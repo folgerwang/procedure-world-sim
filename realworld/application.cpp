@@ -27,15 +27,13 @@ constexpr int kWindowSizeY = 1080;
 
 static uint32_t max_vertex_input_attribute_offset = 0;
 
-struct BaseVertex {
+struct SkyBoxVertex {
     glm::vec3 pos;
-    glm::vec3 color;
-    glm::vec2 tex_coord;
 
     static std::vector<work::renderer::VertexInputBindingDescription> getBindingDescription() {
         std::vector<work::renderer::VertexInputBindingDescription> binding_description(1);
         binding_description[0].binding = 0;
-        binding_description[0].stride = sizeof(BaseVertex);
+        binding_description[0].stride = sizeof(SkyBoxVertex);
         binding_description[0].input_rate = work::renderer::VertexInputRate::VERTEX;
         return binding_description;
     }
@@ -45,22 +43,9 @@ struct BaseVertex {
         attribute_descriptions[0].binding = 0;
         attribute_descriptions[0].location = 0;
         attribute_descriptions[0].format = work::renderer::Format::R32G32B32_SFLOAT;
-        attribute_descriptions[0].offset = offsetof(BaseVertex, pos);
-        attribute_descriptions[1].binding = 0;
-        attribute_descriptions[1].location = 1;
-        attribute_descriptions[1].format = work::renderer::Format::R32G32B32_SFLOAT;
-        attribute_descriptions[1].offset = offsetof(BaseVertex, color);
-        attribute_descriptions[2].binding = 0;
-        attribute_descriptions[2].location = 2;
-        attribute_descriptions[2].format = work::renderer::Format::R32G32_SFLOAT;
-        attribute_descriptions[2].offset = offsetof(BaseVertex, tex_coord);
+        attribute_descriptions[0].offset = offsetof(SkyBoxVertex, pos);
         return attribute_descriptions;
     }
-};
-
-const std::vector<uint16_t> indices = {
-    0, 1, 2, 2, 3, 0,
-    4, 5, 6, 6, 7, 4
 };
 
 struct QueueFamilyIndices {
@@ -855,7 +840,8 @@ VkVertexInputRate toVkVertexInputRate(work::renderer::VertexInputRate input_rate
     return VK_VERTEX_INPUT_RATE_VERTEX;
 }
 
-std::vector<VkVertexInputBindingDescription> toVkVertexInputBindingDescription(const std::vector<work::renderer::VertexInputBindingDescription>& description) {
+std::vector<VkVertexInputBindingDescription> toVkVertexInputBindingDescription(
+    const std::vector<work::renderer::VertexInputBindingDescription>& description) {
     std::vector<VkVertexInputBindingDescription> binding_description(description.size());
     for (int i = 0; i < description.size(); i++) {
         binding_description[i].binding = description[i].binding;
@@ -865,7 +851,8 @@ std::vector<VkVertexInputBindingDescription> toVkVertexInputBindingDescription(c
     return binding_description;
 }
 
-std::vector<VkVertexInputAttributeDescription> toVkVertexInputAttributeDescription(const std::vector<work::renderer::VertexInputAttributeDescription>& description) {
+std::vector<VkVertexInputAttributeDescription> toVkVertexInputAttributeDescription(
+    const std::vector<work::renderer::VertexInputAttributeDescription>& description) {
     std::vector<VkVertexInputAttributeDescription> result(description.size());
     for (int i = 0; i < description.size(); i++) {
         result[i].binding = description[i].binding;
@@ -1108,7 +1095,7 @@ bool isDeviceSuitable(
 
 VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& available_formats) {
     for (const auto& available_format : available_formats) {
-        if (available_format.format == VK_FORMAT_B8G8R8A8_SRGB &&
+        if (available_format.format == VK_FORMAT_B8G8R8A8_UNORM &&
             available_format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
             return available_format;
         }
@@ -1467,6 +1454,7 @@ void create2DTextureImage(
     const std::shared_ptr<work::renderer::Device>& device,
     const std::shared_ptr<work::renderer::Queue>& cmd_queue,
     const std::shared_ptr<work::renderer::CommandPool>& cmd_pool,
+    work::renderer::Format format,
     int tex_width,
     int tex_height,
     int tex_channels,
@@ -1492,7 +1480,7 @@ void create2DTextureImage(
     create2DImage(
         device,
         glm::vec2(tex_width, tex_height),
-        work::renderer::Format::R8G8B8A8_SRGB,
+        format,
         work::renderer::ImageTiling::OPTIMAL,
         static_cast<work::renderer::ImageUsageFlags>(work::renderer::ImageUsageFlagBits::TRANSFER_DST_BIT) |
         static_cast<work::renderer::ImageUsageFlags>(work::renderer::ImageUsageFlagBits::SAMPLED_BIT),
@@ -1500,9 +1488,9 @@ void create2DTextureImage(
         texture_image,
         texture_image_memory);
 
-    transitionImageLayout(device, cmd_queue, cmd_pool, texture_image, work::renderer::Format::R8G8B8A8_SRGB, work::renderer::ImageLayout::UNDEFINED, work::renderer::ImageLayout::TRANSFER_DST_OPTIMAL);
+    transitionImageLayout(device, cmd_queue, cmd_pool, texture_image, format, work::renderer::ImageLayout::UNDEFINED, work::renderer::ImageLayout::TRANSFER_DST_OPTIMAL);
     copyBufferToImage(device, cmd_queue, cmd_pool, staging_buffer, texture_image, glm::uvec2(tex_width, tex_height));
-    transitionImageLayout(device, cmd_queue, cmd_pool, texture_image, work::renderer::Format::R8G8B8A8_SRGB, work::renderer::ImageLayout::TRANSFER_DST_OPTIMAL, work::renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    transitionImageLayout(device, cmd_queue, cmd_pool, texture_image, format, work::renderer::ImageLayout::TRANSFER_DST_OPTIMAL, work::renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     device->destroyBuffer(staging_buffer);
     device->freeMemory(staging_buffer_memory);
@@ -1514,12 +1502,13 @@ void create2x2Texture(
     const std::shared_ptr<work::renderer::CommandPool>& cmd_pool,
     uint32_t color,
     work::renderer::TextureInfo& texture) {
+    auto format = work::renderer::Format::R8G8B8A8_UNORM;
     uint32_t colors[4] = { color };
-    create2DTextureImage(device, cmd_queue, cmd_pool, 2, 2, 4, colors, texture.image, texture.memory);
+    create2DTextureImage(device, cmd_queue, cmd_pool, format, 2, 2, 4, colors, texture.image, texture.memory);
     texture.view = device->createImageView(
         texture.image,
         work::renderer::ImageViewType::VIEW_2D,
-        work::renderer::Format::R8G8B8A8_SRGB,
+        format,
         static_cast<work::renderer::ImageAspectFlags>(work::renderer::ImageAspectFlagBits::COLOR_BIT));
 }
 
@@ -1619,7 +1608,8 @@ std::shared_ptr<Image> VulkanDevice::createImage(
     return result;
 }
 
-std::shared_ptr<ImageView> VulkanDevice::createImageView(std::shared_ptr<Image> image,
+std::shared_ptr<ImageView> VulkanDevice::createImageView(
+    std::shared_ptr<Image> image,
     ImageViewType view_type,
     Format format,
     ImageAspectFlags aspect_flags,
@@ -2293,21 +2283,23 @@ void RealWorldApplication::initVulkan() {
 //    loadGltfModel("assets/Duck.glb");
 //    loadGltfModel("assets/MetalRoughSpheres.glb");
 //    loadGltfModel("assets/BarramundiFish.glb");
-//    loadGltfModel("assets/Lantern.glb");
+    loadGltfModel("assets/Lantern.glb");
 //    *loadGltfModel("assets/MetalRoughSpheresNoTextures.glb");
-    loadGltfModel("assets/BrainStem.glb"); 
+//    loadGltfModel("assets/BrainStem.glb"); 
 //    *loadGltfModel("assets/AnimatedTriangle.gltf");
     loadMtx2Texture("assets/environments/doge2/lambertian/diffuse.ktx2", ibl_diffuse_tex_);
     loadMtx2Texture("assets/environments/doge2/ggx/specular.ktx2", ibl_specular_tex_);
     loadMtx2Texture("assets/environments/doge2/charlie/sheen.ktx2", ibl_sheen_tex_);
+    createGltfPipelineLayout();
     createGraphicsPipeline();
     createDepthResources();
     createFramebuffers();
-    createTextureImage("assets/statue.jpg", sample_tex_);
-    createTextureImage("assets/brdfLUT.png", brdf_lut_tex_);
-    createTextureImage("assets/lut_ggx.png", ggx_lut_tex_);
-    createTextureImage("assets/lut_charlie.png", charlie_lut_tex_);
-    createTextureImage("assets/lut_thin_film.png", thin_film_lut_tex_);
+    auto format = work::renderer::Format::R8G8B8A8_UNORM;
+    createTextureImage("assets/statue.jpg", format, sample_tex_);
+    createTextureImage("assets/brdfLUT.png", format, brdf_lut_tex_);
+    createTextureImage("assets/lut_ggx.png", format, ggx_lut_tex_);
+    createTextureImage("assets/lut_charlie.png", format, charlie_lut_tex_);
+    createTextureImage("assets/lut_thin_film.png", format, thin_film_lut_tex_);
     create2x2Texture(device_, graphics_queue_, command_pool_, 0xffffffff, white_tex_);
     create2x2Texture(device_, graphics_queue_, command_pool_, 0xff000000, black_tex_);
     createTextureSampler();
@@ -2573,7 +2565,7 @@ void RealWorldApplication::createImageViews() {
     }
 }
 
-std::vector<std::shared_ptr<renderer::ShaderModule>> getBaseShaderModules(
+std::vector<std::shared_ptr<renderer::ShaderModule>> getGltfShaderModules(
     std::shared_ptr<renderer::Device> device, 
     bool has_normals, 
     bool has_tangent, 
@@ -2616,44 +2608,29 @@ std::vector<VkPipelineShaderStageCreateInfo> getShaderStages(
     return shader_stages;
 }
 
-void RealWorldApplication::createGraphicsPipeline() {
-
+VkPipelineVertexInputStateCreateInfo fillVkPipelineVertexInputStateCreateInfo(
+    const std::vector<VkVertexInputBindingDescription>& binding_descs,
+    const std::vector<VkVertexInputAttributeDescription>& attribute_descs) {
     VkPipelineVertexInputStateCreateInfo vertex_input_info{};
-    auto binding_descs = toVkVertexInputBindingDescription(gltf_object_->meshes_[0].primitives_[0].binding_descs_);
-    auto attribute_descs = toVkVertexInputAttributeDescription(gltf_object_->meshes_[0].primitives_[0].attribute_descs_);
     vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertex_input_info.vertexBindingDescriptionCount = static_cast<uint32_t>(binding_descs.size());
     vertex_input_info.pVertexBindingDescriptions = binding_descs.data();
     vertex_input_info.vertexAttributeDescriptionCount = static_cast<uint32_t>(attribute_descs.size());
     vertex_input_info.pVertexAttributeDescriptions = attribute_descs.data();
 
+    return vertex_input_info;
+}
+
+VkPipelineInputAssemblyStateCreateInfo fillVkPipelineInputAssemblyStateCreateInfo(std::shared_ptr<renderer::ObjectData> gltf_object) {
     VkPipelineInputAssemblyStateCreateInfo input_assembly{};
     input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    input_assembly.topology = toVkPrimitiveTopology(gltf_object_->meshes_[0].primitives_[0].topology_info_.topology);
-    input_assembly.primitiveRestartEnable = gltf_object_->meshes_[0].primitives_[0].topology_info_.restart_enable;
+    input_assembly.topology = toVkPrimitiveTopology(gltf_object->meshes_[0].primitives_[0].topology_info_.topology);
+    input_assembly.primitiveRestartEnable = gltf_object->meshes_[0].primitives_[0].topology_info_.restart_enable;
 
-    VkPipelineViewportStateCreateInfo viewport_state{};
-    {
-        // setup viewport.
-        VkViewport viewport{};
-        viewport.x = 0.0f;
-        viewport.y = 0.0f;
-        viewport.width = (float)swap_chain_extent_.x;
-        viewport.height = (float)swap_chain_extent_.y;
-        viewport.minDepth = 0.0f;
-        viewport.maxDepth = 1.0f;
+    return input_assembly;
+}
 
-        VkRect2D scissor{};
-        scissor.offset = { 0, 0 };
-        scissor.extent = { swap_chain_extent_.x, swap_chain_extent_.y };
-
-        viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-        viewport_state.viewportCount = 1;
-        viewport_state.pViewports = &viewport;
-        viewport_state.scissorCount = 1;
-        viewport_state.pScissors = &scissor;
-    }
-
+VkPipelineRasterizationStateCreateInfo fillVkPipelineRasterizationStateCreateInfo() {
     VkPipelineRasterizationStateCreateInfo rasterizer{};
     rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     rasterizer.depthClampEnable = VK_FALSE;
@@ -2667,6 +2644,10 @@ void RealWorldApplication::createGraphicsPipeline() {
     rasterizer.depthBiasClamp = 0.0f; // Optional
     rasterizer.depthBiasSlopeFactor = 0.0f; // Optional
 
+    return rasterizer;
+}
+
+VkPipelineMultisampleStateCreateInfo fillVkPipelineMultisampleStateCreateInfo() {
     VkPipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisampling.sampleShadingEnable = VK_FALSE;
@@ -2676,6 +2657,41 @@ void RealWorldApplication::createGraphicsPipeline() {
     multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
     multisampling.alphaToOneEnable = VK_FALSE; // Optional
 
+    return multisampling;
+}
+
+VkViewport fillViewport(const glm::uvec2 size) {
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float)size.x;
+    viewport.height = (float)size.y;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+
+    return viewport;
+}
+
+VkRect2D fillScissor(const glm::uvec2 size) {
+    VkRect2D scissor{};
+    scissor.offset = { 0, 0 };
+    scissor.extent = { size.x, size.y };
+
+    return scissor;
+}
+
+VkPipelineViewportStateCreateInfo fillVkPipelineViewportStateCreateInfo(const VkViewport* viewport, const VkRect2D* scissor) {
+    VkPipelineViewportStateCreateInfo viewport_state{};
+    viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport_state.viewportCount = 1;
+    viewport_state.pViewports = viewport;
+    viewport_state.scissorCount = 1;
+    viewport_state.pScissors = scissor;
+
+    return viewport_state;
+}
+
+VkPipelineColorBlendAttachmentState fillVkPipelineColorBlendAttachmentState() {
     VkPipelineColorBlendAttachmentState color_blend_attachment{};
     color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     color_blend_attachment.blendEnable = VK_FALSE;
@@ -2686,27 +2702,43 @@ void RealWorldApplication::createGraphicsPipeline() {
     color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
     color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
 
+    return color_blend_attachment;
+}
+
+VkPipelineColorBlendStateCreateInfo fillVkPipelineColorBlendStateCreateInfo(VkPipelineColorBlendAttachmentState* color_blend_attachment) {
     VkPipelineColorBlendStateCreateInfo color_blending{};
     color_blending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     color_blending.logicOpEnable = VK_FALSE;
     color_blending.logicOp = VK_LOGIC_OP_COPY; // Optional
     color_blending.attachmentCount = 1;
-    color_blending.pAttachments = &color_blend_attachment;
+    color_blending.pAttachments = color_blend_attachment;
     color_blending.blendConstants[0] = 0.0f; // Optional
     color_blending.blendConstants[1] = 0.0f; // Optional
     color_blending.blendConstants[2] = 0.0f; // Optional
     color_blending.blendConstants[3] = 0.0f; // Optional
 
-    VkDynamicState dynamic_states[] = {
-        VK_DYNAMIC_STATE_VIEWPORT,
-        VK_DYNAMIC_STATE_LINE_WIDTH
-    };
+    return color_blending;
+}
 
-    VkPipelineDynamicStateCreateInfo dynamic_state{};
-    dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamic_state.dynamicStateCount = 2;
-    dynamic_state.pDynamicStates = dynamic_states;
+VkPipelineDepthStencilStateCreateInfo fillVkPipelineDepthStencilStateCreateInfo()
+{
+    VkPipelineDepthStencilStateCreateInfo depth_stencil{};
+    depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth_stencil.depthTestEnable = VK_TRUE;
+    depth_stencil.depthWriteEnable = VK_TRUE;
+    depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depth_stencil.depthBoundsTestEnable = VK_FALSE;
+    depth_stencil.minDepthBounds = 0.0f; // Optional
+    depth_stencil.maxDepthBounds = 1.0f; // Optional
+    depth_stencil.stencilTestEnable = VK_FALSE;
+    //depth_stencil.front = {}; // Optional
+    //depth_stencil.back = {}; // Optional
 
+    return depth_stencil;
+}
+
+void RealWorldApplication::createGltfPipelineLayout()
+{
     VkPushConstantRange push_const_range{};
     push_const_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     push_const_range.offset = 0;
@@ -2735,43 +2767,65 @@ void RealWorldApplication::createGraphicsPipeline() {
     }
     auto vk_pipeline_layout = std::make_shared<renderer::VulkanPipelineLayout>();
     vk_pipeline_layout->set(pipeline_layout);
-    pipeline_layout_ = std::move(vk_pipeline_layout);
+    gltf_pipeline_layout_ = std::move(vk_pipeline_layout);
+}
 
-    VkPipelineDepthStencilStateCreateInfo depth_stencil{};
-    depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depth_stencil.depthTestEnable = VK_TRUE;
-    depth_stencil.depthWriteEnable = VK_TRUE;
-    depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS;
-    depth_stencil.depthBoundsTestEnable = VK_FALSE;
-    depth_stencil.minDepthBounds = 0.0f; // Optional
-    depth_stencil.maxDepthBounds = 1.0f; // Optional
-    depth_stencil.stencilTestEnable = VK_FALSE;
-    //depth_stencil.front = {}; // Optional
-    //depth_stencil.back = {}; // Optional
+void RealWorldApplication::createGraphicsPipeline() {
+    auto vk_device = std::reinterpret_pointer_cast<renderer::VulkanDevice>(device_);
+    assert(vk_device);
+
+    auto gltf_binding_descs = toVkVertexInputBindingDescription(gltf_object_->meshes_[0].primitives_[0].binding_descs_);
+    auto gltf_attribute_descs = toVkVertexInputAttributeDescription(gltf_object_->meshes_[0].primitives_[0].attribute_descs_);
+    auto viewport = fillViewport(swap_chain_extent_);
+    auto scissor = fillScissor(swap_chain_extent_);
+    auto color_blend_attachment = fillVkPipelineColorBlendAttachmentState();
+
+    auto gltf_vertex_input_info = fillVkPipelineVertexInputStateCreateInfo(gltf_binding_descs, gltf_attribute_descs);
+    auto gltf_input_assembly = fillVkPipelineInputAssemblyStateCreateInfo(gltf_object_);
+    auto rasterizer = fillVkPipelineRasterizationStateCreateInfo();
+    auto multisampling = fillVkPipelineMultisampleStateCreateInfo();
+    auto viewport_state = fillVkPipelineViewportStateCreateInfo(&viewport, &scissor);
+    auto color_blending = fillVkPipelineColorBlendStateCreateInfo(&color_blend_attachment);
+    auto depth_stencil = fillVkPipelineDepthStencilStateCreateInfo();
+
+    VkDynamicState dynamic_states[] = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_LINE_WIDTH
+    };
+
+    VkPipelineDynamicStateCreateInfo dynamic_state{};
+    dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamic_state.dynamicStateCount = 2;
+    dynamic_state.pDynamicStates = dynamic_states;
 
     // todo.
-    auto shader_modules = getBaseShaderModules(
+    auto shader_modules = getGltfShaderModules(
         device_, 
         gltf_object_->meshes_[0].primitives_[0].has_normal_, 
         gltf_object_->meshes_[0].primitives_[0].has_tangent_, 
         gltf_object_->meshes_[0].primitives_[0].has_texcoord_0_, 
         gltf_object_->meshes_[0].primitives_[0].has_skin_set_0_);
     auto shader_stages = getShaderStages(shader_modules);
+
     auto vk_render_pass = std::reinterpret_pointer_cast<renderer::VulkanRenderPass>(render_pass_);
     assert(vk_render_pass);
+
+    auto vk_gltf_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(gltf_pipeline_layout_);
+    assert(vk_gltf_pipeline_layout);
+
     VkGraphicsPipelineCreateInfo pipeline_info{};
     pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     pipeline_info.stageCount = static_cast<uint32_t>(shader_stages.size());
     pipeline_info.pStages = shader_stages.data();
-    pipeline_info.pVertexInputState = &vertex_input_info;
-    pipeline_info.pInputAssemblyState = &input_assembly;
+    pipeline_info.pVertexInputState = &gltf_vertex_input_info;
+    pipeline_info.pInputAssemblyState = &gltf_input_assembly;
     pipeline_info.pViewportState = &viewport_state;
     pipeline_info.pRasterizationState = &rasterizer;
     pipeline_info.pMultisampleState = &multisampling;
     pipeline_info.pDepthStencilState = &depth_stencil;
     pipeline_info.pColorBlendState = &color_blending;
 //    pipeline_info.pDynamicState = nullptr; // Optional
-    pipeline_info.layout = pipeline_layout;
+    pipeline_info.layout = vk_gltf_pipeline_layout->get();
     pipeline_info.renderPass = vk_render_pass->get();
     pipeline_info.subpass = 0;
     pipeline_info.basePipelineHandle = VK_NULL_HANDLE; // Optional
@@ -2784,7 +2838,7 @@ void RealWorldApplication::createGraphicsPipeline() {
     }
     auto vk_pipeline = std::make_shared<renderer::VulkanPipeline>();
     vk_pipeline->set(graphics_pipeline);
-    graphics_pipeline_ = std::move(vk_pipeline);
+    gltf_pipeline_ = std::move(vk_pipeline);
 
     for (auto& shader_module : shader_modules) {
         device_->destroyShaderModule(shader_module);
@@ -2892,7 +2946,7 @@ void RealWorldApplication::createCommandBuffers() {
 
         cmd_buf->beginCommandBuffer(0);
         cmd_buf->beginRenderPass(render_pass_, swap_chain_framebuffers_[i], swap_chain_extent_, clear_values);
-        cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, graphics_pipeline_);
+        cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, gltf_pipeline_);
 
         for (const auto& mesh : gltf_object_->meshes_) {
             for (const auto& prim : mesh.primitives_) {
@@ -2962,24 +3016,27 @@ void RealWorldApplication::drawMesh(
 
         // todo.
         auto vk_cmd_buf = std::reinterpret_pointer_cast<renderer::VulkanCommandBuffer>(cmd_buf);
-        auto vk_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(pipeline_layout_);
+        auto vk_gltf_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(gltf_pipeline_layout_);
 
+        std::vector<VkDescriptorSet> desc_sets;
+        desc_sets.reserve(3);
+        desc_sets.push_back(std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(global_tex_desc_set_)->get());
+        desc_sets.push_back(std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(desc_sets_[image_index])->get());
         if (prim.material_idx_ >= 0) {
             const auto& material = gltf_object_->materials_[prim.material_idx_];
-            VkDescriptorSet desc_sets[] = {
-                std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(global_tex_desc_set_)->get(),
-                std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(desc_sets_[image_index])->get(),
-                std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(material.desc_set_)->get()};
-            vkCmdBindDescriptorSets(vk_cmd_buf->get(), VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline_layout->get(), 0, 3, desc_sets, 0, nullptr);
+            desc_sets.push_back(std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(material.desc_set_)->get());
         }
-        else {
-            VkDescriptorSet desc_sets[] = {
-                std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(global_tex_desc_set_)->get(),
-                std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(desc_sets_[image_index])->get()};
-            vkCmdBindDescriptorSets(vk_cmd_buf->get(), VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline_layout->get(), 0, 2, desc_sets, 0, nullptr);
-        }
+        vkCmdBindDescriptorSets(
+            vk_cmd_buf->get(), 
+            VK_PIPELINE_BIND_POINT_GRAPHICS, 
+            vk_gltf_pipeline_layout->get(), 
+            0, 
+            static_cast<uint32_t>(desc_sets.size()), 
+            desc_sets.data(), 
+            0, 
+            nullptr);
 
-        vkCmdPushConstants(vk_cmd_buf->get(), vk_pipeline_layout->get(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(ModelParams), &model_params);
+        vkCmdPushConstants(vk_cmd_buf->get(), vk_gltf_pipeline_layout->get(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(ModelParams), &model_params);
 
         cmd_buf->drawIndexed(static_cast<uint32_t>(prim.index_desc_.index_count));
     }
@@ -2999,7 +3056,8 @@ void RealWorldApplication::drawNodes(
         if (node.mesh_idx >= 0) {
             ModelParams model_params{};
             model_params.model_mat = cur_matrix;
-            model_params.normal_mat = glm::mat3x4(cur_matrix);
+            auto invert_mat = inverse(model_params.model_mat);
+            model_params.normal_mat = transpose(invert_mat);
             drawMesh(cmd_buf, gltf_object_->meshes_[node.mesh_idx], model_params, image_index);
         }
 
@@ -3038,7 +3096,15 @@ void RealWorldApplication::drawFrame() {
     // Mark the image as now being in use by this frame
     images_in_flight_[image_index] = in_flight_fences_[current_frame_];
 
-    updateViewConstBuffer(image_index);
+    int32_t root_node = gltf_object_->default_scene_ >= 0 ? gltf_object_->default_scene_ : 0;
+    auto min_t = gltf_object_->scenes_[root_node].bbox_min_;
+    auto max_t = gltf_object_->scenes_[root_node].bbox_max_;
+
+    auto center = (min_t + max_t) * 0.5f;
+    auto extent = (max_t - min_t) * 0.5f;
+    float radius = max(max(extent.x, extent.y), extent.z);
+
+    updateViewConstBuffer(image_index, center, radius);
 
     device_->resetFences(in_flight_fences);
 
@@ -3052,40 +3118,37 @@ void RealWorldApplication::drawFrame() {
 
     std::vector<renderer::ClearValue> clear_values;
     clear_values.resize(2);
-    clear_values[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
+    clear_values[0].color = { 50.0f / 255.0f, 50.0f / 255.0f, 50.0f / 255.0f, 1.0f };
     clear_values[1].depth_stencil = { 1.0f, 0 };
 
     static auto startTime = std::chrono::high_resolution_clock::now();
 
-    int32_t root_node = gltf_object_->default_scene_ >= 0 ? gltf_object_->default_scene_ : 0;
-    auto min_t = gltf_object_->scenes_[root_node].bbox_min_;
-    auto max_t = gltf_object_->scenes_[root_node].bbox_max_;
-
     auto currentTime = std::chrono::high_resolution_clock::now();
     float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
-    auto center = (min_t + max_t) * 0.5f;
-    auto extent = (max_t - min_t) * 0.5f;
-    float radius = max(max(extent.x, extent.y), extent.z);
+    auto& cmd_buf = command_buffer;
+    cmd_buf->reset(0);
+    cmd_buf->beginCommandBuffer(static_cast<renderer::CommandBufferUsageFlags>(renderer::CommandBufferUsageFlagBits::ONE_TIME_SUBMIT_BIT));
 
-    ModelParams model_params{};
-    auto base_mat = glm::translate(glm::scale(glm::mat4(1.0f), glm::vec3(1.0f / radius)), -center);
-    model_params.model_mat = glm::rotate(base_mat, time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    model_params.normal_mat = glm::mat3(model_params.model_mat);
+    // render gltf meshes.
+    auto model_mat = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     {
-        auto& cmd_buf = command_buffer;
-        cmd_buf->reset(0);
-        cmd_buf->beginCommandBuffer(static_cast<renderer::CommandBufferUsageFlags>(renderer::CommandBufferUsageFlagBits::ONE_TIME_SUBMIT_BIT));
         cmd_buf->beginRenderPass(render_pass_, swap_chain_framebuffers_[image_index], swap_chain_extent_, clear_values);
-        cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, graphics_pipeline_);
+        cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, gltf_pipeline_);
 
         for (auto node_idx : gltf_object_->scenes_[root_node].nodes_) {
-            drawNodes(cmd_buf, node_idx, image_index, model_params.model_mat);
+            drawNodes(cmd_buf, node_idx, image_index, model_mat);
+        }
+
+        // render skybox.
+        {
+            //cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, skybox_pipeline_);
         }
 
         cmd_buf->endRenderPass();
-        cmd_buf->endCommandBuffer();
     }
+
+    cmd_buf->endCommandBuffer();
     auto vk_render_finished_semphores = std::reinterpret_pointer_cast<renderer::VulkanSemaphore>(render_finished_semaphores_[current_frame_]);
     auto vk_in_flight_fence = std::reinterpret_pointer_cast<renderer::VulkanFence>(in_flight_fences_[current_frame_]);
     auto vk_graphic_queue = std::reinterpret_pointer_cast<renderer::VulkanQueue>(graphics_queue_);
@@ -3145,16 +3208,15 @@ void RealWorldApplication::createSyncObjects() {
 }
 
 void RealWorldApplication::createVertexBuffer() {
-    const std::vector<BaseVertex> vertices = {
-        {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-        {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-        {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-        {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
-
-        {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-        {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-        {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-        {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
+    const std::vector<SkyBoxVertex> vertices = {
+        {{-1.0f, -1.0f, -1.0f}},
+        {{1.0f, -1.0f, -1.0f}},
+        {{-1.0f, 1.0f, -1.0f}},
+        {{1.0f, 1.0f, -1.0f}},
+        {{-1.0f, -1.0f, 1.0f}},
+        {{1.0f, -1.0f, 1.0f}},
+        {{-1.0f, 1.0f, 1.0f}},
+        {{1.0f, 1.0f, 1.0f}},
     };
 
     VkDeviceSize buffer_size = sizeof(vertices[0]) * vertices.size();
@@ -3171,7 +3233,16 @@ void RealWorldApplication::createVertexBuffer() {
 }
 
 void RealWorldApplication::createIndexBuffer() {
-    VkDeviceSize buffer_size = sizeof(indices[0]) * indices.size();
+    const std::vector<uint16_t> indices = {
+        0, 1, 2, 2, 1, 3,
+        4, 6, 5, 5, 6, 7,
+        0, 4, 1, 1, 4, 5,
+        2, 3, 6, 6, 3, 7,
+        1, 5, 3, 3, 5, 7,
+        0, 2, 4, 4, 2, 6};
+
+    VkDeviceSize buffer_size = 
+        sizeof(indices[0]) * indices.size();
 
     createBufferWithSrcData(
         device_,
@@ -3305,13 +3376,13 @@ void RealWorldApplication::createUniformBuffers() {
     }
 }
 
-void RealWorldApplication::updateViewConstBuffer(uint32_t current_image) {
-    auto eye_pos = glm::vec3(2.0f, 0.0f, 2.0f);
+void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, const glm::vec3& center, float radius) {
+    auto eye_pos = glm::vec3(3.0f, 0.0f, 0.0f) * radius;
 
     ViewParams view_params{};
-    view_params.camera_pos = glm::vec4(eye_pos, 0);
-    view_params.view = glm::lookAt(eye_pos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    view_params.proj = glm::perspective(glm::radians(45.0f), swap_chain_extent_.x / (float)swap_chain_extent_.y, 0.1f, 100.0f);
+    view_params.camera_pos = glm::vec4(eye_pos + center, 0);
+    view_params.view = glm::lookAt(eye_pos + center, center, glm::vec3(0.0f, 1.0f, 0.0f));
+    view_params.proj = glm::perspective(glm::radians(45.0f), swap_chain_extent_.x / (float)swap_chain_extent_.y, 1.0f * radius, 100.0f);
     view_params.proj[1][1] *= -1;
     view_params.input_features = glm::vec4(gltf_object_->meshes_[0].primitives_[0].has_tangent_ ? FEATURE_INPUT_HAS_TANGENT : 0, 0, 0, 0);
 
@@ -3552,21 +3623,21 @@ void RealWorldApplication::createDescriptorSets() {
     }
 }
 
-void RealWorldApplication::createTextureImage(const std::string& file_name, renderer::TextureInfo& texture) {
+void RealWorldApplication::createTextureImage(const std::string& file_name, renderer::Format format, renderer::TextureInfo& texture) {
     int tex_width, tex_height, tex_channels;
     stbi_uc* pixels = stbi_load(file_name.c_str(), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
 
     if (!pixels) {
         throw std::runtime_error("failed to load texture image!");
     }
-    create2DTextureImage(device_, graphics_queue_, command_pool_, tex_width, tex_height, tex_channels, pixels, texture.image, texture.memory);
+    create2DTextureImage(device_, graphics_queue_, command_pool_, format, tex_width, tex_height, tex_channels, pixels, texture.image, texture.memory);
 
     stbi_image_free(pixels);
 
     texture.view = device_->createImageView(
         texture.image,
         renderer::ImageViewType::VIEW_2D,
-        renderer::Format::R8G8B8A8_SRGB,
+        format,
         static_cast<renderer::ImageAspectFlags>(renderer::ImageAspectFlagBits::COLOR_BIT));
 }
 
@@ -3611,8 +3682,9 @@ void RealWorldApplication::cleanupSwapChain() {
     }
 
     device_->freeCommandBuffers(command_pool_, command_buffers_);
-    device_->destroyPipeline(graphics_pipeline_);
-    device_->destroyPipelineLayout(pipeline_layout_);
+    device_->destroyPipeline(gltf_pipeline_);
+    device_->destroyPipeline(skybox_pipeline_);
+    device_->destroyPipelineLayout(gltf_pipeline_layout_);
     device_->destroyRenderPass(render_pass_);
 
     for (auto image_view : swap_chain_image_views_) {
@@ -3715,30 +3787,8 @@ static void setupMeshState(
         }
     }
 
-    // Texture
-    {
-        gltf_object->textures_.resize(model.textures.size());
-        for (size_t i_tex = 0; i_tex < model.textures.size(); i_tex++) {
-            auto& dst_tex = gltf_object->textures_[i_tex];
-            const auto& src_tex = model.textures[i_tex];
-            const auto& src_img = model.images[i_tex];
-            create2DTextureImage(device,
-                cmd_queue,
-                cmd_pool,
-                src_img.width,
-                src_img.height,
-                src_img.component,
-                src_img.image.data(),
-                dst_tex.image,
-                dst_tex.memory);
-
-            dst_tex.view = device->createImageView(
-                dst_tex.image,
-                renderer::ImageViewType::VIEW_2D,
-                renderer::Format::R8G8B8A8_SRGB,
-                static_cast<renderer::ImageAspectFlags>(renderer::ImageAspectFlagBits::COLOR_BIT));
-        }
-    }
+    // allocate texture memory at first.
+    gltf_object->textures_.resize(model.textures.size());
 
     // Material
     {
@@ -3752,6 +3802,14 @@ static void setupMeshState(
             dst_material.metallic_roughness_idx_ = src_material.pbrMetallicRoughness.metallicRoughnessTexture.index;
             dst_material.emissive_idx_ = src_material.emissiveTexture.index;
             dst_material.occlusion_idx_ = src_material.occlusionTexture.index;
+
+            if (dst_material.base_color_idx_ >= 0) {
+                gltf_object->textures_[dst_material.base_color_idx_].linear = false;
+            }
+
+            if (dst_material.emissive_idx_ >= 0) {
+                gltf_object->textures_[dst_material.emissive_idx_].linear = false;
+            }
 
             createBuffer(
                 device,
@@ -3785,7 +3843,7 @@ static void setupMeshState(
 
             ubo.uv_set_flags = glm::vec4(0, 0, 0, 0);
             ubo.exposure = 1.0f;
-            ubo.material_features = (src_material.pbrMetallicRoughness.metallicRoughnessTexture.index >= 0 ? FEATURE_HAS_METALLIC_ROUGHNESS_MAP : 0 ) | FEATURE_MATERIAL_METALLICROUGHNESS;
+            ubo.material_features = (src_material.pbrMetallicRoughness.metallicRoughnessTexture.index >= 0 ? FEATURE_HAS_METALLIC_ROUGHNESS_MAP : 0) | FEATURE_MATERIAL_METALLICROUGHNESS;
             ubo.material_features |= (src_material.pbrMetallicRoughness.baseColorTexture.index >= 0 ? FEATURE_HAS_BASE_COLOR_MAP : 0);
             ubo.material_features |= (src_material.emissiveTexture.index >= 0 ? FEATURE_HAS_EMISSIVE_MAP : 0);
             ubo.material_features |= (src_material.occlusionTexture.index >= 0 ? FEATURE_HAS_OCCLUSION_MAP : 0);
@@ -3799,6 +3857,32 @@ static void setupMeshState(
             ubo.lights[0].position = glm::vec3(0, 0, 0);
 
             updateBufferMemory(device, dst_material.uniform_buffer_.memory, sizeof(ubo), &ubo);
+        }
+    }
+
+    // Texture
+    {
+        for (size_t i_tex = 0; i_tex < model.textures.size(); i_tex++) {
+            auto& dst_tex = gltf_object->textures_[i_tex];
+            const auto& src_tex = model.textures[i_tex];
+            const auto& src_img = model.images[i_tex];
+            auto format = renderer::Format::R8G8B8A8_UNORM;
+            create2DTextureImage(device,
+                cmd_queue,
+                cmd_pool,
+                format,
+                src_img.width,
+                src_img.height,
+                src_img.component,
+                src_img.image.data(),
+                dst_tex.image,
+                dst_tex.memory);
+
+            dst_tex.view = device->createImageView(
+                dst_tex.image,
+                renderer::ImageViewType::VIEW_2D,
+                format,
+                static_cast<renderer::ImageAspectFlags>(renderer::ImageAspectFlagBits::COLOR_BIT));
         }
     }
 }

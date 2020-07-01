@@ -1,5 +1,6 @@
 #define HAS_BASE_COLOR_MAP          1
 #define USE_IBL                     1
+#define USE_HDR                     1
 #ifdef  HAS_TANGENT 
 #define HAS_NORMALS                 1
 #endif
@@ -110,7 +111,7 @@ struct ViewParams {
 
 struct ModelParams {
     mat4 model_mat;
-    mat3x4 normal_mat;
+    mat4 normal_mat;
 };
 
 struct PbrMaterialParams {

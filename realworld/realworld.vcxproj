@@ -23,7 +23,7 @@
     <ProjectGuid>{482D364D-1093-4184-B0AA-853D00245AFB}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>realworld</RootNamespace>
-    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.18362.0</WindowsTargetPlatformVersion>
     <ProjectName>er</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />

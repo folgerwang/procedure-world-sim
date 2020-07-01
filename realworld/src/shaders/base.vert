@@ -112,7 +112,7 @@ void main() {
 #ifdef HAS_NORMALS
     out_data.vertex_normal = normalize(mat3(model_params.normal_mat) * getNormal());
 #ifdef HAS_TANGENT
-    out_data.vertex_tangent = normalize(mat3(model_params.normal_mat) * getTangent());
+    out_data.vertex_tangent = normalize(mat3(model_params.model_mat) * getTangent());
     out_data.vertex_binormal = cross(out_data.vertex_normal, out_data.vertex_tangent) * in_tangent.w;
 #endif
 #endif // !HAS_NORMALS

@@ -25,11 +25,12 @@ private:
     void createImageViews();
     void createDescriptorSetLayout();
     void createGraphicsPipeline();
+    void createGltfPipelineLayout();
     void createRenderPass();
     void createFramebuffers();
     void createCommandPool();
     void createDepthResources();
-    void createTextureImage(const std::string& file_name, renderer::TextureInfo& texture);
+    void createTextureImage(const std::string& file_name, renderer::Format format, renderer::TextureInfo& texture);
     void createTextureSampler();
     void createVertexBuffer();
     void createIndexBuffer();
@@ -38,7 +39,7 @@ private:
     void createDescriptorSets();
     void createCommandBuffers();
     void createSyncObjects();
-    void updateViewConstBuffer(uint32_t current_image);
+    void updateViewConstBuffer(uint32_t current_image, const glm::vec3& center, float radius);
     // todo remove vk interface here.
     std::vector<VkWriteDescriptorSet> addGlobalTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set);
     std::vector<VkWriteDescriptorSet> addGltfTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set, const renderer::MaterialInfo& material);
@@ -75,7 +76,6 @@ private:
     std::vector<std::shared_ptr<renderer::Framebuffer>> swap_chain_framebuffers_;
     renderer::Format swap_chain_image_format_;
     glm::uvec2 swap_chain_extent_;
-    std::shared_ptr<renderer::PipelineLayout> pipeline_layout_;
     std::shared_ptr<renderer::DescriptorPool> descriptor_pool_;
     std::shared_ptr<renderer::DescriptorSetLayout> desc_set_layout_;
     std::vector<std::shared_ptr<renderer::DescriptorSet>> desc_sets_;
@@ -83,7 +83,9 @@ private:
     std::shared_ptr<renderer::DescriptorSetLayout> material_tex_desc_set_layout_;
     std::shared_ptr<renderer::DescriptorSet> global_tex_desc_set_;
     std::shared_ptr<renderer::RenderPass> render_pass_;
-    std::shared_ptr<renderer::Pipeline> graphics_pipeline_;
+    std::shared_ptr<renderer::PipelineLayout> gltf_pipeline_layout_;
+    std::shared_ptr<renderer::Pipeline> gltf_pipeline_;
+    std::shared_ptr<renderer::Pipeline> skybox_pipeline_;
     std::shared_ptr<renderer::CommandPool> command_pool_;
     renderer::BufferInfo vertex_buffer_;
     renderer::BufferInfo index_buffer_;

@@ -1046,6 +1046,7 @@ namespace renderer {
     };
 
     struct TextureInfo {
+        bool                               linear = true;
         std::shared_ptr<Image>             image;
         std::shared_ptr<DeviceMemory>      memory;
         std::shared_ptr<ImageView>         view;
