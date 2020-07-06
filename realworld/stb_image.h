@@ -870,6 +870,7 @@ static int      stbi__psd_is16(stbi__context *s);
 #ifndef STBI_NO_HDR
 static int      stbi__hdr_test(stbi__context *s);
 static float   *stbi__hdr_load(stbi__context *s, int *x, int *y, int *comp, int req_comp, stbi__result_info *ri);
+static uint8_t *stbi__rgbe_load(stbi__context *s, int *x, int *y, int *comp, int req_comp, stbi__result_info *ri);
 static int      stbi__hdr_info(stbi__context *s, int *x, int *y, int *comp);
 #endif
 
@@ -1079,8 +1080,9 @@ static void *stbi__load_main(stbi__context *s, int *x, int *y, int *comp, int re
 
    #ifndef STBI_NO_HDR
    if (stbi__hdr_test(s)) {
-      float *hdr = stbi__hdr_load(s, x,y,comp,req_comp, ri);
-      return stbi__hdr_to_ldr(hdr, *x, *y, req_comp ? req_comp : *comp);
+/*      float *hdr = stbi__hdr_load(s, x,y,comp,req_comp, ri);
+      return stbi__hdr_to_ldr(hdr, *x, *y, req_comp ? req_comp : *comp);*/
+      return stbi__rgbe_load(s, x, y, comp, req_comp, ri);
    }
    #endif
 
@@ -6980,6 +6982,136 @@ static float *stbi__hdr_load(stbi__context *s, int *x, int *y, int *comp, int re
    }
 
    return hdr_data;
+}
+
+static uint8_t* stbi__rgbe_load(stbi__context* s, int* x, int* y, int* comp, int req_comp, stbi__result_info* ri)
+{
+    char buffer[STBI__HDR_BUFLEN];
+    char* token;
+    int valid = 0;
+    int width, height;
+    stbi_uc* scanline;
+    uint8_t* hdr_data;
+    int len;
+    unsigned char count, value;
+    int i, j, k, c1, c2, z;
+    const char* headerToken;
+    STBI_NOTUSED(ri);
+
+    // Check identifier
+    headerToken = stbi__hdr_gettoken(s, buffer);
+    if (strcmp(headerToken, "#?RADIANCE") != 0 && strcmp(headerToken, "#?RGBE") != 0)
+        return stbi__errpuc("not HDR", "Corrupt HDR image");
+
+    // Parse header
+    for (;;) {
+        token = stbi__hdr_gettoken(s, buffer);
+        if (token[0] == 0) break;
+        if (strcmp(token, "FORMAT=32-bit_rle_rgbe") == 0) valid = 1;
+    }
+
+    if (!valid)    return stbi__errpuc("unsupported format", "Unsupported HDR format");
+
+    // Parse width and height
+    // can't use sscanf() if we're not using stdio!
+    token = stbi__hdr_gettoken(s, buffer);
+    if (strncmp(token, "-Y ", 3))  return stbi__errpuc("unsupported data layout", "Unsupported HDR format");
+    token += 3;
+    height = (int)strtol(token, &token, 10);
+    while (*token == ' ') ++token;
+    if (strncmp(token, "+X ", 3))  return stbi__errpuc("unsupported data layout", "Unsupported HDR format");
+    token += 3;
+    width = (int)strtol(token, NULL, 10);
+
+    *x = width;
+    *y = height;
+
+    if (comp) *comp = 3;
+    if (req_comp == 0) req_comp = 3;
+
+    if (!stbi__mad4sizes_valid(width, height, req_comp, sizeof(float), 0))
+        return stbi__errpuc("too large", "HDR image is too large");
+
+    // Read data
+    hdr_data = (uint8_t*)stbi__malloc_mad4(width, height, req_comp, sizeof(uint8_t), 0);
+    if (!hdr_data)
+        return stbi__errpuc("outofmem", "Out of memory");
+
+    // Load image data
+    // image data is stored as some number of sca
+    if (width < 8 || width >= 32768) {
+        // Read flat data
+        for (j = 0; j < height; ++j) {
+            for (i = 0; i < width; ++i) {
+                stbi_uc rgbe[4];
+            main_decode_loop:
+                stbi__getn(s, rgbe, 4);
+                std::memcpy(hdr_data + j * width * req_comp + i * req_comp, rgbe, sizeof(uint8_t) * 4);
+            }
+        }
+    }
+    else {
+        // Read RLE-encoded data
+        scanline = NULL;
+
+        for (j = 0; j < height; ++j) {
+            c1 = stbi__get8(s);
+            c2 = stbi__get8(s);
+            len = stbi__get8(s);
+            if (c1 != 2 || c2 != 2 || (len & 0x80)) {
+                // not run-length encoded, so we have to actually use THIS data as a decoded
+                // pixel (note this can't be a valid pixel--one of RGB must be >= 128)
+                stbi_uc rgbe[4];
+                rgbe[0] = (stbi_uc)c1;
+                rgbe[1] = (stbi_uc)c2;
+                rgbe[2] = (stbi_uc)len;
+                rgbe[3] = (stbi_uc)stbi__get8(s);
+                std::memcpy(hdr_data, rgbe, sizeof(uint8_t) * 4);
+                i = 1;
+                j = 0;
+                STBI_FREE(scanline);
+                goto main_decode_loop; // yes, this makes no sense
+            }
+            len <<= 8;
+            len |= stbi__get8(s);
+            if (len != width) { STBI_FREE(hdr_data); STBI_FREE(scanline); return stbi__errpuc("invalid decoded scanline length", "corrupt HDR"); }
+            if (scanline == NULL) {
+                scanline = (stbi_uc*)stbi__malloc_mad2(width, 4, 0);
+                if (!scanline) {
+                    STBI_FREE(hdr_data);
+                    return stbi__errpuc("outofmem", "Out of memory");
+                }
+            }
+
+            for (k = 0; k < 4; ++k) {
+                int nleft;
+                i = 0;
+                while ((nleft = width - i) > 0) {
+                    count = stbi__get8(s);
+                    if (count > 128) {
+                        // Run
+                        value = stbi__get8(s);
+                        count -= 128;
+                        if (count > nleft) { STBI_FREE(hdr_data); STBI_FREE(scanline); return stbi__errpuc("corrupt", "bad RLE data in HDR"); }
+                        for (z = 0; z < count; ++z)
+                            scanline[i++ * 4 + k] = value;
+                    }
+                    else {
+                        // Dump
+                        if (count > nleft) { STBI_FREE(hdr_data); STBI_FREE(scanline); return stbi__errpuc("corrupt", "bad RLE data in HDR"); }
+                        for (z = 0; z < count; ++z)
+                            scanline[i++ * 4 + k] = stbi__get8(s);
+                    }
+                }
+            }
+            for (i = 0; i < width; ++i)
+                std::memcpy(hdr_data + (j * width + i) * req_comp, scanline + i * 4, sizeof(uint8_t) * 4);
+        }
+        if (scanline)
+            STBI_FREE(scanline);
+    }
+
+    return hdr_data;
 }
 
 static int stbi__hdr_info(stbi__context *s, int *x, int *y, int *comp)

@@ -19,5 +19,7 @@ C:\work\vulkan\1.2.141.2\Bin\glslc.exe base.frag -DHAS_UV_SET0=1 -DHAS_TANGENT=1
 C:\work\vulkan\1.2.141.2\Bin\glslc.exe base.vert -DHAS_NORMALS=1 -DHAS_SKIN_SET_0=1 -o base_vert_N_SKIN.spv
 C:\work\vulkan\1.2.141.2\Bin\glslc.exe base.frag -DHAS_NORMALS=1 -DHAS_SKIN_SET_0=1 -o base_frag_N_SKIN.spv
 
+C:\work\vulkan\1.2.141.2\Bin\glslc.exe skybox.vert -o skybox_vert.spv
+C:\work\vulkan\1.2.141.2\Bin\glslc.exe skybox.frag -o skybox_frag.spv
 
 pause

@@ -6,6 +6,8 @@
 #endif
 //#define USE_PUNCTUAL                1
 
+#define PI      3.1415926535897f
+
 //#define MATERIAL_UNLIT
 
 // Vertex input attribute location.

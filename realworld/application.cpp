@@ -39,7 +39,7 @@ struct SkyBoxVertex {
     }
 
     static std::vector<work::renderer::VertexInputAttributeDescription> getAttributeDescriptions() {
-        std::vector<work::renderer::VertexInputAttributeDescription> attribute_descriptions(3);
+        std::vector<work::renderer::VertexInputAttributeDescription> attribute_descriptions(1);
         attribute_descriptions[0].binding = 0;
         attribute_descriptions[0].location = 0;
         attribute_descriptions[0].format = work::renderer::Format::R32G32B32_SFLOAT;
@@ -2277,13 +2277,13 @@ void RealWorldApplication::initVulkan() {
     createRenderPass();
     createDescriptorSetLayout();
     createCommandPool();
-//    loadGltfModel("assets/Avocado.glb");
+    loadGltfModel("assets/Avocado.glb");
 //    loadGltfModel("assets/BoomBox.glb");
 //    loadGltfModel("assets/DamagedHelmet.glb");
 //    loadGltfModel("assets/Duck.glb");
 //    loadGltfModel("assets/MetalRoughSpheres.glb");
 //    loadGltfModel("assets/BarramundiFish.glb");
-    loadGltfModel("assets/Lantern.glb");
+//    loadGltfModel("assets/Lantern.glb");
 //    *loadGltfModel("assets/MetalRoughSpheresNoTextures.glb");
 //    loadGltfModel("assets/BrainStem.glb"); 
 //    *loadGltfModel("assets/AnimatedTriangle.gltf");
@@ -2291,6 +2291,7 @@ void RealWorldApplication::initVulkan() {
     loadMtx2Texture("assets/environments/doge2/ggx/specular.ktx2", ibl_specular_tex_);
     loadMtx2Texture("assets/environments/doge2/charlie/sheen.ktx2", ibl_sheen_tex_);
     createGltfPipelineLayout();
+    createSkyboxPipelineLayout();
     createGraphicsPipeline();
     createDepthResources();
     createFramebuffers();
@@ -2300,6 +2301,7 @@ void RealWorldApplication::initVulkan() {
     createTextureImage("assets/lut_ggx.png", format, ggx_lut_tex_);
     createTextureImage("assets/lut_charlie.png", format, charlie_lut_tex_);
     createTextureImage("assets/lut_thin_film.png", format, thin_film_lut_tex_);
+    createTextureImage("assets/environments/doge2.hdr", format, envmap_tex_);
     create2x2Texture(device_, graphics_queue_, command_pool_, 0xffffffff, white_tex_);
     create2x2Texture(device_, graphics_queue_, command_pool_, 0xff000000, black_tex_);
     createTextureSampler();
@@ -2565,6 +2567,17 @@ void RealWorldApplication::createImageViews() {
     }
 }
 
+VkDescriptorSetLayoutBinding getTextureSamplerDescriptionSetLayoutBinding(uint32_t binding, uint32_t stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT) {
+    VkDescriptorSetLayoutBinding texture_binding{};
+    texture_binding.binding = binding;
+    texture_binding.descriptorCount = 1;
+    texture_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    texture_binding.pImmutableSamplers = nullptr;
+    texture_binding.stageFlags = stage_flags;
+
+    return texture_binding;
+}
+
 std::vector<std::shared_ptr<renderer::ShaderModule>> getGltfShaderModules(
     std::shared_ptr<renderer::Device> device, 
     bool has_normals, 
@@ -2579,6 +2592,20 @@ std::vector<std::shared_ptr<renderer::ShaderModule>> getGltfShaderModules(
     uint64_t vert_code_size, frag_code_size;
     auto vert_shader_code = readFile("src/shaders/base_vert" + feature_str + ".spv", vert_code_size);
     auto frag_shader_code = readFile("src/shaders/base_frag" + feature_str + ".spv", frag_code_size);
+
+    shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
+    shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
+
+    return shader_modules;
+}
+
+std::vector<std::shared_ptr<renderer::ShaderModule>> getSkyboxShaderModules(
+    std::shared_ptr<renderer::Device> device)
+{
+    uint64_t vert_code_size, frag_code_size;
+    std::vector<std::shared_ptr<renderer::ShaderModule>> shader_modules(2);
+    auto vert_shader_code = readFile("src/shaders/skybox_vert.spv", vert_code_size);
+    auto frag_shader_code = readFile("src/shaders/skybox_frag.spv", frag_code_size);
 
     shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
     shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
@@ -2726,7 +2753,7 @@ VkPipelineDepthStencilStateCreateInfo fillVkPipelineDepthStencilStateCreateInfo(
     depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depth_stencil.depthTestEnable = VK_TRUE;
     depth_stencil.depthWriteEnable = VK_TRUE;
-    depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     depth_stencil.depthBoundsTestEnable = VK_FALSE;
     depth_stencil.minDepthBounds = 0.0f; // Optional
     depth_stencil.maxDepthBounds = 1.0f; // Optional
@@ -2770,18 +2797,64 @@ void RealWorldApplication::createGltfPipelineLayout()
     gltf_pipeline_layout_ = std::move(vk_pipeline_layout);
 }
 
+void RealWorldApplication::createSkyboxPipelineLayout()
+{
+    auto vk_device = std::reinterpret_pointer_cast<renderer::VulkanDevice>(device_);
+    assert(vk_device);
+
+    VkPushConstantRange push_const_range{};
+    push_const_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    push_const_range.offset = 0;
+    push_const_range.size = sizeof(ModelParams);
+
+    std::vector<VkDescriptorSetLayoutBinding> bindings(1);
+
+    VkDescriptorSetLayoutBinding ubo_layout_binding{};
+    bindings[0] = getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX);
+
+    VkDescriptorSetLayoutCreateInfo layout_info{};
+    layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
+    layout_info.pBindings = bindings.data();
+
+    VkDescriptorSetLayout descriptor_set_layout;
+    if (vkCreateDescriptorSetLayout(vk_device->get(), &layout_info, nullptr, &descriptor_set_layout) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create descriptor set layout!");
+    }
+
+    auto vk_set_layout = std::make_shared<renderer::VulkanDescriptorSetLayout>();
+    vk_set_layout->set(descriptor_set_layout);
+    skybox_desc_set_layout_ = std::move(vk_set_layout);
+
+    std::vector<VkDescriptorSetLayout> vk_layouts;
+    vk_layouts.reserve(3);
+    vk_layouts.push_back(std::reinterpret_pointer_cast<renderer::VulkanDescriptorSetLayout>(skybox_desc_set_layout_)->get());
+    vk_layouts.push_back(std::reinterpret_pointer_cast<renderer::VulkanDescriptorSetLayout>(desc_set_layout_)->get());
+
+    VkPipelineLayoutCreateInfo pipeline_layout_info{};
+    pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipeline_layout_info.setLayoutCount = static_cast<uint32_t>(vk_layouts.size());
+    pipeline_layout_info.pSetLayouts = vk_layouts.data();
+    pipeline_layout_info.pushConstantRangeCount = 0;
+    pipeline_layout_info.pPushConstantRanges = nullptr;
+
+    VkPipelineLayout pipeline_layout;
+    if (vkCreatePipelineLayout(vk_device->get(), &pipeline_layout_info, nullptr, &pipeline_layout) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create pipeline layout!");
+    }
+    auto vk_pipeline_layout = std::make_shared<renderer::VulkanPipelineLayout>();
+    vk_pipeline_layout->set(pipeline_layout);
+    skybox_pipeline_layout_ = std::move(vk_pipeline_layout);
+}
+
 void RealWorldApplication::createGraphicsPipeline() {
     auto vk_device = std::reinterpret_pointer_cast<renderer::VulkanDevice>(device_);
     assert(vk_device);
 
-    auto gltf_binding_descs = toVkVertexInputBindingDescription(gltf_object_->meshes_[0].primitives_[0].binding_descs_);
-    auto gltf_attribute_descs = toVkVertexInputAttributeDescription(gltf_object_->meshes_[0].primitives_[0].attribute_descs_);
     auto viewport = fillViewport(swap_chain_extent_);
     auto scissor = fillScissor(swap_chain_extent_);
     auto color_blend_attachment = fillVkPipelineColorBlendAttachmentState();
 
-    auto gltf_vertex_input_info = fillVkPipelineVertexInputStateCreateInfo(gltf_binding_descs, gltf_attribute_descs);
-    auto gltf_input_assembly = fillVkPipelineInputAssemblyStateCreateInfo(gltf_object_);
     auto rasterizer = fillVkPipelineRasterizationStateCreateInfo();
     auto multisampling = fillVkPipelineMultisampleStateCreateInfo();
     auto viewport_state = fillVkPipelineViewportStateCreateInfo(&viewport, &scissor);
@@ -2798,50 +2871,96 @@ void RealWorldApplication::createGraphicsPipeline() {
     dynamic_state.dynamicStateCount = 2;
     dynamic_state.pDynamicStates = dynamic_states;
 
-    // todo.
-    auto shader_modules = getGltfShaderModules(
-        device_, 
-        gltf_object_->meshes_[0].primitives_[0].has_normal_, 
-        gltf_object_->meshes_[0].primitives_[0].has_tangent_, 
-        gltf_object_->meshes_[0].primitives_[0].has_texcoord_0_, 
-        gltf_object_->meshes_[0].primitives_[0].has_skin_set_0_);
-    auto shader_stages = getShaderStages(shader_modules);
-
     auto vk_render_pass = std::reinterpret_pointer_cast<renderer::VulkanRenderPass>(render_pass_);
     assert(vk_render_pass);
 
-    auto vk_gltf_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(gltf_pipeline_layout_);
-    assert(vk_gltf_pipeline_layout);
-
     VkGraphicsPipelineCreateInfo pipeline_info{};
-    pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipeline_info.stageCount = static_cast<uint32_t>(shader_stages.size());
-    pipeline_info.pStages = shader_stages.data();
-    pipeline_info.pVertexInputState = &gltf_vertex_input_info;
-    pipeline_info.pInputAssemblyState = &gltf_input_assembly;
-    pipeline_info.pViewportState = &viewport_state;
-    pipeline_info.pRasterizationState = &rasterizer;
-    pipeline_info.pMultisampleState = &multisampling;
-    pipeline_info.pDepthStencilState = &depth_stencil;
-    pipeline_info.pColorBlendState = &color_blending;
-//    pipeline_info.pDynamicState = nullptr; // Optional
-    pipeline_info.layout = vk_gltf_pipeline_layout->get();
-    pipeline_info.renderPass = vk_render_pass->get();
-    pipeline_info.subpass = 0;
-    pipeline_info.basePipelineHandle = VK_NULL_HANDLE; // Optional
-    pipeline_info.basePipelineIndex = -1; // Optional
+    {
+        auto gltf_binding_descs = toVkVertexInputBindingDescription(gltf_object_->meshes_[0].primitives_[0].binding_descs_);
+        auto gltf_attribute_descs = toVkVertexInputAttributeDescription(gltf_object_->meshes_[0].primitives_[0].attribute_descs_);
+        auto gltf_vertex_input_info = fillVkPipelineVertexInputStateCreateInfo(gltf_binding_descs, gltf_attribute_descs);
+        auto gltf_input_assembly = fillVkPipelineInputAssemblyStateCreateInfo(gltf_object_);
 
-    // todo.
-    VkPipeline graphics_pipeline;
-    if (vkCreateGraphicsPipelines(vk_device->get(), VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &graphics_pipeline) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create graphics pipeline!");
+        // todo.
+        auto shader_modules = getGltfShaderModules(
+            device_,
+            gltf_object_->meshes_[0].primitives_[0].has_normal_,
+            gltf_object_->meshes_[0].primitives_[0].has_tangent_,
+            gltf_object_->meshes_[0].primitives_[0].has_texcoord_0_,
+            gltf_object_->meshes_[0].primitives_[0].has_skin_set_0_);
+        auto shader_stages = getShaderStages(shader_modules);
+
+        auto vk_gltf_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(gltf_pipeline_layout_);
+        assert(vk_gltf_pipeline_layout);
+
+        pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        pipeline_info.stageCount = static_cast<uint32_t>(shader_stages.size());
+        pipeline_info.pStages = shader_stages.data();
+        pipeline_info.pVertexInputState = &gltf_vertex_input_info;
+        pipeline_info.pInputAssemblyState = &gltf_input_assembly;
+        pipeline_info.pViewportState = &viewport_state;
+        pipeline_info.pRasterizationState = &rasterizer;
+        pipeline_info.pMultisampleState = &multisampling;
+        pipeline_info.pDepthStencilState = &depth_stencil;
+        pipeline_info.pColorBlendState = &color_blending;
+        //    pipeline_info.pDynamicState = nullptr; // Optional
+        pipeline_info.layout = vk_gltf_pipeline_layout->get();
+        pipeline_info.renderPass = vk_render_pass->get();
+        pipeline_info.subpass = 0;
+        pipeline_info.basePipelineHandle = VK_NULL_HANDLE; // Optional
+        pipeline_info.basePipelineIndex = -1; // Optional
+
+        // todo.
+        VkPipeline graphics_pipeline;
+        if (vkCreateGraphicsPipelines(vk_device->get(), VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &graphics_pipeline) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create graphics pipeline!");
+        }
+        auto vk_pipeline = std::make_shared<renderer::VulkanPipeline>();
+        vk_pipeline->set(graphics_pipeline);
+        gltf_pipeline_ = std::move(vk_pipeline);
+
+        for (auto& shader_module : shader_modules) {
+            device_->destroyShaderModule(shader_module);
+        }
     }
-    auto vk_pipeline = std::make_shared<renderer::VulkanPipeline>();
-    vk_pipeline->set(graphics_pipeline);
-    gltf_pipeline_ = std::move(vk_pipeline);
 
-    for (auto& shader_module : shader_modules) {
-        device_->destroyShaderModule(shader_module);
+    {
+        VkPipelineInputAssemblyStateCreateInfo input_assembly{};
+        input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        input_assembly.primitiveRestartEnable = false;
+
+        auto skybox_binding_descs = toVkVertexInputBindingDescription(SkyBoxVertex::getBindingDescription());
+        auto skybox_attrib_descs = toVkVertexInputAttributeDescription(SkyBoxVertex::getAttributeDescriptions());
+        auto skybox_vertex_input_info = fillVkPipelineVertexInputStateCreateInfo(skybox_binding_descs, skybox_attrib_descs);
+
+        // todo.
+        auto shader_modules = getSkyboxShaderModules(device_);
+        auto shader_stages = getShaderStages(shader_modules);
+
+        auto vk_skybox_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(skybox_pipeline_layout_);
+        assert(vk_skybox_pipeline_layout);
+
+        VkGraphicsPipelineCreateInfo skybox_pipeline_info = pipeline_info;
+
+        skybox_pipeline_info.stageCount = static_cast<uint32_t>(shader_stages.size());
+        skybox_pipeline_info.pStages = shader_stages.data();
+        skybox_pipeline_info.pVertexInputState = &skybox_vertex_input_info;
+        skybox_pipeline_info.pInputAssemblyState = &input_assembly;
+        skybox_pipeline_info.layout = vk_skybox_pipeline_layout->get();
+
+        // todo.
+        VkPipeline graphics_pipeline;
+        if (vkCreateGraphicsPipelines(vk_device->get(), VK_NULL_HANDLE, 1, &skybox_pipeline_info, nullptr, &graphics_pipeline) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create graphics pipeline!");
+        }
+        auto vk_pipeline = std::make_shared<renderer::VulkanPipeline>();
+        vk_pipeline->set(graphics_pipeline);
+        skybox_pipeline_ = std::move(vk_pipeline);
+
+        for (auto& shader_module : shader_modules) {
+            device_->destroyShaderModule(shader_module);
+        }
     }
 }
 
@@ -3142,7 +3261,32 @@ void RealWorldApplication::drawFrame() {
 
         // render skybox.
         {
-            //cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, skybox_pipeline_);
+            cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, skybox_pipeline_);
+            std::vector<std::shared_ptr<renderer::Buffer>> buffers(1);
+            std::vector<uint64_t> offsets(1);
+            buffers[0] = vertex_buffer_.buffer;
+            offsets[0] = 0;
+
+            cmd_buf->bindVertexBuffers(0, buffers, offsets);
+            cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, renderer::IndexType::UINT16);
+
+            // todo.
+            auto vk_cmd_buf = std::reinterpret_pointer_cast<renderer::VulkanCommandBuffer>(cmd_buf);
+            auto vk_skybox_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(skybox_pipeline_layout_);
+            std::vector<VkDescriptorSet> desc_sets(2);
+            desc_sets[0] = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(skybox_tex_desc_set_)->get();
+            desc_sets[1] = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(desc_sets_[image_index])->get();
+            vkCmdBindDescriptorSets(
+                vk_cmd_buf->get(),
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                vk_skybox_pipeline_layout->get(),
+                0,
+                static_cast<uint32_t>(desc_sets.size()),
+                desc_sets.data(),
+                0,
+                nullptr);
+
+            cmd_buf->drawIndexed(36);
         }
 
         cmd_buf->endRenderPass();
@@ -3253,17 +3397,6 @@ void RealWorldApplication::createIndexBuffer() {
         indices.data(),
         index_buffer_.buffer,
         index_buffer_.memory);
-}
-
-VkDescriptorSetLayoutBinding getTextureSamplerDescriptionSetLayoutBinding(uint32_t binding, uint32_t stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT) {
-    VkDescriptorSetLayoutBinding texture_binding{};
-    texture_binding.binding = binding;
-    texture_binding.descriptorCount = 1;
-    texture_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    texture_binding.pImmutableSamplers = nullptr;
-    texture_binding.stageFlags = stage_flags;
-
-    return texture_binding;
 }
 
 void RealWorldApplication::createDescriptorSetLayout() {
@@ -3382,7 +3515,7 @@ void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, const g
     ViewParams view_params{};
     view_params.camera_pos = glm::vec4(eye_pos + center, 0);
     view_params.view = glm::lookAt(eye_pos + center, center, glm::vec3(0.0f, 1.0f, 0.0f));
-    view_params.proj = glm::perspective(glm::radians(45.0f), swap_chain_extent_.x / (float)swap_chain_extent_.y, 1.0f * radius, 100.0f);
+    view_params.proj = glm::perspective(glm::radians(45.0f), swap_chain_extent_.x / (float)swap_chain_extent_.y, 1.0f * radius, 10000.0f);
     view_params.proj[1][1] *= -1;
     view_params.input_features = glm::vec4(gltf_object_->meshes_[0].primitives_[0].has_tangent_ ? FEATURE_INPUT_HAS_TANGENT : 0, 0, 0, 0);
 
@@ -3543,6 +3676,25 @@ std::vector<VkWriteDescriptorSet> RealWorldApplication::addGltfTextures(
     return descriptor_writes;
 }
 
+std::vector<VkWriteDescriptorSet> RealWorldApplication::addSkyboxTextures(
+    const std::shared_ptr<renderer::DescriptorSet>& description_set)
+{
+    auto vk_desc_set = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(description_set);
+    auto vk_sampler = std::reinterpret_pointer_cast<renderer::VulkanSampler>(texture_sampler_);
+    std::vector<VkWriteDescriptorSet> descriptor_writes;
+    descriptor_writes.reserve(3);
+
+    // envmap texture.
+    static VkDescriptorImageInfo envmap_image_info = {};
+    auto vk_envmap_tex = std::reinterpret_pointer_cast<renderer::VulkanImageView>(envmap_tex_.view);
+    envmap_image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    envmap_image_info.imageView = vk_envmap_tex->get();
+    envmap_image_info.sampler = vk_sampler->get();
+    descriptor_writes.push_back(addDescriptWrite(vk_desc_set->get(), envmap_image_info, BASE_COLOR_TEX_INDEX));
+
+    return descriptor_writes;
+}
+
 void RealWorldApplication::createDescriptorSets() {
     auto vk_device = std::reinterpret_pointer_cast<work::renderer::VulkanDevice>(device_);
     assert(vk_device);
@@ -3597,30 +3749,47 @@ void RealWorldApplication::createDescriptorSets() {
         }
     }
 
-    desc_sets_ = ::createDescriptorSets(device_, descriptor_pool_, desc_set_layout_, buffer_count);
-    for (uint64_t i = 0; i < buffer_count; i++) {
-        // todo.
-        auto vk_desc_set = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(desc_sets_[i]);
-        VkDescriptorBufferInfo buffer_info{};
-        auto vk_buffer = std::reinterpret_pointer_cast<renderer::VulkanBuffer>(view_const_buffers_[i].buffer);
-        buffer_info.buffer = vk_buffer->get();
-        buffer_info.offset = 0;
-        buffer_info.range = sizeof(ViewParams);
+    {
+        desc_sets_ = ::createDescriptorSets(device_, descriptor_pool_, desc_set_layout_, buffer_count);
+        for (uint64_t i = 0; i < buffer_count; i++) {
+            // todo.
+            auto vk_desc_set = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(desc_sets_[i]);
+            VkDescriptorBufferInfo buffer_info{};
+            auto vk_buffer = std::reinterpret_pointer_cast<renderer::VulkanBuffer>(view_const_buffers_[i].buffer);
+            buffer_info.buffer = vk_buffer->get();
+            buffer_info.offset = 0;
+            buffer_info.range = sizeof(ViewParams);
 
-        VkWriteDescriptorSet descriptor_write = {};
-        descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptor_write.dstSet = vk_desc_set->get();
-        descriptor_write.dstBinding = VIEW_CONSTANT_INDEX;
-        descriptor_write.dstArrayElement = 0;
-        descriptor_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptor_write.descriptorCount = 1;
-        descriptor_write.pBufferInfo = &buffer_info;
+            VkWriteDescriptorSet descriptor_write = {};
+            descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptor_write.dstSet = vk_desc_set->get();
+            descriptor_write.dstBinding = VIEW_CONSTANT_INDEX;
+            descriptor_write.dstArrayElement = 0;
+            descriptor_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            descriptor_write.descriptorCount = 1;
+            descriptor_write.pBufferInfo = &buffer_info;
 
-        std::vector<VkWriteDescriptorSet> descriptor_writes(1);
-        descriptor_writes[0] = descriptor_write;
+            std::vector<VkWriteDescriptorSet> descriptor_writes(1);
+            descriptor_writes[0] = descriptor_write;
 
-        vkUpdateDescriptorSets(vk_device->get(), static_cast<uint32_t>(descriptor_writes.size()), descriptor_writes.data(), 0, nullptr);
+            vkUpdateDescriptorSets(vk_device->get(), static_cast<uint32_t>(descriptor_writes.size()), descriptor_writes.data(), 0, nullptr);
+        }
     }
+
+    // skybox
+    {
+        auto skybox_desc_sets = ::createDescriptorSets(device_, descriptor_pool_, skybox_desc_set_layout_, 1);
+        skybox_tex_desc_set_ = std::move(skybox_desc_sets[0]);
+
+        // create a global ibl texture descriptor set.
+        auto skybox_texture_descs_write = addSkyboxTextures(skybox_tex_desc_set_);
+        vkUpdateDescriptorSets(vk_device->get(),
+            static_cast<uint32_t>(skybox_texture_descs_write.size()),
+            skybox_texture_descs_write.data(),
+            0,
+            nullptr);
+    }
+
 }
 
 void RealWorldApplication::createTextureImage(const std::string& file_name, renderer::Format format, renderer::TextureInfo& texture) {
@@ -3685,6 +3854,7 @@ void RealWorldApplication::cleanupSwapChain() {
     device_->destroyPipeline(gltf_pipeline_);
     device_->destroyPipeline(skybox_pipeline_);
     device_->destroyPipelineLayout(gltf_pipeline_layout_);
+    device_->destroyPipelineLayout(skybox_pipeline_layout_);
     device_->destroyRenderPass(render_pass_);
 
     for (auto image_view : swap_chain_image_views_) {
@@ -3714,12 +3884,14 @@ void RealWorldApplication::cleanup() {
     brdf_lut_tex_.destroy(device_);
     charlie_lut_tex_.destroy(device_);
     thin_film_lut_tex_.destroy(device_);
+    envmap_tex_.destroy(device_);
     ibl_diffuse_tex_.destroy(device_);
     ibl_specular_tex_.destroy(device_);
     ibl_sheen_tex_.destroy(device_);
     device_->destroyDescriptorSetLayout(desc_set_layout_);
     device_->destroyDescriptorSetLayout(global_tex_desc_set_layout_);
     device_->destroyDescriptorSetLayout(material_tex_desc_set_layout_);
+    device_->destroyDescriptorSetLayout(skybox_desc_set_layout_);
 
     vertex_buffer_.destroy(device_);
     index_buffer_.destroy(device_);

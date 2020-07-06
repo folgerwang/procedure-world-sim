@@ -26,6 +26,7 @@ private:
     void createDescriptorSetLayout();
     void createGraphicsPipeline();
     void createGltfPipelineLayout();
+    void createSkyboxPipelineLayout();
     void createRenderPass();
     void createFramebuffers();
     void createCommandPool();
@@ -43,6 +44,7 @@ private:
     // todo remove vk interface here.
     std::vector<VkWriteDescriptorSet> addGlobalTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set);
     std::vector<VkWriteDescriptorSet> addGltfTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set, const renderer::MaterialInfo& material);
+    std::vector<VkWriteDescriptorSet> addSkyboxTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set);
     void mainLoop();
     void drawMesh(
         std::shared_ptr<renderer::CommandBuffer> cmd_buf,
@@ -81,9 +83,12 @@ private:
     std::vector<std::shared_ptr<renderer::DescriptorSet>> desc_sets_;
     std::shared_ptr<renderer::DescriptorSetLayout> global_tex_desc_set_layout_;
     std::shared_ptr<renderer::DescriptorSetLayout> material_tex_desc_set_layout_;
+    std::shared_ptr<renderer::DescriptorSetLayout> skybox_desc_set_layout_;
     std::shared_ptr<renderer::DescriptorSet> global_tex_desc_set_;
+    std::shared_ptr<renderer::DescriptorSet> skybox_tex_desc_set_;
     std::shared_ptr<renderer::RenderPass> render_pass_;
     std::shared_ptr<renderer::PipelineLayout> gltf_pipeline_layout_;
+    std::shared_ptr<renderer::PipelineLayout> skybox_pipeline_layout_;
     std::shared_ptr<renderer::Pipeline> gltf_pipeline_;
     std::shared_ptr<renderer::Pipeline> skybox_pipeline_;
     std::shared_ptr<renderer::CommandPool> command_pool_;
@@ -97,6 +102,7 @@ private:
     renderer::TextureInfo brdf_lut_tex_;
     renderer::TextureInfo charlie_lut_tex_;
     renderer::TextureInfo thin_film_lut_tex_;
+    renderer::TextureInfo envmap_tex_;
     renderer::TextureInfo ibl_diffuse_tex_;
     renderer::TextureInfo ibl_specular_tex_;
     renderer::TextureInfo ibl_sheen_tex_;
