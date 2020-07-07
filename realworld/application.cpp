@@ -2329,6 +2329,8 @@ void RealWorldApplication::recreateSwapChain() {
     createSwapChain();
     createImageViews();
     createRenderPass();
+    createGltfPipelineLayout();
+    createSkyboxPipelineLayout();
     createGraphicsPipeline();
     createDepthResources();
     createFramebuffers();
@@ -2801,30 +2803,6 @@ void RealWorldApplication::createSkyboxPipelineLayout()
 {
     auto vk_device = std::reinterpret_pointer_cast<renderer::VulkanDevice>(device_);
     assert(vk_device);
-
-    VkPushConstantRange push_const_range{};
-    push_const_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    push_const_range.offset = 0;
-    push_const_range.size = sizeof(ModelParams);
-
-    std::vector<VkDescriptorSetLayoutBinding> bindings(1);
-
-    VkDescriptorSetLayoutBinding ubo_layout_binding{};
-    bindings[0] = getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX);
-
-    VkDescriptorSetLayoutCreateInfo layout_info{};
-    layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
-    layout_info.pBindings = bindings.data();
-
-    VkDescriptorSetLayout descriptor_set_layout;
-    if (vkCreateDescriptorSetLayout(vk_device->get(), &layout_info, nullptr, &descriptor_set_layout) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create descriptor set layout!");
-    }
-
-    auto vk_set_layout = std::make_shared<renderer::VulkanDescriptorSetLayout>();
-    vk_set_layout->set(descriptor_set_layout);
-    skybox_desc_set_layout_ = std::move(vk_set_layout);
 
     std::vector<VkDescriptorSetLayout> vk_layouts;
     vk_layouts.reserve(3);
@@ -3489,6 +3467,27 @@ void RealWorldApplication::createDescriptorSetLayout() {
         auto vk_set_layout = std::make_shared<renderer::VulkanDescriptorSetLayout>();
         vk_set_layout->set(descriptor_set_layout);
         desc_set_layout_ = std::move(vk_set_layout);
+    }
+
+    {
+        std::vector<VkDescriptorSetLayoutBinding> bindings(1);
+
+        VkDescriptorSetLayoutBinding ubo_layout_binding{};
+        bindings[0] = getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX);
+
+        VkDescriptorSetLayoutCreateInfo layout_info{};
+        layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
+        layout_info.pBindings = bindings.data();
+
+        VkDescriptorSetLayout descriptor_set_layout;
+        if (vkCreateDescriptorSetLayout(vk_device->get(), &layout_info, nullptr, &descriptor_set_layout) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create descriptor set layout!");
+        }
+
+        auto vk_set_layout = std::make_shared<renderer::VulkanDescriptorSetLayout>();
+        vk_set_layout->set(descriptor_set_layout);
+        skybox_desc_set_layout_ = std::move(vk_set_layout);
     }
 }
 
