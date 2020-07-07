@@ -24,6 +24,7 @@ private:
     void createSurface();
     void createSwapChain();
     void createImageViews();
+    void createCubemapFramebuffers();
     void createDescriptorSetLayout();
     void createGraphicsPipeline();
     void createGltfPipelineLayout();

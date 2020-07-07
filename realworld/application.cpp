@@ -2284,8 +2284,9 @@ void RealWorldApplication::initVulkan() {
     createLogicalDevice();
     createSwapChain();
     createRenderPass();
-    createCubemapRenderPass();
     createImageViews();
+    createCubemapRenderPass();
+    createCubemapFramebuffers();
     createDescriptorSetLayout();
     createCommandPool();
     loadGltfModel("assets/Avocado.glb");
@@ -2338,8 +2339,8 @@ void RealWorldApplication::recreateSwapChain() {
     cleanupSwapChain();
 
     createSwapChain();
-    createImageViews();
     createRenderPass();
+    createImageViews();
     createGltfPipelineLayout();
     createSkyboxPipelineLayout();
     createGraphicsPipeline();
@@ -2573,12 +2574,14 @@ void RealWorldApplication::createImageViews() {
     swap_chain_image_views_.resize(swap_chain_images_.size());
     for (uint64_t i_img = 0; i_img < swap_chain_images_.size(); i_img++) {
         swap_chain_image_views_[i_img] = device_->createImageView(
-            swap_chain_images_[i_img], 
-            renderer::ImageViewType::VIEW_2D, 
-            swap_chain_image_format_, 
+            swap_chain_images_[i_img],
+            renderer::ImageViewType::VIEW_2D,
+            swap_chain_image_format_,
             static_cast<renderer::ImageAspectFlags>(renderer::ImageAspectFlagBits::COLOR_BIT));
     }
+}
 
+void RealWorldApplication::createCubemapFramebuffers() {
     uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
     std::vector<work::renderer::BufferImageCopyInfo> dump_copies;
 
@@ -3948,7 +3951,6 @@ void RealWorldApplication::cleanupSwapChain() {
     device_->destroyPipelineLayout(gltf_pipeline_layout_);
     device_->destroyPipelineLayout(skybox_pipeline_layout_);
     device_->destroyRenderPass(render_pass_);
-    device_->destroyRenderPass(cubemap_render_pass_);
 
     for (auto image_view : swap_chain_image_views_) {
         device_->destroyImageView(image_view);
@@ -3965,6 +3967,8 @@ void RealWorldApplication::cleanupSwapChain() {
 
 void RealWorldApplication::cleanup() {
     cleanupSwapChain();
+
+    device_->destroyRenderPass(cubemap_render_pass_);
 
     gltf_object_->destroy(device_);
 
