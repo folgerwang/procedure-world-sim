@@ -7,6 +7,7 @@ namespace work {
 namespace app {
 
 const int kMaxFramesInFlight = 2;
+const int kCubemapSize = 1024;
 
 class RealWorldApplication {
 public:
@@ -28,6 +29,7 @@ private:
     void createGltfPipelineLayout();
     void createSkyboxPipelineLayout();
     void createRenderPass();
+    void createCubemapRenderPass();
     void createFramebuffers();
     void createCommandPool();
     void createDepthResources();
@@ -61,6 +63,15 @@ private:
     void cleanupSwapChain();
     void recreateSwapChain();
     void loadGltfModel(const std::string& input_filename);
+    void createCubemapTexture(
+        uint32_t width, 
+        uint32_t height, 
+        uint32_t mip_count, 
+        renderer::Format format, 
+        const std::vector<work::renderer::BufferImageCopyInfo>& copy_regions, 
+        renderer::TextureInfo& texture,
+        uint64_t buffer_size = 0,
+        void* data = nullptr);
     void loadMtx2Texture(const std::string& input_filename, renderer::TextureInfo& texture);
 
 private:
@@ -87,6 +98,7 @@ private:
     std::shared_ptr<renderer::DescriptorSet> global_tex_desc_set_;
     std::shared_ptr<renderer::DescriptorSet> skybox_tex_desc_set_;
     std::shared_ptr<renderer::RenderPass> render_pass_;
+    std::shared_ptr<renderer::RenderPass> cubemap_render_pass_;
     std::shared_ptr<renderer::PipelineLayout> gltf_pipeline_layout_;
     std::shared_ptr<renderer::PipelineLayout> skybox_pipeline_layout_;
     std::shared_ptr<renderer::Pipeline> gltf_pipeline_;
@@ -106,6 +118,9 @@ private:
     renderer::TextureInfo ibl_diffuse_tex_;
     renderer::TextureInfo ibl_specular_tex_;
     renderer::TextureInfo ibl_sheen_tex_;
+    renderer::TextureInfo rt_ibl_diffuse_tex_;
+    renderer::TextureInfo rt_ibl_specular_tex_;
+    renderer::TextureInfo rt_ibl_sheen_tex_;
     std::vector<uint32_t> binding_list_;
     std::shared_ptr<renderer::Sampler> texture_sampler_;
     std::vector<renderer::BufferInfo> view_const_buffers_;

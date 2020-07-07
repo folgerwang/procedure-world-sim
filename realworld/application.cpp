@@ -1411,7 +1411,7 @@ void copyBufferToImageWithMips(const std::shared_ptr<work::renderer::Device>& de
     const std::shared_ptr<work::renderer::CommandPool>& cmd_pool,
     const std::shared_ptr<work::renderer::Buffer>& buffer,
     const std::shared_ptr<work::renderer::Image>& image,
-    std::vector<work::renderer::BufferImageCopyInfo>& copy_regions) {
+    const std::vector<work::renderer::BufferImageCopyInfo>& copy_regions) {
     auto command_buffers = device->allocateCommandBuffers(cmd_pool, 1);
     if (command_buffers.size() > 0) {
         auto& cmd_buf = command_buffers[0];
@@ -2225,6 +2225,16 @@ void TextureInfo::destroy(const std::shared_ptr<Device>& device) {
     device->destroyImage(image);
     device->destroyImageView(view);
     device->freeMemory(memory);
+
+    for (auto& s_views : surface_views) {
+        for (auto& s_view : s_views) {
+            device->destroyImageView(s_view);
+        }
+    }
+    
+    for (auto& framebuffer : framebuffers) {
+        device->destroyFramebuffer(framebuffer);
+    }
 }
 
 void BufferInfo::destroy(const std::shared_ptr<Device>& device) {
@@ -2273,8 +2283,9 @@ void RealWorldApplication::initVulkan() {
     pickPhysicalDevice();
     createLogicalDevice();
     createSwapChain();
-    createImageViews();
     createRenderPass();
+    createCubemapRenderPass();
+    createImageViews();
     createDescriptorSetLayout();
     createCommandPool();
     loadGltfModel("assets/Avocado.glb");
@@ -2567,6 +2578,33 @@ void RealWorldApplication::createImageViews() {
             swap_chain_image_format_, 
             static_cast<renderer::ImageAspectFlags>(renderer::ImageAspectFlagBits::COLOR_BIT));
     }
+
+    uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
+    std::vector<work::renderer::BufferImageCopyInfo> dump_copies;
+
+    createCubemapTexture(
+        kCubemapSize,
+        kCubemapSize,
+        1,
+        renderer::Format::R16G16B16A16_SFLOAT,
+        dump_copies,
+        rt_ibl_diffuse_tex_);
+
+    createCubemapTexture(
+        kCubemapSize,
+        kCubemapSize,
+        num_mips,
+        renderer::Format::R16G16B16A16_SFLOAT,
+        dump_copies,
+        rt_ibl_specular_tex_);
+
+    createCubemapTexture(
+        kCubemapSize,
+        kCubemapSize,
+        num_mips,
+        renderer::Format::R16G16B16A16_SFLOAT,
+        dump_copies,
+        rt_ibl_sheen_tex_);
 }
 
 VkDescriptorSetLayoutBinding getTextureSamplerDescriptionSetLayoutBinding(uint32_t binding, uint32_t stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT) {
@@ -3007,6 +3045,61 @@ void RealWorldApplication::createRenderPass() {
     auto vk_render_pass = std::make_shared<renderer::VulkanRenderPass>();
     vk_render_pass->set(render_pass);
     render_pass_ = std::move(vk_render_pass);
+}
+
+void RealWorldApplication::createCubemapRenderPass() {
+    VkAttachmentDescription color_attachment{};
+    color_attachment.format = toVkFormat(renderer::Format::R16G16B16A16_SFLOAT);
+    color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    std::vector<VkAttachmentReference> color_attachment_refs(6);
+    for (uint32_t i = 0; i < 6; i++) {
+        color_attachment_refs[i].attachment = i;
+        color_attachment_refs[i].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
+
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = static_cast<uint32_t>(color_attachment_refs.size());
+    subpass.pColorAttachments = color_attachment_refs.data();
+    subpass.pDepthStencilAttachment = nullptr;
+
+    VkSubpassDependency dependency{};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.srcAccessMask = 0;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    std::vector<VkAttachmentDescription> attachments = {6, color_attachment};
+
+    VkRenderPassCreateInfo render_pass_info{};
+    render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    render_pass_info.attachmentCount = static_cast<uint32_t>(attachments.size());
+    render_pass_info.pAttachments = attachments.data();
+    render_pass_info.subpassCount = 1;
+    render_pass_info.pSubpasses = &subpass;
+    render_pass_info.dependencyCount = 1;
+    render_pass_info.pDependencies = &dependency;
+
+    // todo.
+    auto vk_device = std::reinterpret_pointer_cast<renderer::VulkanDevice>(device_);
+    assert(vk_device);
+    VkRenderPass render_pass;
+    if (vkCreateRenderPass(vk_device->get(), &render_pass_info, nullptr, &render_pass) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create render pass!");
+    }
+
+    auto vk_render_pass = std::make_shared<renderer::VulkanRenderPass>();
+    vk_render_pass->set(render_pass);
+    cubemap_render_pass_ = std::move(vk_render_pass);
 }
 
 void RealWorldApplication::createFramebuffers() {
@@ -3855,6 +3948,7 @@ void RealWorldApplication::cleanupSwapChain() {
     device_->destroyPipelineLayout(gltf_pipeline_layout_);
     device_->destroyPipelineLayout(skybox_pipeline_layout_);
     device_->destroyRenderPass(render_pass_);
+    device_->destroyRenderPass(cubemap_render_pass_);
 
     for (auto image_view : swap_chain_image_views_) {
         device_->destroyImageView(image_view);
@@ -3887,6 +3981,9 @@ void RealWorldApplication::cleanup() {
     ibl_diffuse_tex_.destroy(device_);
     ibl_specular_tex_.destroy(device_);
     ibl_sheen_tex_.destroy(device_);
+    rt_ibl_diffuse_tex_.destroy(device_);
+    rt_ibl_specular_tex_.destroy(device_);
+    rt_ibl_sheen_tex_.destroy(device_);
     device_->destroyDescriptorSetLayout(desc_set_layout_);
     device_->destroyDescriptorSetLayout(global_tex_desc_set_layout_);
     device_->destroyDescriptorSetLayout(material_tex_desc_set_layout_);
@@ -4395,6 +4492,118 @@ void RealWorldApplication::loadGltfModel(const std::string& input_filename)
     }
 }
 
+void RealWorldApplication::createCubemapTexture(
+    uint32_t width, 
+    uint32_t height, 
+    uint32_t mip_count, 
+    renderer::Format format, 
+    const std::vector<work::renderer::BufferImageCopyInfo>& copy_regions, 
+    renderer::TextureInfo& texture,
+    uint64_t buffer_size /*= 0*/,
+    void* data /*= nullptr*/)
+{
+    bool use_as_framebuffer = data == nullptr;
+    VkDeviceSize image_size = static_cast<VkDeviceSize>(buffer_size);
+
+    std::shared_ptr<renderer::Buffer> staging_buffer;
+    std::shared_ptr<renderer::DeviceMemory> staging_buffer_memory;
+    if (data) {
+        createBuffer(
+            device_,
+            image_size,
+            static_cast<renderer::BufferUsageFlags>(renderer::BufferUsageFlagBits::TRANSFER_SRC_BIT),
+            static_cast<renderer::MemoryPropertyFlags>(renderer::MemoryPropertyFlagBits::HOST_VISIBLE_BIT) |
+            static_cast<renderer::MemoryPropertyFlags>(renderer::MemoryPropertyFlagBits::HOST_COHERENT_BIT),
+            staging_buffer,
+            staging_buffer_memory);
+
+        updateBufferMemory(device_, staging_buffer_memory, buffer_size, data);
+    }
+
+    auto image_usage_flags =
+        static_cast<renderer::ImageUsageFlags>(renderer::ImageUsageFlagBits::TRANSFER_DST_BIT) |
+        static_cast<renderer::ImageUsageFlags>(renderer::ImageUsageFlagBits::SAMPLED_BIT);
+
+    if (use_as_framebuffer) {
+        image_usage_flags |=
+            static_cast<renderer::ImageUsageFlags>(renderer::ImageUsageFlagBits::COLOR_ATTACHMENT_BIT) |
+            static_cast<renderer::ImageUsageFlags>(renderer::ImageUsageFlagBits::TRANSFER_SRC_BIT);
+    }
+
+    texture.image = device_->createImage(
+        renderer::ImageType::TYPE_2D,
+        glm::uvec3(width, height, 1),
+        format,
+        image_usage_flags,
+        renderer::ImageTiling::OPTIMAL,
+        renderer::ImageLayout::UNDEFINED,
+        static_cast<uint32_t>(renderer::ImageCreateFlagBits::CUBE_COMPATIBLE_BIT),
+        false,
+        1,
+        mip_count,
+        6u);
+
+    auto mem_requirements = device_->getImageMemoryRequirements(texture.image);
+    texture.memory = device_->allocateMemory(
+        mem_requirements.size,
+        mem_requirements.memory_type_bits,
+        toVkMemoryPropertyFlags(static_cast<uint32_t>(renderer::MemoryPropertyFlagBits::DEVICE_LOCAL_BIT)));
+    device_->bindImageMemory(texture.image, texture.memory);
+
+    if (data) {
+        transitionImageLayout(device_, graphics_queue_, command_pool_, texture.image, format, work::renderer::ImageLayout::UNDEFINED, work::renderer::ImageLayout::TRANSFER_DST_OPTIMAL, 0, mip_count, 0, 6);
+        copyBufferToImageWithMips(device_, graphics_queue_, command_pool_, staging_buffer, texture.image, copy_regions);
+        transitionImageLayout(device_, graphics_queue_, command_pool_, texture.image, format, work::renderer::ImageLayout::TRANSFER_DST_OPTIMAL, work::renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL, 0, mip_count, 0, 6);
+    }
+
+    texture.view = device_->createImageView(
+        texture.image,
+        renderer::ImageViewType::VIEW_CUBE,
+        format,
+        static_cast<renderer::ImageAspectFlags>(renderer::ImageAspectFlagBits::COLOR_BIT),
+        0,
+        mip_count,
+        0,
+        6);
+
+    assert(cubemap_render_pass_);
+
+    if (use_as_framebuffer) {
+        texture.surface_views.resize(mip_count);
+        texture.framebuffers.resize(mip_count);
+        auto w = width;
+        auto h = height;
+
+        for (uint32_t i = 0; i < mip_count; ++i)
+        {
+            texture.surface_views[i].resize(6, VK_NULL_HANDLE); //sides of the cube
+
+            for (uint32_t j = 0; j < 6; j++)
+            {
+                texture.surface_views[i][j] =
+                    device_->createImageView(
+                        texture.image,
+                        renderer::ImageViewType::VIEW_2D,
+                        format,
+                        static_cast<renderer::ImageAspectFlags>(renderer::ImageAspectFlagBits::COLOR_BIT),
+                        i,
+                        1,
+                        j,
+                        1);
+            }
+
+            texture.framebuffers[i] = device_->createFrameBuffer(cubemap_render_pass_, texture.surface_views[i], glm::uvec2(w, h));
+            w = std::max(w >> 1, 1u);
+            h = std::max(h >> 1, 1u);
+        }
+    }
+
+    if (data) {
+        device_->destroyBuffer(staging_buffer);
+        device_->freeMemory(staging_buffer_memory);
+    }
+}
+
 void RealWorldApplication::loadMtx2Texture(const std::string& input_filename, renderer::TextureInfo& texture) {
     uint64_t buffer_size;
     auto mtx2_data = readFile(input_filename, buffer_size);
@@ -4453,58 +4662,15 @@ void RealWorldApplication::loadMtx2Texture(const std::string& input_filename, re
         sgd_data_start = (char*)mtx2_data.data() + index_block->sgd_byte_offset;
     }
 
-    VkDeviceSize image_size = static_cast<VkDeviceSize>(buffer_size);
-
-    std::shared_ptr<renderer::Buffer> staging_buffer;
-    std::shared_ptr<renderer::DeviceMemory> staging_buffer_memory;
-    createBuffer(
-        device_,
-        image_size,
-        static_cast<renderer::BufferUsageFlags>(renderer::BufferUsageFlagBits::TRANSFER_SRC_BIT),
-        static_cast<renderer::MemoryPropertyFlags>(renderer::MemoryPropertyFlagBits::HOST_VISIBLE_BIT) |
-        static_cast<renderer::MemoryPropertyFlags>(renderer::MemoryPropertyFlagBits::HOST_COHERENT_BIT),
-        staging_buffer,
-        staging_buffer_memory);
-
-    updateBufferMemory(device_, staging_buffer_memory, buffer_size, mtx2_data.data());
-
-    texture.image = device_->createImage(
-        renderer::ImageType::TYPE_2D,
-        glm::uvec3(header_block->pixel_width, header_block->pixel_height, 1),
-        header_block->format,
-        static_cast<renderer::ImageUsageFlags>(renderer::ImageUsageFlagBits::TRANSFER_DST_BIT) |
-        static_cast<renderer::ImageUsageFlags>(renderer::ImageUsageFlagBits::SAMPLED_BIT),
-        renderer::ImageTiling::OPTIMAL,
-        renderer::ImageLayout::UNDEFINED,
-        static_cast<uint32_t>(renderer::ImageCreateFlagBits::CUBE_COMPATIBLE_BIT),
-        false,
-        1,
+    createCubemapTexture(
+        header_block->pixel_width,
+        header_block->pixel_height,
         num_level_blocks,
-        header_block->face_count);
-
-    auto mem_requirements = device_->getImageMemoryRequirements(texture.image);
-    texture.memory = device_->allocateMemory(
-        mem_requirements.size, 
-        mem_requirements.memory_type_bits, 
-        toVkMemoryPropertyFlags(static_cast<uint32_t>(renderer::MemoryPropertyFlagBits::DEVICE_LOCAL_BIT)));
-    device_->bindImageMemory(texture.image, texture.memory);
-
-    transitionImageLayout(device_, graphics_queue_, command_pool_, texture.image, header_block->format, work::renderer::ImageLayout::UNDEFINED, work::renderer::ImageLayout::TRANSFER_DST_OPTIMAL, 0, num_level_blocks, 0, 6);
-    copyBufferToImageWithMips(device_, graphics_queue_, command_pool_, staging_buffer, texture.image, copy_regions);
-    transitionImageLayout(device_, graphics_queue_, command_pool_, texture.image, header_block->format, work::renderer::ImageLayout::TRANSFER_DST_OPTIMAL, work::renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL, 0, num_level_blocks, 0, 6);
-
-    texture.view = device_->createImageView(
-        texture.image,
-        renderer::ImageViewType::VIEW_CUBE,
         header_block->format,
-        static_cast<renderer::ImageAspectFlags>(renderer::ImageAspectFlagBits::COLOR_BIT),
-        0,
-        num_level_blocks,
-        0, 
-        6);
-
-    device_->destroyBuffer(staging_buffer);
-    device_->freeMemory(staging_buffer_memory);
+        copy_regions,
+        texture,
+        buffer_size,
+        mtx2_data.data());
 }
 
 

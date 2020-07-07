@@ -1050,6 +1050,8 @@ namespace renderer {
         std::shared_ptr<Image>             image;
         std::shared_ptr<DeviceMemory>      memory;
         std::shared_ptr<ImageView>         view;
+        std::vector<std::vector<std::shared_ptr<ImageView>>> surface_views;
+        std::vector<std::shared_ptr<Framebuffer>> framebuffers;
 
         void destroy(const std::shared_ptr<Device>& device);
     };
