@@ -1,19 +1,21 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
+#include "global_definition.glsl.h"
+#include "noise.glsl.h"
+
 #define UX3D_MATH_PI 3.1415926535897932384626433832795
 #define UX3D_MATH_INV_PI (1.0 / UX3D_MATH_PI)
 
-layout(set = 0, binding = 0) uniform sampler2D uPanorama;
-layout(set = 0, binding = 1) uniform samplerCube uCubeMap;
+#ifdef PANORAMA_TO_CUBEMAP
+layout(set = 0, binding = PANORAMA_TEX_INDEX) uniform sampler2D uPanorama;
+#else
+layout(set = 0, binding = ENVMAP_TEX_INDEX) uniform samplerCube uCubeMap;
+#endif
 
-layout(push_constant) uniform FilterParameters {
-  float roughness;
-  uint sampleCount;
-  uint currentMipLevel;
-  uint width;
-  float lodBias;
-} pFilterParameters;
+layout(push_constant) uniform IblUniformBufferObject {
+    IblParams ibl_params;
+};
 
 layout (location = 0) in vec2 inUV;
 
@@ -157,10 +159,13 @@ float D_Charlie(float sheenRoughness, float NdotH)
 
 vec3 getSampleVector(uint sampleIndex, vec3 N, float roughness)
 {
-	float X = float(sampleIndex) / float(pFilterParameters.sampleCount);
-	float Y = Hammersley(sampleIndex);
+	float X = float(sampleIndex) / float(NUM_SAMPLES);
+	vec4 noise = hash44(vec4((N * 0.5 + 0.5), X)*3333);
 
-	float phi = 2.0 * UX3D_MATH_PI * X;
+	// give more samples closer to N.
+	float Y = pow(noise.y, 1.8);
+
+	float phi = 2.0 * UX3D_MATH_PI * noise.x;
     float cosTheta = 0.f;
 	float sinTheta = 0.f;
 
@@ -202,15 +207,16 @@ float PDF(vec3 V, vec3 H, vec3 N, vec3 L, float roughness)
 	return 0.f;
 }
 
+#ifndef PANORAMA_TO_CUBEMAP
 vec3 filterColor(vec3 N)
 {
 	vec4 color = vec4(0.f);
-	const uint NumSamples = pFilterParameters.sampleCount;
-	const float solidAngleTexel = 4.0 * UX3D_MATH_PI / (6.0 * pFilterParameters.width * pFilterParameters.width);	
+	const uint NumSamples = NUM_SAMPLES;
+	const float solidAngleTexel = 4.0 * UX3D_MATH_PI / (6.0 * ibl_params.width * ibl_params.width);	
 	
 	for(uint i = 0; i < NumSamples; ++i)
 	{
-		vec3 H = getSampleVector(i, N, pFilterParameters.roughness);
+		vec3 H = getSampleVector(i, N, ibl_params.roughness);
 
 		// Note: reflect takes incident vector.
 		// Note: N = V
@@ -224,7 +230,7 @@ vec3 filterColor(vec3 N)
 		{
 			float lod = 0.0;
 		
-			bool do_mip_filtering = pFilterParameters.roughness > 0.0;
+			bool do_mip_filtering = ibl_params.roughness > 0.0;
 #ifdef LAMBERTIAN_FILTER
 			do_mip_filtering = true;
 #endif		
@@ -233,12 +239,12 @@ vec3 filterColor(vec3 N)
 				// Mipmap Filtered Samples 
 				// see https://github.com/derkreature/IBLBaker
 				// see https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch20.html
-				float pdf = PDF(V, H, N, L, pFilterParameters.roughness );
+				float pdf = PDF(V, H, N, L, ibl_params.roughness );
 				
 				float solidAngleSample = 1.0 / (NumSamples * pdf);
 				
 				lod = 0.5 * log2(solidAngleSample / solidAngleTexel);
-				lod += pFilterParameters.lodBias;
+				lod += ibl_params.lodBias;
 			}
 						
 #ifdef LAMBERTIAN_FILTER
@@ -256,6 +262,7 @@ vec3 filterColor(vec3 N)
 
 	return color.rgb / color.w;
 }
+#endif
 
 // From the filament docs. Geometric Shadowing function
 // https://google.github.io/filament/Filament.html#toc4.4.2
@@ -285,7 +292,7 @@ vec3 LUT(float NdotV, float roughness)
 	float B = 0;
 	float C = 0;
 
-	for(uint i = 0; i < pFilterParameters.sampleCount; ++i)
+	for(uint i = 0; i < NUM_SAMPLES; ++i)
 	{
 		// Importance sampling, depending on the distribution.
 		vec3 H = getSampleVector(i, N, roughness);
@@ -325,7 +332,7 @@ vec3 LUT(float NdotV, float roughness)
 	// The PDF is simply pdf(v, h) -> NDF * <nh>.
 	// To parametrize the PDF over l, use the Jacobian transform, yielding to: pdf(v, l) -> NDF * <nh> / 4<vh>
 	// Since the BRDF divide through the PDF to be normalized, the 4 can be pulled out of the integral.
-	return vec3(4.0 * A, 4.0 * B, 4.0 * 2.0 * UX3D_MATH_PI * C) / pFilterParameters.sampleCount;
+	return vec3(4.0 * A, 4.0 * B, 4.0 * 2.0 * UX3D_MATH_PI * C) / NUM_SAMPLES;
 }
 
 // entry point
@@ -339,15 +346,18 @@ void main()
 		vec3 direction = normalize(scan);		
 	
 		vec2 src = dirToUV(direction);		
-			
-		writeFace(face, texture(uPanorama, src).rgb);
+		
+		vec4 rgbe = texture(uPanorama, src);
+	    float scale = exp2(rgbe.w * 255 - 128);
+
+		writeFace(face, rgbe.xyz * scale);
 	}
 }
 #else
 // entry point
 void main() 
 {
-	vec2 newUV = inUV * float(1 << (pFilterParameters.currentMipLevel));
+	vec2 newUV = inUV * float(1 << (ibl_params.currentMipLevel));
 	 
 	newUV = newUV*2.0-1.0;
 	
@@ -369,7 +379,7 @@ void main()
 	// Write LUT:
 	// x-coordinate: NdotV
 	// y-coordinate: roughness
-	if (pFilterParameters.currentMipLevel == 0)
+	if (ibl_params.currentMipLevel == 0)
 	{
 		
 		outLUT = LUT(inUV.x, inUV.y);

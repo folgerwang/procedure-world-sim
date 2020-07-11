@@ -29,6 +29,7 @@ private:
     void createGraphicsPipeline();
     void createGltfPipelineLayout();
     void createSkyboxPipelineLayout();
+    void createCubemapPipelineLayout();
     void createRenderPass();
     void createCubemapRenderPass();
     void createFramebuffers();
@@ -48,6 +49,8 @@ private:
     std::vector<VkWriteDescriptorSet> addGlobalTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set);
     std::vector<VkWriteDescriptorSet> addGltfTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set, const renderer::MaterialInfo& material);
     std::vector<VkWriteDescriptorSet> addSkyboxTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set);
+    std::vector<VkWriteDescriptorSet> addPanoramaTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set);
+    std::vector<VkWriteDescriptorSet> addIblTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set);
     void mainLoop();
     void drawMesh(
         std::shared_ptr<renderer::CommandBuffer> cmd_buf,
@@ -96,14 +99,22 @@ private:
     std::shared_ptr<renderer::DescriptorSetLayout> global_tex_desc_set_layout_;
     std::shared_ptr<renderer::DescriptorSetLayout> material_tex_desc_set_layout_;
     std::shared_ptr<renderer::DescriptorSetLayout> skybox_desc_set_layout_;
+    std::shared_ptr<renderer::DescriptorSetLayout> ibl_desc_set_layout_;
     std::shared_ptr<renderer::DescriptorSet> global_tex_desc_set_;
     std::shared_ptr<renderer::DescriptorSet> skybox_tex_desc_set_;
+    std::shared_ptr<renderer::DescriptorSet> envmap_tex_desc_set_;
+    std::shared_ptr<renderer::DescriptorSet> ibl_tex_desc_set_;
     std::shared_ptr<renderer::RenderPass> render_pass_;
     std::shared_ptr<renderer::RenderPass> cubemap_render_pass_;
     std::shared_ptr<renderer::PipelineLayout> gltf_pipeline_layout_;
     std::shared_ptr<renderer::PipelineLayout> skybox_pipeline_layout_;
+    std::shared_ptr<renderer::PipelineLayout> ibl_pipeline_layout_;
     std::shared_ptr<renderer::Pipeline> gltf_pipeline_;
     std::shared_ptr<renderer::Pipeline> skybox_pipeline_;
+    std::shared_ptr<renderer::Pipeline> envmap_pipeline_;
+    std::shared_ptr<renderer::Pipeline> lambertian_pipeline_;
+    std::shared_ptr<renderer::Pipeline> ggx_pipeline_;
+    std::shared_ptr<renderer::Pipeline> charlie_pipeline_;
     std::shared_ptr<renderer::CommandPool> command_pool_;
     renderer::BufferInfo vertex_buffer_;
     renderer::BufferInfo index_buffer_;
@@ -115,10 +126,11 @@ private:
     renderer::TextureInfo brdf_lut_tex_;
     renderer::TextureInfo charlie_lut_tex_;
     renderer::TextureInfo thin_film_lut_tex_;
-    renderer::TextureInfo envmap_tex_;
+    renderer::TextureInfo panorama_tex_;
     renderer::TextureInfo ibl_diffuse_tex_;
     renderer::TextureInfo ibl_specular_tex_;
     renderer::TextureInfo ibl_sheen_tex_;
+    renderer::TextureInfo rt_envmap_tex_;
     renderer::TextureInfo rt_ibl_diffuse_tex_;
     renderer::TextureInfo rt_ibl_specular_tex_;
     renderer::TextureInfo rt_ibl_sheen_tex_;

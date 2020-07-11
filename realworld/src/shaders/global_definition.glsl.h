@@ -48,6 +48,10 @@
 #define EMISSIVE_TEX_INDEX          (BASE_COLOR_TEX_INDEX + 3)
 #define OCCLUSION_TEX_INDEX         (BASE_COLOR_TEX_INDEX + 4)
 
+// IBL texure index
+#define PANORAMA_TEX_INDEX          0
+#define ENVMAP_TEX_INDEX            0
+
 #define FEATURE_MATERIAL_SPECULARGLOSSINESS     0x00000001
 #define FEATURE_MATERIAL_METALLICROUGHNESS      0x00000002
 #define FEATURE_MATERIAL_SHEEN                  0x00000004
@@ -114,6 +118,14 @@ struct ViewParams {
 struct ModelParams {
     mat4 model_mat;
     mat4 normal_mat;
+};
+
+struct IblParams {
+    float roughness;
+    uint sampleCount;
+    uint currentMipLevel;
+    uint width;
+	float lodBias;
 };
 
 struct PbrMaterialParams {

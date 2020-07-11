@@ -23,9 +23,9 @@ C:\work\vulkan\1.2.141.2\Bin\glslc.exe skybox.vert -o skybox_vert.spv
 C:\work\vulkan\1.2.141.2\Bin\glslc.exe skybox.frag -o skybox_frag.spv
 
 C:\work\vulkan\1.2.141.2\Bin\glslc.exe ibl.vert -o ibl_vert.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe ibl.frag -DPANORAMA_TO_CUBEMAP=1 -o panorama_to_cubemap_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe ibl.frag -DLAMBERTIAN_FILTER=1 -o ibl_labertian_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe ibl.frag -DGGX_FILTER=1 -o ibl_ggx_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe ibl.frag -DCHARLIE_FILTER=1 -o ibl_charlie_frag.spv
+C:\work\vulkan\1.2.141.2\Bin\glslc.exe ibl.frag -DPANORAMA_TO_CUBEMAP=1 -DNUM_SAMPLES=8 -o panorama_to_cubemap_frag.spv
+C:\work\vulkan\1.2.141.2\Bin\glslc.exe ibl.frag -DLAMBERTIAN_FILTER=1 -DNUM_SAMPLES=8 -o ibl_labertian_frag.spv
+C:\work\vulkan\1.2.141.2\Bin\glslc.exe ibl.frag -DGGX_FILTER=1 -DNUM_SAMPLES=8 -o ibl_ggx_frag.spv
+C:\work\vulkan\1.2.141.2\Bin\glslc.exe ibl.frag -DCHARLIE_FILTER=1 -DNUM_SAMPLES=8 -o ibl_charlie_frag.spv
 
 pause

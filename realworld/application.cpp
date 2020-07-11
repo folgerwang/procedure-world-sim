@@ -1547,6 +1547,259 @@ std::vector<std::shared_ptr<work::renderer::DescriptorSet>> createDescriptorSets
     return desc_sets;
 }
 
+std::shared_ptr<work::renderer::DescriptorSetLayout> createDescriptorSetLayout(
+    const std::shared_ptr<work::renderer::Device>& device,
+    const VkDescriptorSetLayoutCreateInfo& descriptor_set_layout_info) {
+    auto vk_device = std::reinterpret_pointer_cast<work::renderer::VulkanDevice>(device);
+    assert(vk_device);
+
+    VkDescriptorSetLayout descriptor_set_layout;
+    if (vkCreateDescriptorSetLayout(vk_device->get(), &descriptor_set_layout_info, nullptr, &descriptor_set_layout) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create descriptor set layout!");
+    }
+
+    auto vk_set_layout = std::make_shared<work::renderer::VulkanDescriptorSetLayout>();
+    vk_set_layout->set(descriptor_set_layout);
+    return vk_set_layout;
+}
+
+std::shared_ptr<work::renderer::PipelineLayout> createPipelineLayout(
+    const std::shared_ptr<work::renderer::Device>& device,
+    const VkPipelineLayoutCreateInfo& pipeline_layout_info) {
+    auto vk_device = std::reinterpret_pointer_cast<work::renderer::VulkanDevice>(device);
+    assert(vk_device);
+
+    VkPipelineLayout pipeline_layout;
+    if (vkCreatePipelineLayout(vk_device->get(), &pipeline_layout_info, nullptr, &pipeline_layout) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create pipeline layout!");
+    }
+    auto vk_pipeline_layout = std::make_shared<work::renderer::VulkanPipelineLayout>();
+    vk_pipeline_layout->set(pipeline_layout);
+
+    return vk_pipeline_layout;
+}
+
+std::shared_ptr<work::renderer::Pipeline> createPipeline(
+    const std::shared_ptr<work::renderer::Device>& device,
+    const VkGraphicsPipelineCreateInfo& pipeline_info) {
+    auto vk_device = std::reinterpret_pointer_cast<work::renderer::VulkanDevice>(device);
+    assert(vk_device);
+
+    VkPipeline graphics_pipeline;
+    if (vkCreateGraphicsPipelines(vk_device->get(), VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &graphics_pipeline) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create graphics pipeline!");
+    }
+    auto vk_pipeline = std::make_shared<work::renderer::VulkanPipeline>();
+    vk_pipeline->set(graphics_pipeline);
+    return vk_pipeline;
+}
+
+std::shared_ptr<work::renderer::RenderPass> createRenderPass(
+    const std::shared_ptr<work::renderer::Device>& device,
+    const VkRenderPassCreateInfo& render_pass_info) {
+    // todo.
+    auto vk_device = std::reinterpret_pointer_cast<work::renderer::VulkanDevice>(device);
+    assert(vk_device);
+    VkRenderPass render_pass;
+    if (vkCreateRenderPass(vk_device->get(), &render_pass_info, nullptr, &render_pass) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create render pass!");
+    }
+
+    auto vk_render_pass = std::make_shared<work::renderer::VulkanRenderPass>();
+    vk_render_pass->set(render_pass);
+    return vk_render_pass;
+}
+
+void addImageBarrier(const std::shared_ptr<work::renderer::CommandBuffer>& cmd_buf,
+    const std::shared_ptr<work::renderer::Image>& image,
+    VkImageLayout src_image_layout,
+    VkImageLayout dst_image_layout,
+    VkAccessFlags src_access_flags,
+    VkAccessFlags dst_access_flags,
+    VkPipelineStageFlags src_stage_flags,
+    VkPipelineStageFlags dst_stage_flags,
+    uint32_t base_mip = 0,
+    uint32_t mip_count = 1,
+    uint32_t base_layer = 0,
+    uint32_t layer_count = 1) {
+    auto vk_cmd_buf = std::reinterpret_pointer_cast<work::renderer::VulkanCommandBuffer>(cmd_buf);
+    auto vk_image = std::reinterpret_pointer_cast<work::renderer::VulkanImage>(image);
+
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = src_image_layout;
+    barrier.newLayout = dst_image_layout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = vk_image->get();
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = base_mip;
+    barrier.subresourceRange.levelCount = mip_count;
+    barrier.subresourceRange.baseArrayLayer = base_layer;
+    barrier.subresourceRange.layerCount = layer_count;
+    barrier.srcAccessMask = src_access_flags;
+    barrier.dstAccessMask = dst_access_flags;
+
+    auto vk_cmd_Buf = std::reinterpret_pointer_cast<work::renderer::VulkanCommandBuffer>(cmd_buf);
+    assert(vk_cmd_Buf);
+    vkCmdPipelineBarrier(
+        vk_cmd_Buf->get(),
+        src_stage_flags, dst_stage_flags,
+        0,
+        0, nullptr,
+        0, nullptr,
+        1, &barrier
+    );
+}
+
+void addAsColorOutputImageBarrier(
+    const std::shared_ptr<work::renderer::CommandBuffer>& cmd_buf, 
+    const std::shared_ptr<work::renderer::Image>& image,
+    uint32_t base_mip = 0,
+    uint32_t mip_count = 1,
+    uint32_t base_layer = 0,
+    uint32_t layer_count = 1) {
+    addImageBarrier(
+        cmd_buf,
+        image,
+        VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_ACCESS_SHADER_READ_BIT,
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        base_mip,
+        mip_count,
+        base_layer,
+        layer_count);
+}
+
+void addAsShaderResourceImageBarrier(
+    const std::shared_ptr<work::renderer::CommandBuffer>& cmd_buf,
+    const std::shared_ptr<work::renderer::Image>& image,
+    uint32_t base_mip = 0,
+    uint32_t mip_count = 1,
+    uint32_t base_layer = 0,
+    uint32_t layer_count = 1)
+{
+    addImageBarrier(
+        cmd_buf,
+        image,
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        VK_ACCESS_SHADER_READ_BIT,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        base_mip,
+        mip_count,
+        base_layer,
+        layer_count);
+}
+
+void generateMipmapLevels(
+    const std::shared_ptr<work::renderer::CommandBuffer>& cmd_buf,
+    const std::shared_ptr<work::renderer::Image>& image, 
+    uint32_t mip_count, 
+    uint32_t width,
+    uint32_t height,
+    const VkImageLayout& cur_image_layout)
+{
+    auto vk_cmd_buf = std::reinterpret_pointer_cast<work::renderer::VulkanCommandBuffer>(cmd_buf);
+    auto vk_image = std::reinterpret_pointer_cast<work::renderer::VulkanImage>(image);
+
+    {
+        VkImageSubresourceRange mipbaseRange{};
+        mipbaseRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        mipbaseRange.baseMipLevel = 0u;
+        mipbaseRange.levelCount = 1u;
+        mipbaseRange.layerCount = 6u;
+
+        addImageBarrier(
+            cmd_buf,
+            image,
+            cur_image_layout,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_ACCESS_TRANSFER_READ_BIT,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 1, 0, 6);
+    }
+
+    for (uint32_t i = 1; i < mip_count; i++)
+    {
+        VkImageBlit imageBlit{};
+
+        // Source
+        imageBlit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        imageBlit.srcSubresource.layerCount = 6u;
+        imageBlit.srcSubresource.mipLevel = i - 1;
+        imageBlit.srcOffsets[1].x = int32_t(width >> (i - 1));
+        imageBlit.srcOffsets[1].y = int32_t(height >> (i - 1));
+        imageBlit.srcOffsets[1].z = 1;
+
+        // Destination
+        imageBlit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        imageBlit.dstSubresource.layerCount = 6u;
+        imageBlit.dstSubresource.mipLevel = i;
+        imageBlit.dstOffsets[1].x = int32_t(width >> i);
+        imageBlit.dstOffsets[1].y = int32_t(height >> i);
+        imageBlit.dstOffsets[1].z = 1;
+
+        VkImageSubresourceRange mipSubRange = {};
+        mipSubRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        mipSubRange.baseMipLevel = i;
+        mipSubRange.levelCount = 1;
+        mipSubRange.layerCount = 6u;
+
+        addImageBarrier(
+            cmd_buf,
+            image,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_ACCESS_TRANSFER_WRITE_BIT,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            i, 1, 0, 6);
+
+        vkCmdBlitImage(
+            vk_cmd_buf->get(),
+            vk_image->get(),
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            vk_image->get(),
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            1,
+            &imageBlit,
+            VK_FILTER_LINEAR);
+
+        addImageBarrier(
+            cmd_buf,
+            image,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_ACCESS_TRANSFER_WRITE_BIT,
+            VK_ACCESS_TRANSFER_READ_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            i, 1, 0, 6);
+    }
+
+    {
+        addImageBarrier(
+            cmd_buf,
+            image,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_ACCESS_TRANSFER_READ_BIT,
+            VK_ACCESS_SHADER_READ_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0, mip_count, 0, 6);
+    }
+}
+
 }
 
 namespace work {
@@ -2304,6 +2557,7 @@ void RealWorldApplication::initVulkan() {
     loadMtx2Texture("assets/environments/doge2/charlie/sheen.ktx2", ibl_sheen_tex_);
     createGltfPipelineLayout();
     createSkyboxPipelineLayout();
+    createCubemapPipelineLayout();
     createGraphicsPipeline();
     createDepthResources();
     createFramebuffers();
@@ -2313,7 +2567,7 @@ void RealWorldApplication::initVulkan() {
     createTextureImage("assets/lut_ggx.png", format, ggx_lut_tex_);
     createTextureImage("assets/lut_charlie.png", format, charlie_lut_tex_);
     createTextureImage("assets/lut_thin_film.png", format, thin_film_lut_tex_);
-    createTextureImage("assets/environments/doge2.hdr", format, envmap_tex_);
+    createTextureImage("assets/environments/doge2.hdr", format, panorama_tex_);
     create2x2Texture(device_, graphics_queue_, command_pool_, 0xffffffff, white_tex_);
     create2x2Texture(device_, graphics_queue_, command_pool_, 0xff000000, black_tex_);
     createTextureSampler();
@@ -2343,6 +2597,7 @@ void RealWorldApplication::recreateSwapChain() {
     createImageViews();
     createGltfPipelineLayout();
     createSkyboxPipelineLayout();
+    createCubemapPipelineLayout();
     createGraphicsPipeline();
     createDepthResources();
     createFramebuffers();
@@ -2588,6 +2843,14 @@ void RealWorldApplication::createCubemapFramebuffers() {
     createCubemapTexture(
         kCubemapSize,
         kCubemapSize,
+        num_mips,
+        renderer::Format::R16G16B16A16_SFLOAT,
+        dump_copies,
+        rt_envmap_tex_);
+
+    createCubemapTexture(
+        kCubemapSize,
+        kCubemapSize,
         1,
         renderer::Format::R16G16B16A16_SFLOAT,
         dump_copies,
@@ -2656,24 +2919,46 @@ std::vector<std::shared_ptr<renderer::ShaderModule>> getSkyboxShaderModules(
     return shader_modules;
 }
 
+std::vector<std::shared_ptr<renderer::ShaderModule>> getIblShaderModules(
+    std::shared_ptr<renderer::Device> device)
+{
+    uint64_t vert_code_size, frag_code_size;
+    std::vector<std::shared_ptr<renderer::ShaderModule>> shader_modules;
+    shader_modules.reserve(6);
+    auto vert_shader_code = readFile("src/shaders/ibl_vert.spv", vert_code_size);
+    shader_modules.push_back(device->createShaderModule(vert_code_size, vert_shader_code.data()));
+    auto frag_shader_code = readFile("src/shaders/panorama_to_cubemap_frag.spv", frag_code_size);
+    shader_modules.push_back(device->createShaderModule(frag_code_size, frag_shader_code.data()));
+    auto labertian_frag_shader_code = readFile("src/shaders/ibl_labertian_frag.spv", frag_code_size);
+    shader_modules.push_back(device->createShaderModule(frag_code_size, labertian_frag_shader_code.data()));
+    auto ggx_frag_shader_code = readFile("src/shaders/ibl_ggx_frag.spv", frag_code_size);
+    shader_modules.push_back(device->createShaderModule(frag_code_size, ggx_frag_shader_code.data()));
+    auto charlie_frag_shader_code = readFile("src/shaders/ibl_charlie_frag.spv", frag_code_size);
+    shader_modules.push_back(device->createShaderModule(frag_code_size, charlie_frag_shader_code.data()));
+
+    return shader_modules;
+}
+
 std::vector<VkPipelineShaderStageCreateInfo> getShaderStages(
     std::vector<std::shared_ptr<renderer::ShaderModule>> shader_modules) {
+    std::vector<VkPipelineShaderStageCreateInfo> shader_stages(shader_modules.size());
 
-    std::vector<VkPipelineShaderStageCreateInfo> shader_stages(2);
-    shader_stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shader_stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
     // todo.
     auto vk_vert_shader_module = std::reinterpret_pointer_cast<renderer::VulkanShaderModule>(shader_modules[0]);
+    shader_stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shader_stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
     shader_stages[0].module = vk_vert_shader_module->get();
     shader_stages[0].pName = "main";
 
-    VkPipelineShaderStageCreateInfo frag_shader_stage_info{};
-    shader_stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shader_stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
     // todo.
-    auto vk_frag_shader_module = std::reinterpret_pointer_cast<renderer::VulkanShaderModule>(shader_modules[1]);
-    shader_stages[1].module = vk_frag_shader_module->get();
-    shader_stages[1].pName = "main";
+    for (int i = 1; i < shader_modules.size(); i++) {
+        auto vk_frag_shader_module = std::reinterpret_pointer_cast<renderer::VulkanShaderModule>(shader_modules[i]);
+        VkPipelineShaderStageCreateInfo frag_shader_stage_info{};
+        shader_stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        shader_stages[i].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        shader_stages[i].module = vk_frag_shader_module->get();
+        shader_stages[i].pName = "main";
+    }
 
     return shader_stages;
 }
@@ -2716,6 +3001,24 @@ VkPipelineRasterizationStateCreateInfo fillVkPipelineRasterizationStateCreateInf
 
     return rasterizer;
 }
+
+VkPipelineRasterizationStateCreateInfo fillVkPipelineNocullingRasterizationStateCreateInfo() {
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.depthClampEnable = VK_FALSE;
+    rasterizer.rasterizerDiscardEnable = VK_FALSE;
+    rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizer.lineWidth = 1.0f;
+    rasterizer.cullMode = VK_CULL_MODE_NONE;
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.depthBiasEnable = VK_FALSE;
+    rasterizer.depthBiasConstantFactor = 0.0f; // Optional
+    rasterizer.depthBiasClamp = 0.0f; // Optional
+    rasterizer.depthBiasSlopeFactor = 0.0f; // Optional
+
+    return rasterizer;
+}
+
 
 VkPipelineMultisampleStateCreateInfo fillVkPipelineMultisampleStateCreateInfo() {
     VkPipelineMultisampleStateCreateInfo multisampling{};
@@ -2761,7 +3064,8 @@ VkPipelineViewportStateCreateInfo fillVkPipelineViewportStateCreateInfo(const Vk
     return viewport_state;
 }
 
-VkPipelineColorBlendAttachmentState fillVkPipelineColorBlendAttachmentState() {
+std::vector<VkPipelineColorBlendAttachmentState> fillVkPipelineColorBlendAttachmentState(uint32_t num_attachments) {
+    std::vector<VkPipelineColorBlendAttachmentState> color_blend_attachements(num_attachments);
     VkPipelineColorBlendAttachmentState color_blend_attachment{};
     color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     color_blend_attachment.blendEnable = VK_FALSE;
@@ -2772,16 +3076,21 @@ VkPipelineColorBlendAttachmentState fillVkPipelineColorBlendAttachmentState() {
     color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO; // Optional
     color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD; // Optional
 
-    return color_blend_attachment;
+    for (uint32_t i = 0; i < num_attachments; i++) {
+        color_blend_attachements[i] = color_blend_attachment;
+    }
+
+    return color_blend_attachements;
 }
 
-VkPipelineColorBlendStateCreateInfo fillVkPipelineColorBlendStateCreateInfo(VkPipelineColorBlendAttachmentState* color_blend_attachment) {
+VkPipelineColorBlendStateCreateInfo fillVkPipelineColorBlendStateCreateInfo(
+    const std::vector<VkPipelineColorBlendAttachmentState>& color_blend_attachments) {
     VkPipelineColorBlendStateCreateInfo color_blending{};
     color_blending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     color_blending.logicOpEnable = VK_FALSE;
     color_blending.logicOp = VK_LOGIC_OP_COPY; // Optional
-    color_blending.attachmentCount = 1;
-    color_blending.pAttachments = color_blend_attachment;
+    color_blending.attachmentCount = static_cast<uint32_t>(color_blend_attachments.size());
+    color_blending.pAttachments = color_blend_attachments.data();
     color_blending.blendConstants[0] = 0.0f; // Optional
     color_blending.blendConstants[1] = 0.0f; // Optional
     color_blending.blendConstants[2] = 0.0f; // Optional
@@ -2797,6 +3106,23 @@ VkPipelineDepthStencilStateCreateInfo fillVkPipelineDepthStencilStateCreateInfo(
     depth_stencil.depthTestEnable = VK_TRUE;
     depth_stencil.depthWriteEnable = VK_TRUE;
     depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    depth_stencil.depthBoundsTestEnable = VK_FALSE;
+    depth_stencil.minDepthBounds = 0.0f; // Optional
+    depth_stencil.maxDepthBounds = 1.0f; // Optional
+    depth_stencil.stencilTestEnable = VK_FALSE;
+    //depth_stencil.front = {}; // Optional
+    //depth_stencil.back = {}; // Optional
+
+    return depth_stencil;
+}
+
+VkPipelineDepthStencilStateCreateInfo fillVkPipelineNoDepthStencilStateCreateInfo()
+{
+    VkPipelineDepthStencilStateCreateInfo depth_stencil{};
+    depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth_stencil.depthTestEnable = VK_FALSE;
+    depth_stencil.depthWriteEnable = VK_FALSE;
+    depth_stencil.depthCompareOp = VK_COMPARE_OP_ALWAYS;
     depth_stencil.depthBoundsTestEnable = VK_FALSE;
     depth_stencil.minDepthBounds = 0.0f; // Optional
     depth_stencil.maxDepthBounds = 1.0f; // Optional
@@ -2829,22 +3155,11 @@ void RealWorldApplication::createGltfPipelineLayout()
     pipeline_layout_info.pushConstantRangeCount = 1;
     pipeline_layout_info.pPushConstantRanges = &push_const_range;
 
-    auto vk_device = std::reinterpret_pointer_cast<renderer::VulkanDevice>(device_);
-    assert(vk_device);
-    VkPipelineLayout pipeline_layout;
-    if (vkCreatePipelineLayout(vk_device->get(), &pipeline_layout_info, nullptr, &pipeline_layout) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create pipeline layout!");
-    }
-    auto vk_pipeline_layout = std::make_shared<renderer::VulkanPipelineLayout>();
-    vk_pipeline_layout->set(pipeline_layout);
-    gltf_pipeline_layout_ = std::move(vk_pipeline_layout);
+    gltf_pipeline_layout_ = ::createPipelineLayout(device_, pipeline_layout_info);
 }
 
 void RealWorldApplication::createSkyboxPipelineLayout()
 {
-    auto vk_device = std::reinterpret_pointer_cast<renderer::VulkanDevice>(device_);
-    assert(vk_device);
-
     std::vector<VkDescriptorSetLayout> vk_layouts;
     vk_layouts.reserve(3);
     vk_layouts.push_back(std::reinterpret_pointer_cast<renderer::VulkanDescriptorSetLayout>(skybox_desc_set_layout_)->get());
@@ -2857,28 +3172,46 @@ void RealWorldApplication::createSkyboxPipelineLayout()
     pipeline_layout_info.pushConstantRangeCount = 0;
     pipeline_layout_info.pPushConstantRanges = nullptr;
 
-    VkPipelineLayout pipeline_layout;
-    if (vkCreatePipelineLayout(vk_device->get(), &pipeline_layout_info, nullptr, &pipeline_layout) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create pipeline layout!");
-    }
-    auto vk_pipeline_layout = std::make_shared<renderer::VulkanPipelineLayout>();
-    vk_pipeline_layout->set(pipeline_layout);
-    skybox_pipeline_layout_ = std::move(vk_pipeline_layout);
+    skybox_pipeline_layout_ = ::createPipelineLayout(device_, pipeline_layout_info);
+}
+
+void RealWorldApplication::createCubemapPipelineLayout()
+{
+    VkPushConstantRange push_const_range{};
+    push_const_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    push_const_range.offset = 0;
+    push_const_range.size = sizeof(IblParams);
+
+    VkPipelineLayoutCreateInfo pipeline_layout_info{};
+    pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    // todo.
+    std::vector<VkDescriptorSetLayout> vk_layouts(1);
+    vk_layouts[0] = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSetLayout>(ibl_desc_set_layout_)->get();
+    pipeline_layout_info.setLayoutCount = static_cast<uint32_t>(vk_layouts.size());
+    pipeline_layout_info.pSetLayouts = vk_layouts.data();
+    pipeline_layout_info.pushConstantRangeCount = 1;
+    pipeline_layout_info.pPushConstantRanges = &push_const_range;
+
+    ibl_pipeline_layout_ = ::createPipelineLayout(device_, pipeline_layout_info);
 }
 
 void RealWorldApplication::createGraphicsPipeline() {
-    auto vk_device = std::reinterpret_pointer_cast<renderer::VulkanDevice>(device_);
-    assert(vk_device);
-
     auto viewport = fillViewport(swap_chain_extent_);
     auto scissor = fillScissor(swap_chain_extent_);
-    auto color_blend_attachment = fillVkPipelineColorBlendAttachmentState();
+    auto cubemap_viewport = fillViewport(glm::uvec2(kCubemapSize, kCubemapSize));
+    auto cubemap_scissor = fillScissor(glm::uvec2(kCubemapSize, kCubemapSize));
+    auto color_blend_attachment = fillVkPipelineColorBlendAttachmentState(1);
+    auto cubemap_color_blend_attachment = fillVkPipelineColorBlendAttachmentState(6);
 
     auto rasterizer = fillVkPipelineRasterizationStateCreateInfo();
+    auto ibl_rasterizer = fillVkPipelineNocullingRasterizationStateCreateInfo();
     auto multisampling = fillVkPipelineMultisampleStateCreateInfo();
     auto viewport_state = fillVkPipelineViewportStateCreateInfo(&viewport, &scissor);
-    auto color_blending = fillVkPipelineColorBlendStateCreateInfo(&color_blend_attachment);
+    auto cubemap_viewport_state = fillVkPipelineViewportStateCreateInfo(&cubemap_viewport, &cubemap_scissor);
+    auto color_blending = fillVkPipelineColorBlendStateCreateInfo(color_blend_attachment);
+    auto cubemap_color_blending = fillVkPipelineColorBlendStateCreateInfo(cubemap_color_blend_attachment);
     auto depth_stencil = fillVkPipelineDepthStencilStateCreateInfo();
+    auto cubemap_depth_stencil = fillVkPipelineNoDepthStencilStateCreateInfo();
 
     VkDynamicState dynamic_states[] = {
         VK_DYNAMIC_STATE_VIEWPORT,
@@ -2930,13 +3263,7 @@ void RealWorldApplication::createGraphicsPipeline() {
         pipeline_info.basePipelineIndex = -1; // Optional
 
         // todo.
-        VkPipeline graphics_pipeline;
-        if (vkCreateGraphicsPipelines(vk_device->get(), VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &graphics_pipeline) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create graphics pipeline!");
-        }
-        auto vk_pipeline = std::make_shared<renderer::VulkanPipeline>();
-        vk_pipeline->set(graphics_pipeline);
-        gltf_pipeline_ = std::move(vk_pipeline);
+        gltf_pipeline_ = ::createPipeline(device_, pipeline_info);
 
         for (auto& shader_module : shader_modules) {
             device_->destroyShaderModule(shader_module);
@@ -2969,15 +3296,62 @@ void RealWorldApplication::createGraphicsPipeline() {
         skybox_pipeline_info.layout = vk_skybox_pipeline_layout->get();
 
         // todo.
-        VkPipeline graphics_pipeline;
-        if (vkCreateGraphicsPipelines(vk_device->get(), VK_NULL_HANDLE, 1, &skybox_pipeline_info, nullptr, &graphics_pipeline) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create graphics pipeline!");
-        }
-        auto vk_pipeline = std::make_shared<renderer::VulkanPipeline>();
-        vk_pipeline->set(graphics_pipeline);
-        skybox_pipeline_ = std::move(vk_pipeline);
+        skybox_pipeline_ = ::createPipeline(device_, skybox_pipeline_info);
 
         for (auto& shader_module : shader_modules) {
+            device_->destroyShaderModule(shader_module);
+        }
+    }
+
+    {
+        VkPipelineInputAssemblyStateCreateInfo input_assembly{};
+        input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        input_assembly.primitiveRestartEnable = false;
+
+        // todo.
+        auto ibl_shader_modules = getIblShaderModules(device_);
+        auto ibl_shader_stages = getShaderStages(ibl_shader_modules);
+
+        VkPipelineVertexInputStateCreateInfo vertex_input_info{};
+        vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+        auto vk_ibl_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(ibl_pipeline_layout_);
+        assert(vk_ibl_pipeline_layout);
+
+        auto vk_cubemap_render_pass = std::reinterpret_pointer_cast<renderer::VulkanRenderPass>(cubemap_render_pass_);
+        assert(vk_cubemap_render_pass);
+
+        VkGraphicsPipelineCreateInfo ibl_pipeline_info = pipeline_info;
+        ibl_pipeline_info.stageCount = 2;
+        ibl_pipeline_info.pStages = ibl_shader_stages.data();
+        ibl_pipeline_info.pVertexInputState = &vertex_input_info;
+        ibl_pipeline_info.pInputAssemblyState = &input_assembly;
+        ibl_pipeline_info.pViewportState = &cubemap_viewport_state;
+        ibl_pipeline_info.pDepthStencilState = &cubemap_depth_stencil;
+        ibl_pipeline_info.pColorBlendState = &cubemap_color_blending;
+        ibl_pipeline_info.pRasterizationState = &ibl_rasterizer;
+        ibl_pipeline_info.layout = vk_ibl_pipeline_layout->get();
+        ibl_pipeline_info.renderPass = vk_cubemap_render_pass->get();
+        ibl_pipeline_info.subpass = 0;
+        ibl_pipeline_info.basePipelineHandle = VK_NULL_HANDLE; // Optional
+        ibl_pipeline_info.basePipelineIndex = -1; // Optional
+
+        envmap_pipeline_ = ::createPipeline(device_, ibl_pipeline_info);
+
+        std::array<VkPipelineShaderStageCreateInfo, 2> lambertian_stages = { ibl_shader_stages[0], ibl_shader_stages[2] };
+        ibl_pipeline_info.pStages = lambertian_stages.data();
+        lambertian_pipeline_ = ::createPipeline(device_, ibl_pipeline_info);
+
+        std::array<VkPipelineShaderStageCreateInfo, 2> ggx_stages = { ibl_shader_stages[0], ibl_shader_stages[3] };
+        ibl_pipeline_info.pStages = ggx_stages.data();
+        ggx_pipeline_ = ::createPipeline(device_, ibl_pipeline_info);
+
+        std::array<VkPipelineShaderStageCreateInfo, 2> charlie_stages = { ibl_shader_stages[0], ibl_shader_stages[4] };
+        ibl_pipeline_info.pStages = charlie_stages.data();
+        charlie_pipeline_ = ::createPipeline(device_, ibl_pipeline_info);
+
+        for (auto& shader_module : ibl_shader_modules) {
             device_->destroyShaderModule(shader_module);
         }
     }
@@ -3037,29 +3411,19 @@ void RealWorldApplication::createRenderPass() {
     render_pass_info.dependencyCount = 1;
     render_pass_info.pDependencies = &dependency;
 
-    // todo.
-    auto vk_device = std::reinterpret_pointer_cast<renderer::VulkanDevice>(device_);
-    assert(vk_device);
-    VkRenderPass render_pass;
-    if (vkCreateRenderPass(vk_device->get(), &render_pass_info, nullptr, &render_pass) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create render pass!");
-    }
-
-    auto vk_render_pass = std::make_shared<renderer::VulkanRenderPass>();
-    vk_render_pass->set(render_pass);
-    render_pass_ = std::move(vk_render_pass);
+    render_pass_ = ::createRenderPass(device_, render_pass_info);
 }
 
 void RealWorldApplication::createCubemapRenderPass() {
     VkAttachmentDescription color_attachment{};
     color_attachment.format = toVkFormat(renderer::Format::R16G16B16A16_SFLOAT);
     color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    color_attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     std::vector<VkAttachmentReference> color_attachment_refs(6);
     for (uint32_t i = 0; i < 6; i++) {
@@ -3092,17 +3456,7 @@ void RealWorldApplication::createCubemapRenderPass() {
     render_pass_info.dependencyCount = 1;
     render_pass_info.pDependencies = &dependency;
 
-    // todo.
-    auto vk_device = std::reinterpret_pointer_cast<renderer::VulkanDevice>(device_);
-    assert(vk_device);
-    VkRenderPass render_pass;
-    if (vkCreateRenderPass(vk_device->get(), &render_pass_info, nullptr, &render_pass) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create render pass!");
-    }
-
-    auto vk_render_pass = std::make_shared<renderer::VulkanRenderPass>();
-    vk_render_pass->set(render_pass);
-    cubemap_render_pass_ = std::move(vk_render_pass);
+    cubemap_render_pass_ = ::createRenderPass(device_, render_pass_info);
 }
 
 void RealWorldApplication::createFramebuffers() {
@@ -3320,8 +3674,175 @@ void RealWorldApplication::drawFrame() {
     float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
     auto& cmd_buf = command_buffer;
+    auto vk_cmd_buf = std::reinterpret_pointer_cast<renderer::VulkanCommandBuffer>(cmd_buf);
+
     cmd_buf->reset(0);
     cmd_buf->beginCommandBuffer(static_cast<renderer::CommandBufferUsageFlags>(renderer::CommandBufferUsageFlagBits::ONE_TIME_SUBMIT_BIT));
+
+    // generate envmap cubemap from panorama hdr image.
+    {
+        addAsColorOutputImageBarrier(cmd_buf, rt_envmap_tex_.image, 0, 1, 0, 6);
+
+        cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, envmap_pipeline_);
+
+        std::vector<renderer::ClearValue> envmap_clear_values;
+        cmd_buf->beginRenderPass(cubemap_render_pass_, rt_envmap_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
+
+        IblParams ibl_params = {};
+
+        auto vk_ibl_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(ibl_pipeline_layout_);
+        vkCmdPushConstants(vk_cmd_buf->get(), vk_ibl_pipeline_layout->get(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(IblParams), &ibl_params);
+
+        // todo.
+        std::vector<VkDescriptorSet> desc_sets(1);
+        desc_sets[0] = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(envmap_tex_desc_set_)->get();
+        vkCmdBindDescriptorSets(
+            vk_cmd_buf->get(),
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vk_ibl_pipeline_layout->get(),
+            0,
+            static_cast<uint32_t>(desc_sets.size()),
+            desc_sets.data(),
+            0,
+            nullptr);
+
+        vkCmdDraw(vk_cmd_buf->get(), 3, 1u, 0, 0);
+
+        cmd_buf->endRenderPass();
+
+        uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
+
+        generateMipmapLevels(cmd_buf, rt_envmap_tex_.image, num_mips, kCubemapSize, kCubemapSize, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    }
+
+    // generate ibl diffuse texture.
+    {
+        addAsColorOutputImageBarrier(cmd_buf, rt_ibl_diffuse_tex_.image, 0, 1, 0, 6);
+
+        cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, lambertian_pipeline_);
+
+        std::vector<renderer::ClearValue> envmap_clear_values;
+        cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_diffuse_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
+
+        IblParams ibl_params = {};
+        ibl_params.roughness = 1.0f;
+        ibl_params.sampleCount = 16;
+        ibl_params.currentMipLevel = 0;
+        ibl_params.width = kCubemapSize;
+        ibl_params.lodBias = 0;
+
+        auto vk_ibl_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(ibl_pipeline_layout_);
+        vkCmdPushConstants(vk_cmd_buf->get(), vk_ibl_pipeline_layout->get(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(IblParams), &ibl_params);
+
+        // todo.
+        std::vector<VkDescriptorSet> desc_sets(1);
+        desc_sets[0] = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(ibl_tex_desc_set_)->get();
+        vkCmdBindDescriptorSets(
+            vk_cmd_buf->get(),
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vk_ibl_pipeline_layout->get(),
+            0,
+            static_cast<uint32_t>(desc_sets.size()),
+            desc_sets.data(),
+            0,
+            nullptr);
+
+        vkCmdDraw(vk_cmd_buf->get(), 3, 1u, 0, 0);
+
+        cmd_buf->endRenderPass();
+
+        addAsShaderResourceImageBarrier(cmd_buf, rt_ibl_diffuse_tex_.image, 0, 1, 0, 6);
+    }
+
+    // generate ibl specular texture.
+    {
+        uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
+        cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, ggx_pipeline_);
+
+        for (int i_mip = num_mips-1; i_mip >= 0; i_mip--) {
+            addAsColorOutputImageBarrier(cmd_buf, rt_ibl_specular_tex_.image, i_mip, 1, 0, 6);
+
+            uint32_t width = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
+            uint32_t height = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
+
+            std::vector<renderer::ClearValue> envmap_clear_values;
+            cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_specular_tex_.framebuffers[i_mip], glm::uvec2(width, height), envmap_clear_values);
+
+            IblParams ibl_params = {};
+            ibl_params.roughness = static_cast<float>(i_mip) / static_cast<float>(num_mips - 1);
+            ibl_params.sampleCount = 16;
+            ibl_params.currentMipLevel = i_mip;
+            ibl_params.width = kCubemapSize;
+            ibl_params.lodBias = 0;
+
+            auto vk_ibl_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(ibl_pipeline_layout_);
+            vkCmdPushConstants(vk_cmd_buf->get(), vk_ibl_pipeline_layout->get(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(IblParams), &ibl_params);
+
+            // todo.
+            std::vector<VkDescriptorSet> desc_sets(1);
+            desc_sets[0] = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(ibl_tex_desc_set_)->get();
+            vkCmdBindDescriptorSets(
+                vk_cmd_buf->get(),
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                vk_ibl_pipeline_layout->get(),
+                0,
+                static_cast<uint32_t>(desc_sets.size()),
+                desc_sets.data(),
+                0,
+                nullptr);
+
+            vkCmdDraw(vk_cmd_buf->get(), 3, 1u, 0, 0);
+
+            cmd_buf->endRenderPass();
+        }
+
+        addAsShaderResourceImageBarrier(cmd_buf, rt_ibl_specular_tex_.image, 0, num_mips, 0, 6);
+    }
+
+    // generate ibl sheen texture.
+    {
+        uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
+        cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, charlie_pipeline_);
+
+        for (int i_mip = num_mips - 1; i_mip >= 0; i_mip--) {
+            addAsColorOutputImageBarrier(cmd_buf, rt_ibl_sheen_tex_.image, i_mip, 1, 0, 6);
+
+            uint32_t width = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
+            uint32_t height = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
+
+            std::vector<renderer::ClearValue> envmap_clear_values;
+            cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_sheen_tex_.framebuffers[i_mip], glm::uvec2(width, height), envmap_clear_values);
+
+            IblParams ibl_params = {};
+            ibl_params.roughness = static_cast<float>(i_mip) / static_cast<float>(num_mips - 1);
+            ibl_params.sampleCount = 32;
+            ibl_params.currentMipLevel = i_mip;
+            ibl_params.width = kCubemapSize;
+            ibl_params.lodBias = 0;
+
+            auto vk_ibl_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(ibl_pipeline_layout_);
+            vkCmdPushConstants(vk_cmd_buf->get(), vk_ibl_pipeline_layout->get(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(IblParams), &ibl_params);
+
+            // todo.
+            std::vector<VkDescriptorSet> desc_sets(1);
+            desc_sets[0] = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(ibl_tex_desc_set_)->get();
+            vkCmdBindDescriptorSets(
+                vk_cmd_buf->get(),
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                vk_ibl_pipeline_layout->get(),
+                0,
+                static_cast<uint32_t>(desc_sets.size()),
+                desc_sets.data(),
+                0,
+                nullptr);
+
+            vkCmdDraw(vk_cmd_buf->get(), 3, 1u, 0, 0);
+
+            cmd_buf->endRenderPass();
+        }
+
+        addAsShaderResourceImageBarrier(cmd_buf, rt_ibl_sheen_tex_.image, 0, num_mips, 0, 6);
+    }
 
     // render gltf meshes.
     auto model_mat = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
@@ -3345,7 +3866,6 @@ void RealWorldApplication::drawFrame() {
             cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, renderer::IndexType::UINT16);
 
             // todo.
-            auto vk_cmd_buf = std::reinterpret_pointer_cast<renderer::VulkanCommandBuffer>(cmd_buf);
             auto vk_skybox_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(skybox_pipeline_layout_);
             std::vector<VkDescriptorSet> desc_sets(2);
             desc_sets[0] = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(skybox_tex_desc_set_)->get();
@@ -3474,10 +3994,6 @@ void RealWorldApplication::createIndexBuffer() {
 }
 
 void RealWorldApplication::createDescriptorSetLayout() {
-    // todo.
-    auto vk_device = std::reinterpret_pointer_cast<renderer::VulkanDevice>(device_);
-    assert(vk_device);
-
     // global texture descriptor set layout.
     {
         std::vector<VkDescriptorSetLayoutBinding> bindings;
@@ -3494,14 +4010,7 @@ void RealWorldApplication::createDescriptorSetLayout() {
         layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
         layout_info.pBindings = bindings.data();
 
-        VkDescriptorSetLayout descriptor_set_layout;
-        if (vkCreateDescriptorSetLayout(vk_device->get(), &layout_info, nullptr, &descriptor_set_layout) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create descriptor set layout!");
-        }
-
-        auto vk_set_layout = std::make_shared<renderer::VulkanDescriptorSetLayout>();
-        vk_set_layout->set(descriptor_set_layout);
-        global_tex_desc_set_layout_ = std::move(vk_set_layout);
+        global_tex_desc_set_layout_ = ::createDescriptorSetLayout(device_, layout_info);
     }
 
     // material texture descriptor set layout.
@@ -3529,14 +4038,7 @@ void RealWorldApplication::createDescriptorSetLayout() {
         layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
         layout_info.pBindings = bindings.data();
 
-        VkDescriptorSetLayout descriptor_set_layout;
-        if (vkCreateDescriptorSetLayout(vk_device->get(), &layout_info, nullptr, &descriptor_set_layout) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create descriptor set layout!");
-        }
-
-        auto vk_set_layout = std::make_shared<renderer::VulkanDescriptorSetLayout>();
-        vk_set_layout->set(descriptor_set_layout);
-        material_tex_desc_set_layout_ = std::move(vk_set_layout);
+        material_tex_desc_set_layout_ = ::createDescriptorSetLayout(device_, layout_info);
     }
 
     {
@@ -3555,14 +4057,7 @@ void RealWorldApplication::createDescriptorSetLayout() {
         layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
         layout_info.pBindings = bindings.data();
 
-        VkDescriptorSetLayout descriptor_set_layout;
-        if (vkCreateDescriptorSetLayout(vk_device->get(), &layout_info, nullptr, &descriptor_set_layout) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create descriptor set layout!");
-        }
-
-        auto vk_set_layout = std::make_shared<renderer::VulkanDescriptorSetLayout>();
-        vk_set_layout->set(descriptor_set_layout);
-        desc_set_layout_ = std::move(vk_set_layout);
+        desc_set_layout_ = ::createDescriptorSetLayout(device_, layout_info);
     }
 
     {
@@ -3576,14 +4071,21 @@ void RealWorldApplication::createDescriptorSetLayout() {
         layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
         layout_info.pBindings = bindings.data();
 
-        VkDescriptorSetLayout descriptor_set_layout;
-        if (vkCreateDescriptorSetLayout(vk_device->get(), &layout_info, nullptr, &descriptor_set_layout) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create descriptor set layout!");
-        }
+        skybox_desc_set_layout_ = ::createDescriptorSetLayout(device_, layout_info);
+    }
 
-        auto vk_set_layout = std::make_shared<renderer::VulkanDescriptorSetLayout>();
-        vk_set_layout->set(descriptor_set_layout);
-        skybox_desc_set_layout_ = std::move(vk_set_layout);
+    // ibl texture descriptor set layout.
+    {
+        std::vector<VkDescriptorSetLayoutBinding> bindings(1);
+        bindings[0] = getTextureSamplerDescriptionSetLayoutBinding(PANORAMA_TEX_INDEX);
+//        bindings[1] = getTextureSamplerDescriptionSetLayoutBinding(ENVMAP_TEX_INDEX);
+
+        VkDescriptorSetLayoutCreateInfo layout_info{};
+        layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
+        layout_info.pBindings = bindings.data();
+
+        ibl_desc_set_layout_ = ::createDescriptorSetLayout(device_, layout_info);
     }
 }
 
@@ -3678,25 +4180,25 @@ std::vector<VkWriteDescriptorSet> RealWorldApplication::addGlobalTextures(
     charlie_lut_image_info.sampler = vk_sampler->get();
     descriptor_writes.push_back(addDescriptWrite(vk_desc_set->get(), charlie_lut_image_info, CHARLIE_LUT_INDEX));
 
-    // ggx_lut.
+    // labertian tex.
     static VkDescriptorImageInfo ibl_diffuse_image_info = {};
-    auto vk_diffuse_tex = std::reinterpret_pointer_cast<renderer::VulkanImageView>(ibl_diffuse_tex_.view);
+    auto vk_diffuse_tex = std::reinterpret_pointer_cast<renderer::VulkanImageView>(rt_ibl_diffuse_tex_.view);
     ibl_diffuse_image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     ibl_diffuse_image_info.imageView = vk_diffuse_tex->get();
     ibl_diffuse_image_info.sampler = vk_sampler->get();
     descriptor_writes.push_back(addDescriptWrite(vk_desc_set->get(), ibl_diffuse_image_info, LAMBERTIAN_ENV_TEX_INDEX));
 
-    // charlie_lut.
+    // specular tex.
     static VkDescriptorImageInfo ibl_specular_image_info = {};
-    auto vk_specular_tex = std::reinterpret_pointer_cast<renderer::VulkanImageView>(ibl_specular_tex_.view);
+    auto vk_specular_tex = std::reinterpret_pointer_cast<renderer::VulkanImageView>(rt_ibl_specular_tex_.view);
     ibl_specular_image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     ibl_specular_image_info.imageView = vk_specular_tex->get();
     ibl_specular_image_info.sampler = vk_sampler->get();
     descriptor_writes.push_back(addDescriptWrite(vk_desc_set->get(), ibl_specular_image_info, GGX_ENV_TEX_INDEX));
 
-    // sheen_lut.
+    // sheen tex.
     static VkDescriptorImageInfo ibl_sheen_image_info = {};
-    auto vk_sheen_tex = std::reinterpret_pointer_cast<renderer::VulkanImageView>(ibl_sheen_tex_.view);
+    auto vk_sheen_tex = std::reinterpret_pointer_cast<renderer::VulkanImageView>(rt_ibl_sheen_tex_.view);
     ibl_sheen_image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     ibl_sheen_image_info.imageView = vk_sheen_tex->get();
     ibl_sheen_image_info.sampler = vk_sampler->get();
@@ -3777,15 +4279,53 @@ std::vector<VkWriteDescriptorSet> RealWorldApplication::addSkyboxTextures(
     auto vk_desc_set = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(description_set);
     auto vk_sampler = std::reinterpret_pointer_cast<renderer::VulkanSampler>(texture_sampler_);
     std::vector<VkWriteDescriptorSet> descriptor_writes;
-    descriptor_writes.reserve(3);
+    descriptor_writes.reserve(1);
 
     // envmap texture.
     static VkDescriptorImageInfo envmap_image_info = {};
-    auto vk_envmap_tex = std::reinterpret_pointer_cast<renderer::VulkanImageView>(envmap_tex_.view);
+    auto vk_envmap_tex = std::reinterpret_pointer_cast<renderer::VulkanImageView>(rt_envmap_tex_.view);
     envmap_image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     envmap_image_info.imageView = vk_envmap_tex->get();
     envmap_image_info.sampler = vk_sampler->get();
     descriptor_writes.push_back(addDescriptWrite(vk_desc_set->get(), envmap_image_info, BASE_COLOR_TEX_INDEX));
+
+    return descriptor_writes;
+}
+
+std::vector<VkWriteDescriptorSet> RealWorldApplication::addPanoramaTextures(
+    const std::shared_ptr<renderer::DescriptorSet>& description_set)
+{
+    auto vk_desc_set = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(description_set);
+    auto vk_sampler = std::reinterpret_pointer_cast<renderer::VulkanSampler>(texture_sampler_);
+    std::vector<VkWriteDescriptorSet> descriptor_writes;
+    descriptor_writes.reserve(1);
+
+    // envmap texture.
+    static VkDescriptorImageInfo panorama_image_info = {};
+    auto vk_panorama_tex = std::reinterpret_pointer_cast<renderer::VulkanImageView>(panorama_tex_.view);
+    panorama_image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    panorama_image_info.imageView = vk_panorama_tex->get();
+    panorama_image_info.sampler = vk_sampler->get();
+
+    descriptor_writes.push_back(addDescriptWrite(vk_desc_set->get(), panorama_image_info, PANORAMA_TEX_INDEX));
+
+    return descriptor_writes;
+}
+
+std::vector<VkWriteDescriptorSet> RealWorldApplication::addIblTextures(
+    const std::shared_ptr<renderer::DescriptorSet>& description_set)
+{
+    auto vk_desc_set = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(description_set);
+    auto vk_sampler = std::reinterpret_pointer_cast<renderer::VulkanSampler>(texture_sampler_);
+    std::vector<VkWriteDescriptorSet> descriptor_writes;
+    descriptor_writes.reserve(1);
+
+    static VkDescriptorImageInfo rt_envmap_image_info = {};
+    auto vk_rt_envmap_tex = std::reinterpret_pointer_cast<renderer::VulkanImageView>(rt_envmap_tex_.view);
+    rt_envmap_image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    rt_envmap_image_info.imageView = vk_rt_envmap_tex->get();
+    rt_envmap_image_info.sampler = vk_sampler->get();
+    descriptor_writes.push_back(addDescriptWrite(vk_desc_set->get(), rt_envmap_image_info, ENVMAP_TEX_INDEX));
 
     return descriptor_writes;
 }
@@ -3885,6 +4425,33 @@ void RealWorldApplication::createDescriptorSets() {
             nullptr);
     }
 
+    // ibl
+    {
+        // only one descriptor layout.
+        envmap_tex_desc_set_ = std::move(::createDescriptorSets(device_, descriptor_pool_, ibl_desc_set_layout_, 1)[0]);
+
+        // create a global ibl texture descriptor set.
+        auto ibl_texture_descs_write = addPanoramaTextures(envmap_tex_desc_set_);
+        vkUpdateDescriptorSets(vk_device->get(),
+            static_cast<uint32_t>(ibl_texture_descs_write.size()),
+            ibl_texture_descs_write.data(),
+            0,
+            nullptr);
+    }
+
+    // ibl
+    {
+        // only one descriptor layout.
+        ibl_tex_desc_set_ = std::move(::createDescriptorSets(device_, descriptor_pool_, ibl_desc_set_layout_, 1)[0]);
+
+        // create a global ibl texture descriptor set.
+        auto ibl_texture_descs_write = addIblTextures(ibl_tex_desc_set_);
+        vkUpdateDescriptorSets(vk_device->get(),
+            static_cast<uint32_t>(ibl_texture_descs_write.size()),
+            ibl_texture_descs_write.data(),
+            0,
+            nullptr);
+    }
 }
 
 void RealWorldApplication::createTextureImage(const std::string& file_name, renderer::Format format, renderer::TextureInfo& texture) {
@@ -3948,8 +4515,13 @@ void RealWorldApplication::cleanupSwapChain() {
     device_->freeCommandBuffers(command_pool_, command_buffers_);
     device_->destroyPipeline(gltf_pipeline_);
     device_->destroyPipeline(skybox_pipeline_);
+    device_->destroyPipeline(envmap_pipeline_);
+    device_->destroyPipeline(lambertian_pipeline_);
+    device_->destroyPipeline(ggx_pipeline_);
+    device_->destroyPipeline(charlie_pipeline_);
     device_->destroyPipelineLayout(gltf_pipeline_layout_);
     device_->destroyPipelineLayout(skybox_pipeline_layout_);
+    device_->destroyPipelineLayout(ibl_pipeline_layout_);
     device_->destroyRenderPass(render_pass_);
 
     for (auto image_view : swap_chain_image_views_) {
@@ -3981,10 +4553,11 @@ void RealWorldApplication::cleanup() {
     brdf_lut_tex_.destroy(device_);
     charlie_lut_tex_.destroy(device_);
     thin_film_lut_tex_.destroy(device_);
-    envmap_tex_.destroy(device_);
+    panorama_tex_.destroy(device_);
     ibl_diffuse_tex_.destroy(device_);
     ibl_specular_tex_.destroy(device_);
     ibl_sheen_tex_.destroy(device_);
+    rt_envmap_tex_.destroy(device_);
     rt_ibl_diffuse_tex_.destroy(device_);
     rt_ibl_specular_tex_.destroy(device_);
     rt_ibl_sheen_tex_.destroy(device_);
@@ -3992,6 +4565,7 @@ void RealWorldApplication::cleanup() {
     device_->destroyDescriptorSetLayout(global_tex_desc_set_layout_);
     device_->destroyDescriptorSetLayout(material_tex_desc_set_layout_);
     device_->destroyDescriptorSetLayout(skybox_desc_set_layout_);
+    device_->destroyDescriptorSetLayout(ibl_desc_set_layout_);
 
     vertex_buffer_.destroy(device_);
     index_buffer_.destroy(device_);
