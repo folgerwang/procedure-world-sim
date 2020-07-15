@@ -89,7 +89,9 @@ float Hammersley(uint i)
 vec3 getImportanceSampleDirection(vec3 normal, float sinTheta, float cosTheta, float phi)
 {
 	vec3 H = normalize(vec3(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta));
-    
+
+// Optimisation : filter banding fix.
+#if 0    
     vec3 bitangent = vec3(0.0, 1.0, 0.0);
 	
 	// Eliminates singularities.
@@ -108,7 +110,22 @@ vec3 getImportanceSampleDirection(vec3 normal, float sinTheta, float cosTheta, f
 			bitangent = vec3(0.0, 0.0, -1.0);
 		}
 	}
+#else
+	float theta = acos(normal.y);
+	float deta = 1.0f - normal.y * normal.y;
+	vec3 bitangent = vec3(1, 0, 0);
+	if (deta > 0.0f) {
+		float sin_theta = sqrt(1.0f - normal.y * normal.y);
+		float cos_theta = normal.y;
+		float cos_alpha = normal.x / sin_theta;
+		float sin_alpha = normal.z / sin_theta;
 
+		vec3 v1 = vec3(cos_theta * cos_alpha, -sin_theta, cos_theta * sin_alpha);
+		vec3 v2 = vec3(sin_theta * -sin_alpha, 0, sin_theta * cos_alpha);
+
+		bitangent = normalize(v1 + v2);
+	}
+#endif
     vec3 tangent = cross(bitangent, normal);
     bitangent = cross(normal, tangent);
     
@@ -160,12 +177,12 @@ float D_Charlie(float sheenRoughness, float NdotH)
 vec3 getSampleVector(uint sampleIndex, vec3 N, float roughness)
 {
 	float X = float(sampleIndex) / float(NUM_SAMPLES);
-	vec4 noise = hash44(vec4((N * 0.5 + 0.5), X)*3333);
+	float noise = hash11(X);
 
 	// give more samples closer to N.
-	float Y = pow(noise.y, 1.8);
+	float Y = pow(noise, 2.0);
 
-	float phi = 2.0 * UX3D_MATH_PI * noise.x;
+	float phi = 2.0 * UX3D_MATH_PI * X;
     float cosTheta = 0.f;
 	float sinTheta = 0.f;
 

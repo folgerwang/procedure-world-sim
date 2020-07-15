@@ -51,6 +51,8 @@
 // IBL texure index
 #define PANORAMA_TEX_INDEX          0
 #define ENVMAP_TEX_INDEX            0
+#define SRC_TEX_INDEX               0
+#define DST_TEX_INDEX               1
 
 #define FEATURE_MATERIAL_SPECULARGLOSSINESS     0x00000001
 #define FEATURE_MATERIAL_METALLICROUGHNESS      0x00000002
@@ -122,10 +124,13 @@ struct ModelParams {
 
 struct IblParams {
     float roughness;
-    uint sampleCount;
     uint currentMipLevel;
     uint width;
 	float lodBias;
+};
+
+struct IblComputeParams {
+    ivec4   size;
 };
 
 struct PbrMaterialParams {

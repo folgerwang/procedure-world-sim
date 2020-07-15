@@ -1652,9 +1652,38 @@ void addImageBarrier(const std::shared_ptr<work::renderer::CommandBuffer>& cmd_b
     );
 }
 
-void addAsColorOutputImageBarrier(
+struct ImageResourceInfo{
+    VkImageLayout           image_layout;
+    VkAccessFlags           access_flags;
+    VkPipelineStageFlags    stage_flags;
+};
+
+ImageResourceInfo image_source_info = {
+    VK_IMAGE_LAYOUT_UNDEFINED,
+    VK_ACCESS_SHADER_READ_BIT,
+    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT};
+
+ImageResourceInfo image_as_color_attachement = {
+    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+
+ImageResourceInfo image_as_store = {
+    VK_IMAGE_LAYOUT_GENERAL,
+    VK_ACCESS_SHADER_WRITE_BIT,
+    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT };
+
+ImageResourceInfo image_as_shader_sampler = {
+    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+    VK_ACCESS_SHADER_READ_BIT,
+    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT };
+
+void addImageBarrier(
     const std::shared_ptr<work::renderer::CommandBuffer>& cmd_buf, 
     const std::shared_ptr<work::renderer::Image>& image,
+    const ImageResourceInfo& src_info,
+    const ImageResourceInfo& dst_info,
     uint32_t base_mip = 0,
     uint32_t mip_count = 1,
     uint32_t base_layer = 0,
@@ -1662,35 +1691,12 @@ void addAsColorOutputImageBarrier(
     addImageBarrier(
         cmd_buf,
         image,
-        VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        VK_ACCESS_SHADER_READ_BIT,
-        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        base_mip,
-        mip_count,
-        base_layer,
-        layer_count);
-}
-
-void addAsShaderResourceImageBarrier(
-    const std::shared_ptr<work::renderer::CommandBuffer>& cmd_buf,
-    const std::shared_ptr<work::renderer::Image>& image,
-    uint32_t base_mip = 0,
-    uint32_t mip_count = 1,
-    uint32_t base_layer = 0,
-    uint32_t layer_count = 1)
-{
-    addImageBarrier(
-        cmd_buf,
-        image,
-        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        VK_ACCESS_SHADER_READ_BIT,
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        src_info.image_layout,
+        dst_info.image_layout,
+        src_info.access_flags,
+        dst_info.access_flags,
+        src_info.stage_flags,
+        dst_info.stage_flags,
         base_mip,
         mip_count,
         base_layer,
@@ -1708,6 +1714,9 @@ void generateMipmapLevels(
     auto vk_cmd_buf = std::reinterpret_pointer_cast<work::renderer::VulkanCommandBuffer>(cmd_buf);
     auto vk_image = std::reinterpret_pointer_cast<work::renderer::VulkanImage>(image);
 
+    ImageResourceInfo src_info = { cur_image_layout, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+    ImageResourceInfo src_as_transfer = { VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT };
+
     {
         VkImageSubresourceRange mipbaseRange{};
         mipbaseRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -1718,12 +1727,8 @@ void generateMipmapLevels(
         addImageBarrier(
             cmd_buf,
             image,
-            cur_image_layout,
-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-            VK_ACCESS_TRANSFER_READ_BIT,
-            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            src_info,
+            src_as_transfer,
             0, 1, 0, 6);
     }
 
@@ -1753,15 +1758,14 @@ void generateMipmapLevels(
         mipSubRange.levelCount = 1;
         mipSubRange.layerCount = 6u;
 
+        ImageResourceInfo src_mip_info = { VK_IMAGE_LAYOUT_UNDEFINED, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+        ImageResourceInfo dst_transfer_info = { VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT };
+
         addImageBarrier(
             cmd_buf,
             image,
-            VK_IMAGE_LAYOUT_UNDEFINED,
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-            VK_ACCESS_TRANSFER_WRITE_BIT,
-            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            src_mip_info,
+            dst_transfer_info,
             i, 1, 0, 6);
 
         vkCmdBlitImage(
@@ -1777,12 +1781,8 @@ void generateMipmapLevels(
         addImageBarrier(
             cmd_buf,
             image,
-            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            VK_ACCESS_TRANSFER_WRITE_BIT,
-            VK_ACCESS_TRANSFER_READ_BIT,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            dst_transfer_info,
+            src_as_transfer,
             i, 1, 0, 6);
     }
 
@@ -1790,12 +1790,8 @@ void generateMipmapLevels(
         addImageBarrier(
             cmd_buf,
             image,
-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            VK_ACCESS_TRANSFER_READ_BIT,
-            VK_ACCESS_SHADER_READ_BIT,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            src_as_transfer,
+            image_as_shader_sampler,
             0, mip_count, 0, 6);
     }
 }
@@ -2542,9 +2538,9 @@ void RealWorldApplication::initVulkan() {
     createCubemapFramebuffers();
     createDescriptorSetLayout();
     createCommandPool();
-    loadGltfModel("assets/Avocado.glb");
+//    loadGltfModel("assets/Avocado.glb");
 //    loadGltfModel("assets/BoomBox.glb");
-//    loadGltfModel("assets/DamagedHelmet.glb");
+    loadGltfModel("assets/DamagedHelmet.glb");
 //    loadGltfModel("assets/Duck.glb");
 //    loadGltfModel("assets/MetalRoughSpheres.glb");
 //    loadGltfModel("assets/BarramundiFish.glb");
@@ -2558,7 +2554,9 @@ void RealWorldApplication::initVulkan() {
     createGltfPipelineLayout();
     createSkyboxPipelineLayout();
     createCubemapPipelineLayout();
+    createCubemapComputePipelineLayout();
     createGraphicsPipeline();
+    createComputePipeline();
     createDepthResources();
     createFramebuffers();
     auto format = work::renderer::Format::R8G8B8A8_UNORM;
@@ -2598,7 +2596,9 @@ void RealWorldApplication::recreateSwapChain() {
     createGltfPipelineLayout();
     createSkyboxPipelineLayout();
     createCubemapPipelineLayout();
+    createCubemapComputePipelineLayout();
     createGraphicsPipeline();
+    createComputePipeline();
     createDepthResources();
     createFramebuffers();
     createUniformBuffers();
@@ -2854,6 +2854,30 @@ void RealWorldApplication::createCubemapFramebuffers() {
         1,
         renderer::Format::R16G16B16A16_SFLOAT,
         dump_copies,
+        tmp_ibl_diffuse_tex_);
+
+    createCubemapTexture(
+        kCubemapSize,
+        kCubemapSize,
+        num_mips,
+        renderer::Format::R16G16B16A16_SFLOAT,
+        dump_copies,
+        tmp_ibl_specular_tex_);
+
+    createCubemapTexture(
+        kCubemapSize,
+        kCubemapSize,
+        num_mips,
+        renderer::Format::R16G16B16A16_SFLOAT,
+        dump_copies,
+        tmp_ibl_sheen_tex_);
+
+    createCubemapTexture(
+        kCubemapSize,
+        kCubemapSize,
+        1,
+        renderer::Format::R16G16B16A16_SFLOAT,
+        dump_copies,
         rt_ibl_diffuse_tex_);
 
     createCubemapTexture(
@@ -2873,11 +2897,14 @@ void RealWorldApplication::createCubemapFramebuffers() {
         rt_ibl_sheen_tex_);
 }
 
-VkDescriptorSetLayoutBinding getTextureSamplerDescriptionSetLayoutBinding(uint32_t binding, uint32_t stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT) {
+VkDescriptorSetLayoutBinding getTextureSamplerDescriptionSetLayoutBinding(
+    uint32_t binding, 
+    uint32_t stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT,
+    VkDescriptorType descript_type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
     VkDescriptorSetLayoutBinding texture_binding{};
     texture_binding.binding = binding;
     texture_binding.descriptorCount = 1;
-    texture_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    texture_binding.descriptorType = descript_type;
     texture_binding.pImmutableSamplers = nullptr;
     texture_binding.stageFlags = stage_flags;
 
@@ -2939,6 +2966,18 @@ std::vector<std::shared_ptr<renderer::ShaderModule>> getIblShaderModules(
     return shader_modules;
 }
 
+std::vector<std::shared_ptr<renderer::ShaderModule>> getIblComputeShaderModules(
+    std::shared_ptr<renderer::Device> device)
+{
+    uint64_t compute_code_size;
+    std::vector<std::shared_ptr<renderer::ShaderModule>> shader_modules;
+    shader_modules.reserve(1);
+    auto compute_shader_code = readFile("src/shaders/ibl_smooth_comp.spv", compute_code_size);
+    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
+
+    return shader_modules;
+}
+
 std::vector<VkPipelineShaderStageCreateInfo> getShaderStages(
     std::vector<std::shared_ptr<renderer::ShaderModule>> shader_modules) {
     std::vector<VkPipelineShaderStageCreateInfo> shader_stages(shader_modules.size());
@@ -2953,7 +2992,6 @@ std::vector<VkPipelineShaderStageCreateInfo> getShaderStages(
     // todo.
     for (int i = 1; i < shader_modules.size(); i++) {
         auto vk_frag_shader_module = std::reinterpret_pointer_cast<renderer::VulkanShaderModule>(shader_modules[i]);
-        VkPipelineShaderStageCreateInfo frag_shader_stage_info{};
         shader_stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         shader_stages[i].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
         shader_stages[i].module = vk_frag_shader_module->get();
@@ -2962,6 +3000,23 @@ std::vector<VkPipelineShaderStageCreateInfo> getShaderStages(
 
     return shader_stages;
 }
+
+std::vector<VkPipelineShaderStageCreateInfo> getComputeShaderStages(
+    std::vector<std::shared_ptr<renderer::ShaderModule>> shader_modules) {
+    std::vector<VkPipelineShaderStageCreateInfo> shader_stages(shader_modules.size());
+
+    // todo.
+    for (int i = 0; i < shader_modules.size(); i++) {
+        auto vk_comp_shader_module = std::reinterpret_pointer_cast<renderer::VulkanShaderModule>(shader_modules[i]);
+        shader_stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        shader_stages[i].stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        shader_stages[i].module = vk_comp_shader_module->get();
+        shader_stages[i].pName = "main";
+    }
+
+    return shader_stages;
+}
+
 
 VkPipelineVertexInputStateCreateInfo fillVkPipelineVertexInputStateCreateInfo(
     const std::vector<VkVertexInputBindingDescription>& binding_descs,
@@ -3195,6 +3250,26 @@ void RealWorldApplication::createCubemapPipelineLayout()
     ibl_pipeline_layout_ = ::createPipelineLayout(device_, pipeline_layout_info);
 }
 
+void RealWorldApplication::createCubemapComputePipelineLayout()
+{
+    VkPushConstantRange push_const_range{};
+    push_const_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    push_const_range.offset = 0;
+    push_const_range.size = sizeof(IblComputeParams);
+
+    VkPipelineLayoutCreateInfo pipeline_layout_info{};
+    pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    // todo.
+    std::vector<VkDescriptorSetLayout> vk_layouts(1);
+    vk_layouts[0] = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSetLayout>(ibl_comp_desc_set_layout_)->get();
+    pipeline_layout_info.setLayoutCount = static_cast<uint32_t>(vk_layouts.size());
+    pipeline_layout_info.pSetLayouts = vk_layouts.data();
+    pipeline_layout_info.pushConstantRangeCount = 1;
+    pipeline_layout_info.pPushConstantRanges = &push_const_range;
+
+    ibl_comp_pipeline_layout_ = ::createPipelineLayout(device_, pipeline_layout_info);
+}
+
 void RealWorldApplication::createGraphicsPipeline() {
     auto viewport = fillViewport(swap_chain_extent_);
     auto scissor = fillScissor(swap_chain_extent_);
@@ -3354,6 +3429,40 @@ void RealWorldApplication::createGraphicsPipeline() {
         for (auto& shader_module : ibl_shader_modules) {
             device_->destroyShaderModule(shader_module);
         }
+    }
+}
+
+void RealWorldApplication::createComputePipeline()
+{
+    auto vk_device = std::reinterpret_pointer_cast<work::renderer::VulkanDevice>(device_);
+    assert(vk_device);
+
+    auto ibl_compute_shader_modules = getIblComputeShaderModules(device_);
+    auto ibl_compute_shader_stages = getComputeShaderStages(ibl_compute_shader_modules);
+
+    auto vk_ibl_comp_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(ibl_comp_pipeline_layout_);
+    assert(vk_ibl_comp_pipeline_layout);
+
+    // flags = 0, - e.g. disable optimization
+    VkComputePipelineCreateInfo pipeline_info = {};
+    pipeline_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeline_info.stage = ibl_compute_shader_stages[0];
+    pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
+    pipeline_info.basePipelineIndex = -1;
+    pipeline_info.layout = vk_ibl_comp_pipeline_layout->get();
+
+    VkPipeline compute_pipeline;
+    if (vkCreateComputePipelines(vk_device->get(), VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &compute_pipeline) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create compute pipeline!");
+    }
+
+    auto vk_blur_pipeline = std::make_shared<work::renderer::VulkanPipeline>();
+    vk_blur_pipeline->set(compute_pipeline);
+
+    blur_comp_pipeline_ = std::move(vk_blur_pipeline);
+
+    for (auto& shader_module : ibl_compute_shader_modules) {
+        device_->destroyShaderModule(shader_module);
     }
 }
 
@@ -3681,7 +3790,7 @@ void RealWorldApplication::drawFrame() {
 
     // generate envmap cubemap from panorama hdr image.
     {
-        addAsColorOutputImageBarrier(cmd_buf, rt_envmap_tex_.image, 0, 1, 0, 6);
+        addImageBarrier(cmd_buf, rt_envmap_tex_.image, image_source_info, image_as_color_attachement, 0, 1, 0, 6);
 
         cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, envmap_pipeline_);
 
@@ -3691,7 +3800,7 @@ void RealWorldApplication::drawFrame() {
         IblParams ibl_params = {};
 
         auto vk_ibl_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(ibl_pipeline_layout_);
-        vkCmdPushConstants(vk_cmd_buf->get(), vk_ibl_pipeline_layout->get(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(IblParams), &ibl_params);
+        vkCmdPushConstants(vk_cmd_buf->get(), vk_ibl_pipeline_layout->get(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ibl_params), &ibl_params);
 
         // todo.
         std::vector<VkDescriptorSet> desc_sets(1);
@@ -3717,7 +3826,7 @@ void RealWorldApplication::drawFrame() {
 
     // generate ibl diffuse texture.
     {
-        addAsColorOutputImageBarrier(cmd_buf, rt_ibl_diffuse_tex_.image, 0, 1, 0, 6);
+        addImageBarrier(cmd_buf, rt_ibl_diffuse_tex_.image, image_source_info, image_as_color_attachement, 0, 1, 0, 6);
 
         cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, lambertian_pipeline_);
 
@@ -3726,13 +3835,12 @@ void RealWorldApplication::drawFrame() {
 
         IblParams ibl_params = {};
         ibl_params.roughness = 1.0f;
-        ibl_params.sampleCount = 16;
         ibl_params.currentMipLevel = 0;
         ibl_params.width = kCubemapSize;
         ibl_params.lodBias = 0;
 
         auto vk_ibl_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(ibl_pipeline_layout_);
-        vkCmdPushConstants(vk_cmd_buf->get(), vk_ibl_pipeline_layout->get(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(IblParams), &ibl_params);
+        vkCmdPushConstants(vk_cmd_buf->get(), vk_ibl_pipeline_layout->get(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ibl_params), &ibl_params);
 
         // todo.
         std::vector<VkDescriptorSet> desc_sets(1);
@@ -3751,7 +3859,7 @@ void RealWorldApplication::drawFrame() {
 
         cmd_buf->endRenderPass();
 
-        addAsShaderResourceImageBarrier(cmd_buf, rt_ibl_diffuse_tex_.image, 0, 1, 0, 6);
+        addImageBarrier(cmd_buf, rt_ibl_diffuse_tex_.image, image_as_color_attachement, image_as_shader_sampler, 0, 1, 0, 6);
     }
 
     // generate ibl specular texture.
@@ -3760,7 +3868,7 @@ void RealWorldApplication::drawFrame() {
         cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, ggx_pipeline_);
 
         for (int i_mip = num_mips-1; i_mip >= 0; i_mip--) {
-            addAsColorOutputImageBarrier(cmd_buf, rt_ibl_specular_tex_.image, i_mip, 1, 0, 6);
+            addImageBarrier(cmd_buf, rt_ibl_specular_tex_.image, image_source_info, image_as_color_attachement, i_mip, 1, 0, 6);
 
             uint32_t width = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
             uint32_t height = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
@@ -3770,13 +3878,12 @@ void RealWorldApplication::drawFrame() {
 
             IblParams ibl_params = {};
             ibl_params.roughness = static_cast<float>(i_mip) / static_cast<float>(num_mips - 1);
-            ibl_params.sampleCount = 16;
             ibl_params.currentMipLevel = i_mip;
             ibl_params.width = kCubemapSize;
             ibl_params.lodBias = 0;
 
             auto vk_ibl_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(ibl_pipeline_layout_);
-            vkCmdPushConstants(vk_cmd_buf->get(), vk_ibl_pipeline_layout->get(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(IblParams), &ibl_params);
+            vkCmdPushConstants(vk_cmd_buf->get(), vk_ibl_pipeline_layout->get(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ibl_params), &ibl_params);
 
             // todo.
             std::vector<VkDescriptorSet> desc_sets(1);
@@ -3796,7 +3903,7 @@ void RealWorldApplication::drawFrame() {
             cmd_buf->endRenderPass();
         }
 
-        addAsShaderResourceImageBarrier(cmd_buf, rt_ibl_specular_tex_.image, 0, num_mips, 0, 6);
+        addImageBarrier(cmd_buf, rt_ibl_specular_tex_.image, image_as_color_attachement, image_as_shader_sampler, 0, num_mips, 0, 6);
     }
 
     // generate ibl sheen texture.
@@ -3805,7 +3912,7 @@ void RealWorldApplication::drawFrame() {
         cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, charlie_pipeline_);
 
         for (int i_mip = num_mips - 1; i_mip >= 0; i_mip--) {
-            addAsColorOutputImageBarrier(cmd_buf, rt_ibl_sheen_tex_.image, i_mip, 1, 0, 6);
+            addImageBarrier(cmd_buf, rt_ibl_sheen_tex_.image, image_source_info, image_as_color_attachement, i_mip, 1, 0, 6);
 
             uint32_t width = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
             uint32_t height = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
@@ -3815,13 +3922,12 @@ void RealWorldApplication::drawFrame() {
 
             IblParams ibl_params = {};
             ibl_params.roughness = static_cast<float>(i_mip) / static_cast<float>(num_mips - 1);
-            ibl_params.sampleCount = 32;
             ibl_params.currentMipLevel = i_mip;
             ibl_params.width = kCubemapSize;
             ibl_params.lodBias = 0;
 
             auto vk_ibl_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(ibl_pipeline_layout_);
-            vkCmdPushConstants(vk_cmd_buf->get(), vk_ibl_pipeline_layout->get(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(IblParams), &ibl_params);
+            vkCmdPushConstants(vk_cmd_buf->get(), vk_ibl_pipeline_layout->get(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ibl_params), &ibl_params);
 
             // todo.
             std::vector<VkDescriptorSet> desc_sets(1);
@@ -3841,7 +3947,41 @@ void RealWorldApplication::drawFrame() {
             cmd_buf->endRenderPass();
         }
 
-        addAsShaderResourceImageBarrier(cmd_buf, rt_ibl_sheen_tex_.image, 0, num_mips, 0, 6);
+        addImageBarrier(cmd_buf, rt_ibl_sheen_tex_.image, image_as_color_attachement, image_as_shader_sampler, 0, num_mips, 0, 6);
+    }
+
+    {
+        if (0)
+        {
+            addImageBarrier(cmd_buf, rt_ibl_diffuse_tex_.image, image_source_info, image_as_store, 0, 1, 0, 6);
+
+            cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, blur_comp_pipeline_);
+            IblComputeParams ibl_comp_params = {};
+            ibl_comp_params.size = glm::ivec4(kCubemapSize, kCubemapSize, 0, 0);
+
+            auto vk_ibl_comp_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(ibl_comp_pipeline_layout_);
+            vkCmdPushConstants(vk_cmd_buf->get(), vk_ibl_comp_pipeline_layout->get(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(ibl_comp_params), &ibl_comp_params);
+
+            // todo.
+            std::vector<VkDescriptorSet> desc_sets(1);
+            desc_sets[0] = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(ibl_diffuse_tex_desc_set_)->get();
+            vkCmdBindDescriptorSets(
+                vk_cmd_buf->get(),
+                VK_PIPELINE_BIND_POINT_COMPUTE,
+                vk_ibl_comp_pipeline_layout->get(),
+                0,
+                static_cast<uint32_t>(desc_sets.size()),
+                desc_sets.data(),
+                0,
+                nullptr);
+
+            vkCmdDispatch(vk_cmd_buf->get(), (kCubemapSize + 7) / 8, (kCubemapSize + 7) / 8, 6);
+
+            uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
+            addImageBarrier(cmd_buf, rt_ibl_diffuse_tex_.image, image_as_store, image_as_shader_sampler, 0, 1, 0, 6);
+            addImageBarrier(cmd_buf, rt_ibl_specular_tex_.image, image_source_info, image_as_shader_sampler, 0, num_mips, 0, 6);
+            addImageBarrier(cmd_buf, rt_ibl_sheen_tex_.image, image_source_info, image_as_shader_sampler, 0, num_mips, 0, 6);
+        }
     }
 
     // render gltf meshes.
@@ -4087,6 +4227,20 @@ void RealWorldApplication::createDescriptorSetLayout() {
 
         ibl_desc_set_layout_ = ::createDescriptorSetLayout(device_, layout_info);
     }
+
+    // ibl compute texture descriptor set layout.
+    {
+        std::vector<VkDescriptorSetLayoutBinding> bindings(2);
+        bindings[0] = getTextureSamplerDescriptionSetLayoutBinding(SRC_TEX_INDEX, VK_SHADER_STAGE_COMPUTE_BIT, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+        bindings[1] = getTextureSamplerDescriptionSetLayoutBinding(DST_TEX_INDEX, VK_SHADER_STAGE_COMPUTE_BIT, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+
+        VkDescriptorSetLayoutCreateInfo layout_info{};
+        layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
+        layout_info.pBindings = bindings.data();
+
+        ibl_comp_desc_set_layout_ = ::createDescriptorSetLayout(device_, layout_info);
+    }
 }
 
 void RealWorldApplication::createUniformBuffers() {
@@ -4107,7 +4261,7 @@ void RealWorldApplication::createUniformBuffers() {
 }
 
 void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, const glm::vec3& center, float radius) {
-    auto eye_pos = glm::vec3(3.0f, 0.0f, 0.0f) * radius;
+    auto eye_pos = glm::vec3(3.0f, -7.0f, 0.0f) * radius;
 
     ViewParams view_params{};
     view_params.camera_pos = glm::vec4(eye_pos + center, 0);
@@ -4120,11 +4274,13 @@ void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, const g
 }
 
 void RealWorldApplication::createDescriptorPool() {
-    std::array<VkDescriptorPoolSize, 2> pool_sizes{};
+    std::array<VkDescriptorPoolSize, 3> pool_sizes{};
     pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     pool_sizes[0].descriptorCount = 16;
     pool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     pool_sizes[1].descriptorCount = 64;
+    pool_sizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    pool_sizes[2].descriptorCount = 16;
     VkDescriptorPoolCreateInfo pool_info{};
     pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());;
@@ -4143,13 +4299,17 @@ void RealWorldApplication::createDescriptorPool() {
     descriptor_pool_ = std::move(vk_descriptor_pool);
 }
 
-VkWriteDescriptorSet addDescriptWrite(const VkDescriptorSet& description_set, const VkDescriptorImageInfo& image_info, uint32_t binding) {
+VkWriteDescriptorSet addDescriptWrite(
+    const VkDescriptorSet& description_set,
+    const VkDescriptorImageInfo& image_info,
+    uint32_t binding,
+    const VkDescriptorType& desc_type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
     VkWriteDescriptorSet result = {};
     result.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     result.dstSet = description_set;
     result.dstBinding = binding;
     result.dstArrayElement = 0;
-    result.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    result.descriptorType = desc_type;
     result.descriptorCount = 1;
     result.pImageInfo = &image_info;
 
@@ -4330,6 +4490,33 @@ std::vector<VkWriteDescriptorSet> RealWorldApplication::addIblTextures(
     return descriptor_writes;
 }
 
+std::vector<VkWriteDescriptorSet> RealWorldApplication::addIblComputeTextures(
+    const std::shared_ptr<renderer::DescriptorSet>& description_set,
+    const renderer::TextureInfo& src_tex,
+    const renderer::TextureInfo& dst_tex)
+{
+    auto vk_desc_set = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(description_set);
+    auto vk_sampler = std::reinterpret_pointer_cast<renderer::VulkanSampler>(texture_sampler_);
+    std::vector<VkWriteDescriptorSet> descriptor_writes;
+    descriptor_writes.reserve(2);
+
+    static VkDescriptorImageInfo rt_src_image_info = {};
+    auto vk_src_tex = std::reinterpret_pointer_cast<renderer::VulkanImageView>(src_tex.view);
+    rt_src_image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    rt_src_image_info.imageView = vk_src_tex->get();
+    rt_src_image_info.sampler = vk_sampler->get();
+    descriptor_writes.push_back(addDescriptWrite(vk_desc_set->get(), rt_src_image_info, SRC_TEX_INDEX, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE));
+
+    static VkDescriptorImageInfo rt_dst_image_info = {};
+    auto vk_dst_tex = std::reinterpret_pointer_cast<renderer::VulkanImageView>(dst_tex.view);
+    rt_dst_image_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    rt_dst_image_info.imageView = vk_dst_tex->get();
+    rt_dst_image_info.sampler = vk_sampler->get();
+    descriptor_writes.push_back(addDescriptWrite(vk_desc_set->get(), rt_dst_image_info, DST_TEX_INDEX, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE));
+
+    return descriptor_writes;
+}
+
 void RealWorldApplication::createDescriptorSets() {
     auto vk_device = std::reinterpret_pointer_cast<work::renderer::VulkanDevice>(device_);
     assert(vk_device);
@@ -4425,7 +4612,7 @@ void RealWorldApplication::createDescriptorSets() {
             nullptr);
     }
 
-    // ibl
+    // envmap
     {
         // only one descriptor layout.
         envmap_tex_desc_set_ = std::move(::createDescriptorSets(device_, descriptor_pool_, ibl_desc_set_layout_, 1)[0]);
@@ -4446,6 +4633,48 @@ void RealWorldApplication::createDescriptorSets() {
 
         // create a global ibl texture descriptor set.
         auto ibl_texture_descs_write = addIblTextures(ibl_tex_desc_set_);
+        vkUpdateDescriptorSets(vk_device->get(),
+            static_cast<uint32_t>(ibl_texture_descs_write.size()),
+            ibl_texture_descs_write.data(),
+            0,
+            nullptr);
+    }
+
+    // ibl diffuse compute
+    {
+        // only one descriptor layout.
+        ibl_diffuse_tex_desc_set_ = std::move(::createDescriptorSets(device_, descriptor_pool_, ibl_comp_desc_set_layout_, 1)[0]);
+
+        // create a global ibl texture descriptor set.
+        auto ibl_texture_descs_write = addIblComputeTextures(ibl_diffuse_tex_desc_set_, tmp_ibl_diffuse_tex_, rt_ibl_diffuse_tex_);
+        vkUpdateDescriptorSets(vk_device->get(),
+            static_cast<uint32_t>(ibl_texture_descs_write.size()),
+            ibl_texture_descs_write.data(),
+            0,
+            nullptr);
+    }
+
+    // ibl specular compute
+    {
+        // only one descriptor layout.
+        ibl_specular_tex_desc_set_ = std::move(::createDescriptorSets(device_, descriptor_pool_, ibl_comp_desc_set_layout_, 1)[0]);
+
+        // create a global ibl texture descriptor set.
+        auto ibl_texture_descs_write = addIblComputeTextures(ibl_specular_tex_desc_set_, tmp_ibl_specular_tex_, rt_ibl_specular_tex_);
+        vkUpdateDescriptorSets(vk_device->get(),
+            static_cast<uint32_t>(ibl_texture_descs_write.size()),
+            ibl_texture_descs_write.data(),
+            0,
+            nullptr);
+    }
+
+    // ibl sheen compute
+    {
+        // only one descriptor layout.
+        ibl_sheen_tex_desc_set_ = std::move(::createDescriptorSets(device_, descriptor_pool_, ibl_comp_desc_set_layout_, 1)[0]);
+
+        // create a global ibl texture descriptor set.
+        auto ibl_texture_descs_write = addIblComputeTextures(ibl_sheen_tex_desc_set_, tmp_ibl_sheen_tex_, rt_ibl_sheen_tex_);
         vkUpdateDescriptorSets(vk_device->get(),
             static_cast<uint32_t>(ibl_texture_descs_write.size()),
             ibl_texture_descs_write.data(),
@@ -4519,9 +4748,11 @@ void RealWorldApplication::cleanupSwapChain() {
     device_->destroyPipeline(lambertian_pipeline_);
     device_->destroyPipeline(ggx_pipeline_);
     device_->destroyPipeline(charlie_pipeline_);
+    device_->destroyPipeline(blur_comp_pipeline_);
     device_->destroyPipelineLayout(gltf_pipeline_layout_);
     device_->destroyPipelineLayout(skybox_pipeline_layout_);
     device_->destroyPipelineLayout(ibl_pipeline_layout_);
+    device_->destroyPipelineLayout(ibl_comp_pipeline_layout_);
     device_->destroyRenderPass(render_pass_);
 
     for (auto image_view : swap_chain_image_views_) {
@@ -4558,6 +4789,9 @@ void RealWorldApplication::cleanup() {
     ibl_specular_tex_.destroy(device_);
     ibl_sheen_tex_.destroy(device_);
     rt_envmap_tex_.destroy(device_);
+    tmp_ibl_diffuse_tex_.destroy(device_);
+    tmp_ibl_specular_tex_.destroy(device_);
+    tmp_ibl_sheen_tex_.destroy(device_);
     rt_ibl_diffuse_tex_.destroy(device_);
     rt_ibl_specular_tex_.destroy(device_);
     rt_ibl_sheen_tex_.destroy(device_);
@@ -4566,6 +4800,7 @@ void RealWorldApplication::cleanup() {
     device_->destroyDescriptorSetLayout(material_tex_desc_set_layout_);
     device_->destroyDescriptorSetLayout(skybox_desc_set_layout_);
     device_->destroyDescriptorSetLayout(ibl_desc_set_layout_);
+    device_->destroyDescriptorSetLayout(ibl_comp_desc_set_layout_);
 
     vertex_buffer_.destroy(device_);
     index_buffer_.destroy(device_);
@@ -5100,7 +5335,8 @@ void RealWorldApplication::createCubemapTexture(
 
     auto image_usage_flags =
         static_cast<renderer::ImageUsageFlags>(renderer::ImageUsageFlagBits::TRANSFER_DST_BIT) |
-        static_cast<renderer::ImageUsageFlags>(renderer::ImageUsageFlagBits::SAMPLED_BIT);
+        static_cast<renderer::ImageUsageFlags>(renderer::ImageUsageFlagBits::SAMPLED_BIT) |
+        static_cast<renderer::ImageUsageFlags>(renderer::ImageUsageFlagBits::STORAGE_BIT);
 
     if (use_as_framebuffer) {
         image_usage_flags |=
