@@ -133,6 +133,10 @@ struct IblComputeParams {
     ivec4   size;
 };
 
+struct SunSkyParams {
+    vec3    sun_pos;
+};
+
 struct PbrMaterialParams {
     vec4    base_color_factor;
 

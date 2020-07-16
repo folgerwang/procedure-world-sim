@@ -3215,6 +3215,11 @@ void RealWorldApplication::createGltfPipelineLayout()
 
 void RealWorldApplication::createSkyboxPipelineLayout()
 {
+    VkPushConstantRange push_const_range{};
+    push_const_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    push_const_range.offset = 0;
+    push_const_range.size = sizeof(SunSkyParams);
+
     std::vector<VkDescriptorSetLayout> vk_layouts;
     vk_layouts.reserve(3);
     vk_layouts.push_back(std::reinterpret_pointer_cast<renderer::VulkanDescriptorSetLayout>(skybox_desc_set_layout_)->get());
@@ -3224,8 +3229,8 @@ void RealWorldApplication::createSkyboxPipelineLayout()
     pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipeline_layout_info.setLayoutCount = static_cast<uint32_t>(vk_layouts.size());
     pipeline_layout_info.pSetLayouts = vk_layouts.data();
-    pipeline_layout_info.pushConstantRangeCount = 0;
-    pipeline_layout_info.pPushConstantRanges = nullptr;
+    pipeline_layout_info.pushConstantRangeCount = 1;
+    pipeline_layout_info.pPushConstantRanges = &push_const_range;
 
     skybox_pipeline_layout_ = ::createPipelineLayout(device_, pipeline_layout_info);
 }
@@ -4005,8 +4010,16 @@ void RealWorldApplication::drawFrame() {
             cmd_buf->bindVertexBuffers(0, buffers, offsets);
             cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, renderer::IndexType::UINT16);
 
-            // todo.
+            SunSkyParams sun_sky_params = {};
+
+            static float s_sun_angle = 0.0f;
+            sun_sky_params.sun_pos = glm::vec3(cos(s_sun_angle), sin(s_sun_angle), -0.3f);
+            s_sun_angle += 0.001f;
+
             auto vk_skybox_pipeline_layout = std::reinterpret_pointer_cast<renderer::VulkanPipelineLayout>(skybox_pipeline_layout_);
+            vkCmdPushConstants(vk_cmd_buf->get(), vk_skybox_pipeline_layout->get(), VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(sun_sky_params), &sun_sky_params);
+
+            // todo.
             std::vector<VkDescriptorSet> desc_sets(2);
             desc_sets[0] = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(skybox_tex_desc_set_)->get();
             desc_sets[1] = std::reinterpret_pointer_cast<renderer::VulkanDescriptorSet>(desc_sets_[image_index])->get();
@@ -4261,7 +4274,7 @@ void RealWorldApplication::createUniformBuffers() {
 }
 
 void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, const glm::vec3& center, float radius) {
-    auto eye_pos = glm::vec3(3.0f, -7.0f, 0.0f) * radius;
+    auto eye_pos = normalize(glm::vec3(-3.0f, -1.0f, 0.0f)) * 4.0f * radius;
 
     ViewParams view_params{};
     view_params.camera_pos = glm::vec4(eye_pos + center, 0);
