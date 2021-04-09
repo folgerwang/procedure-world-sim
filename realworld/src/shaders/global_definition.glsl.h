@@ -135,6 +135,7 @@ struct IblComputeParams {
 
 struct SunSkyParams {
     vec3    sun_pos;
+    float   pad;
 };
 
 struct PbrMaterialParams {

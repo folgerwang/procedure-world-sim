@@ -1,6 +1,7 @@
 #pragma once
 #include "renderer.h"
 #include "src/shaders/global_definition.glsl.h"
+#include "gltf.h"
 
 struct GLFWwindow;
 namespace work {
@@ -18,12 +19,6 @@ public:
 private:
     void initWindow();
     void initVulkan();
-    void createInstance();
-    void setupDebugMessenger();
-    void pickPhysicalDevice();
-    void createLogicalDevice();
-    void createSurface();
-    void createSwapChain();
     void createImageViews();
     void createCubemapFramebuffers();
     void createDescriptorSetLayout();
@@ -49,12 +44,11 @@ private:
     void createSyncObjects();
     void updateViewConstBuffer(uint32_t current_image, const glm::vec3& center, float radius);
     // todo remove vk interface here.
-    std::vector<VkWriteDescriptorSet> addGlobalTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set);
-    std::vector<VkWriteDescriptorSet> addGltfTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set, const renderer::MaterialInfo& material);
-    std::vector<VkWriteDescriptorSet> addSkyboxTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set);
-    std::vector<VkWriteDescriptorSet> addPanoramaTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set);
-    std::vector<VkWriteDescriptorSet> addIblTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set);
-    std::vector<VkWriteDescriptorSet> addIblComputeTextures(
+    std::vector<renderer::TextureDescriptor> addGlobalTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set);
+    std::vector<renderer::TextureDescriptor> addSkyboxTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set);
+    std::vector<renderer::TextureDescriptor> addPanoramaTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set);
+    std::vector<renderer::TextureDescriptor> addIblTextures(const std::shared_ptr<renderer::DescriptorSet>& description_set);
+    std::vector<renderer::TextureDescriptor> addIblComputeTextures(
         const std::shared_ptr<renderer::DescriptorSet>& description_set, 
         const renderer::TextureInfo& src_tex,
         const renderer::TextureInfo& dst_tex);
@@ -73,33 +67,23 @@ private:
     void cleanup();
     void cleanupSwapChain();
     void recreateSwapChain();
-    void loadGltfModel(const std::string& input_filename);
-    void createCubemapTexture(
-        uint32_t width, 
-        uint32_t height, 
-        uint32_t mip_count, 
-        renderer::Format format, 
-        const std::vector<work::renderer::BufferImageCopyInfo>& copy_regions, 
-        renderer::TextureInfo& texture,
-        uint64_t buffer_size = 0,
-        void* data = nullptr);
+
     void loadMtx2Texture(const std::string& input_filename, renderer::TextureInfo& texture);
 
 private:
-    GLFWwindow* window_;
-    VkInstance vk_instance_;
-    VkDebugUtilsMessengerEXT debug_messenger_;
-    std::shared_ptr<VkPhysicalDevice> vk_physical_device_;
+    GLFWwindow* window_ = nullptr;
+
+    renderer::DeviceInfo device_info_;
+    renderer::QueueFamilyIndices queue_indices_;
+
+    std::shared_ptr<renderer::Instance> instance_;
+    renderer::PhysicalDeviceList physical_devices_;
+    std::shared_ptr<renderer::PhysicalDevice> physical_device_;
     std::shared_ptr<renderer::Device> device_;
     std::shared_ptr<renderer::Queue> graphics_queue_;
     std::shared_ptr<renderer::Queue> present_queue_;
     std::shared_ptr<renderer::Surface> surface_;
-    std::shared_ptr<renderer::Swapchain> swap_chain_;
-    std::vector<std::shared_ptr<renderer::Image>> swap_chain_images_;
-    std::vector<std::shared_ptr<renderer::ImageView>> swap_chain_image_views_;
-    std::vector<std::shared_ptr<renderer::Framebuffer>> swap_chain_framebuffers_;
-    renderer::Format swap_chain_image_format_;
-    glm::uvec2 swap_chain_extent_;
+    renderer::SwapChainInfo swap_chain_info_;
     std::shared_ptr<renderer::DescriptorPool> descriptor_pool_;
     std::shared_ptr<renderer::DescriptorSetLayout> desc_set_layout_;
     std::vector<std::shared_ptr<renderer::DescriptorSet>> desc_sets_;
@@ -133,8 +117,6 @@ private:
     renderer::BufferInfo index_buffer_;
     renderer::TextureInfo sample_tex_;
     renderer::TextureInfo depth_buffer_;
-    renderer::TextureInfo black_tex_;
-    renderer::TextureInfo white_tex_;
     renderer::TextureInfo ggx_lut_tex_;
     renderer::TextureInfo brdf_lut_tex_;
     renderer::TextureInfo charlie_lut_tex_;
