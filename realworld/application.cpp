@@ -424,8 +424,8 @@ renderer::ShaderModuleList getGltfShaderModules(
         (has_tangent ? "_TN" : (has_normals ? "_N" : "")) +
         (has_skin_set_0 ? "_SKIN" : "");
     uint64_t vert_code_size, frag_code_size;
-    auto vert_shader_code = readFile("src/shaders/base_vert" + feature_str + ".spv", vert_code_size);
-    auto frag_shader_code = readFile("src/shaders/base_frag" + feature_str + ".spv", frag_code_size);
+    auto vert_shader_code = readFile("lib/shaders/base_vert" + feature_str + ".spv", vert_code_size);
+    auto frag_shader_code = readFile("lib/shaders/base_frag" + feature_str + ".spv", frag_code_size);
 
     shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
     shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
@@ -438,8 +438,8 @@ std::vector<std::shared_ptr<renderer::ShaderModule>> getSkyboxShaderModules(
 {
     uint64_t vert_code_size, frag_code_size;
     std::vector<std::shared_ptr<renderer::ShaderModule>> shader_modules(2);
-    auto vert_shader_code = readFile("src/shaders/skybox_vert.spv", vert_code_size);
-    auto frag_shader_code = readFile("src/shaders/skybox_frag.spv", frag_code_size);
+    auto vert_shader_code = readFile("lib/shaders/skybox_vert.spv", vert_code_size);
+    auto frag_shader_code = readFile("lib/shaders/skybox_frag.spv", frag_code_size);
 
     shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
     shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
@@ -452,8 +452,8 @@ std::vector<std::shared_ptr<renderer::ShaderModule>> getTileShaderModules(
 {
     uint64_t vert_code_size, frag_code_size;
     std::vector<std::shared_ptr<renderer::ShaderModule>> shader_modules(2);
-    auto vert_shader_code = readFile("src/shaders/tile_vert.spv", vert_code_size);
-    auto frag_shader_code = readFile("src/shaders/tile_frag.spv", frag_code_size);
+    auto vert_shader_code = readFile("lib/shaders/tile_vert.spv", vert_code_size);
+    auto frag_shader_code = readFile("lib/shaders/tile_frag.spv", frag_code_size);
 
     shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
     shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
@@ -467,17 +467,17 @@ std::vector<std::shared_ptr<renderer::ShaderModule>> getIblShaderModules(
     uint64_t vert_code_size, frag_code_size;
     std::vector<std::shared_ptr<renderer::ShaderModule>> shader_modules;
     shader_modules.reserve(7);
-    auto vert_shader_code = readFile("src/shaders/ibl_vert.spv", vert_code_size);
+    auto vert_shader_code = readFile("lib/shaders/ibl_vert.spv", vert_code_size);
     shader_modules.push_back(device->createShaderModule(vert_code_size, vert_shader_code.data()));
-    auto frag_shader_code = readFile("src/shaders/panorama_to_cubemap_frag.spv", frag_code_size);
+    auto frag_shader_code = readFile("lib/shaders/panorama_to_cubemap_frag.spv", frag_code_size);
     shader_modules.push_back(device->createShaderModule(frag_code_size, frag_shader_code.data()));
-    auto labertian_frag_shader_code = readFile("src/shaders/ibl_labertian_frag.spv", frag_code_size);
+    auto labertian_frag_shader_code = readFile("lib/shaders/ibl_labertian_frag.spv", frag_code_size);
     shader_modules.push_back(device->createShaderModule(frag_code_size, labertian_frag_shader_code.data()));
-    auto ggx_frag_shader_code = readFile("src/shaders/ibl_ggx_frag.spv", frag_code_size);
+    auto ggx_frag_shader_code = readFile("lib/shaders/ibl_ggx_frag.spv", frag_code_size);
     shader_modules.push_back(device->createShaderModule(frag_code_size, ggx_frag_shader_code.data()));
-    auto charlie_frag_shader_code = readFile("src/shaders/ibl_charlie_frag.spv", frag_code_size);
+    auto charlie_frag_shader_code = readFile("lib/shaders/ibl_charlie_frag.spv", frag_code_size);
     shader_modules.push_back(device->createShaderModule(frag_code_size, charlie_frag_shader_code.data()));
-    auto cube_skybox_shader_code = readFile("src/shaders/cube_skybox.spv", frag_code_size);
+    auto cube_skybox_shader_code = readFile("lib/shaders/cube_skybox.spv", frag_code_size);
     shader_modules.push_back(device->createShaderModule(frag_code_size, cube_skybox_shader_code.data()));
 
     return shader_modules;
@@ -489,7 +489,7 @@ std::vector<std::shared_ptr<renderer::ShaderModule>> getIblComputeShaderModules(
     uint64_t compute_code_size;
     std::vector<std::shared_ptr<renderer::ShaderModule>> shader_modules;
     shader_modules.reserve(1);
-    auto compute_shader_code = readFile("src/shaders/ibl_smooth_comp.spv", compute_code_size);
+    auto compute_shader_code = readFile("lib/shaders/ibl_smooth_comp.spv", compute_code_size);
     shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
 
     return shader_modules;
