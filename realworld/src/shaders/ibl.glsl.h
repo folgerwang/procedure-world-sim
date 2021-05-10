@@ -4,10 +4,10 @@ layout(set = PBR_GLOBAL_PARAMS_SET, binding = LAMBERTIAN_ENV_TEX_INDEX) uniform 
 layout(set = PBR_GLOBAL_PARAMS_SET, binding = CHARLIE_LUT_INDEX) uniform sampler2D charlie_lut;
 layout(set = PBR_GLOBAL_PARAMS_SET, binding = CHARLIE_ENV_TEX_INDEX) uniform samplerCube charlie_env_sampler;
 
-vec3 getIBLRadianceGGX(vec3 n, vec3 v, float perceptualRoughness, vec3 specularColor)
+vec3 getIBLRadianceGGX(vec3 n, vec3 v, float perceptualRoughness, vec3 specularColor, float mip_count)
 {
     float n_dot_v = clampedDot(n, v);
-    float lod = clamp(perceptualRoughness * float(material.mip_count), 0.0, float(material.mip_count));
+    float lod = clamp(perceptualRoughness * float(mip_count), 0.0, float(mip_count));
     vec3 reflection = normalize(reflect(-v, n));
 
     vec2 brdfSamplePoint = clamp(vec2(n_dot_v, perceptualRoughness), vec2(0.0, 0.0), vec2(1.0, 1.0));
@@ -23,7 +23,7 @@ vec3 getIBLRadianceGGX(vec3 n, vec3 v, float perceptualRoughness, vec3 specularC
     return specularLight * (specularColor * brdf.x + brdf.y);
 }
 
-vec3 getIBLRadianceTransmission(vec3 n, vec3 v, float perceptualRoughness, float ior, vec3 baseColor)
+vec3 getIBLRadianceTransmission(vec3 n, vec3 v, float perceptualRoughness, float ior, vec3 baseColor, float mip_count)
 {
     // Sample GGX LUT.
     float NdotV = clampedDot(n, v);
@@ -31,7 +31,7 @@ vec3 getIBLRadianceTransmission(vec3 n, vec3 v, float perceptualRoughness, float
     vec2 brdf = texture(ggx_lut, brdfSamplePoint).rg;
 
     // Sample GGX environment map.
-    float lod = clamp(perceptualRoughness * float(material.mip_count), 0.0, float(material.mip_count));
+    float lod = clamp(perceptualRoughness * float(mip_count), 0.0, float(mip_count));
 
     // Approximate double refraction by assuming a solid sphere beneath the point.
     vec3 r = refract(-v, n, 1.0 / ior);
@@ -59,10 +59,10 @@ vec3 getIBLRadianceLambertian(vec3 n, vec3 diffuseColor)
     return diffuseLight * diffuseColor;
 }
 
-vec3 getIBLRadianceCharlie(vec3 n, vec3 v, float sheenRoughness, vec3 sheenColor, float sheenIntensity)
+vec3 getIBLRadianceCharlie(vec3 n, vec3 v, float sheenRoughness, vec3 sheenColor, float sheenIntensity, float mip_count)
 {
     float NdotV = clampedDot(n, v);
-    float lod = clamp(sheenRoughness * float(material.mip_count), 0.0, float(material.mip_count));
+    float lod = clamp(sheenRoughness * float(mip_count), 0.0, float(mip_count));
     vec3 reflection = normalize(reflect(-v, n));
 
     vec2 brdfSamplePoint = clamp(vec2(NdotV, sheenRoughness), vec2(0.0, 0.0), vec2(1.0, 1.0));

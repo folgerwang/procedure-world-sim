@@ -133,6 +133,13 @@ struct IblComputeParams {
     ivec4   size;
 };
 
+struct TileParams {
+    vec2    min;
+    vec2    max;
+    ivec2   segment_count;
+    ivec2   pad;
+};
+
 struct SunSkyParams {
     vec3    sun_pos;
     float   pad;

@@ -17,6 +17,7 @@
 namespace {
 constexpr int kWindowSizeX = 1920;
 constexpr int kWindowSizeY = 1080;
+static float s_sun_angle = 0.0f;
 
 struct SkyBoxVertex {
     glm::vec3 pos;
@@ -35,6 +36,27 @@ struct SkyBoxVertex {
         attribute_descriptions[0].location = 0;
         attribute_descriptions[0].format = work::renderer::Format::R32G32B32_SFLOAT;
         attribute_descriptions[0].offset = offsetof(SkyBoxVertex, pos);
+        return attribute_descriptions;
+    }
+};
+
+struct TileVertex {
+    glm::vec2 height;
+
+    static std::vector<work::renderer::VertexInputBindingDescription> getBindingDescription() {
+        std::vector<work::renderer::VertexInputBindingDescription> binding_description(1);
+        binding_description[0].binding = 0;
+        binding_description[0].stride = sizeof(TileVertex);
+        binding_description[0].input_rate = work::renderer::VertexInputRate::VERTEX;
+        return binding_description;
+    }
+
+    static std::vector<work::renderer::VertexInputAttributeDescription> getAttributeDescriptions() {
+        std::vector<work::renderer::VertexInputAttributeDescription> attribute_descriptions(1);
+        attribute_descriptions[0].binding = 0;
+        attribute_descriptions[0].location = 0;
+        attribute_descriptions[0].format = work::renderer::Format::R32G32_SFLOAT;
+        attribute_descriptions[0].offset = offsetof(TileVertex, height);
         return attribute_descriptions;
     }
 };
@@ -113,12 +135,75 @@ static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
     app->setFrameBufferResized(true);
 }
 
+static bool s_exit_game = false;
+static bool s_mouse_init = false;
+static glm::vec2 s_last_mouse_pos;
+static float s_yaw = 0.0f;
+static float s_pitch = 0.0f;
+const float s_camera_speed = 0.2f;
+static glm::vec3 s_camera_pos = glm::vec3(0, -100.0f, 0);
+static glm::vec3 s_camera_dir = glm::normalize(glm::vec3(1.0f, 0.0f, 0));
+static glm::vec3 s_camera_up = glm::vec3(0, 1, 0);
+
+static void keyInputCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
+{
+    auto up_vector = abs(s_camera_dir[1]) < glm::min(abs(s_camera_dir[0]), abs(s_camera_dir[2])) ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+    auto camera_right = glm::normalize(glm::cross(s_camera_dir, s_camera_up));
+    if (action != GLFW_RELEASE) {
+        if (key == GLFW_KEY_W)
+            s_camera_pos += s_camera_speed * s_camera_dir;
+        if (key == GLFW_KEY_S)
+            s_camera_pos -= s_camera_speed * s_camera_dir;
+        if (key == GLFW_KEY_A)
+            s_camera_pos -= s_camera_speed * camera_right;
+        if (key == GLFW_KEY_D)
+            s_camera_pos += s_camera_speed * camera_right;
+    }
+
+    if (action == GLFW_PRESS && key == GLFW_KEY_ESCAPE) {
+        s_exit_game = true;
+    }
+}
+
+void mouseInputCallback(GLFWwindow* window, double xpos, double ypos)
+{
+    glm::vec2 cur_mouse_pos = glm::vec2(xpos, ypos);
+    if (!s_mouse_init)
+    {
+        s_last_mouse_pos = cur_mouse_pos;
+        s_mouse_init = true;
+    }
+
+    auto mouse_offset = cur_mouse_pos - s_last_mouse_pos;
+    s_last_mouse_pos = cur_mouse_pos;
+
+    float sensitivity = 0.01f;
+    mouse_offset *= sensitivity;
+
+    s_yaw += mouse_offset.x;
+    s_pitch += mouse_offset.y;
+
+    if (s_pitch > 89.0f)
+        s_pitch = 89.0f;
+    if (s_pitch < -89.0f)
+        s_pitch = -89.0f;
+
+    glm::vec3 direction;
+    direction.x = cos(glm::radians(-s_yaw)) * cos(glm::radians(s_pitch));
+    direction.y = sin(glm::radians(s_pitch));
+    direction.z = sin(glm::radians(-s_yaw)) * cos(glm::radians(s_pitch));
+    s_camera_dir = glm::normalize(direction);
+}
+
 void RealWorldApplication::initWindow() {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     window_ = glfwCreateWindow(kWindowSizeX, kWindowSizeY, "Vulkan", nullptr, nullptr);
     glfwSetWindowUserPointer(window_, this);
     glfwSetFramebufferSizeCallback(window_, framebufferResizeCallback);
+    glfwSetKeyCallback(window_, keyInputCallback);
+    glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    glfwSetCursorPosCallback(window_, mouseInputCallback);
 }
 
 void RealWorldApplication::createDepthResources()
@@ -170,8 +255,10 @@ void RealWorldApplication::initVulkan() {
     loadMtx2Texture("assets/environments/doge2/ggx/specular.ktx2", ibl_specular_tex_);
     loadMtx2Texture("assets/environments/doge2/charlie/sheen.ktx2", ibl_sheen_tex_);
     createGltfPipelineLayout();
+    createTileMeshPipelineLayout();
     createSkyboxPipelineLayout();
     createCubemapPipelineLayout();
+    createCubeSkyboxPipelineLayout();
     createCubemapComputePipelineLayout();
     createGraphicsPipeline();
     createComputePipeline();
@@ -192,6 +279,8 @@ void RealWorldApplication::initVulkan() {
     createDescriptorSets();
     createCommandBuffers();
     createSyncObjects();
+
+    tile_mesh_ = std::make_shared<renderer::TileMesh> (device_info_, glm::uvec2(256, 256), glm::vec2(-100.0f, -100.0f), glm::vec2(100.0f, 100.0f));
 }
 
 void RealWorldApplication::recreateSwapChain() {
@@ -358,12 +447,26 @@ std::vector<std::shared_ptr<renderer::ShaderModule>> getSkyboxShaderModules(
     return shader_modules;
 }
 
+std::vector<std::shared_ptr<renderer::ShaderModule>> getTileShaderModules(
+    std::shared_ptr<renderer::Device> device)
+{
+    uint64_t vert_code_size, frag_code_size;
+    std::vector<std::shared_ptr<renderer::ShaderModule>> shader_modules(2);
+    auto vert_shader_code = readFile("src/shaders/tile_vert.spv", vert_code_size);
+    auto frag_shader_code = readFile("src/shaders/tile_frag.spv", frag_code_size);
+
+    shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
+    shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
+
+    return shader_modules;
+}
+
 std::vector<std::shared_ptr<renderer::ShaderModule>> getIblShaderModules(
     std::shared_ptr<renderer::Device> device)
 {
     uint64_t vert_code_size, frag_code_size;
     std::vector<std::shared_ptr<renderer::ShaderModule>> shader_modules;
-    shader_modules.reserve(6);
+    shader_modules.reserve(7);
     auto vert_shader_code = readFile("src/shaders/ibl_vert.spv", vert_code_size);
     shader_modules.push_back(device->createShaderModule(vert_code_size, vert_shader_code.data()));
     auto frag_shader_code = readFile("src/shaders/panorama_to_cubemap_frag.spv", frag_code_size);
@@ -374,6 +477,8 @@ std::vector<std::shared_ptr<renderer::ShaderModule>> getIblShaderModules(
     shader_modules.push_back(device->createShaderModule(frag_code_size, ggx_frag_shader_code.data()));
     auto charlie_frag_shader_code = readFile("src/shaders/ibl_charlie_frag.spv", frag_code_size);
     shader_modules.push_back(device->createShaderModule(frag_code_size, charlie_frag_shader_code.data()));
+    auto cube_skybox_shader_code = readFile("src/shaders/cube_skybox.spv", frag_code_size);
+    shader_modules.push_back(device->createShaderModule(frag_code_size, cube_skybox_shader_code.data()));
 
     return shader_modules;
 }
@@ -408,6 +513,23 @@ void RealWorldApplication::createGltfPipelineLayout()
     gltf_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
 
+void RealWorldApplication::createTileMeshPipelineLayout()
+{
+    renderer::PushConstantRange push_const_range{};
+    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
+                                   SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
+    push_const_range.offset = 0;
+    push_const_range.size = sizeof(TileParams);
+
+    renderer::DescriptorSetLayoutList desc_set_layouts;
+    desc_set_layouts.reserve(3);
+    desc_set_layouts.push_back(global_tex_desc_set_layout_);
+    desc_set_layouts.push_back(desc_set_layout_);
+    desc_set_layouts.push_back(skybox_desc_set_layout_);
+
+    tile_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
+}
+
 void RealWorldApplication::createSkyboxPipelineLayout()
 {
     renderer::PushConstantRange push_const_range{};
@@ -434,6 +556,19 @@ void RealWorldApplication::createCubemapPipelineLayout()
     desc_set_layouts[0] = ibl_desc_set_layout_;
 
     ibl_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
+}
+
+void RealWorldApplication::createCubeSkyboxPipelineLayout()
+{
+    renderer::PushConstantRange push_const_range{};
+    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
+    push_const_range.offset = 0;
+    push_const_range.size = sizeof(SunSkyParams);
+
+    renderer::DescriptorSetLayoutList desc_set_layouts(1);
+    desc_set_layouts[0] = ibl_desc_set_layout_;
+
+    cube_skybox_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
 
 void RealWorldApplication::createCubemapComputePipelineLayout()
@@ -632,6 +767,26 @@ void RealWorldApplication::createGraphicsPipeline() {
     input_assembly.topology = renderer::PrimitiveTopology::TRIANGLE_LIST;
     input_assembly.restart_enable = false;
     {
+        auto shader_modules = getTileShaderModules(device_);
+        tile_pipeline_ = device_->createPipeline(
+            render_pass_,
+            tile_pipeline_layout_,
+            TileVertex::getBindingDescription(),
+            TileVertex::getAttributeDescriptions(),
+            input_assembly,
+            color_blending,
+            rasterizer,
+            multisampling,
+            depth_stencil,
+            shader_modules,
+            swap_chain_info_.extent);
+
+        for (auto& shader_module : shader_modules) {
+            device_->destroyShaderModule(shader_module);
+        }
+    }
+
+    {
         auto shader_modules = getSkyboxShaderModules(device_);
         skybox_pipeline_ = device_->createPipeline(
             render_pass_,
@@ -653,6 +808,18 @@ void RealWorldApplication::createGraphicsPipeline() {
 
     {
         auto ibl_shader_modules = getIblShaderModules(device_);
+        cube_skybox_pipeline_ = device_->createPipeline(
+            cubemap_render_pass_,
+            cube_skybox_pipeline_layout_,
+            {}, {},
+            input_assembly,
+            cubemap_color_blending,
+            ibl_rasterizer,
+            multisampling,
+            cubemap_depth_stencil,
+            { ibl_shader_modules[0], ibl_shader_modules[5] },
+            glm::uvec2(kCubemapSize, kCubemapSize));
+
         envmap_pipeline_ = device_->createPipeline(
             cubemap_render_pass_,
             ibl_pipeline_layout_,
@@ -922,7 +1089,7 @@ void RealWorldApplication::createCommandBuffers() {
 }
 
 void RealWorldApplication::mainLoop() {
-    while (!glfwWindowShouldClose(window_)) {
+    while (!glfwWindowShouldClose(window_) && !s_exit_game) {
         glfwPollEvents();
         drawFrame();
     }
@@ -992,8 +1159,9 @@ void RealWorldApplication::drawFrame() {
     cmd_buf->reset(0);
     cmd_buf->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
 
-    // generate envmap cubemap from panorama hdr image.
+    if (0)
     {
+        // generate envmap cubemap from panorama hdr image.
         cmd_buf->addImageBarrier(
             rt_envmap_tex_.image,
             renderer::Helper::getImageAsSource(),
@@ -1009,6 +1177,40 @@ void RealWorldApplication::drawFrame() {
         cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
 
         cmd_buf->bindDescriptorSets(renderer::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { envmap_tex_desc_set_ });
+
+        cmd_buf->draw(3);
+
+        cmd_buf->endRenderPass();
+
+        uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
+
+        renderer::Helper::generateMipmapLevels(
+            cmd_buf,
+            rt_envmap_tex_.image,
+            num_mips,
+            kCubemapSize,
+            kCubemapSize,
+            renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+    }
+    else {
+        // generate envmap from skybox.
+        cmd_buf->addImageBarrier(
+            rt_envmap_tex_.image,
+            renderer::Helper::getImageAsSource(),
+            renderer::Helper::getImageAsColorAttachment(),
+            0, 1, 0, 6);
+
+        cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, cube_skybox_pipeline_);
+
+        std::vector<renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
+        cmd_buf->beginRenderPass(cubemap_render_pass_, rt_envmap_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
+
+        SunSkyParams sun_sky_params = {};
+        sun_sky_params.sun_pos = glm::vec3(cos(s_sun_angle), sin(s_sun_angle), -0.3f);
+
+        cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), cube_skybox_pipeline_layout_, &sun_sky_params, sizeof(sun_sky_params));
+
+        cmd_buf->bindDescriptorSets(renderer::PipelineBindPoint::GRAPHICS, cube_skybox_pipeline_layout_, { envmap_tex_desc_set_ });
 
         cmd_buf->draw(3);
 
@@ -1173,15 +1375,16 @@ void RealWorldApplication::drawFrame() {
         }
     }
 
-    // render gltf meshes.
-    auto model_mat = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     {
         cmd_buf->beginRenderPass(
             render_pass_,
             swap_chain_info_.framebuffers[image_index],
             swap_chain_info_.extent, clear_values);
+
+        // render gltf meshes.
         cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, gltf_pipeline_);
 
+        auto model_mat = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
         for (auto node_idx : gltf_object_->scenes_[root_node].nodes_) {
             renderer::drawNodes(cmd_buf,
                 gltf_object_,
@@ -1191,6 +1394,13 @@ void RealWorldApplication::drawFrame() {
                 node_idx,
                 image_index,
                 model_mat);
+        }
+
+        // render terrain.
+        {
+            cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, tile_pipeline_);
+            renderer::DescriptorSetList desc_sets{ global_tex_desc_set_, desc_sets_[image_index], skybox_tex_desc_set_ };
+            tile_mesh_->draw(cmd_buf, tile_pipeline_layout_, desc_sets);
         }
 
         // render skybox.
@@ -1205,7 +1415,6 @@ void RealWorldApplication::drawFrame() {
             cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, renderer::IndexType::UINT16);
 
             SunSkyParams sun_sky_params = {};
-            static float s_sun_angle = 0.0f;
             sun_sky_params.sun_pos = glm::vec3(cos(s_sun_angle), sin(s_sun_angle), -0.3f);
             s_sun_angle += 0.001f;
             cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), skybox_pipeline_layout_, &sun_sky_params, sizeof(sun_sky_params));
@@ -1368,7 +1577,8 @@ void RealWorldApplication::createDescriptorSetLayout() {
         ubo_layout_binding.binding = VIEW_CONSTANT_INDEX;
         ubo_layout_binding.descriptor_count = 1;
         ubo_layout_binding.descriptor_type = renderer::DescriptorType::UNIFORM_BUFFER;
-        ubo_layout_binding.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
+        ubo_layout_binding.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | 
+                                         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
         ubo_layout_binding.immutable_samplers = nullptr; // Optional
         bindings[0] = ubo_layout_binding;
 
@@ -1415,19 +1625,19 @@ void RealWorldApplication::createUniformBuffers() {
         device_->createBuffer(
             buffer_size, 
             SET_FLAG_BIT(BufferUsage, UNIFORM_BUFFER_BIT),
-            SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) | SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+            SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+            SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
             view_const_buffers_[i].buffer,
             view_const_buffers_[i].memory);
     }
 }
 
 void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, const glm::vec3& center, float radius) {
-    auto eye_pos = normalize(glm::vec3(-3.0f, -1.0f, 0.0f)) * 4.0f * radius;
     auto aspect = swap_chain_info_.extent.x / (float)swap_chain_info_.extent.y;
 
     ViewParams view_params{};
-    view_params.camera_pos = glm::vec4(eye_pos + center, 0);
-    view_params.view = glm::lookAt(eye_pos + center, center, glm::vec3(0.0f, 1.0f, 0.0f));
+    view_params.camera_pos = glm::vec4(s_camera_pos, 0);
+    view_params.view = glm::lookAt(s_camera_pos, s_camera_pos + s_camera_dir, s_camera_up);
     view_params.proj = glm::perspective(glm::radians(45.0f), aspect, 1.0f * radius, 10000.0f);
     view_params.proj[1][1] *= -1;
     view_params.input_features = glm::vec4(gltf_object_->meshes_[0].primitives_[0].has_tangent_ ? FEATURE_INPUT_HAS_TANGENT : 0, 0, 0, 0);
@@ -1652,15 +1862,19 @@ void RealWorldApplication::cleanupSwapChain() {
 
     device_->freeCommandBuffers(command_pool_, command_buffers_);
     device_->destroyPipeline(gltf_pipeline_);
+    device_->destroyPipeline(tile_pipeline_);
     device_->destroyPipeline(skybox_pipeline_);
     device_->destroyPipeline(envmap_pipeline_);
+    device_->destroyPipeline(cube_skybox_pipeline_);
     device_->destroyPipeline(lambertian_pipeline_);
     device_->destroyPipeline(ggx_pipeline_);
     device_->destroyPipeline(charlie_pipeline_);
     device_->destroyPipeline(blur_comp_pipeline_);
     device_->destroyPipelineLayout(gltf_pipeline_layout_);
+    device_->destroyPipelineLayout(tile_pipeline_layout_);
     device_->destroyPipelineLayout(skybox_pipeline_layout_);
     device_->destroyPipelineLayout(ibl_pipeline_layout_);
+    device_->destroyPipelineLayout(cube_skybox_pipeline_layout_);
     device_->destroyPipelineLayout(ibl_comp_pipeline_layout_);
     device_->destroyRenderPass(render_pass_);
 
@@ -1715,6 +1929,8 @@ void RealWorldApplication::cleanup() {
 
     vertex_buffer_.destroy(device_);
     index_buffer_.destroy(device_);
+
+    tile_mesh_->destory();
 
     for (uint64_t i = 0; i < kMaxFramesInFlight; i++) {
         device_->destroySemaphore(render_finished_semaphores_[i]);

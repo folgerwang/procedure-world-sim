@@ -612,15 +612,15 @@ void main() {
 
     // Calculate lighting contribution from image based lighting source (IBL)
 #ifdef USE_IBL
-    f_specular += getIBLRadianceGGX(n, v, material_info.perceptualRoughness, material_info.f0);
+    f_specular += getIBLRadianceGGX(n, v, material_info.perceptualRoughness, material_info.f0, material.mip_count);
     f_diffuse += getIBLRadianceLambertian(n, material_info.albedoColor);
 
     if (enable_clearcoat) {
-        f_clearcoat += getIBLRadianceGGX(material_info.clearcoatNormal, v, material_info.clearcoatRoughness, material_info.clearcoatF0);
+        f_clearcoat += getIBLRadianceGGX(material_info.clearcoatNormal, v, material_info.clearcoatRoughness, material_info.clearcoatF0, material.mip_count);
     }
 
     if (enable_sheen) {
-        f_sheen += getIBLRadianceCharlie(n, v, material_info.sheenRoughness, material_info.sheenColor, material_info.sheenIntensity);
+        f_sheen += getIBLRadianceCharlie(n, v, material_info.sheenRoughness, material_info.sheenColor, material_info.sheenIntensity, material.mip_count);
     }
 
     if (enable_subsurface) {
@@ -628,7 +628,7 @@ void main() {
     }
 
     if (enable_transmission) {
-        f_transmission += getIBLRadianceTransmission(n, v, material_info.perceptualRoughness, ior, material_info.baseColor);
+        f_transmission += getIBLRadianceTransmission(n, v, material_info.perceptualRoughness, ior, material_info.baseColor, material.mip_count);
     }
 #endif
 

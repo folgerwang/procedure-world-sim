@@ -13,6 +13,9 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Source Files\shaders">
+      <UniqueIdentifier>{5ad07a34-4873-40fe-ab9b-1c064d213dc1}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -53,5 +56,67 @@
     <ClInclude Include="gltf.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\shaders\functions.glsl.h">
+      <Filter>Source Files\shaders</Filter>
+    </ClInclude>
+    <ClInclude Include="src\shaders\global_definition.glsl.h">
+      <Filter>Source Files\shaders</Filter>
+    </ClInclude>
+    <ClInclude Include="src\shaders\ibl.glsl.h">
+      <Filter>Source Files\shaders</Filter>
+    </ClInclude>
+    <ClInclude Include="src\shaders\noise.glsl.h">
+      <Filter>Source Files\shaders</Filter>
+    </ClInclude>
+    <ClInclude Include="src\shaders\punctual.glsl.h">
+      <Filter>Source Files\shaders</Filter>
+    </ClInclude>
+    <ClInclude Include="src\shaders\sun.glsl.h">
+      <Filter>Source Files\shaders</Filter>
+    </ClInclude>
+    <ClInclude Include="src\shaders\sunlight_scattering.glsl.h">
+      <Filter>Source Files\shaders</Filter>
+    </ClInclude>
+    <ClInclude Include="src\shaders\brdf.glsl.h">
+      <Filter>Source Files\shaders</Filter>
+    </ClInclude>
+    <ClInclude Include="terrain.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="src\shaders\cube_ibl.frag">
+      <Filter>Source Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\cube.vert">
+      <Filter>Source Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\ibl_smooth.comp">
+      <Filter>Source Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\skybox.frag">
+      <Filter>Source Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\skybox.vert">
+      <Filter>Source Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\tile.frag">
+      <Filter>Source Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\tile.vert">
+      <Filter>Source Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\base.frag">
+      <Filter>Source Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\base.vert">
+      <Filter>Source Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\glsl_compile.bat">
+      <Filter>Source Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\cube_skybox.frag">
+      <Filter>Source Files\shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

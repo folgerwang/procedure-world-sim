@@ -17,6 +17,8 @@
 #include <GLFW/glfw3.h>
 
 #include "renderer.h"
+#include "terrain.h"
+#include "src/shaders/global_definition.glsl.h"
 
 #if 0
 float tree_line = 0.0f;
@@ -1510,7 +1512,7 @@ static void generateTileMesh(const glm::vec3 corners[4], const glm::uvec2& segme
 }
 #endif
 
-std::vector<glm::vec2> generateTileMesh(const glm::vec3 corners[4], const glm::uvec2& segment_count) {
+std::vector<glm::vec2> generateTileMeshVertex(const glm::vec3 corners[4], const glm::uvec2& segment_count) {
     std::vector<glm::vec2> height_map;
     auto height_map_size = (segment_count.x + 1) * (segment_count.y + 1);
     height_map.resize(height_map_size);
@@ -1531,3 +1533,98 @@ std::vector<glm::vec2> generateTileMesh(const glm::vec3 corners[4], const glm::u
 
     return height_map;
 }
+
+std::vector<uint32_t> generateTileMeshIndex(const glm::uvec2& segment_count) {
+    std::vector<uint32_t> index_buffer;
+    index_buffer.resize(segment_count.x * segment_count.y * 6);
+    uint32_t* p_index_buffer = index_buffer.data();
+    const uint32_t line_index_count = segment_count.x + 1;
+    for (uint32_t y = 0; y < segment_count.y; y++) {
+        for (uint32_t x = 0; x < segment_count.x; x++) {
+            uint32_t i00 = y * line_index_count + x;
+            uint32_t i01 = i00 + 1;
+            uint32_t i10 = i00 + line_index_count;
+            uint32_t i11 = i01 + line_index_count;
+            *p_index_buffer++ = i00;
+            *p_index_buffer++ = i10;
+            *p_index_buffer++ = i01;
+            *p_index_buffer++ = i10;
+            *p_index_buffer++ = i11;
+            *p_index_buffer++ = i01;
+        }
+    }
+
+    uint32_t index_buffer_size = p_index_buffer - index_buffer.data();
+
+    assert(index_buffer_size == segment_count.x * segment_count.y * 6);
+
+    return index_buffer;
+}
+
+namespace work {
+namespace renderer {
+
+void TileMesh::destory() {
+    vertex_buffer_.destroy(device_info_.device);
+    index_buffer_.destroy(device_info_.device);
+}
+
+void TileMesh::generateMesh() {
+    glm::vec3 corners[4];
+    corners[0] = glm::vec3(min_.x, 0.0f, min_.y);
+    corners[1] = glm::vec3(min_.x, 0.0f, max_.y);
+    corners[2] = glm::vec3(max_.x, 0.0f, max_.y);
+    corners[3] = glm::vec3(max_.x, 0.0f, min_.y);
+
+    auto height_map = generateTileMeshVertex(corners, segment_count_);
+
+    uint64_t buffer_size = sizeof(height_map[0]) * height_map.size();
+
+    renderer::Helper::createBufferWithSrcData(
+        device_info_,
+        SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT),
+        buffer_size,
+        height_map.data(),
+        vertex_buffer_.buffer,
+        vertex_buffer_.memory);
+
+    auto index_buffer = generateTileMeshIndex(segment_count_);
+
+    buffer_size =
+        sizeof(index_buffer[0]) * index_buffer.size();
+
+    renderer::Helper::createBufferWithSrcData(
+        device_info_,
+        SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT),
+        buffer_size,
+        index_buffer.data(),
+        index_buffer_.buffer,
+        index_buffer_.memory);
+}
+
+void TileMesh::draw(const std::shared_ptr<CommandBuffer>& cmd_buf,
+    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout,
+    const renderer::DescriptorSetList& desc_set_list)
+{
+    std::vector<std::shared_ptr<Buffer>> buffers(1);
+    std::vector<uint64_t> offsets(1);
+    buffers[0] = vertex_buffer_.buffer;
+    offsets[0] = 0;
+
+    cmd_buf->bindVertexBuffers(0, buffers, offsets);
+    cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, renderer::IndexType::UINT32);
+
+    TileParams tile_params = {};
+    tile_params.min = min_;
+    tile_params.max = max_;
+    tile_params.segment_count = segment_count_;
+    cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
+        pipeline_layout, &tile_params, sizeof(tile_params));
+
+    cmd_buf->bindDescriptorSets(renderer::PipelineBindPoint::GRAPHICS, pipeline_layout, desc_set_list);
+
+    cmd_buf->drawIndexed(segment_count_.x * segment_count_.y * 6);
+}
+
+} // renderer
+} // work

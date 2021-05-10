@@ -2,6 +2,7 @@
 #include "renderer.h"
 #include "src/shaders/global_definition.glsl.h"
 #include "gltf.h"
+#include "terrain.h"
 
 struct GLFWwindow;
 namespace work {
@@ -25,8 +26,10 @@ private:
     void createGraphicsPipeline();
     void createComputePipeline();
     void createGltfPipelineLayout();
+    void createTileMeshPipelineLayout();
     void createSkyboxPipelineLayout();
     void createCubemapPipelineLayout();
+    void createCubeSkyboxPipelineLayout();
     void createCubemapComputePipelineLayout();
     void createRenderPass();
     void createCubemapRenderPass();
@@ -102,12 +105,16 @@ private:
     std::shared_ptr<renderer::RenderPass> render_pass_;
     std::shared_ptr<renderer::RenderPass> cubemap_render_pass_;
     std::shared_ptr<renderer::PipelineLayout> gltf_pipeline_layout_;
+    std::shared_ptr<renderer::PipelineLayout> tile_pipeline_layout_;
     std::shared_ptr<renderer::PipelineLayout> skybox_pipeline_layout_;
     std::shared_ptr<renderer::PipelineLayout> ibl_pipeline_layout_;
+    std::shared_ptr<renderer::PipelineLayout> cube_skybox_pipeline_layout_;
     std::shared_ptr<renderer::PipelineLayout> ibl_comp_pipeline_layout_;
     std::shared_ptr<renderer::Pipeline> gltf_pipeline_;
+    std::shared_ptr<renderer::Pipeline> tile_pipeline_;
     std::shared_ptr<renderer::Pipeline> skybox_pipeline_;
     std::shared_ptr<renderer::Pipeline> envmap_pipeline_;
+    std::shared_ptr<renderer::Pipeline> cube_skybox_pipeline_;
     std::shared_ptr<renderer::Pipeline> lambertian_pipeline_;
     std::shared_ptr<renderer::Pipeline> ggx_pipeline_;
     std::shared_ptr<renderer::Pipeline> charlie_pipeline_;
@@ -142,6 +149,7 @@ private:
     std::vector<std::shared_ptr<renderer::Fence>> images_in_flight_;
 
     std::shared_ptr<renderer::ObjectData> gltf_object_;
+    std::shared_ptr<renderer::TileMesh> tile_mesh_;
 
     uint64_t current_frame_ = 0;
     bool framebuffer_resized_ = false;
@@ -149,3 +157,6 @@ private:
 
 }//app
 }//work
+
+extern std::vector<glm::vec2> generateTileMeshVertex(const glm::vec3 corners[4], const glm::uvec2& segment_count);
+extern std::vector<uint16_t> generateTileMeshIndex(const glm::uvec2& segment_count);

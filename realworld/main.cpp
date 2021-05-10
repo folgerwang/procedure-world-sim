@@ -10,7 +10,6 @@
 #include "application.h"
 
 extern glm::vec4 getMainImage(const glm::vec2& frag_coord, const glm::ivec2& screen_size);
-extern std::vector<glm::vec2> generateTileMesh(const glm::vec3 corners[4], const glm::uvec2& segment_count);
 
 struct FillBlockParams {
     glm::ivec2 blk_ofs;
@@ -50,7 +49,7 @@ int main() {
                                 {100.0f, 0.0f, -100.0f} };
 
         const uint32_t w = 1920, h = 1080;
-        auto height_map = generateTileMesh(corners, glm::uvec2(w - 1, h - 1));
+        auto height_map = generateTileMeshVertex(corners, glm::uvec2(w - 1, h - 1));
 
         uint32_t file_size = 54 + 3 * w * h;
 
