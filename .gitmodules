@@ -4,3 +4,6 @@
 [submodule "realworld/src/third_party/glm"]
 	path = realworld/src/third_party/glm
 	url = git@github.com:g-truc/glm.git
+[submodule "realworld/src/third_party/Vulkan-Headers"]
+	path = realworld/src/third_party/Vulkan-Headers
+	url = git@github.com:KhronosGroup/Vulkan-Headers.git
