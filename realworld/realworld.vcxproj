@@ -100,10 +100,10 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <SDLCheck>true</SDLCheck>
+      <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\work\imgui;$(ProjectDir)src\third_party\glfw\include;$(ProjectDir)src\third_party\glm;$(ProjectDir)src\third_party\Vulkan-Headers\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\work\imgui;$(ProjectDir)src\third_party\glfw\include;$(ProjectDir)src\third_party\glm;$(ProjectDir)src\third_party\Vulkan-Headers\Include;$(ProjectDir)src\third_party\tinygltf;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -165,10 +165,10 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\ibl_s
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <SDLCheck>true</SDLCheck>
+      <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\work\imgui;$(ProjectDir)src\third_party\glfw\include;$(ProjectDir)src\third_party\glm;$(ProjectDir)src\third_party\Vulkan-Headers\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\work\imgui;$(ProjectDir)src\third_party\glfw\include;$(ProjectDir)src\third_party\glm;$(ProjectDir)src\third_party\Vulkan-Headers\Include;$(ProjectDir)src\third_party\tinygltf;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -228,10 +228,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\ibl_s
     <ClInclude Include="src\shaders\punctual.glsl.h" />
     <ClInclude Include="src\shaders\sun.glsl.h" />
     <ClInclude Include="src\shaders\sunlight_scattering.glsl.h" />
-    <ClInclude Include="stb_image.h" />
-    <ClInclude Include="stb_image_write.h" />
     <ClInclude Include="terrain.h" />
-    <ClInclude Include="tiny_gltf.h" />
     <ClInclude Include="tiny_mtx2.h" />
   </ItemGroup>
   <ItemGroup>
