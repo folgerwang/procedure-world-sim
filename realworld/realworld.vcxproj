@@ -109,38 +109,36 @@
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Console</SubSystem>
-      <AdditionalLibraryDirectories>C:\work\vulkan\1.2.141.2\Lib;$(ProjectDir)lib\$(IntDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(ProjectDir)src\third_party\vulkan_lib;$(ProjectDir)lib\$(IntDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>glfw3.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>mkdir $(ProjectDir)lib\shaders
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.vert -o $(ProjectDir)lib\shaders\base_vert.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.frag -o $(ProjectDir)lib\shaders\base_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -o $(ProjectDir)lib\shaders\base_vert_TEX.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -o $(ProjectDir)lib\shaders\base_frag_TEX.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe  $(ProjectDir)src\shaders\base.vert -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_vert_N.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe  $(ProjectDir)src\shaders\base.frag -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_frag_N.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_vert_TN.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_frag_TN.spv
-
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe  $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_vert_TEX_N.spv
-
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe  $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_frag_TEX_N.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_vert_TEX_TN.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_frag_TEX_TN.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_NORMALS=1 -DHAS_SKIN_SET_0=1 -o $(ProjectDir)lib\shaders\base_vert_N_SKIN.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_NORMALS=1 -DHAS_SKIN_SET_0=1 -o $(ProjectDir)lib\shaders\base_frag_N_SKIN.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\tile.vert -o $(ProjectDir)lib\shaders\tile_vert.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\tile.frag -o $(ProjectDir)lib\shaders\tile_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\skybox.vert -o $(ProjectDir)lib\shaders\skybox_vert.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\skybox.frag -o $(ProjectDir)lib\shaders\skybox_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\cube.vert -o $(ProjectDir)lib\shaders\ibl_vert.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DPANORAMA_TO_CUBEMAP=1 -DNUM_SAMPLES=1 -o $(ProjectDir)lib\shaders\panorama_to_cubemap_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DLAMBERTIAN_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_labertian_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DGGX_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_ggx_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DCHARLIE_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_charlie_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\cube_skybox.frag -o $(ProjectDir)lib\shaders\cube_skybox.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\ibl_smooth.comp -o $(ProjectDir)lib\shaders\ibl_smooth_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -o $(ProjectDir)lib\shaders\base_vert.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -o $(ProjectDir)lib\shaders\base_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -o $(ProjectDir)lib\shaders\base_vert_TEX.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -o $(ProjectDir)lib\shaders\base_frag_TEX.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe  $(ProjectDir)src\shaders\base.vert -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_vert_N.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe  $(ProjectDir)src\shaders\base.frag -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_frag_N.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_vert_TN.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_frag_TN.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe  $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_vert_TEX_N.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe  $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_frag_TEX_N.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_vert_TEX_TN.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_frag_TEX_TN.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_NORMALS=1 -DHAS_SKIN_SET_0=1 -o $(ProjectDir)lib\shaders\base_vert_N_SKIN.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_NORMALS=1 -DHAS_SKIN_SET_0=1 -o $(ProjectDir)lib\shaders\base_frag_N_SKIN.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.vert -o $(ProjectDir)lib\shaders\tile_vert.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -o $(ProjectDir)lib\shaders\tile_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\skybox.vert -o $(ProjectDir)lib\shaders\skybox_vert.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\skybox.frag -o $(ProjectDir)lib\shaders\skybox_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube.vert -o $(ProjectDir)lib\shaders\ibl_vert.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DPANORAMA_TO_CUBEMAP=1 -DNUM_SAMPLES=1 -o $(ProjectDir)lib\shaders\panorama_to_cubemap_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DLAMBERTIAN_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_labertian_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DGGX_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_ggx_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DCHARLIE_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_charlie_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_skybox.frag -o $(ProjectDir)lib\shaders\cube_skybox.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\ibl_smooth.comp -o $(ProjectDir)lib\shaders\ibl_smooth_comp.spv
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -178,38 +176,36 @@ C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\ibl_smooth.comp 
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Console</SubSystem>
-      <AdditionalLibraryDirectories>C:\work\vulkan\1.2.141.2\Lib;$(ProjectDir)lib\$(IntDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(ProjectDir)src\third_party\vulkan_lib;$(ProjectDir)lib\$(IntDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>glfw3.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>mkdir $(ProjectDir)lib\shaders
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.vert -o $(ProjectDir)lib\shaders\base_vert.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.frag -o $(ProjectDir)lib\shaders\base_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -o $(ProjectDir)lib\shaders\base_vert_TEX.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -o $(ProjectDir)lib\shaders\base_frag_TEX.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe  $(ProjectDir)src\shaders\base.vert -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_vert_N.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe  $(ProjectDir)src\shaders\base.frag -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_frag_N.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_vert_TN.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_frag_TN.spv
-
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe  $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_vert_TEX_N.spv
-
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe  $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_frag_TEX_N.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_vert_TEX_TN.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_frag_TEX_TN.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_NORMALS=1 -DHAS_SKIN_SET_0=1 -o $(ProjectDir)lib\shaders\base_vert_N_SKIN.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_NORMALS=1 -DHAS_SKIN_SET_0=1 -o $(ProjectDir)lib\shaders\base_frag_N_SKIN.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\tile.vert -o $(ProjectDir)lib\shaders\tile_vert.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\tile.frag -o $(ProjectDir)lib\shaders\tile_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\skybox.vert -o $(ProjectDir)lib\shaders\skybox_vert.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\skybox.frag -o $(ProjectDir)lib\shaders\skybox_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\cube.vert -o $(ProjectDir)lib\shaders\ibl_vert.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DPANORAMA_TO_CUBEMAP=1 -DNUM_SAMPLES=1 -o $(ProjectDir)lib\shaders\panorama_to_cubemap_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DLAMBERTIAN_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_labertian_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DGGX_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_ggx_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DCHARLIE_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_charlie_frag.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\cube_skybox.frag -o $(ProjectDir)lib\shaders\cube_skybox.spv
-C:\work\vulkan\1.2.141.2\Bin\glslc.exe $(ProjectDir)src\shaders\ibl_smooth.comp -o $(ProjectDir)lib\shaders\ibl_smooth_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -o $(ProjectDir)lib\shaders\base_vert.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -o $(ProjectDir)lib\shaders\base_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -o $(ProjectDir)lib\shaders\base_vert_TEX.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -o $(ProjectDir)lib\shaders\base_frag_TEX.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe  $(ProjectDir)src\shaders\base.vert -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_vert_N.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe  $(ProjectDir)src\shaders\base.frag -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_frag_N.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_vert_TN.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_frag_TN.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe  $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_vert_TEX_N.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe  $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_frag_TEX_N.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_vert_TEX_TN.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_frag_TEX_TN.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_NORMALS=1 -DHAS_SKIN_SET_0=1 -o $(ProjectDir)lib\shaders\base_vert_N_SKIN.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_NORMALS=1 -DHAS_SKIN_SET_0=1 -o $(ProjectDir)lib\shaders\base_frag_N_SKIN.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.vert -o $(ProjectDir)lib\shaders\tile_vert.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -o $(ProjectDir)lib\shaders\tile_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\skybox.vert -o $(ProjectDir)lib\shaders\skybox_vert.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\skybox.frag -o $(ProjectDir)lib\shaders\skybox_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube.vert -o $(ProjectDir)lib\shaders\ibl_vert.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DPANORAMA_TO_CUBEMAP=1 -DNUM_SAMPLES=1 -o $(ProjectDir)lib\shaders\panorama_to_cubemap_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DLAMBERTIAN_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_labertian_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DGGX_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_ggx_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DCHARLIE_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_charlie_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_skybox.frag -o $(ProjectDir)lib\shaders\cube_skybox.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\ibl_smooth.comp -o $(ProjectDir)lib\shaders\ibl_smooth_comp.spv
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
