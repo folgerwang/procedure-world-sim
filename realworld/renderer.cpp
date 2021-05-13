@@ -2792,23 +2792,31 @@ std::shared_ptr<Framebuffer> VulkanDevice::createFrameBuffer(
 }
 
 std::shared_ptr<DescriptorPool> VulkanDevice::createDescriptorPool() {
-    std::array<VkDescriptorPoolSize, 3> pool_sizes{};
-    pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    pool_sizes[0].descriptorCount = 16;
-    pool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    pool_sizes[1].descriptorCount = 64;
-    pool_sizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    pool_sizes[2].descriptorCount = 16;
-    VkDescriptorPoolCreateInfo pool_info{};
+    VkDescriptorPoolSize pool_sizes[] =
+    {
+        { VK_DESCRIPTOR_TYPE_SAMPLER, 256 },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 256 },
+        { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 256 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 256 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 256 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 256 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 256 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 256 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 256 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 256 },
+        { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 256 }
+    };
+    VkDescriptorPoolCreateInfo pool_info = {};
     pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());;
-    pool_info.pPoolSizes = pool_sizes.data();
-    pool_info.maxSets = 64;
-
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool_info.maxSets = 256 * IM_ARRAYSIZE(pool_sizes);
+    pool_info.poolSizeCount = (uint32_t)IM_ARRAYSIZE(pool_sizes);
+    pool_info.pPoolSizes = pool_sizes;
     VkDescriptorPool descriptor_pool;
     if (vkCreateDescriptorPool(device_, &pool_info, nullptr, &descriptor_pool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor pool!");
     }
+
     auto vk_descriptor_pool = std::make_shared<VulkanDescriptorPool>();
     vk_descriptor_pool->set(descriptor_pool);
     return vk_descriptor_pool;

@@ -20,6 +20,7 @@ public:
 private:
     void initWindow();
     void initVulkan();
+    void initImgui();
     void createImageViews();
     void createCubemapFramebuffers();
     void createDescriptorSetLayout();
@@ -56,16 +57,6 @@ private:
         const renderer::TextureInfo& src_tex,
         const renderer::TextureInfo& dst_tex);
     void mainLoop();
-    void drawMesh(
-        std::shared_ptr<renderer::CommandBuffer> cmd_buf,
-        const renderer::MeshInfo& mesh_info,
-        const ModelParams& model_params,
-        const uint32_t image_index);
-    void drawNodes(
-        std::shared_ptr<renderer::CommandBuffer> cmd_buf,
-        int32_t node_idx,
-        const uint32_t image_index,
-        const glm::mat4& parent_matrix);
     void drawFrame();
     void cleanup();
     void cleanupSwapChain();

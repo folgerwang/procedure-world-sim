@@ -10,3 +10,6 @@
 [submodule "realworld/src/third_party/tinygltf"]
 	path = realworld/src/third_party/tinygltf
 	url = git@github.com:syoyo/tinygltf.git
+[submodule "realworld/src/third_party/imgui"]
+	path = realworld/src/third_party/imgui
+	url = git@github.com:ocornut/imgui.git

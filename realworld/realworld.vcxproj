@@ -103,7 +103,7 @@
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\work\imgui;$(ProjectDir)src\third_party\glfw\include;$(ProjectDir)src\third_party\glm;$(ProjectDir)src\third_party\Vulkan-Headers\Include;$(ProjectDir)src\third_party\tinygltf;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src\third_party\imgui;$(ProjectDir)src\third_party\glfw\include;$(ProjectDir)src\third_party\glm;$(ProjectDir)src\third_party\Vulkan-Headers\Include;$(ProjectDir)src\third_party\tinygltf;$(ProjectDir)src\third_party\imgui\backends;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -168,7 +168,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\ibl_s
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\work\imgui;$(ProjectDir)src\third_party\glfw\include;$(ProjectDir)src\third_party\glm;$(ProjectDir)src\third_party\Vulkan-Headers\Include;$(ProjectDir)src\third_party\tinygltf;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src\third_party\imgui;$(ProjectDir)src\third_party\glfw\include;$(ProjectDir)src\third_party\glm;$(ProjectDir)src\third_party\Vulkan-Headers\Include;$(ProjectDir)src\third_party\tinygltf;$(ProjectDir)src\third_party\imgui\backends;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -214,6 +214,12 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\ibl_s
     <ClCompile Include="gltf.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="renderer.cpp" />
+    <ClCompile Include="src\third_party\imgui\backends\imgui_impl_glfw.cpp" />
+    <ClCompile Include="src\third_party\imgui\backends\imgui_impl_vulkan.cpp" />
+    <ClCompile Include="src\third_party\imgui\imgui.cpp" />
+    <ClCompile Include="src\third_party\imgui\imgui_draw.cpp" />
+    <ClCompile Include="src\third_party\imgui\imgui_tables.cpp" />
+    <ClCompile Include="src\third_party\imgui\imgui_widgets.cpp" />
     <ClCompile Include="terrain.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -228,6 +234,9 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\ibl_s
     <ClInclude Include="src\shaders\punctual.glsl.h" />
     <ClInclude Include="src\shaders\sun.glsl.h" />
     <ClInclude Include="src\shaders\sunlight_scattering.glsl.h" />
+    <ClInclude Include="src\third_party\imgui\imconfig.h" />
+    <ClInclude Include="src\third_party\imgui\imgui.h" />
+    <ClInclude Include="src\third_party\imgui\imgui_internal.h" />
     <ClInclude Include="terrain.h" />
     <ClInclude Include="tiny_mtx2.h" />
   </ItemGroup>

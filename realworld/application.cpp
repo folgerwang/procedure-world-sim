@@ -79,6 +79,15 @@ std::vector<uint64_t> readFile(const std::string& file_name, uint64_t& file_size
     return buffer;
 }
 
+static void check_vk_result(VkResult err)
+{
+    if (err == 0)
+        return;
+    fprintf(stderr, "[vulkan] Error: VkResult = %d\n", err);
+    if (err < 0)
+        abort();
+}
+
 }
 
 namespace work {
@@ -126,6 +135,7 @@ namespace app {
 void RealWorldApplication::run() {
     initWindow();
     initVulkan();
+    initImgui();
     mainLoop();
     cleanup();
 }
@@ -198,11 +208,11 @@ void mouseInputCallback(GLFWwindow* window, double xpos, double ypos)
 void RealWorldApplication::initWindow() {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    window_ = glfwCreateWindow(kWindowSizeX, kWindowSizeY, "Vulkan", nullptr, nullptr);
+    window_ = glfwCreateWindow(kWindowSizeX, kWindowSizeY, "Real World", nullptr, nullptr);
     glfwSetWindowUserPointer(window_, this);
     glfwSetFramebufferSizeCallback(window_, framebufferResizeCallback);
     glfwSetKeyCallback(window_, keyInputCallback);
-    glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     glfwSetCursorPosCallback(window_, mouseInputCallback);
 }
 
@@ -281,6 +291,82 @@ void RealWorldApplication::initVulkan() {
     createSyncObjects();
 
     tile_mesh_ = std::make_shared<renderer::TileMesh> (device_info_, glm::uvec2(256, 256), glm::vec2(-100.0f, -100.0f), glm::vec2(100.0f, 100.0f));
+}
+
+void RealWorldApplication::initImgui() {
+    // Setup Dear ImGui context
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    //io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+    //io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+
+    // Setup Dear ImGui style
+    ImGui::StyleColorsDark();
+    //ImGui::StyleColorsClassic();
+
+    // Setup Platform/Renderer backends
+    auto logic_device = RENDER_TYPE_CAST(Device, device_);
+    ImGui_ImplGlfw_InitForVulkan(window_, true);
+    ImGui_ImplVulkan_InitInfo init_info = {};
+    init_info.Instance = RENDER_TYPE_CAST(Instance, instance_)->get();
+    init_info.PhysicalDevice = RENDER_TYPE_CAST(PhysicalDevice, logic_device->getPhysicalDevice())->get();
+    init_info.Device = logic_device->get();
+    init_info.QueueFamily = queue_indices_.graphics_family_.value();
+    init_info.Queue = RENDER_TYPE_CAST(Queue, graphics_queue_)->get();
+    init_info.PipelineCache = nullptr;// g_PipelineCache;
+    init_info.DescriptorPool = RENDER_TYPE_CAST(DescriptorPool, descriptor_pool_)->get();
+    init_info.Allocator = nullptr; // g_Allocator;
+    init_info.MinImageCount = swap_chain_info_.framebuffers.size();
+    init_info.ImageCount = swap_chain_info_.framebuffers.size();
+    init_info.CheckVkResultFn = check_vk_result;
+    ImGui_ImplVulkan_Init(&init_info, RENDER_TYPE_CAST(RenderPass, render_pass_)->get());
+
+    // Load Fonts
+    // - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
+    // - AddFontFromFileTTF() will return the ImFont* so you can store it if you need to select the font among multiple.
+    // - If the file cannot be loaded, the function will return NULL. Please handle those errors in your application (e.g. use an assertion, or display an error and quit).
+    // - The fonts will be rasterized at a given size (w/ oversampling) and stored into a texture when calling ImFontAtlas::Build()/GetTexDataAsXXXX(), which ImGui_ImplXXXX_NewFrame below will call.
+    // - Read 'docs/FONTS.md' for more instructions and details.
+    // - Remember that in C/C++ if you want to include a backslash \ in a string literal you need to write a double backslash \\ !
+    //io.Fonts->AddFontDefault();
+    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf", 16.0f);
+    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
+    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf", 16.0f);
+    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/ProggyTiny.ttf", 10.0f);
+    //ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f, NULL, io.Fonts->GetGlyphRangesJapanese());
+    //IM_ASSERT(font != NULL);
+
+    // Upload Fonts
+    {
+        // Use any command queue
+        //VkCommandPool command_pool = wd->Frames[wd->FrameIndex].CommandPool;
+        auto current_cmd_buf = command_buffers_[0];
+        VkCommandBuffer command_buffer = RENDER_TYPE_CAST(CommandBuffer, current_cmd_buf)->get();
+
+        //auto err = vkResetCommandPool(init_info.Device, command_pool, 0);
+        //check_vk_result(err);
+        VkCommandBufferBeginInfo begin_info = {};
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin_info.flags |= VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        auto err = vkBeginCommandBuffer(command_buffer, &begin_info);
+        check_vk_result(err);
+
+        ImGui_ImplVulkan_CreateFontsTexture(command_buffer);
+
+        VkSubmitInfo end_info = {};
+        end_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        end_info.commandBufferCount = 1;
+        end_info.pCommandBuffers = &command_buffer;
+        err = vkEndCommandBuffer(command_buffer);
+        check_vk_result(err);
+        err = vkQueueSubmit(init_info.Queue, 1, &end_info, VK_NULL_HANDLE);
+        check_vk_result(err);
+
+        err = vkDeviceWaitIdle(init_info.Device);
+        check_vk_result(err);
+        ImGui_ImplVulkan_DestroyFontUploadObjects();
+    }
 }
 
 void RealWorldApplication::recreateSwapChain() {
@@ -1384,7 +1470,7 @@ void RealWorldApplication::drawFrame() {
         // render gltf meshes.
         cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, gltf_pipeline_);
 
-        auto model_mat = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        auto model_mat = glm::translate(glm::mat4(1.0f), s_camera_pos + s_camera_dir * 5.0f);
         for (auto node_idx : gltf_object_->scenes_[root_node].nodes_) {
             renderer::drawNodes(cmd_buf,
                 gltf_object_,
@@ -1427,6 +1513,34 @@ void RealWorldApplication::drawFrame() {
 
         cmd_buf->endRenderPass();
     }
+
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    if (ImGui::BeginMainMenuBar())
+    {
+        if (ImGui::BeginMenu("File"))
+        {
+            //ShowExampleMenuFile();
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Edit"))
+        {
+            if (ImGui::MenuItem("Undo", "CTRL+Z")) {}
+            if (ImGui::MenuItem("Redo", "CTRL+Y", false, false)) {}  // Disabled item
+            ImGui::Separator();
+            if (ImGui::MenuItem("Cut", "CTRL+X")) {}
+            if (ImGui::MenuItem("Copy", "CTRL+C")) {}
+            if (ImGui::MenuItem("Paste", "CTRL+V")) {}
+            ImGui::EndMenu();
+        }
+        ImGui::EndMainMenuBar();
+    }
+
+    ImGui::Render();
+    ImDrawData* draw_data = ImGui::GetDrawData();
+
+    ImGui_ImplVulkan_RenderDrawData(draw_data, RENDER_TYPE_CAST(CommandBuffer, cmd_buf)->get());
 
     cmd_buf->endCommandBuffer();
 
@@ -1894,6 +2008,10 @@ void RealWorldApplication::cleanupSwapChain() {
 void RealWorldApplication::cleanup() {
     cleanupSwapChain();
 
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+
     auto vk_instance = RENDER_TYPE_CAST(Instance, instance_);
     auto vk_surface = RENDER_TYPE_CAST(Surface, surface_);
 
@@ -1946,6 +2064,7 @@ void RealWorldApplication::cleanup() {
 
     // todo.
     vkDestroySurfaceKHR(vk_instance->get(), vk_surface->get(), nullptr);
+
     vk_instance->destroy();
     glfwDestroyWindow(window_);
     glfwTerminate();
