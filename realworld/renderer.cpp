@@ -1148,9 +1148,9 @@ const std::vector<const char*> device_extensions = {
 };
 
 #ifdef NDEBUG
-const bool enable_validation_layers = false;
+bool enable_validation_layers = false;
 #else
-const bool enable_validation_layers = true;
+bool enable_validation_layers = true;
 #endif
 
 
@@ -1273,7 +1273,18 @@ std::shared_ptr<renderer::Instance> createInstance() {
     }
 #endif
     VkInstance instance;
-    if (vkCreateInstance(&create_info, nullptr, &instance) != VK_SUCCESS) {
+    auto result = vkCreateInstance(&create_info, nullptr, &instance);
+    if (result != VK_SUCCESS) {
+        // validation layer doesn't exist.
+        if (result == VK_ERROR_LAYER_NOT_PRESENT && enable_validation_layers) {
+            create_info.enabledLayerCount = 0;
+            create_info.pNext = nullptr;
+            result = vkCreateInstance(&create_info, nullptr, &instance);
+            enable_validation_layers = false;
+        }
+    }
+
+    if (result != VK_SUCCESS) {
         throw std::runtime_error("failed to create instance!");
     }
 
