@@ -187,7 +187,7 @@ void mouseInputCallback(GLFWwindow* window, double xpos, double ypos)
     auto mouse_offset = cur_mouse_pos - s_last_mouse_pos;
     s_last_mouse_pos = cur_mouse_pos;
 
-    float sensitivity = 0.01f;
+    float sensitivity = 0.02f;
     mouse_offset *= sensitivity;
 
     s_yaw += mouse_offset.x;

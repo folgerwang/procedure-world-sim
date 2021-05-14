@@ -512,7 +512,6 @@ VkBufferUsageFlags toVkBufferUsageFlags(work::renderer::BufferUsageFlags flags) 
     ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, TRANSFORM_FEEDBACK_BUFFER_BIT_EXT);
     ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, TRANSFORM_FEEDBACK_COUNTER_BUFFER_BIT_EXT);
     ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, CONDITIONAL_RENDERING_BIT_EXT);
-    ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, RAY_TRACING_BIT_KHR);
     ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, RAY_TRACING_BIT_NV);
     ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, SHADER_DEVICE_ADDRESS_BIT_EXT);
     ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, SHADER_DEVICE_ADDRESS_BIT_KHR);
@@ -1190,6 +1189,14 @@ std::vector<const char*> getRequiredExtensions() {
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
 
+    if (0) {
+        extensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_MAINTENANCE3_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+    }
     return extensions;
 }
 

@@ -139,5 +139,17 @@
     <None Include="src\shaders\cube_skybox.frag">
       <Filter>Source Files\shaders</Filter>
     </None>
+    <None Include="src\shaders\grass.comp">
+      <Filter>Source Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\grass.frag">
+      <Filter>Source Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\grass.geom">
+      <Filter>Source Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\grass.vert">
+      <Filter>Source Files\shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

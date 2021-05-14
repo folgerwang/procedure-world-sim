@@ -139,6 +139,10 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DCHARLIE_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_charlie_frag.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_skybox.frag -o $(ProjectDir)lib\shaders\cube_skybox.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\ibl_smooth.comp -o $(ProjectDir)lib\shaders\ibl_smooth_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.vert -o $(ProjectDir)lib\shaders\grass_vert.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.geom -o $(ProjectDir)lib\shaders\grass_geom.spv 
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.frag -o $(ProjectDir)lib\shaders\grass_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.comp -o $(ProjectDir)lib\shaders\grass_comp.spv
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -206,6 +210,10 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DCHARLIE_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_charlie_frag.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_skybox.frag -o $(ProjectDir)lib\shaders\cube_skybox.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\ibl_smooth.comp -o $(ProjectDir)lib\shaders\ibl_smooth_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.vert -o $(ProjectDir)lib\shaders\grass_vert.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.geom -o $(ProjectDir)lib\shaders\grass_geom.spv 
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.frag -o $(ProjectDir)lib\shaders\grass_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.comp -o $(ProjectDir)lib\shaders\grass_comp.spv
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -247,6 +255,10 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\ibl_s
     <None Include="src\shaders\glsl_compile.bat" />
     <None Include="src\shaders\cube_ibl.frag" />
     <None Include="src\shaders\cube.vert" />
+    <None Include="src\shaders\grass.comp" />
+    <None Include="src\shaders\grass.frag" />
+    <None Include="src\shaders\grass.geom" />
+    <None Include="src\shaders\grass.vert" />
     <None Include="src\shaders\ibl_smooth.comp" />
     <None Include="src\shaders\skybox.frag" />
     <None Include="src\shaders\skybox.vert" />
