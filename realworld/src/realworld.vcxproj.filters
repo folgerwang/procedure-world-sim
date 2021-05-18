@@ -13,18 +13,24 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
-    <Filter Include="Source Files\shaders">
+    <Filter Include="Resource Files\shaders">
       <UniqueIdentifier>{5ad07a34-4873-40fe-ab9b-1c064d213dc1}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Source Files\imgui">
+    <Filter Include="third_party">
+      <UniqueIdentifier>{f447a24b-2185-4799-9a4c-0af52722d1c8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="third_party\imgui">
       <UniqueIdentifier>{1f419729-9e55-4c07-b7a8-8fe2837c7c6f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\renderer">
+      <UniqueIdentifier>{0cf5f08b-065a-4674-9764-f698c2f73986}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\renderer">
+      <UniqueIdentifier>{40d7a48a-9e78-4b03-9edf-44917ffecc0a}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="renderer.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="terrain.cpp">
@@ -33,26 +39,29 @@
     <ClCompile Include="gltf.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\third_party\imgui\backends\imgui_impl_glfw.cpp">
-      <Filter>Source Files\imgui</Filter>
-    </ClCompile>
-    <ClCompile Include="src\third_party\imgui\backends\imgui_impl_vulkan.cpp">
-      <Filter>Source Files\imgui</Filter>
-    </ClCompile>
-    <ClCompile Include="src\third_party\imgui\imgui.cpp">
-      <Filter>Source Files\imgui</Filter>
-    </ClCompile>
-    <ClCompile Include="src\third_party\imgui\imgui_draw.cpp">
-      <Filter>Source Files\imgui</Filter>
-    </ClCompile>
-    <ClCompile Include="src\third_party\imgui\imgui_tables.cpp">
-      <Filter>Source Files\imgui</Filter>
-    </ClCompile>
-    <ClCompile Include="src\third_party\imgui\imgui_widgets.cpp">
-      <Filter>Source Files\imgui</Filter>
-    </ClCompile>
     <ClCompile Include="application.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="renderer\renderer.cpp">
+      <Filter>Source Files\renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_tables.cpp">
+      <Filter>third_party\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_widgets.cpp">
+      <Filter>third_party\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui.cpp">
+      <Filter>third_party\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_draw.cpp">
+      <Filter>third_party\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\backends\imgui_impl_glfw.cpp">
+      <Filter>third_party\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\backends\imgui_impl_vulkan.cpp">
+      <Filter>third_party\imgui</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -62,94 +71,94 @@
     <ClInclude Include="tiny_mtx2.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="renderer.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="gltf.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\shaders\functions.glsl.h">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </ClInclude>
     <ClInclude Include="src\shaders\global_definition.glsl.h">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </ClInclude>
     <ClInclude Include="src\shaders\ibl.glsl.h">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </ClInclude>
     <ClInclude Include="src\shaders\noise.glsl.h">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </ClInclude>
     <ClInclude Include="src\shaders\punctual.glsl.h">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </ClInclude>
     <ClInclude Include="src\shaders\sun.glsl.h">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </ClInclude>
     <ClInclude Include="src\shaders\sunlight_scattering.glsl.h">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </ClInclude>
     <ClInclude Include="src\shaders\brdf.glsl.h">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </ClInclude>
     <ClInclude Include="terrain.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="src\third_party\imgui\imconfig.h">
-      <Filter>Source Files\imgui</Filter>
+    <ClInclude Include="renderer\renderer.h">
+      <Filter>Header Files\renderer</Filter>
     </ClInclude>
-    <ClInclude Include="src\third_party\imgui\imgui.h">
-      <Filter>Source Files\imgui</Filter>
+    <ClInclude Include="third_party\imgui\imgui_internal.h">
+      <Filter>third_party\imgui</Filter>
     </ClInclude>
-    <ClInclude Include="src\third_party\imgui\imgui_internal.h">
-      <Filter>Source Files\imgui</Filter>
+    <ClInclude Include="third_party\imgui\imconfig.h">
+      <Filter>third_party\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imgui.h">
+      <Filter>third_party\imgui</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\shaders\cube_ibl.frag">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\cube.vert">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\ibl_smooth.comp">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\skybox.frag">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\skybox.vert">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\tile.frag">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\tile.vert">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\base.frag">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\base.vert">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\glsl_compile.bat">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\cube_skybox.frag">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\grass.comp">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\grass.frag">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\grass.geom">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\grass.vert">
-      <Filter>Source Files\shaders</Filter>
+      <Filter>Resource Files\shaders</Filter>
     </None>
   </ItemGroup>
 </Project>

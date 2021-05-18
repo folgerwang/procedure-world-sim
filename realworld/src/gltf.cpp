@@ -5,7 +5,7 @@
 #include <memory>
 
 #include "gltf.h"
-#include "src/shaders/global_definition.glsl.h"
+#include "shaders/global_definition.glsl.h"
 
 #include "tiny_gltf.h"
 #include "tiny_mtx2.h"

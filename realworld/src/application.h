@@ -1,6 +1,6 @@
 #pragma once
-#include "renderer.h"
-#include "src/shaders/global_definition.glsl.h"
+#include "renderer/renderer.h"
+#include "shaders/global_definition.glsl.h"
 #include "gltf.h"
 #include "terrain.h"
 

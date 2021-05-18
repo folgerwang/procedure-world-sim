@@ -5,7 +5,7 @@
 #include <fstream>
 #include <chrono>
 
-#include "renderer.h"
+#include "renderer/renderer.h"
 #include "application.h"
 
 #define TINYGLTF_IMPLEMENTATION

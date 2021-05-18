@@ -16,9 +16,9 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
-#include "renderer.h"
+#include "renderer/renderer.h"
 #include "terrain.h"
-#include "src/shaders/global_definition.glsl.h"
+#include "shaders/global_definition.glsl.h"
 
 #if 0
 float tree_line = 0.0f;
