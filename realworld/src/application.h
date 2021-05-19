@@ -20,23 +20,21 @@ public:
 private:
     void initWindow();
     void initVulkan();
-    void initImgui();
     void createImageViews();
     void createCubemapFramebuffers();
     void createDescriptorSetLayout();
-    void createGraphicsPipeline();
+    void createGraphicsPipeline(const glm::uvec2& display_size);
+    void createCubeGraphicsPipeline();
     void createComputePipeline();
-    void createGltfPipelineLayout();
-    void createTileMeshPipelineLayout();
-    void createSkyboxPipelineLayout();
+    void createGraphicPipelineLayout();
     void createCubemapPipelineLayout();
     void createCubeSkyboxPipelineLayout();
     void createCubemapComputePipelineLayout();
     void createRenderPass();
     void createCubemapRenderPass();
-    void createFramebuffers();
+    void createFramebuffers(const glm::uvec2& display_size);
     void createCommandPool();
-    void createDepthResources();
+    void createDepthResources(const glm::uvec2& display_size);
     void createTextureImage(
         const std::string& file_name,
         engine::renderer::Format format,
@@ -49,6 +47,7 @@ private:
     void createDescriptorSets();
     void createCommandBuffers();
     void createSyncObjects();
+    void destroyGraphicsPipeline();
     void updateViewConstBuffer(uint32_t current_image, float radius = 2.0f);
     // todo remove vk interface here.
     std::vector<engine::renderer::TextureDescriptor> addGlobalTextures(

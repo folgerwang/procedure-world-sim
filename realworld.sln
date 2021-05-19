@@ -5,7 +5,7 @@ VisualStudioVersion = 16.0.31205.134
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "glfw3", "realworld\src\glfw3\glfw3.vcxproj", "{866FD0AE-BD91-4DEB-BDD5-13672335D767}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "RealWorld", "realworld\src\realworld.vcxproj", "{482D364D-1093-4184-B0AA-853D00245AFB}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "RealWorld", "realworld\realworld.vcxproj", "{482D364D-1093-4184-B0AA-853D00245AFB}"
 	ProjectSection(ProjectDependencies) = postProject
 		{866FD0AE-BD91-4DEB-BDD5-13672335D767} = {866FD0AE-BD91-4DEB-BDD5-13672335D767}
 	EndProjectSection

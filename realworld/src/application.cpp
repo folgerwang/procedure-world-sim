@@ -167,13 +167,13 @@ void RealWorldApplication::initWindow() {
     glfwSetCursorPosCallback(window_, mouseInputCallback);
 }
 
-void RealWorldApplication::createDepthResources()
+void RealWorldApplication::createDepthResources(const glm::uvec2& display_size)
 {
     auto depth_format = engine::renderer::Helper::findDepthFormat(device_info_.device);
     engine::renderer::Helper::createDepthResources(
         device_info_,
         depth_format,
-        swap_chain_info_.extent,
+        display_size,
         depth_buffer_);
 }
 
@@ -215,16 +215,15 @@ void RealWorldApplication::initVulkan() {
     loadMtx2Texture("assets/environments/doge2/lambertian/diffuse.ktx2", ibl_diffuse_tex_);
     loadMtx2Texture("assets/environments/doge2/ggx/specular.ktx2", ibl_specular_tex_);
     loadMtx2Texture("assets/environments/doge2/charlie/sheen.ktx2", ibl_sheen_tex_);
-    createGltfPipelineLayout();
-    createTileMeshPipelineLayout();
-    createSkyboxPipelineLayout();
+    createGraphicPipelineLayout();
     createCubemapPipelineLayout();
     createCubeSkyboxPipelineLayout();
     createCubemapComputePipelineLayout();
-    createGraphicsPipeline();
+    createGraphicsPipeline(swap_chain_info_.extent);
+    createCubeGraphicsPipeline();
     createComputePipeline();
-    createDepthResources();
-    createFramebuffers();
+    createDepthResources(swap_chain_info_.extent);
+    createFramebuffers(swap_chain_info_.extent);
     auto format = engine::renderer::Format::R8G8B8A8_UNORM;
     createTextureImage("assets/statue.jpg", format, sample_tex_);
     createTextureImage("assets/brdfLUT.png", format, brdf_lut_tex_);
@@ -264,23 +263,38 @@ void RealWorldApplication::recreateSwapChain() {
 
     device_->waitIdle();
 
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+
     cleanupSwapChain();
 
     engine::renderer::Helper::createSwapChain(window_, device_, surface_, queue_indices_, swap_chain_info_);
     createRenderPass();
     createImageViews();
-    createGltfPipelineLayout();
-    createSkyboxPipelineLayout();
+    createGraphicPipelineLayout();
     createCubemapPipelineLayout();
     createCubemapComputePipelineLayout();
-    createGraphicsPipeline();
+    createCubeSkyboxPipelineLayout();
+    createGraphicsPipeline(swap_chain_info_.extent);
     createComputePipeline();
-    createDepthResources();
-    createFramebuffers();
+    createDepthResources(swap_chain_info_.extent);
+    createFramebuffers(swap_chain_info_.extent);
     createUniformBuffers();
     descriptor_pool_ = device_->createDescriptorPool();
     createDescriptorSets();
     createCommandBuffers();
+
+    engine::renderer::Helper::initImgui(
+        device_info_,
+        instance_,
+        window_,
+        queue_indices_,
+        swap_chain_info_,
+        graphics_queue_,
+        descriptor_pool_,
+        render_pass_,
+        command_buffers_[0]);
 }
 
 void RealWorldApplication::createImageViews() {
@@ -466,54 +480,54 @@ engine::renderer::ShaderModuleList getIblComputeShaderModules(
     return shader_modules;
 }
 
-void RealWorldApplication::createGltfPipelineLayout()
+void RealWorldApplication::createGraphicPipelineLayout()
 {
-    engine::renderer::PushConstantRange push_const_range{};
-    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT);
-    push_const_range.offset = 0;
-    push_const_range.size = sizeof(ModelParams);
+    {
+        engine::renderer::PushConstantRange push_const_range{};
+        push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT);
+        push_const_range.offset = 0;
+        push_const_range.size = sizeof(ModelParams);
 
-    engine::renderer::DescriptorSetLayoutList desc_set_layouts;
-    desc_set_layouts.reserve(3);
-    desc_set_layouts.push_back(global_tex_desc_set_layout_);
-    desc_set_layouts.push_back(desc_set_layout_);
-    if (gltf_object_->materials_.size() > 0) {
-        desc_set_layouts.push_back(material_tex_desc_set_layout_);
+        engine::renderer::DescriptorSetLayoutList desc_set_layouts;
+        desc_set_layouts.reserve(3);
+        desc_set_layouts.push_back(global_tex_desc_set_layout_);
+        desc_set_layouts.push_back(desc_set_layout_);
+        if (gltf_object_->materials_.size() > 0) {
+            desc_set_layouts.push_back(material_tex_desc_set_layout_);
+        }
+
+        gltf_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
     }
 
-    gltf_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
-}
+    {
+        engine::renderer::PushConstantRange push_const_range{};
+        push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
+            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
+        push_const_range.offset = 0;
+        push_const_range.size = sizeof(TileParams);
 
-void RealWorldApplication::createTileMeshPipelineLayout()
-{
-    engine::renderer::PushConstantRange push_const_range{};
-    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
-                                   SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
-    push_const_range.offset = 0;
-    push_const_range.size = sizeof(TileParams);
+        engine::renderer::DescriptorSetLayoutList desc_set_layouts;
+        desc_set_layouts.reserve(3);
+        desc_set_layouts.push_back(global_tex_desc_set_layout_);
+        desc_set_layouts.push_back(desc_set_layout_);
+        desc_set_layouts.push_back(skybox_desc_set_layout_);
 
-    engine::renderer::DescriptorSetLayoutList desc_set_layouts;
-    desc_set_layouts.reserve(3);
-    desc_set_layouts.push_back(global_tex_desc_set_layout_);
-    desc_set_layouts.push_back(desc_set_layout_);
-    desc_set_layouts.push_back(skybox_desc_set_layout_);
+        tile_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
+    }
 
-    tile_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
-}
+    {
+        engine::renderer::PushConstantRange push_const_range{};
+        push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
+        push_const_range.offset = 0;
+        push_const_range.size = sizeof(SunSkyParams);
 
-void RealWorldApplication::createSkyboxPipelineLayout()
-{
-    engine::renderer::PushConstantRange push_const_range{};
-    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
-    push_const_range.offset = 0;
-    push_const_range.size = sizeof(SunSkyParams);
+        engine::renderer::DescriptorSetLayoutList desc_set_layouts;
+        desc_set_layouts.reserve(2);
+        desc_set_layouts.push_back(skybox_desc_set_layout_);
+        desc_set_layouts.push_back(desc_set_layout_);
 
-    engine::renderer::DescriptorSetLayoutList desc_set_layouts;
-    desc_set_layouts.reserve(2);
-    desc_set_layouts.push_back(skybox_desc_set_layout_);
-    desc_set_layouts.push_back(desc_set_layout_);
-
-    skybox_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
+        skybox_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
+    }
 }
 
 void RealWorldApplication::createCubemapPipelineLayout()
@@ -681,21 +695,14 @@ engine::renderer::PipelineDepthStencilStateCreateInfo fillPipelineDepthStencilSt
     return depth_stencil;
 }
 
-void RealWorldApplication::createGraphicsPipeline() {
+void RealWorldApplication::createGraphicsPipeline(const glm::uvec2& display_size) {
     auto color_blend_attachment = fillPipelineColorBlendAttachmentState();
     std::vector<engine::renderer::PipelineColorBlendAttachmentState> color_blend_attachments(1, color_blend_attachment);
-    std::vector<engine::renderer::PipelineColorBlendAttachmentState> cube_color_blend_attachments(6, color_blend_attachment);
     auto color_blending = fillPipelineColorBlendStateCreateInfo(color_blend_attachments);
-    auto cubemap_color_blending = fillPipelineColorBlendStateCreateInfo(cube_color_blend_attachments);
     auto rasterizer = fillPipelineRasterizationStateCreateInfo();
-    auto ibl_rasterizer = fillPipelineRasterizationStateCreateInfo(
-        false, false, engine::renderer::PolygonMode::FILL,
-        SET_FLAG_BIT(CullMode, NONE));
     auto multisampling = fillPipelineMultisampleStateCreateInfo();
     auto depth_stencil_info = fillDepthStencilInfo();
     auto depth_stencil = fillPipelineDepthStencilStateCreateInfo();
-    auto cubemap_depth_stencil = fillPipelineDepthStencilStateCreateInfo(
-        false, false, engine::renderer::CompareOp::ALWAYS, false);
 #if 0
     VkDynamicState dynamic_states[] = {
         VK_DYNAMIC_STATE_VIEWPORT,
@@ -727,7 +734,7 @@ void RealWorldApplication::createGraphicsPipeline() {
             multisampling,
             depth_stencil,
             shader_modules,
-            swap_chain_info_.extent);
+            display_size);
 
         for (auto& shader_module : shader_modules) {
             device_->destroyShaderModule(shader_module);
@@ -750,7 +757,7 @@ void RealWorldApplication::createGraphicsPipeline() {
             multisampling,
             depth_stencil,
             shader_modules,
-            swap_chain_info_.extent);
+            display_size);
 
         for (auto& shader_module : shader_modules) {
             device_->destroyShaderModule(shader_module);
@@ -770,13 +777,36 @@ void RealWorldApplication::createGraphicsPipeline() {
             multisampling,
             depth_stencil,
             shader_modules,
-            swap_chain_info_.extent);
+            display_size);
 
         for (auto& shader_module : shader_modules) {
             device_->destroyShaderModule(shader_module);
         }
     }
+}
 
+void RealWorldApplication::destroyGraphicsPipeline()
+{
+    device_->destroyPipeline(gltf_pipeline_);
+    device_->destroyPipeline(tile_pipeline_);
+    device_->destroyPipeline(skybox_pipeline_);
+}
+
+void RealWorldApplication::createCubeGraphicsPipeline() {
+    auto color_blend_attachment = fillPipelineColorBlendAttachmentState();
+    std::vector<engine::renderer::PipelineColorBlendAttachmentState> cube_color_blend_attachments(6, color_blend_attachment);
+    auto cubemap_color_blending = fillPipelineColorBlendStateCreateInfo(cube_color_blend_attachments);
+    auto ibl_rasterizer = fillPipelineRasterizationStateCreateInfo(
+        false, false, engine::renderer::PolygonMode::FILL,
+        SET_FLAG_BIT(CullMode, NONE));
+    auto multisampling = fillPipelineMultisampleStateCreateInfo();
+    auto depth_stencil_info = fillDepthStencilInfo();
+    auto cubemap_depth_stencil = fillPipelineDepthStencilStateCreateInfo(
+        false, false, engine::renderer::CompareOp::ALWAYS, false);
+
+    engine::renderer::PipelineInputAssemblyStateCreateInfo input_assembly;
+    input_assembly.topology = engine::renderer::PrimitiveTopology::TRIANGLE_LIST;
+    input_assembly.restart_enable = false;
     {
         auto ibl_shader_modules = getIblShaderModules(device_);
         cube_skybox_pipeline_ = device_->createPipeline(
@@ -985,7 +1015,7 @@ void RealWorldApplication::createCubemapRenderPass() {
     cubemap_render_pass_ = device_->createRenderPass(attachments, { subpass }, { depency });
 }
 
-void RealWorldApplication::createFramebuffers() {
+void RealWorldApplication::createFramebuffers(const glm::uvec2& display_size) {
     swap_chain_info_.framebuffers.resize(swap_chain_info_.image_views.size());
     for (uint64_t i = 0; i < swap_chain_info_.image_views.size(); i++) {
         assert(swap_chain_info_.image_views[i]);
@@ -996,7 +1026,7 @@ void RealWorldApplication::createFramebuffers() {
         attachments[1] = depth_buffer_.view;
 
         swap_chain_info_.framebuffers[i] =
-            device_->createFrameBuffer(render_pass_, attachments, swap_chain_info_.extent);
+            device_->createFrameBuffer(render_pass_, attachments, display_size);
     }
 }
 
@@ -1915,20 +1945,11 @@ void RealWorldApplication::cleanupSwapChain() {
     }
 
     device_->freeCommandBuffers(command_pool_, command_buffers_);
-    device_->destroyPipeline(gltf_pipeline_);
-    device_->destroyPipeline(tile_pipeline_);
-    device_->destroyPipeline(skybox_pipeline_);
-    device_->destroyPipeline(envmap_pipeline_);
-    device_->destroyPipeline(cube_skybox_pipeline_);
-    device_->destroyPipeline(lambertian_pipeline_);
-    device_->destroyPipeline(ggx_pipeline_);
-    device_->destroyPipeline(charlie_pipeline_);
+    destroyGraphicsPipeline();
     device_->destroyPipeline(blur_comp_pipeline_);
     device_->destroyPipelineLayout(gltf_pipeline_layout_);
     device_->destroyPipelineLayout(tile_pipeline_layout_);
     device_->destroyPipelineLayout(skybox_pipeline_layout_);
-    device_->destroyPipelineLayout(ibl_pipeline_layout_);
-    device_->destroyPipelineLayout(cube_skybox_pipeline_layout_);
     device_->destroyPipelineLayout(ibl_comp_pipeline_layout_);
     device_->destroyRenderPass(render_pass_);
 
@@ -1947,6 +1968,14 @@ void RealWorldApplication::cleanupSwapChain() {
 
 void RealWorldApplication::cleanup() {
     cleanupSwapChain();
+
+    device_->destroyPipeline(envmap_pipeline_);
+    device_->destroyPipeline(cube_skybox_pipeline_);
+    device_->destroyPipeline(lambertian_pipeline_);
+    device_->destroyPipeline(ggx_pipeline_);
+    device_->destroyPipeline(charlie_pipeline_);
+    device_->destroyPipelineLayout(ibl_pipeline_layout_);
+    device_->destroyPipelineLayout(cube_skybox_pipeline_layout_);
 
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
@@ -1994,7 +2023,6 @@ void RealWorldApplication::cleanup() {
     }
 
     device_->destroyCommandPool(command_pool_);
-
     device_->destroy();
 
     instance_->destroySurface(surface_);
