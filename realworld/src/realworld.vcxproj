@@ -219,10 +219,13 @@ $(ProjectDir)third_party\vulkan_lib\glslc.exe $(ProjectDir)shaders\grass.comp -o
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="application.cpp" />
-    <ClCompile Include="gltf.cpp" />
+    <ClCompile Include="engine\gltf.cpp" />
+    <ClCompile Include="engine\renderer\renderer.cpp" />
+    <ClCompile Include="engine\renderer\vulkan\vk_command_buffer.cpp" />
+    <ClCompile Include="engine\renderer\vulkan\vk_device.cpp" />
+    <ClCompile Include="engine\renderer\vulkan\vk_renderer_helper.cpp" />
+    <ClCompile Include="engine\terrain.cpp" />
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="renderer\renderer.cpp" />
-    <ClCompile Include="terrain.cpp" />
     <ClCompile Include="third_party\imgui\backends\imgui_impl_glfw.cpp" />
     <ClCompile Include="third_party\imgui\backends\imgui_impl_vulkan.cpp" />
     <ClCompile Include="third_party\imgui\imgui.cpp" />
@@ -232,8 +235,19 @@ $(ProjectDir)third_party\vulkan_lib\glslc.exe $(ProjectDir)shaders\grass.comp -o
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="application.h" />
-    <ClInclude Include="gltf.h" />
-    <ClInclude Include="renderer\renderer.h" />
+    <ClInclude Include="engine\gltf.h" />
+    <ClInclude Include="engine\renderer\command_buffer.h" />
+    <ClInclude Include="engine\renderer\device.h" />
+    <ClInclude Include="engine\renderer\physical_device.h" />
+    <ClInclude Include="engine\renderer\renderer.h" />
+    <ClInclude Include="engine\renderer\renderer_definition.h" />
+    <ClInclude Include="engine\renderer\renderer_structs.h" />
+    <ClInclude Include="engine\renderer\vulkan\vk_command_buffer.h" />
+    <ClInclude Include="engine\renderer\vulkan\vk_device.h" />
+    <ClInclude Include="engine\renderer\vulkan\vk_physical_device.h" />
+    <ClInclude Include="engine\renderer\vulkan\vk_renderer_helper.h" />
+    <ClInclude Include="engine\terrain.h" />
+    <ClInclude Include="engine\tiny_mtx2.h" />
     <ClInclude Include="src\shaders\brdf.glsl.h" />
     <ClInclude Include="src\shaders\functions.glsl.h" />
     <ClInclude Include="src\shaders\global_definition.glsl.h" />
@@ -242,11 +256,9 @@ $(ProjectDir)third_party\vulkan_lib\glslc.exe $(ProjectDir)shaders\grass.comp -o
     <ClInclude Include="src\shaders\punctual.glsl.h" />
     <ClInclude Include="src\shaders\sun.glsl.h" />
     <ClInclude Include="src\shaders\sunlight_scattering.glsl.h" />
-    <ClInclude Include="terrain.h" />
     <ClInclude Include="third_party\imgui\imconfig.h" />
     <ClInclude Include="third_party\imgui\imgui.h" />
     <ClInclude Include="third_party\imgui\imgui_internal.h" />
-    <ClInclude Include="tiny_mtx2.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="src\shaders\base.frag" />

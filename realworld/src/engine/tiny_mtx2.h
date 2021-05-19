@@ -1,8 +1,4 @@
 /*
-
-
-
-
 // Data Format Descriptor 
 UInt32 dfdTotalSize
 continue
@@ -35,7 +31,7 @@ namespace work {
 
 struct Mtx2HeaderBlock {
     uint8_t             identifier[12];
-    renderer::Format    format;
+    engine::renderer::Format    format;
     uint32_t            type_size;
     uint32_t            pixel_width;
     uint32_t            pixel_height;

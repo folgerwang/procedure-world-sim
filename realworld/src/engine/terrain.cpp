@@ -18,7 +18,7 @@
 
 #include "renderer/renderer.h"
 #include "terrain.h"
-#include "shaders/global_definition.glsl.h"
+#include "../shaders/global_definition.glsl.h"
 
 #if 0
 float tree_line = 0.0f;
@@ -1554,14 +1554,14 @@ std::vector<uint32_t> generateTileMeshIndex(const glm::uvec2& segment_count) {
         }
     }
 
-    uint32_t index_buffer_size = p_index_buffer - index_buffer.data();
+    uint32_t index_buffer_size = static_cast<uint32_t>(p_index_buffer - index_buffer.data());
 
     assert(index_buffer_size == segment_count.x * segment_count.y * 6);
 
     return index_buffer;
 }
 
-namespace work {
+namespace engine {
 namespace renderer {
 
 void TileMesh::destory() {
@@ -1626,5 +1626,5 @@ void TileMesh::draw(const std::shared_ptr<CommandBuffer>& cmd_buf,
     cmd_buf->drawIndexed(segment_count_.x * segment_count_.y * 6);
 }
 
-} // renderer
-} // work
+} // namespace renderer
+} // namespace engine

@@ -5,14 +5,14 @@
 #include <fstream>
 #include <chrono>
 
-#include "renderer/renderer.h"
+#include "engine/renderer/renderer.h"
 #include "application.h"
 
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "tiny_gltf.h"
-#include "tiny_mtx2.h"
+#include "engine/tiny_mtx2.h"
 
 namespace {
 constexpr int kWindowSizeX = 1920;
@@ -22,19 +22,19 @@ static float s_sun_angle = 0.0f;
 struct SkyBoxVertex {
     glm::vec3 pos;
 
-    static std::vector<work::renderer::VertexInputBindingDescription> getBindingDescription() {
-        std::vector<work::renderer::VertexInputBindingDescription> binding_description(1);
+    static std::vector<engine::renderer::VertexInputBindingDescription> getBindingDescription() {
+        std::vector<engine::renderer::VertexInputBindingDescription> binding_description(1);
         binding_description[0].binding = 0;
         binding_description[0].stride = sizeof(SkyBoxVertex);
-        binding_description[0].input_rate = work::renderer::VertexInputRate::VERTEX;
+        binding_description[0].input_rate = engine::renderer::VertexInputRate::VERTEX;
         return binding_description;
     }
 
-    static std::vector<work::renderer::VertexInputAttributeDescription> getAttributeDescriptions() {
-        std::vector<work::renderer::VertexInputAttributeDescription> attribute_descriptions(1);
+    static std::vector<engine::renderer::VertexInputAttributeDescription> getAttributeDescriptions() {
+        std::vector<engine::renderer::VertexInputAttributeDescription> attribute_descriptions(1);
         attribute_descriptions[0].binding = 0;
         attribute_descriptions[0].location = 0;
-        attribute_descriptions[0].format = work::renderer::Format::R32G32B32_SFLOAT;
+        attribute_descriptions[0].format = engine::renderer::Format::R32G32B32_SFLOAT;
         attribute_descriptions[0].offset = offsetof(SkyBoxVertex, pos);
         return attribute_descriptions;
     }
@@ -43,19 +43,19 @@ struct SkyBoxVertex {
 struct TileVertex {
     glm::vec2 height;
 
-    static std::vector<work::renderer::VertexInputBindingDescription> getBindingDescription() {
-        std::vector<work::renderer::VertexInputBindingDescription> binding_description(1);
+    static std::vector<engine::renderer::VertexInputBindingDescription> getBindingDescription() {
+        std::vector<engine::renderer::VertexInputBindingDescription> binding_description(1);
         binding_description[0].binding = 0;
         binding_description[0].stride = sizeof(TileVertex);
-        binding_description[0].input_rate = work::renderer::VertexInputRate::VERTEX;
+        binding_description[0].input_rate = engine::renderer::VertexInputRate::VERTEX;
         return binding_description;
     }
 
-    static std::vector<work::renderer::VertexInputAttributeDescription> getAttributeDescriptions() {
-        std::vector<work::renderer::VertexInputAttributeDescription> attribute_descriptions(1);
+    static std::vector<engine::renderer::VertexInputAttributeDescription> getAttributeDescriptions() {
+        std::vector<engine::renderer::VertexInputAttributeDescription> attribute_descriptions(1);
         attribute_descriptions[0].binding = 0;
         attribute_descriptions[0].location = 0;
-        attribute_descriptions[0].format = work::renderer::Format::R32G32_SFLOAT;
+        attribute_descriptions[0].format = engine::renderer::Format::R32G32_SFLOAT;
         attribute_descriptions[0].offset = offsetof(TileVertex, height);
         return attribute_descriptions;
     }
@@ -79,63 +79,14 @@ std::vector<uint64_t> readFile(const std::string& file_name, uint64_t& file_size
     return buffer;
 }
 
-static void check_vk_result(VkResult err)
-{
-    if (err == 0)
-        return;
-    fprintf(stderr, "[vulkan] Error: VkResult = %d\n", err);
-    if (err < 0)
-        abort();
-}
-
 }
 
 namespace work {
-namespace renderer {
-
-void TextureInfo::destroy(const std::shared_ptr<Device>& device) {
-    device->destroyImage(image);
-    device->destroyImageView(view);
-    device->freeMemory(memory);
-
-    for (auto& s_views : surface_views) {
-        for (auto& s_view : s_views) {
-            device->destroyImageView(s_view);
-        }
-    }
-    
-    for (auto& framebuffer : framebuffers) {
-        device->destroyFramebuffer(framebuffer);
-    }
-}
-
-void BufferInfo::destroy(const std::shared_ptr<Device>& device) {
-    device->destroyBuffer(buffer);
-    device->freeMemory(memory);
-}
-
-void ObjectData::destroy(const std::shared_ptr<Device>& device) {
-    for (auto& texture : textures_) {
-        texture.destroy(device);
-    }
-
-    for (auto& material : materials_) {
-        material.uniform_buffer_.destroy(device);
-    }
-
-    for (auto& buffer : buffers_) {
-        buffer.destroy(device);
-    }
-}
-
-}
-
 namespace app {
 
 void RealWorldApplication::run() {
     initWindow();
     initVulkan();
-    initImgui();
     mainLoop();
     cleanup();
 }
@@ -218,8 +169,8 @@ void RealWorldApplication::initWindow() {
 
 void RealWorldApplication::createDepthResources()
 {
-    auto depth_format = renderer::Helper::findDepthFormat(device_info_.device);
-    renderer::Helper::createDepthResources(
+    auto depth_format = engine::renderer::Helper::findDepthFormat(device_info_.device);
+    engine::renderer::Helper::createDepthResources(
         device_info_,
         depth_format,
         swap_chain_info_.extent,
@@ -228,19 +179,19 @@ void RealWorldApplication::createDepthResources()
 
 void RealWorldApplication::initVulkan() {
     // the initialization order has to be strict.
-    instance_ = renderer::Helper::createInstance();
-    physical_devices_ = renderer::Helper::collectPhysicalDevices(instance_);
-    surface_ = renderer::Helper::createSurface(instance_, window_);
-    physical_device_ = renderer::Helper::pickPhysicalDevice(physical_devices_, surface_);
-    queue_indices_ = renderer::Helper::findQueueFamilies(physical_device_, surface_);
-    device_ = renderer::Helper::createLogicalDevice(physical_device_, surface_, queue_indices_);
+    instance_ = engine::renderer::Helper::createInstance();
+    physical_devices_ = engine::renderer::Helper::collectPhysicalDevices(instance_);
+    surface_ = engine::renderer::Helper::createSurface(instance_, window_);
+    physical_device_ = engine::renderer::Helper::pickPhysicalDevice(physical_devices_, surface_);
+    queue_indices_ = engine::renderer::Helper::findQueueFamilies(physical_device_, surface_);
+    device_ = engine::renderer::Helper::createLogicalDevice(physical_device_, surface_, queue_indices_);
     assert(device_);
     device_info_.device = device_;
     graphics_queue_ = device_->getDeviceQueue(queue_indices_.graphics_family_.value());
     assert(graphics_queue_);
     device_info_.cmd_queue = graphics_queue_;
     present_queue_ = device_->getDeviceQueue(queue_indices_.present_family_.value());
-    renderer::Helper::createSwapChain(window_, device_, surface_, queue_indices_, swap_chain_info_);
+    engine::renderer::Helper::createSwapChain(window_, device_, surface_, queue_indices_, swap_chain_info_);
     createRenderPass();
     createImageViews();
     createCubemapRenderPass();
@@ -249,11 +200,11 @@ void RealWorldApplication::initVulkan() {
     createCommandPool();
     assert(command_pool_);
     device_info_.cmd_pool = command_pool_;
-    renderer::Helper::init(device_info_);
+    engine::renderer::Helper::init(device_info_);
 
 //    loadGltfModel(device_info_, "assets/Avocado.glb");
 //    loadGltfModel(device_info_, "assets/BoomBox.glb");
-    gltf_object_ = renderer::loadGltfModel(device_info_, "assets/DamagedHelmet.glb");
+    gltf_object_ = engine::renderer::loadGltfModel(device_info_, "assets/DamagedHelmet.glb");
 //    loadGltfModel(device_info_, "assets/Duck.glb");
 //    loadGltfModel(device_info_, "assets/MetalRoughSpheres.glb");
 //    loadGltfModel(device_info_, "assets/BarramundiFish.glb");
@@ -274,7 +225,7 @@ void RealWorldApplication::initVulkan() {
     createComputePipeline();
     createDepthResources();
     createFramebuffers();
-    auto format = work::renderer::Format::R8G8B8A8_UNORM;
+    auto format = engine::renderer::Format::R8G8B8A8_UNORM;
     createTextureImage("assets/statue.jpg", format, sample_tex_);
     createTextureImage("assets/brdfLUT.png", format, brdf_lut_tex_);
     createTextureImage("assets/lut_ggx.png", format, ggx_lut_tex_);
@@ -290,83 +241,17 @@ void RealWorldApplication::initVulkan() {
     createCommandBuffers();
     createSyncObjects();
 
-    tile_mesh_ = std::make_shared<renderer::TileMesh> (device_info_, glm::uvec2(256, 256), glm::vec2(-100.0f, -100.0f), glm::vec2(100.0f, 100.0f));
-}
-
-void RealWorldApplication::initImgui() {
-    // Setup Dear ImGui context
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
-    //io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
-    //io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-
-    // Setup Dear ImGui style
-    ImGui::StyleColorsDark();
-    //ImGui::StyleColorsClassic();
-
-    // Setup Platform/Renderer backends
-    auto logic_device = RENDER_TYPE_CAST(Device, device_);
-    ImGui_ImplGlfw_InitForVulkan(window_, true);
-    ImGui_ImplVulkan_InitInfo init_info = {};
-    init_info.Instance = RENDER_TYPE_CAST(Instance, instance_)->get();
-    init_info.PhysicalDevice = RENDER_TYPE_CAST(PhysicalDevice, logic_device->getPhysicalDevice())->get();
-    init_info.Device = logic_device->get();
-    init_info.QueueFamily = queue_indices_.graphics_family_.value();
-    init_info.Queue = RENDER_TYPE_CAST(Queue, graphics_queue_)->get();
-    init_info.PipelineCache = nullptr;// g_PipelineCache;
-    init_info.DescriptorPool = RENDER_TYPE_CAST(DescriptorPool, descriptor_pool_)->get();
-    init_info.Allocator = nullptr; // g_Allocator;
-    init_info.MinImageCount = swap_chain_info_.framebuffers.size();
-    init_info.ImageCount = swap_chain_info_.framebuffers.size();
-    init_info.CheckVkResultFn = check_vk_result;
-    ImGui_ImplVulkan_Init(&init_info, RENDER_TYPE_CAST(RenderPass, render_pass_)->get());
-
-    // Load Fonts
-    // - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
-    // - AddFontFromFileTTF() will return the ImFont* so you can store it if you need to select the font among multiple.
-    // - If the file cannot be loaded, the function will return NULL. Please handle those errors in your application (e.g. use an assertion, or display an error and quit).
-    // - The fonts will be rasterized at a given size (w/ oversampling) and stored into a texture when calling ImFontAtlas::Build()/GetTexDataAsXXXX(), which ImGui_ImplXXXX_NewFrame below will call.
-    // - Read 'docs/FONTS.md' for more instructions and details.
-    // - Remember that in C/C++ if you want to include a backslash \ in a string literal you need to write a double backslash \\ !
-    //io.Fonts->AddFontDefault();
-    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf", 16.0f);
-    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
-    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf", 16.0f);
-    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/ProggyTiny.ttf", 10.0f);
-    //ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f, NULL, io.Fonts->GetGlyphRangesJapanese());
-    //IM_ASSERT(font != NULL);
-
-    // Upload Fonts
-    {
-        // Use any command queue
-        //VkCommandPool command_pool = wd->Frames[wd->FrameIndex].CommandPool;
-        auto current_cmd_buf = command_buffers_[0];
-        VkCommandBuffer command_buffer = RENDER_TYPE_CAST(CommandBuffer, current_cmd_buf)->get();
-
-        //auto err = vkResetCommandPool(init_info.Device, command_pool, 0);
-        //check_vk_result(err);
-        VkCommandBufferBeginInfo begin_info = {};
-        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        begin_info.flags |= VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        auto err = vkBeginCommandBuffer(command_buffer, &begin_info);
-        check_vk_result(err);
-
-        ImGui_ImplVulkan_CreateFontsTexture(command_buffer);
-
-        VkSubmitInfo end_info = {};
-        end_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        end_info.commandBufferCount = 1;
-        end_info.pCommandBuffers = &command_buffer;
-        err = vkEndCommandBuffer(command_buffer);
-        check_vk_result(err);
-        err = vkQueueSubmit(init_info.Queue, 1, &end_info, VK_NULL_HANDLE);
-        check_vk_result(err);
-
-        err = vkDeviceWaitIdle(init_info.Device);
-        check_vk_result(err);
-        ImGui_ImplVulkan_DestroyFontUploadObjects();
-    }
+    tile_mesh_ = std::make_shared<engine::renderer::TileMesh> (device_info_, glm::uvec2(256, 256), glm::vec2(-100.0f, -100.0f), glm::vec2(100.0f, 100.0f));
+    engine::renderer::Helper::initImgui(
+        device_info_,
+        instance_,
+        window_, 
+        queue_indices_,
+        swap_chain_info_,
+        graphics_queue_,
+        descriptor_pool_,
+        render_pass_,
+        command_buffers_[0]);
 }
 
 void RealWorldApplication::recreateSwapChain() {
@@ -381,7 +266,7 @@ void RealWorldApplication::recreateSwapChain() {
 
     cleanupSwapChain();
 
-    renderer::Helper::createSwapChain(window_, device_, surface_, queue_indices_, swap_chain_info_);
+    engine::renderer::Helper::createSwapChain(window_, device_, surface_, queue_indices_, swap_chain_info_);
     createRenderPass();
     createImageViews();
     createGltfPipelineLayout();
@@ -403,7 +288,7 @@ void RealWorldApplication::createImageViews() {
     for (uint64_t i_img = 0; i_img < swap_chain_info_.images.size(); i_img++) {
         swap_chain_info_.image_views[i_img] = device_->createImageView(
             swap_chain_info_.images[i_img],
-            renderer::ImageViewType::VIEW_2D,
+            engine::renderer::ImageViewType::VIEW_2D,
             swap_chain_info_.format,
             SET_FLAG_BIT(ImageAspect, COLOR_BIT));
     }
@@ -411,84 +296,84 @@ void RealWorldApplication::createImageViews() {
 
 void RealWorldApplication::createCubemapFramebuffers() {
     uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
-    std::vector<work::renderer::BufferImageCopyInfo> dump_copies;
+    std::vector<engine::renderer::BufferImageCopyInfo> dump_copies;
 
-    renderer::Helper::createCubemapTexture(
+    engine::renderer::Helper::createCubemapTexture(
         device_info_,
         cubemap_render_pass_,
         kCubemapSize,
         kCubemapSize,
         num_mips,
-        renderer::Format::R16G16B16A16_SFLOAT,
+        engine::renderer::Format::R16G16B16A16_SFLOAT,
         dump_copies,
         rt_envmap_tex_);
 
-    renderer::Helper::createCubemapTexture(
+    engine::renderer::Helper::createCubemapTexture(
         device_info_,
         cubemap_render_pass_,
         kCubemapSize,
         kCubemapSize,
         1,
-        renderer::Format::R16G16B16A16_SFLOAT,
+        engine::renderer::Format::R16G16B16A16_SFLOAT,
         dump_copies,
         tmp_ibl_diffuse_tex_);
 
-    renderer::Helper::createCubemapTexture(
+    engine::renderer::Helper::createCubemapTexture(
         device_info_,
         cubemap_render_pass_,
         kCubemapSize,
         kCubemapSize,
         num_mips,
-        renderer::Format::R16G16B16A16_SFLOAT,
+        engine::renderer::Format::R16G16B16A16_SFLOAT,
         dump_copies,
         tmp_ibl_specular_tex_);
 
-    renderer::Helper::createCubemapTexture(
+    engine::renderer::Helper::createCubemapTexture(
         device_info_,
         cubemap_render_pass_,
         kCubemapSize,
         kCubemapSize,
         num_mips,
-        renderer::Format::R16G16B16A16_SFLOAT,
+        engine::renderer::Format::R16G16B16A16_SFLOAT,
         dump_copies,
         tmp_ibl_sheen_tex_);
 
-    renderer::Helper::createCubemapTexture(
+    engine::renderer::Helper::createCubemapTexture(
         device_info_,
         cubemap_render_pass_,
         kCubemapSize,
         kCubemapSize,
         1,
-        renderer::Format::R16G16B16A16_SFLOAT,
+        engine::renderer::Format::R16G16B16A16_SFLOAT,
         dump_copies,
         rt_ibl_diffuse_tex_);
 
-    renderer::Helper::createCubemapTexture(
+    engine::renderer::Helper::createCubemapTexture(
         device_info_,
         cubemap_render_pass_,
         kCubemapSize,
         kCubemapSize,
         num_mips,
-        renderer::Format::R16G16B16A16_SFLOAT,
+        engine::renderer::Format::R16G16B16A16_SFLOAT,
         dump_copies,
         rt_ibl_specular_tex_);
 
-    renderer::Helper::createCubemapTexture(
+    engine::renderer::Helper::createCubemapTexture(
         device_info_,
         cubemap_render_pass_,
         kCubemapSize,
         kCubemapSize,
         num_mips,
-        renderer::Format::R16G16B16A16_SFLOAT,
+        engine::renderer::Format::R16G16B16A16_SFLOAT,
         dump_copies,
         rt_ibl_sheen_tex_);
 }
 
-renderer::DescriptorSetLayoutBinding getTextureSamplerDescriptionSetLayoutBinding(
+engine::renderer::DescriptorSetLayoutBinding getTextureSamplerDescriptionSetLayoutBinding(
     uint32_t binding, 
-    renderer::ShaderStageFlags stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
-    renderer::DescriptorType descript_type = renderer::DescriptorType::COMBINED_IMAGE_SAMPLER) {
-    renderer::DescriptorSetLayoutBinding texture_binding{};
+    engine::renderer::ShaderStageFlags stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
+    engine::renderer::DescriptorType descript_type = engine::renderer::DescriptorType::COMBINED_IMAGE_SAMPLER) {
+    engine::renderer::DescriptorSetLayoutBinding texture_binding{};
     texture_binding.binding = binding;
     texture_binding.descriptor_count = 1;
     texture_binding.descriptor_type = descript_type;
@@ -498,14 +383,14 @@ renderer::DescriptorSetLayoutBinding getTextureSamplerDescriptionSetLayoutBindin
     return texture_binding;
 }
 
-renderer::ShaderModuleList getGltfShaderModules(
-    std::shared_ptr<renderer::Device> device, 
+engine::renderer::ShaderModuleList getGltfShaderModules(
+    std::shared_ptr<engine::renderer::Device> device, 
     bool has_normals, 
     bool has_tangent, 
     bool has_texcoord_0,
     bool has_skin_set_0)
 {
-    renderer::ShaderModuleList shader_modules(2);
+    engine::renderer::ShaderModuleList shader_modules(2);
     std::string feature_str = std::string(has_texcoord_0 ? "_TEX" : "") + 
         (has_tangent ? "_TN" : (has_normals ? "_N" : "")) +
         (has_skin_set_0 ? "_SKIN" : "");
@@ -519,11 +404,11 @@ renderer::ShaderModuleList getGltfShaderModules(
     return shader_modules;
 }
 
-std::vector<std::shared_ptr<renderer::ShaderModule>> getSkyboxShaderModules(
-    std::shared_ptr<renderer::Device> device)
+engine::renderer::ShaderModuleList getSkyboxShaderModules(
+    std::shared_ptr<engine::renderer::Device> device)
 {
     uint64_t vert_code_size, frag_code_size;
-    std::vector<std::shared_ptr<renderer::ShaderModule>> shader_modules(2);
+    engine::renderer::ShaderModuleList shader_modules(2);
     auto vert_shader_code = readFile("lib/shaders/skybox_vert.spv", vert_code_size);
     auto frag_shader_code = readFile("lib/shaders/skybox_frag.spv", frag_code_size);
 
@@ -533,11 +418,11 @@ std::vector<std::shared_ptr<renderer::ShaderModule>> getSkyboxShaderModules(
     return shader_modules;
 }
 
-std::vector<std::shared_ptr<renderer::ShaderModule>> getTileShaderModules(
-    std::shared_ptr<renderer::Device> device)
+engine::renderer::ShaderModuleList getTileShaderModules(
+    std::shared_ptr<engine::renderer::Device> device)
 {
     uint64_t vert_code_size, frag_code_size;
-    std::vector<std::shared_ptr<renderer::ShaderModule>> shader_modules(2);
+    engine::renderer::ShaderModuleList shader_modules(2);
     auto vert_shader_code = readFile("lib/shaders/tile_vert.spv", vert_code_size);
     auto frag_shader_code = readFile("lib/shaders/tile_frag.spv", frag_code_size);
 
@@ -547,11 +432,11 @@ std::vector<std::shared_ptr<renderer::ShaderModule>> getTileShaderModules(
     return shader_modules;
 }
 
-std::vector<std::shared_ptr<renderer::ShaderModule>> getIblShaderModules(
-    std::shared_ptr<renderer::Device> device)
+engine::renderer::ShaderModuleList getIblShaderModules(
+    std::shared_ptr<engine::renderer::Device> device)
 {
     uint64_t vert_code_size, frag_code_size;
-    std::vector<std::shared_ptr<renderer::ShaderModule>> shader_modules;
+    engine::renderer::ShaderModuleList shader_modules;
     shader_modules.reserve(7);
     auto vert_shader_code = readFile("lib/shaders/ibl_vert.spv", vert_code_size);
     shader_modules.push_back(device->createShaderModule(vert_code_size, vert_shader_code.data()));
@@ -569,11 +454,11 @@ std::vector<std::shared_ptr<renderer::ShaderModule>> getIblShaderModules(
     return shader_modules;
 }
 
-std::vector<std::shared_ptr<renderer::ShaderModule>> getIblComputeShaderModules(
-    std::shared_ptr<renderer::Device> device)
+engine::renderer::ShaderModuleList getIblComputeShaderModules(
+    std::shared_ptr<engine::renderer::Device> device)
 {
     uint64_t compute_code_size;
-    std::vector<std::shared_ptr<renderer::ShaderModule>> shader_modules;
+    engine::renderer::ShaderModuleList shader_modules;
     shader_modules.reserve(1);
     auto compute_shader_code = readFile("lib/shaders/ibl_smooth_comp.spv", compute_code_size);
     shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
@@ -583,12 +468,12 @@ std::vector<std::shared_ptr<renderer::ShaderModule>> getIblComputeShaderModules(
 
 void RealWorldApplication::createGltfPipelineLayout()
 {
-    renderer::PushConstantRange push_const_range{};
+    engine::renderer::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT);
     push_const_range.offset = 0;
     push_const_range.size = sizeof(ModelParams);
 
-    renderer::DescriptorSetLayoutList desc_set_layouts;
+    engine::renderer::DescriptorSetLayoutList desc_set_layouts;
     desc_set_layouts.reserve(3);
     desc_set_layouts.push_back(global_tex_desc_set_layout_);
     desc_set_layouts.push_back(desc_set_layout_);
@@ -601,13 +486,13 @@ void RealWorldApplication::createGltfPipelineLayout()
 
 void RealWorldApplication::createTileMeshPipelineLayout()
 {
-    renderer::PushConstantRange push_const_range{};
+    engine::renderer::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
                                    SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
     push_const_range.offset = 0;
     push_const_range.size = sizeof(TileParams);
 
-    renderer::DescriptorSetLayoutList desc_set_layouts;
+    engine::renderer::DescriptorSetLayoutList desc_set_layouts;
     desc_set_layouts.reserve(3);
     desc_set_layouts.push_back(global_tex_desc_set_layout_);
     desc_set_layouts.push_back(desc_set_layout_);
@@ -618,12 +503,12 @@ void RealWorldApplication::createTileMeshPipelineLayout()
 
 void RealWorldApplication::createSkyboxPipelineLayout()
 {
-    renderer::PushConstantRange push_const_range{};
+    engine::renderer::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
     push_const_range.offset = 0;
     push_const_range.size = sizeof(SunSkyParams);
 
-    renderer::DescriptorSetLayoutList desc_set_layouts;
+    engine::renderer::DescriptorSetLayoutList desc_set_layouts;
     desc_set_layouts.reserve(2);
     desc_set_layouts.push_back(skybox_desc_set_layout_);
     desc_set_layouts.push_back(desc_set_layout_);
@@ -633,12 +518,12 @@ void RealWorldApplication::createSkyboxPipelineLayout()
 
 void RealWorldApplication::createCubemapPipelineLayout()
 {
-    renderer::PushConstantRange push_const_range{};
+    engine::renderer::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
     push_const_range.offset = 0;
     push_const_range.size = sizeof(IblParams);
 
-    renderer::DescriptorSetLayoutList desc_set_layouts(1);
+    engine::renderer::DescriptorSetLayoutList desc_set_layouts(1);
     desc_set_layouts[0] = ibl_desc_set_layout_;
 
     ibl_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
@@ -646,12 +531,12 @@ void RealWorldApplication::createCubemapPipelineLayout()
 
 void RealWorldApplication::createCubeSkyboxPipelineLayout()
 {
-    renderer::PushConstantRange push_const_range{};
+    engine::renderer::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
     push_const_range.offset = 0;
     push_const_range.size = sizeof(SunSkyParams);
 
-    renderer::DescriptorSetLayoutList desc_set_layouts(1);
+    engine::renderer::DescriptorSetLayoutList desc_set_layouts(1);
     desc_set_layouts[0] = ibl_desc_set_layout_;
 
     cube_skybox_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
@@ -659,27 +544,27 @@ void RealWorldApplication::createCubeSkyboxPipelineLayout()
 
 void RealWorldApplication::createCubemapComputePipelineLayout()
 {
-    renderer::PushConstantRange push_const_range{};
+    engine::renderer::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
     push_const_range.offset = 0;
     push_const_range.size = sizeof(IblComputeParams);
 
-    renderer::DescriptorSetLayoutList desc_set_layouts(1);
+    engine::renderer::DescriptorSetLayoutList desc_set_layouts(1);
     desc_set_layouts[0] = ibl_comp_desc_set_layout_;
 
     ibl_comp_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
 
-renderer::PipelineColorBlendAttachmentState fillPipelineColorBlendAttachmentState(
-    renderer::ColorComponentFlags color_write_mask = SET_FLAG_BIT(ColorComponent, ALL_BITS),
+engine::renderer::PipelineColorBlendAttachmentState fillPipelineColorBlendAttachmentState(
+    engine::renderer::ColorComponentFlags color_write_mask = SET_FLAG_BIT(ColorComponent, ALL_BITS),
     bool blend_enable = false,
-    renderer::BlendFactor src_color_blend_factor = renderer::BlendFactor::ONE,
-    renderer::BlendFactor dst_color_blend_factor = renderer::BlendFactor::ZERO,
-    renderer::BlendOp color_blend_op = renderer::BlendOp::ADD,
-    renderer::BlendFactor src_alpha_blend_factor = renderer::BlendFactor::ONE,
-    renderer::BlendFactor dst_alpha_blend_factor = renderer::BlendFactor::ZERO,
-    renderer::BlendOp alpha_blend_op = renderer::BlendOp::ADD) {
-    renderer::PipelineColorBlendAttachmentState color_blend_attachment{};
+    engine::renderer::BlendFactor src_color_blend_factor = engine::renderer::BlendFactor::ONE,
+    engine::renderer::BlendFactor dst_color_blend_factor = engine::renderer::BlendFactor::ZERO,
+    engine::renderer::BlendOp color_blend_op = engine::renderer::BlendOp::ADD,
+    engine::renderer::BlendFactor src_alpha_blend_factor = engine::renderer::BlendFactor::ONE,
+    engine::renderer::BlendFactor dst_alpha_blend_factor = engine::renderer::BlendFactor::ZERO,
+    engine::renderer::BlendOp alpha_blend_op = engine::renderer::BlendOp::ADD) {
+    engine::renderer::PipelineColorBlendAttachmentState color_blend_attachment{};
     color_blend_attachment.color_write_mask = color_write_mask;
     color_blend_attachment.blend_enable = blend_enable;
     color_blend_attachment.src_color_blend_factor = src_color_blend_factor; // Optional
@@ -692,12 +577,12 @@ renderer::PipelineColorBlendAttachmentState fillPipelineColorBlendAttachmentStat
     return color_blend_attachment;
 }
 
-renderer::PipelineColorBlendStateCreateInfo fillPipelineColorBlendStateCreateInfo(
-    const std::vector<renderer::PipelineColorBlendAttachmentState>& color_blend_attachments,
+engine::renderer::PipelineColorBlendStateCreateInfo fillPipelineColorBlendStateCreateInfo(
+    const std::vector<engine::renderer::PipelineColorBlendAttachmentState>& color_blend_attachments,
     bool logic_op_enable = false,
-    renderer::LogicOp logic_op = renderer::LogicOp::NO_OP,
+    engine::renderer::LogicOp logic_op = engine::renderer::LogicOp::NO_OP,
     glm::vec4 blend_constants = glm::vec4(0.0f)) {
-    renderer::PipelineColorBlendStateCreateInfo color_blending{};
+    engine::renderer::PipelineColorBlendStateCreateInfo color_blending{};
     color_blending.logic_op_enable = logic_op_enable;
     color_blending.logic_op = logic_op; // Optional
     color_blending.attachment_count = static_cast<uint32_t>(color_blend_attachments.size());
@@ -707,18 +592,18 @@ renderer::PipelineColorBlendStateCreateInfo fillPipelineColorBlendStateCreateInf
     return color_blending;
 }
 
-renderer::PipelineRasterizationStateCreateInfo fillPipelineRasterizationStateCreateInfo(
+engine::renderer::PipelineRasterizationStateCreateInfo fillPipelineRasterizationStateCreateInfo(
     bool depth_clamp_enable = false,
     bool rasterizer_discard_enable = false,
-    renderer::PolygonMode polygon_mode = renderer::PolygonMode::FILL,
-    renderer::CullModeFlags cull_mode = SET_FLAG_BIT(CullMode, BACK_BIT),
-    renderer::FrontFace front_face = renderer::FrontFace::COUNTER_CLOCKWISE,
+    engine::renderer::PolygonMode polygon_mode = engine::renderer::PolygonMode::FILL,
+    engine::renderer::CullModeFlags cull_mode = SET_FLAG_BIT(CullMode, BACK_BIT),
+    engine::renderer::FrontFace front_face = engine::renderer::FrontFace::COUNTER_CLOCKWISE,
     bool  depth_bias_enable = false,
     float depth_bias_constant_factor = 0.0f,
     float depth_bias_clamp = 0.0f,
     float depth_bias_slope_factor = 0.0f,
     float line_width = 1.0f) {
-    renderer::PipelineRasterizationStateCreateInfo rasterizer{};
+    engine::renderer::PipelineRasterizationStateCreateInfo rasterizer{};
     rasterizer.depth_clamp_enable = depth_clamp_enable;
     rasterizer.rasterizer_discard_enable = rasterizer_discard_enable;
     rasterizer.polygon_mode = polygon_mode;
@@ -733,14 +618,14 @@ renderer::PipelineRasterizationStateCreateInfo fillPipelineRasterizationStateCre
     return rasterizer;
 }
 
-renderer::PipelineMultisampleStateCreateInfo fillPipelineMultisampleStateCreateInfo(
-    renderer::SampleCountFlagBits rasterization_samples = renderer::SampleCountFlagBits::SC_1_BIT,
+engine::renderer::PipelineMultisampleStateCreateInfo fillPipelineMultisampleStateCreateInfo(
+    engine::renderer::SampleCountFlagBits rasterization_samples = engine::renderer::SampleCountFlagBits::SC_1_BIT,
     bool sample_shading_enable = false,
     float min_sample_shading = 1.0f,
-    const renderer::SampleMask* sample_mask = nullptr,
+    const engine::renderer::SampleMask* sample_mask = nullptr,
     bool alpha_to_coverage_enable = false,
     bool alpha_to_one_enable = false) {
-    renderer::PipelineMultisampleStateCreateInfo multisampling{};
+    engine::renderer::PipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sample_shading_enable = sample_shading_enable;
     multisampling.rasterization_samples = rasterization_samples;
     multisampling.min_sample_shading = min_sample_shading; // Optional
@@ -751,15 +636,15 @@ renderer::PipelineMultisampleStateCreateInfo fillPipelineMultisampleStateCreateI
     return multisampling;
 }
 
-renderer::StencilOpState fillDepthStencilInfo(
-    renderer::StencilOp fail_op = renderer::StencilOp::KEEP,
-    renderer::StencilOp pass_op = renderer::StencilOp::KEEP,
-    renderer::StencilOp depth_fail_op = renderer::StencilOp::KEEP,
-    renderer::CompareOp compare_op = renderer::CompareOp::NEVER,
+engine::renderer::StencilOpState fillDepthStencilInfo(
+    engine::renderer::StencilOp fail_op = engine::renderer::StencilOp::KEEP,
+    engine::renderer::StencilOp pass_op = engine::renderer::StencilOp::KEEP,
+    engine::renderer::StencilOp depth_fail_op = engine::renderer::StencilOp::KEEP,
+    engine::renderer::CompareOp compare_op = engine::renderer::CompareOp::NEVER,
     uint32_t        compare_mask = 0xff,
     uint32_t        write_mask = 0xff,
     uint32_t        reference = 0x00) {
-    renderer::StencilOpState stencil_op_state;
+    engine::renderer::StencilOpState stencil_op_state;
     stencil_op_state.fail_op = fail_op;
     stencil_op_state.pass_op = pass_op;
     stencil_op_state.depth_fail_op = depth_fail_op;
@@ -771,18 +656,18 @@ renderer::StencilOpState fillDepthStencilInfo(
     return stencil_op_state;
 }
 
-renderer::PipelineDepthStencilStateCreateInfo fillPipelineDepthStencilStateCreateInfo(
+engine::renderer::PipelineDepthStencilStateCreateInfo fillPipelineDepthStencilStateCreateInfo(
     bool depth_test_enable = true,
     bool depth_write_enable = true,
-    renderer::CompareOp depth_compare_op = renderer::CompareOp::LESS,
+    engine::renderer::CompareOp depth_compare_op = engine::renderer::CompareOp::LESS,
     bool depth_bounds_test_enable = false,
     float min_depth_bounds = 0.0f,
     float max_depth_bounds = 1.0f,
     bool stencil_test_enable = false,
-    renderer::StencilOpState front = {},
-    renderer::StencilOpState back = {})
+    engine::renderer::StencilOpState front = {},
+    engine::renderer::StencilOpState back = {})
 {
-    renderer::PipelineDepthStencilStateCreateInfo depth_stencil{};
+    engine::renderer::PipelineDepthStencilStateCreateInfo depth_stencil{};
     depth_stencil.depth_test_enable = depth_test_enable;
     depth_stencil.depth_write_enable = depth_write_enable;
     depth_stencil.depth_compare_op = depth_compare_op;
@@ -798,19 +683,19 @@ renderer::PipelineDepthStencilStateCreateInfo fillPipelineDepthStencilStateCreat
 
 void RealWorldApplication::createGraphicsPipeline() {
     auto color_blend_attachment = fillPipelineColorBlendAttachmentState();
-    std::vector<renderer::PipelineColorBlendAttachmentState> color_blend_attachments(1, color_blend_attachment);
-    std::vector<renderer::PipelineColorBlendAttachmentState> cube_color_blend_attachments(6, color_blend_attachment);
+    std::vector<engine::renderer::PipelineColorBlendAttachmentState> color_blend_attachments(1, color_blend_attachment);
+    std::vector<engine::renderer::PipelineColorBlendAttachmentState> cube_color_blend_attachments(6, color_blend_attachment);
     auto color_blending = fillPipelineColorBlendStateCreateInfo(color_blend_attachments);
     auto cubemap_color_blending = fillPipelineColorBlendStateCreateInfo(cube_color_blend_attachments);
     auto rasterizer = fillPipelineRasterizationStateCreateInfo();
     auto ibl_rasterizer = fillPipelineRasterizationStateCreateInfo(
-        false, false, renderer::PolygonMode::FILL,
+        false, false, engine::renderer::PolygonMode::FILL,
         SET_FLAG_BIT(CullMode, NONE));
     auto multisampling = fillPipelineMultisampleStateCreateInfo();
     auto depth_stencil_info = fillDepthStencilInfo();
     auto depth_stencil = fillPipelineDepthStencilStateCreateInfo();
     auto cubemap_depth_stencil = fillPipelineDepthStencilStateCreateInfo(
-        false, false, renderer::CompareOp::ALWAYS, false);
+        false, false, engine::renderer::CompareOp::ALWAYS, false);
 #if 0
     VkDynamicState dynamic_states[] = {
         VK_DYNAMIC_STATE_VIEWPORT,
@@ -849,8 +734,8 @@ void RealWorldApplication::createGraphicsPipeline() {
         }
     }
 
-    renderer::PipelineInputAssemblyStateCreateInfo input_assembly;
-    input_assembly.topology = renderer::PrimitiveTopology::TRIANGLE_LIST;
+    engine::renderer::PipelineInputAssemblyStateCreateInfo input_assembly;
+    input_assembly.topology = engine::renderer::PrimitiveTopology::TRIANGLE_LIST;
     input_assembly.restart_enable = false;
     {
         auto shader_modules = getTileShaderModules(device_);
@@ -974,17 +859,17 @@ void RealWorldApplication::createComputePipeline()
     }
 }
 
-renderer::AttachmentDescription FillAttachmentDescription(
-    renderer::Format format,
-    renderer::SampleCountFlagBits samples = renderer::SampleCountFlagBits::SC_1_BIT,
-    renderer::ImageLayout initial_layout = renderer::ImageLayout::UNDEFINED,
-    renderer::ImageLayout final_layout = renderer::ImageLayout::PRESENT_SRC_KHR,
-    renderer::AttachmentLoadOp load_op = renderer::AttachmentLoadOp::CLEAR,
-    renderer::AttachmentStoreOp store_op = renderer::AttachmentStoreOp::STORE,
-    renderer::AttachmentLoadOp stencil_load_op = renderer::AttachmentLoadOp::DONT_CARE,
-    renderer::AttachmentStoreOp stencil_store_op = renderer::AttachmentStoreOp::DONT_CARE) {
+engine::renderer::AttachmentDescription FillAttachmentDescription(
+    engine::renderer::Format format,
+    engine::renderer::SampleCountFlagBits samples = engine::renderer::SampleCountFlagBits::SC_1_BIT,
+    engine::renderer::ImageLayout initial_layout = engine::renderer::ImageLayout::UNDEFINED,
+    engine::renderer::ImageLayout final_layout = engine::renderer::ImageLayout::PRESENT_SRC_KHR,
+    engine::renderer::AttachmentLoadOp load_op = engine::renderer::AttachmentLoadOp::CLEAR,
+    engine::renderer::AttachmentStoreOp store_op = engine::renderer::AttachmentStoreOp::STORE,
+    engine::renderer::AttachmentLoadOp stencil_load_op = engine::renderer::AttachmentLoadOp::DONT_CARE,
+    engine::renderer::AttachmentStoreOp stencil_store_op = engine::renderer::AttachmentStoreOp::DONT_CARE) {
 
-    renderer::AttachmentDescription attachment{};
+    engine::renderer::AttachmentDescription attachment{};
     attachment.format = format;
     attachment.samples = samples;
     attachment.initial_layout = initial_layout;
@@ -997,14 +882,14 @@ renderer::AttachmentDescription FillAttachmentDescription(
     return attachment;
 }
 
-renderer::SubpassDescription FillSubpassDescription(
-    renderer::PipelineBindPoint pipeline_bind_point,
-    const std::vector<renderer::AttachmentReference>& color_attachments,
-    const renderer::AttachmentReference* depth_stencil_attachment,
-    renderer::SubpassDescriptionFlags flags = static_cast<renderer::SubpassDescriptionFlags>(0),
-    const std::vector<renderer::AttachmentReference>& input_attachments = {},
-    const std::vector<renderer::AttachmentReference>& resolve_attachments = {}) {
-    renderer::SubpassDescription desc{};
+engine::renderer::SubpassDescription FillSubpassDescription(
+    engine::renderer::PipelineBindPoint pipeline_bind_point,
+    const std::vector<engine::renderer::AttachmentReference>& color_attachments,
+    const engine::renderer::AttachmentReference* depth_stencil_attachment,
+    engine::renderer::SubpassDescriptionFlags flags = static_cast<engine::renderer::SubpassDescriptionFlags>(0),
+    const std::vector<engine::renderer::AttachmentReference>& input_attachments = {},
+    const std::vector<engine::renderer::AttachmentReference>& resolve_attachments = {}) {
+    engine::renderer::SubpassDescription desc{};
     desc.flags = flags;
     desc.input_attachments = input_attachments;
     desc.color_attachments = color_attachments;
@@ -1019,15 +904,15 @@ renderer::SubpassDescription FillSubpassDescription(
     return desc;
 }
 
-renderer::SubpassDependency FillSubpassDependency(
+engine::renderer::SubpassDependency FillSubpassDependency(
     uint32_t src_subpass,
     uint32_t dst_subpass,
-    renderer::PipelineStageFlags src_stage_mask,
-    renderer::PipelineStageFlags dst_stage_mask,
-    renderer::AccessFlags src_access_mask,
-    renderer::AccessFlags dst_access_mask,
-    renderer::DependencyFlags dependency_flags = 0){
-    renderer::SubpassDependency dependency{};
+    engine::renderer::PipelineStageFlags src_stage_mask,
+    engine::renderer::PipelineStageFlags dst_stage_mask,
+    engine::renderer::AccessFlags src_access_mask,
+    engine::renderer::AccessFlags dst_access_mask,
+    engine::renderer::DependencyFlags dependency_flags = 0){
+    engine::renderer::SubpassDependency dependency{};
     dependency.src_subpass = src_subpass;
     dependency.dst_subpass = dst_subpass;
     dependency.src_stage_mask = src_stage_mask;
@@ -1039,21 +924,21 @@ renderer::SubpassDependency FillSubpassDependency(
 }
 
 void RealWorldApplication::createRenderPass() {
-    renderer::AttachmentDescription color_attachment = FillAttachmentDescription(
+    engine::renderer::AttachmentDescription color_attachment = FillAttachmentDescription(
         swap_chain_info_.format);
 
-    renderer::AttachmentReference color_attachment_ref(0, renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+    engine::renderer::AttachmentReference color_attachment_ref(0, engine::renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
     auto depth_attachment = FillAttachmentDescription(
-        renderer::Helper::findDepthFormat(device_),
-        renderer::SampleCountFlagBits::SC_1_BIT,
-        renderer::ImageLayout::UNDEFINED,
-        renderer::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        engine::renderer::Helper::findDepthFormat(device_),
+        engine::renderer::SampleCountFlagBits::SC_1_BIT,
+        engine::renderer::ImageLayout::UNDEFINED,
+        engine::renderer::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
-    renderer::AttachmentReference depth_attachment_ref(1, renderer::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    engine::renderer::AttachmentReference depth_attachment_ref(1, engine::renderer::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
     auto subpass = FillSubpassDescription(
-        renderer::PipelineBindPoint::GRAPHICS,
+        engine::renderer::PipelineBindPoint::GRAPHICS,
         { color_attachment_ref },
         &depth_attachment_ref);
 
@@ -1064,7 +949,7 @@ void RealWorldApplication::createRenderPass() {
         SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT) |
         SET_FLAG_BIT(Access, COLOR_ATTACHMENT_READ_BIT));
 
-    std::vector<renderer::AttachmentDescription> attachments(2);
+    std::vector<engine::renderer::AttachmentDescription> attachments(2);
     attachments[0] = color_attachment;
     attachments[1] = depth_attachment;
 
@@ -1073,19 +958,19 @@ void RealWorldApplication::createRenderPass() {
 
 void RealWorldApplication::createCubemapRenderPass() {
     auto color_attachment = FillAttachmentDescription(
-        renderer::Format::R16G16B16A16_SFLOAT,
-        renderer::SampleCountFlagBits::SC_1_BIT,
-        renderer::ImageLayout::UNDEFINED,
-        renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+        engine::renderer::Format::R16G16B16A16_SFLOAT,
+        engine::renderer::SampleCountFlagBits::SC_1_BIT,
+        engine::renderer::ImageLayout::UNDEFINED,
+        engine::renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-    std::vector<renderer::AttachmentReference> color_attachment_refs(6);
+    std::vector<engine::renderer::AttachmentReference> color_attachment_refs(6);
     for (uint32_t i = 0; i < 6; i++) {
         color_attachment_refs[i].attachment_ = i;
-        color_attachment_refs[i].layout_ = renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+        color_attachment_refs[i].layout_ = engine::renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
     }
 
     auto subpass = FillSubpassDescription(
-        renderer::PipelineBindPoint::GRAPHICS,
+        engine::renderer::PipelineBindPoint::GRAPHICS,
         color_attachment_refs,
         nullptr);
 
@@ -1095,7 +980,7 @@ void RealWorldApplication::createCubemapRenderPass() {
         0,
         SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT));
 
-    std::vector<renderer::AttachmentDescription> attachments = {6, color_attachment};
+    std::vector<engine::renderer::AttachmentDescription> attachments = {6, color_attachment};
 
     cubemap_render_pass_ = device_->createRenderPass(attachments, { subpass }, { depency });
 }
@@ -1106,7 +991,7 @@ void RealWorldApplication::createFramebuffers() {
         assert(swap_chain_info_.image_views[i]);
         assert(depth_buffer_.view);
         assert(render_pass_);
-        std::vector<std::shared_ptr<renderer::ImageView>> attachments(2);
+        std::vector<std::shared_ptr<engine::renderer::ImageView>> attachments(2);
         attachments[0] = swap_chain_info_.image_views[i];
         attachments[1] = depth_buffer_.view;
 
@@ -1174,420 +1059,6 @@ void RealWorldApplication::createCommandBuffers() {
     }*/
 }
 
-void RealWorldApplication::mainLoop() {
-    while (!glfwWindowShouldClose(window_) && !s_exit_game) {
-        glfwPollEvents();
-        drawFrame();
-    }
-
-    device_->waitIdle();
-}
-
-void RealWorldApplication::drawFrame() {
-    std::vector<std::shared_ptr<renderer::Fence>> in_flight_fences(1);
-    in_flight_fences[0] = in_flight_fences_[current_frame_];
-    device_->waitForFences(in_flight_fences);
-
-    auto vk_device = RENDER_TYPE_CAST(Device, device_);
-    auto vk_swap_chain = RENDER_TYPE_CAST(Swapchain, swap_chain_info_.swap_chain);
-    auto vk_img_available_semphores = RENDER_TYPE_CAST(Semaphore, image_available_semaphores_[current_frame_]);
-    assert(vk_device);
-
-    uint32_t image_index;
-    auto result = vkAcquireNextImageKHR(vk_device->get(), vk_swap_chain->get(), UINT64_MAX, vk_img_available_semphores->get(), VK_NULL_HANDLE, &image_index);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-        recreateSwapChain();
-        return;
-    }
-    else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
-        throw std::runtime_error("failed to acquire swap chain image!");
-    }
-
-    if (images_in_flight_[image_index] != VK_NULL_HANDLE) {
-        std::vector<std::shared_ptr<renderer::Fence>> images_in_flight(1);
-        images_in_flight[0] = images_in_flight_[image_index];
-        device_->waitForFences(images_in_flight);
-    }
-    // Mark the image as now being in use by this frame
-    images_in_flight_[image_index] = in_flight_fences_[current_frame_];
-
-    int32_t root_node = gltf_object_->default_scene_ >= 0 ? gltf_object_->default_scene_ : 0;
-    auto min_t = gltf_object_->scenes_[root_node].bbox_min_;
-    auto max_t = gltf_object_->scenes_[root_node].bbox_max_;
-
-    auto center = (min_t + max_t) * 0.5f;
-    auto extent = (max_t - min_t) * 0.5f;
-    float radius = max(max(extent.x, extent.y), extent.z);
-
-    updateViewConstBuffer(image_index, center, radius);
-
-    device_->resetFences(in_flight_fences);
-
-    VkSubmitInfo submit_info{};
-    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-
-    // todo.
-    auto command_buffer = command_buffers_[image_index];
-    auto vk_command_buffer = RENDER_TYPE_CAST(CommandBuffer, command_buffer);
-    std::vector<std::shared_ptr<renderer::CommandBuffer>>command_buffers(1, command_buffer);
-
-    std::vector<renderer::ClearValue> clear_values(2);
-    clear_values[0].color = { 50.0f / 255.0f, 50.0f / 255.0f, 50.0f / 255.0f, 1.0f };
-    clear_values[1].depth_stencil = { 1.0f, 0 };
-
-    static auto startTime = std::chrono::high_resolution_clock::now();
-
-    auto currentTime = std::chrono::high_resolution_clock::now();
-    float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-
-    auto& cmd_buf = command_buffer;
-
-    cmd_buf->reset(0);
-    cmd_buf->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
-
-    if (0)
-    {
-        // generate envmap cubemap from panorama hdr image.
-        cmd_buf->addImageBarrier(
-            rt_envmap_tex_.image,
-            renderer::Helper::getImageAsSource(),
-            renderer::Helper::getImageAsColorAttachment(),
-            0, 1, 0, 6);
-
-        cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, envmap_pipeline_);
-
-        std::vector<renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
-        cmd_buf->beginRenderPass(cubemap_render_pass_, rt_envmap_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
-
-        IblParams ibl_params = {};
-        cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
-
-        cmd_buf->bindDescriptorSets(renderer::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { envmap_tex_desc_set_ });
-
-        cmd_buf->draw(3);
-
-        cmd_buf->endRenderPass();
-
-        uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
-
-        renderer::Helper::generateMipmapLevels(
-            cmd_buf,
-            rt_envmap_tex_.image,
-            num_mips,
-            kCubemapSize,
-            kCubemapSize,
-            renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-    }
-    else {
-        // generate envmap from skybox.
-        cmd_buf->addImageBarrier(
-            rt_envmap_tex_.image,
-            renderer::Helper::getImageAsSource(),
-            renderer::Helper::getImageAsColorAttachment(),
-            0, 1, 0, 6);
-
-        cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, cube_skybox_pipeline_);
-
-        std::vector<renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
-        cmd_buf->beginRenderPass(cubemap_render_pass_, rt_envmap_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
-
-        SunSkyParams sun_sky_params = {};
-        sun_sky_params.sun_pos = glm::vec3(cos(s_sun_angle), sin(s_sun_angle), -0.3f);
-
-        cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), cube_skybox_pipeline_layout_, &sun_sky_params, sizeof(sun_sky_params));
-
-        cmd_buf->bindDescriptorSets(renderer::PipelineBindPoint::GRAPHICS, cube_skybox_pipeline_layout_, { envmap_tex_desc_set_ });
-
-        cmd_buf->draw(3);
-
-        cmd_buf->endRenderPass();
-
-        uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
-
-        renderer::Helper::generateMipmapLevels(
-            cmd_buf,
-            rt_envmap_tex_.image,
-            num_mips,
-            kCubemapSize,
-            kCubemapSize,
-            renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-    }
-
-    // generate ibl diffuse texture.
-    {
-        cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, lambertian_pipeline_);
-
-        cmd_buf->addImageBarrier(
-            rt_ibl_diffuse_tex_.image,
-            renderer::Helper::getImageAsSource(),
-            renderer::Helper::getImageAsColorAttachment(),
-            0, 1, 0, 6);
-
-        std::vector<renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
-        cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_diffuse_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
-
-        IblParams ibl_params = {};
-        ibl_params.roughness = 1.0f;
-        ibl_params.currentMipLevel = 0;
-        ibl_params.width = kCubemapSize;
-        ibl_params.lodBias = 0;
-        cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
-
-        cmd_buf->bindDescriptorSets(renderer::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { ibl_tex_desc_set_ });
-
-        cmd_buf->draw(3);
-
-        cmd_buf->endRenderPass();
-
-        cmd_buf->addImageBarrier(
-            rt_ibl_diffuse_tex_.image,
-            renderer::Helper::getImageAsColorAttachment(),
-            renderer::Helper::getImageAsShaderSampler(),
-            0, 1, 0, 6);
-    }
-
-    // generate ibl specular texture.
-    {
-        uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
-        cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, ggx_pipeline_);
-
-        for (int i_mip = num_mips-1; i_mip >= 0; i_mip--) {
-            cmd_buf->addImageBarrier(
-                rt_ibl_specular_tex_.image,
-                renderer::Helper::getImageAsSource(),
-                renderer::Helper::getImageAsColorAttachment(),
-                i_mip, 1, 0, 6);
-
-            uint32_t width = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
-            uint32_t height = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
-
-            std::vector<renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
-            cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_specular_tex_.framebuffers[i_mip], glm::uvec2(width, height), envmap_clear_values);
-
-            IblParams ibl_params = {};
-            ibl_params.roughness = static_cast<float>(i_mip) / static_cast<float>(num_mips - 1);
-            ibl_params.currentMipLevel = i_mip;
-            ibl_params.width = kCubemapSize;
-            ibl_params.lodBias = 0;
-            cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
-
-            cmd_buf->bindDescriptorSets(renderer::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { ibl_tex_desc_set_ });
-
-            cmd_buf->draw(3);
-
-            cmd_buf->endRenderPass();
-        }
-
-        cmd_buf->addImageBarrier(
-            rt_ibl_specular_tex_.image,
-            renderer::Helper::getImageAsColorAttachment(),
-            renderer::Helper::getImageAsShaderSampler(),
-            0, num_mips, 0, 6);
-    }
-
-    // generate ibl sheen texture.
-    {
-        uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
-        cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, charlie_pipeline_);
-
-        for (int i_mip = num_mips - 1; i_mip >= 0; i_mip--) {
-            uint32_t width = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
-            uint32_t height = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
-
-            cmd_buf->addImageBarrier(
-                rt_ibl_sheen_tex_.image,
-                renderer::Helper::getImageAsSource(),
-                renderer::Helper::getImageAsColorAttachment(),
-                i_mip, 1, 0, 6);
-
-            std::vector<renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
-            cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_sheen_tex_.framebuffers[i_mip], glm::uvec2(width, height), envmap_clear_values);
-
-            IblParams ibl_params = {};
-            ibl_params.roughness = static_cast<float>(i_mip) / static_cast<float>(num_mips - 1);
-            ibl_params.currentMipLevel = i_mip;
-            ibl_params.width = kCubemapSize;
-            ibl_params.lodBias = 0;
-            cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
-
-            cmd_buf->bindDescriptorSets(renderer::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { ibl_tex_desc_set_ });
-
-            cmd_buf->draw(3);
-
-            cmd_buf->endRenderPass();
-        }
-
-        cmd_buf->addImageBarrier(
-            rt_ibl_sheen_tex_.image,
-            renderer::Helper::getImageAsColorAttachment(),
-            renderer::Helper::getImageAsShaderSampler(),
-            0, num_mips, 0, 6);
-    }
-
-    {
-        if (0)
-        {
-            cmd_buf->addImageBarrier(
-                rt_ibl_diffuse_tex_.image,
-                renderer::Helper::getImageAsSource(),
-                renderer::Helper::getImageAsStore(),
-                0, 1, 0, 6);
-
-            cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, blur_comp_pipeline_);
-            IblComputeParams ibl_comp_params = {};
-            ibl_comp_params.size = glm::ivec4(kCubemapSize, kCubemapSize, 0, 0);
-            cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, COMPUTE_BIT), ibl_comp_pipeline_layout_, &ibl_comp_params, sizeof(ibl_comp_params));
-
-            cmd_buf->bindDescriptorSets(renderer::PipelineBindPoint::COMPUTE, ibl_comp_pipeline_layout_, { ibl_diffuse_tex_desc_set_ });
-
-            cmd_buf->dispatch((kCubemapSize + 7) / 8, (kCubemapSize + 7) / 8, 6);
-
-            uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
-            cmd_buf->addImageBarrier(
-                rt_ibl_diffuse_tex_.image,
-                renderer::Helper::getImageAsStore(),
-                renderer::Helper::getImageAsShaderSampler(),
-                0, 1, 0, 6);
-            cmd_buf->addImageBarrier(
-                rt_ibl_specular_tex_.image,
-                renderer::Helper::getImageAsSource(),
-                renderer::Helper::getImageAsShaderSampler(),
-                0, num_mips, 0, 6);
-            cmd_buf->addImageBarrier(
-                rt_ibl_sheen_tex_.image,
-                renderer::Helper::getImageAsSource(),
-                renderer::Helper::getImageAsShaderSampler(),
-                0, num_mips, 0, 6);
-        }
-    }
-
-    {
-        cmd_buf->beginRenderPass(
-            render_pass_,
-            swap_chain_info_.framebuffers[image_index],
-            swap_chain_info_.extent, clear_values);
-
-        // render gltf meshes.
-        cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, gltf_pipeline_);
-
-        auto model_mat = glm::translate(glm::mat4(1.0f), s_camera_pos + s_camera_dir * 5.0f);
-        for (auto node_idx : gltf_object_->scenes_[root_node].nodes_) {
-            renderer::drawNodes(cmd_buf,
-                gltf_object_,
-                gltf_pipeline_layout_,
-                global_tex_desc_set_,
-                desc_sets_,
-                node_idx,
-                image_index,
-                model_mat);
-        }
-
-        // render terrain.
-        {
-            cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, tile_pipeline_);
-            renderer::DescriptorSetList desc_sets{ global_tex_desc_set_, desc_sets_[image_index], skybox_tex_desc_set_ };
-            tile_mesh_->draw(cmd_buf, tile_pipeline_layout_, desc_sets);
-        }
-
-        // render skybox.
-        {
-            cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, skybox_pipeline_);
-            std::vector<std::shared_ptr<renderer::Buffer>> buffers(1);
-            std::vector<uint64_t> offsets(1);
-            buffers[0] = vertex_buffer_.buffer;
-            offsets[0] = 0;
-
-            cmd_buf->bindVertexBuffers(0, buffers, offsets);
-            cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, renderer::IndexType::UINT16);
-
-            SunSkyParams sun_sky_params = {};
-            sun_sky_params.sun_pos = glm::vec3(cos(s_sun_angle), sin(s_sun_angle), -0.3f);
-            s_sun_angle += 0.001f;
-            cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), skybox_pipeline_layout_, &sun_sky_params, sizeof(sun_sky_params));
-
-            renderer::DescriptorSetList desc_sets{ skybox_tex_desc_set_, desc_sets_[image_index] };
-            cmd_buf->bindDescriptorSets(renderer::PipelineBindPoint::GRAPHICS, skybox_pipeline_layout_, desc_sets);
-
-            cmd_buf->drawIndexed(36);
-        }
-
-        cmd_buf->endRenderPass();
-    }
-
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    if (ImGui::BeginMainMenuBar())
-    {
-        if (ImGui::BeginMenu("File"))
-        {
-            //ShowExampleMenuFile();
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Edit"))
-        {
-            if (ImGui::MenuItem("Undo", "CTRL+Z")) {}
-            if (ImGui::MenuItem("Redo", "CTRL+Y", false, false)) {}  // Disabled item
-            ImGui::Separator();
-            if (ImGui::MenuItem("Cut", "CTRL+X")) {}
-            if (ImGui::MenuItem("Copy", "CTRL+C")) {}
-            if (ImGui::MenuItem("Paste", "CTRL+V")) {}
-            ImGui::EndMenu();
-        }
-        ImGui::EndMainMenuBar();
-    }
-
-    ImGui::Render();
-    ImDrawData* draw_data = ImGui::GetDrawData();
-
-    ImGui_ImplVulkan_RenderDrawData(draw_data, RENDER_TYPE_CAST(CommandBuffer, cmd_buf)->get());
-
-    cmd_buf->endCommandBuffer();
-
-    auto vk_render_finished_semphores = RENDER_TYPE_CAST(Semaphore, render_finished_semaphores_[current_frame_]);
-    auto vk_in_flight_fence = RENDER_TYPE_CAST(Fence, in_flight_fences_[current_frame_]);
-    auto vk_graphic_queue = RENDER_TYPE_CAST(Queue, graphics_queue_);
-    auto vk_present_queue = RENDER_TYPE_CAST(Queue, present_queue_);
-
-    std::vector<VkCommandBuffer> cmd_bufs(1, vk_command_buffer->get());
-    VkSemaphore wait_semaphores[] = { vk_img_available_semphores->get() };
-    VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-    submit_info.waitSemaphoreCount = 1;
-    submit_info.pWaitSemaphores = wait_semaphores;
-    submit_info.pWaitDstStageMask = wait_stages;
-    submit_info.commandBufferCount = static_cast<uint32_t>(cmd_bufs.size());
-    submit_info.pCommandBuffers = cmd_bufs.data();
-    VkSemaphore signal_semaphores[] = { vk_render_finished_semphores->get() };
-    submit_info.signalSemaphoreCount = 1;
-    submit_info.pSignalSemaphores = signal_semaphores;
-
-    if (vkQueueSubmit(vk_graphic_queue->get(), 1, &submit_info, vk_in_flight_fence->get()) != VK_SUCCESS) {
-        throw std::runtime_error("failed to submit draw command buffer!");
-    }
-
-    VkPresentInfoKHR present_info{};
-    present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-    present_info.waitSemaphoreCount = 1;
-    present_info.pWaitSemaphores = signal_semaphores;
-    VkSwapchainKHR swapChains[] = { vk_swap_chain->get() };
-    present_info.swapchainCount = 1;
-    present_info.pSwapchains = swapChains;
-    present_info.pImageIndices = &image_index;
-    present_info.pResults = nullptr; // Optional
-
-    result = vkQueuePresentKHR(vk_present_queue->get(), &present_info);
-
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebuffer_resized_) {
-        framebuffer_resized_ = false;
-        recreateSwapChain();
-    }
-    else if (result != VK_SUCCESS) {
-        throw std::runtime_error("failed to present swap chain image!");
-    }
-
-    current_frame_ = (current_frame_ + 1) % kMaxFramesInFlight;
-}
-
 void RealWorldApplication::createSyncObjects() {
     image_available_semaphores_.resize(kMaxFramesInFlight);
     render_finished_semaphores_.resize(kMaxFramesInFlight);
@@ -1616,7 +1087,7 @@ void RealWorldApplication::createVertexBuffer() {
 
     uint64_t buffer_size = sizeof(vertices[0]) * vertices.size();
 
-    renderer::Helper::createBufferWithSrcData(
+    engine::renderer::Helper::createBufferWithSrcData(
         device_info_,
         SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT),
         buffer_size,
@@ -1632,12 +1103,12 @@ void RealWorldApplication::createIndexBuffer() {
         0, 4, 1, 1, 4, 5,
         2, 3, 6, 6, 3, 7,
         1, 5, 3, 3, 5, 7,
-        0, 2, 4, 4, 2, 6};
+        0, 2, 4, 4, 2, 6 };
 
     uint64_t buffer_size =
         sizeof(indices[0]) * indices.size();
 
-    renderer::Helper::createBufferWithSrcData(
+    engine::renderer::Helper::createBufferWithSrcData(
         device_info_,
         SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT),
         buffer_size,
@@ -1649,7 +1120,7 @@ void RealWorldApplication::createIndexBuffer() {
 void RealWorldApplication::createDescriptorSetLayout() {
     // global texture descriptor set layout.
     {
-        std::vector<renderer::DescriptorSetLayoutBinding> bindings;
+        std::vector<engine::renderer::DescriptorSetLayoutBinding> bindings;
         bindings.reserve(5);
 
         bindings.push_back(getTextureSamplerDescriptionSetLayoutBinding(GGX_LUT_INDEX));
@@ -1663,13 +1134,13 @@ void RealWorldApplication::createDescriptorSetLayout() {
 
     // material texture descriptor set layout.
     {
-        std::vector<renderer::DescriptorSetLayoutBinding> bindings;
+        std::vector<engine::renderer::DescriptorSetLayoutBinding> bindings;
         bindings.reserve(7);
 
-        renderer::DescriptorSetLayoutBinding ubo_pbr_layout_binding{};
+        engine::renderer::DescriptorSetLayoutBinding ubo_pbr_layout_binding{};
         ubo_pbr_layout_binding.binding = PBR_CONSTANT_INDEX;
         ubo_pbr_layout_binding.descriptor_count = 1;
-        ubo_pbr_layout_binding.descriptor_type = renderer::DescriptorType::UNIFORM_BUFFER;
+        ubo_pbr_layout_binding.descriptor_type = engine::renderer::DescriptorType::UNIFORM_BUFFER;
         ubo_pbr_layout_binding.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
         ubo_pbr_layout_binding.immutable_samplers = nullptr; // Optional
         bindings.push_back(ubo_pbr_layout_binding);
@@ -1685,14 +1156,14 @@ void RealWorldApplication::createDescriptorSetLayout() {
     }
 
     {
-        std::vector<renderer::DescriptorSetLayoutBinding> bindings(1);
+        std::vector<engine::renderer::DescriptorSetLayoutBinding> bindings(1);
 
-        renderer::DescriptorSetLayoutBinding ubo_layout_binding{};
+        engine::renderer::DescriptorSetLayoutBinding ubo_layout_binding{};
         ubo_layout_binding.binding = VIEW_CONSTANT_INDEX;
         ubo_layout_binding.descriptor_count = 1;
-        ubo_layout_binding.descriptor_type = renderer::DescriptorType::UNIFORM_BUFFER;
-        ubo_layout_binding.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | 
-                                         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
+        ubo_layout_binding.descriptor_type = engine::renderer::DescriptorType::UNIFORM_BUFFER;
+        ubo_layout_binding.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
+            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
         ubo_layout_binding.immutable_samplers = nullptr; // Optional
         bindings[0] = ubo_layout_binding;
 
@@ -1700,7 +1171,7 @@ void RealWorldApplication::createDescriptorSetLayout() {
     }
 
     {
-        std::vector<renderer::DescriptorSetLayoutBinding> bindings(1);
+        std::vector<engine::renderer::DescriptorSetLayoutBinding> bindings(1);
 
         bindings[0] = getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX);
 
@@ -1709,7 +1180,7 @@ void RealWorldApplication::createDescriptorSetLayout() {
 
     // ibl texture descriptor set layout.
     {
-        std::vector<renderer::DescriptorSetLayoutBinding> bindings(1);
+        std::vector<engine::renderer::DescriptorSetLayoutBinding> bindings(1);
         bindings[0] = getTextureSamplerDescriptionSetLayoutBinding(PANORAMA_TEX_INDEX);
         //bindings[1] = getTextureSamplerDescriptionSetLayoutBinding(ENVMAP_TEX_INDEX);
 
@@ -1718,13 +1189,13 @@ void RealWorldApplication::createDescriptorSetLayout() {
 
     // ibl compute texture descriptor set layout.
     {
-        std::vector<renderer::DescriptorSetLayoutBinding> bindings(2);
+        std::vector<engine::renderer::DescriptorSetLayoutBinding> bindings(2);
         bindings[0] = getTextureSamplerDescriptionSetLayoutBinding(SRC_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-            renderer::DescriptorType::STORAGE_IMAGE);
+            engine::renderer::DescriptorType::STORAGE_IMAGE);
         bindings[1] = getTextureSamplerDescriptionSetLayoutBinding(DST_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-            renderer::DescriptorType::STORAGE_IMAGE);
+            engine::renderer::DescriptorType::STORAGE_IMAGE);
 
         ibl_comp_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
     }
@@ -1737,7 +1208,7 @@ void RealWorldApplication::createUniformBuffers() {
     view_const_buffers_.resize(images_count);
     for (uint64_t i = 0; i < images_count; i++) {
         device_->createBuffer(
-            buffer_size, 
+            buffer_size,
             SET_FLAG_BIT(BufferUsage, UNIFORM_BUFFER_BIT),
             SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
             SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
@@ -1746,7 +1217,7 @@ void RealWorldApplication::createUniformBuffers() {
     }
 }
 
-void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, const glm::vec3& center, float radius) {
+void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, float radius) {
     auto aspect = swap_chain_info_.extent.x / (float)swap_chain_info_.extent.y;
 
     ViewParams view_params{};
@@ -1759,79 +1230,79 @@ void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, const g
     device_->updateBufferMemory(view_const_buffers_[current_image].memory, sizeof(view_params), &view_params);
 }
 
-std::vector<renderer::TextureDescriptor> RealWorldApplication::addGlobalTextures(
-    const std::shared_ptr<renderer::DescriptorSet>& description_set)
+std::vector<engine::renderer::TextureDescriptor> RealWorldApplication::addGlobalTextures(
+    const std::shared_ptr<engine::renderer::DescriptorSet>& description_set)
 {
-    std::vector<renderer::TextureDescriptor> descriptor_writes;
+    std::vector<engine::renderer::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(5);
-    renderer::Helper::addOneTexture(descriptor_writes, GGX_LUT_INDEX, texture_sampler_, ggx_lut_tex_.view, description_set);
-    renderer::Helper::addOneTexture(descriptor_writes, CHARLIE_LUT_INDEX, texture_sampler_, charlie_lut_tex_.view, description_set);
-    renderer::Helper::addOneTexture(descriptor_writes, LAMBERTIAN_ENV_TEX_INDEX, texture_sampler_, rt_ibl_diffuse_tex_.view, description_set);
-    renderer::Helper::addOneTexture(descriptor_writes, GGX_ENV_TEX_INDEX, texture_sampler_, rt_ibl_specular_tex_.view, description_set);
-    renderer::Helper::addOneTexture(descriptor_writes, CHARLIE_ENV_TEX_INDEX, texture_sampler_, rt_ibl_sheen_tex_.view, description_set);
+    engine::renderer::Helper::addOneTexture(descriptor_writes, GGX_LUT_INDEX, texture_sampler_, ggx_lut_tex_.view, description_set);
+    engine::renderer::Helper::addOneTexture(descriptor_writes, CHARLIE_LUT_INDEX, texture_sampler_, charlie_lut_tex_.view, description_set);
+    engine::renderer::Helper::addOneTexture(descriptor_writes, LAMBERTIAN_ENV_TEX_INDEX, texture_sampler_, rt_ibl_diffuse_tex_.view, description_set);
+    engine::renderer::Helper::addOneTexture(descriptor_writes, GGX_ENV_TEX_INDEX, texture_sampler_, rt_ibl_specular_tex_.view, description_set);
+    engine::renderer::Helper::addOneTexture(descriptor_writes, CHARLIE_ENV_TEX_INDEX, texture_sampler_, rt_ibl_sheen_tex_.view, description_set);
 
     return descriptor_writes;
 }
 
-std::vector<renderer::TextureDescriptor> RealWorldApplication::addSkyboxTextures(
-    const std::shared_ptr<renderer::DescriptorSet>& description_set)
+std::vector<engine::renderer::TextureDescriptor> RealWorldApplication::addSkyboxTextures(
+    const std::shared_ptr<engine::renderer::DescriptorSet>& description_set)
 {
-    std::vector<renderer::TextureDescriptor> descriptor_writes;
+    std::vector<engine::renderer::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(1);
 
     // envmap texture.
-    renderer::Helper::addOneTexture(descriptor_writes, BASE_COLOR_TEX_INDEX, texture_sampler_, rt_envmap_tex_.view, description_set);
+    engine::renderer::Helper::addOneTexture(descriptor_writes, BASE_COLOR_TEX_INDEX, texture_sampler_, rt_envmap_tex_.view, description_set);
 
     return descriptor_writes;
 }
 
-std::vector<renderer::TextureDescriptor> RealWorldApplication::addPanoramaTextures(
-    const std::shared_ptr<renderer::DescriptorSet>& description_set)
+std::vector<engine::renderer::TextureDescriptor> RealWorldApplication::addPanoramaTextures(
+    const std::shared_ptr<engine::renderer::DescriptorSet>& description_set)
 {
-    std::vector<renderer::TextureDescriptor> descriptor_writes;
+    std::vector<engine::renderer::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(1);
 
     // envmap texture.
-    renderer::Helper::addOneTexture(descriptor_writes, PANORAMA_TEX_INDEX, texture_sampler_, panorama_tex_.view, description_set);
+    engine::renderer::Helper::addOneTexture(descriptor_writes, PANORAMA_TEX_INDEX, texture_sampler_, panorama_tex_.view, description_set);
 
     return descriptor_writes;
 }
 
-std::vector<renderer::TextureDescriptor> RealWorldApplication::addIblTextures(
-    const std::shared_ptr<renderer::DescriptorSet>& description_set)
+std::vector<engine::renderer::TextureDescriptor> RealWorldApplication::addIblTextures(
+    const std::shared_ptr<engine::renderer::DescriptorSet>& description_set)
 {
-    std::vector<renderer::TextureDescriptor> descriptor_writes;
+    std::vector<engine::renderer::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(1);
 
-    renderer::Helper::addOneTexture(descriptor_writes, ENVMAP_TEX_INDEX, texture_sampler_, rt_envmap_tex_.view, description_set);
+    engine::renderer::Helper::addOneTexture(descriptor_writes, ENVMAP_TEX_INDEX, texture_sampler_, rt_envmap_tex_.view, description_set);
 
     return descriptor_writes;
 }
 
-std::vector<renderer::TextureDescriptor> RealWorldApplication::addIblComputeTextures(
-    const std::shared_ptr<renderer::DescriptorSet>& description_set,
-    const renderer::TextureInfo& src_tex,
-    const renderer::TextureInfo& dst_tex)
+std::vector<engine::renderer::TextureDescriptor> RealWorldApplication::addIblComputeTextures(
+    const std::shared_ptr<engine::renderer::DescriptorSet>& description_set,
+    const engine::renderer::TextureInfo& src_tex,
+    const engine::renderer::TextureInfo& dst_tex)
 {
-    std::vector<renderer::TextureDescriptor> descriptor_writes;
+    std::vector<engine::renderer::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(2);
 
-    renderer::Helper::addOneTexture(
+    engine::renderer::Helper::addOneTexture(
         descriptor_writes,
         SRC_TEX_INDEX,
         texture_sampler_,
         src_tex.view,
         description_set,
-        renderer::DescriptorType::STORAGE_IMAGE,
-        renderer::ImageLayout::GENERAL);
-    renderer::Helper::addOneTexture(
+        engine::renderer::DescriptorType::STORAGE_IMAGE,
+        engine::renderer::ImageLayout::GENERAL);
+    engine::renderer::Helper::addOneTexture(
         descriptor_writes,
         DST_TEX_INDEX,
         texture_sampler_,
         dst_tex.view,
         description_set,
-        renderer::DescriptorType::STORAGE_IMAGE,
-        renderer::ImageLayout::GENERAL);
+        engine::renderer::DescriptorType::STORAGE_IMAGE,
+        engine::renderer::ImageLayout::GENERAL);
 
     return descriptor_writes;
 }
@@ -1852,17 +1323,17 @@ void RealWorldApplication::createDescriptorSets() {
             auto& material = gltf_object_->materials_[i_mat];
             material.desc_set_ = device_->createDescriptorSets(descriptor_pool_, material_tex_desc_set_layout_, 1)[0];
 
-            std::vector<renderer::BufferDescriptor> material_buffer_descs;
-            renderer::Helper::addOneBuffer(
+            std::vector<engine::renderer::BufferDescriptor> material_buffer_descs;
+            engine::renderer::Helper::addOneBuffer(
                 material_buffer_descs,
                 PBR_CONSTANT_INDEX,
                 material.uniform_buffer_.buffer,
                 material.desc_set_,
-                renderer::DescriptorType::UNIFORM_BUFFER,
+                engine::renderer::DescriptorType::UNIFORM_BUFFER,
                 sizeof(PbrMaterialParams));
 
             // create a global ibl texture descriptor set.
-            auto material_tex_descs = renderer::addGltfTextures(gltf_object_, material, texture_sampler_, thin_film_lut_tex_);
+            auto material_tex_descs = engine::renderer::addGltfTextures(gltf_object_, material, texture_sampler_, thin_film_lut_tex_);
 
             device_->updateDescriptorSets(material_tex_descs, material_buffer_descs);
         }
@@ -1871,13 +1342,13 @@ void RealWorldApplication::createDescriptorSets() {
     {
         desc_sets_ = device_->createDescriptorSets(descriptor_pool_, desc_set_layout_, buffer_count);
         for (uint64_t i = 0; i < buffer_count; i++) {
-            std::vector<renderer::BufferDescriptor> buffer_descs;
-            renderer::Helper::addOneBuffer(
+            std::vector<engine::renderer::BufferDescriptor> buffer_descs;
+            engine::renderer::Helper::addOneBuffer(
                 buffer_descs,
                 VIEW_CONSTANT_INDEX,
                 view_const_buffers_[i].buffer,
                 desc_sets_[i],
-                renderer::DescriptorType::UNIFORM_BUFFER,
+                engine::renderer::DescriptorType::UNIFORM_BUFFER,
                 sizeof(ViewParams));
 
             device_->updateDescriptorSets({}, buffer_descs);
@@ -1944,26 +1415,495 @@ void RealWorldApplication::createDescriptorSets() {
     }
 }
 
-void RealWorldApplication::createTextureImage(const std::string& file_name, renderer::Format format, renderer::TextureInfo& texture) {
+void RealWorldApplication::createTextureImage(
+    const std::string& file_name,
+    engine::renderer::Format format,
+    engine::renderer::TextureInfo& texture) {
     int tex_width, tex_height, tex_channels;
     stbi_uc* pixels = stbi_load(file_name.c_str(), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
 
     if (!pixels) {
         throw std::runtime_error("failed to load texture image!");
     }
-    renderer::Helper::create2DTextureImage(device_info_, format, tex_width, tex_height, tex_channels, pixels, texture.image, texture.memory);
+    engine::renderer::Helper::create2DTextureImage(device_info_, format, tex_width, tex_height, tex_channels, pixels, texture.image, texture.memory);
 
     stbi_image_free(pixels);
 
     texture.view = device_->createImageView(
         texture.image,
-        renderer::ImageViewType::VIEW_2D,
+        engine::renderer::ImageViewType::VIEW_2D,
         format,
         SET_FLAG_BIT(ImageAspect, COLOR_BIT));
 }
 
 void RealWorldApplication::createTextureSampler() {
-    texture_sampler_ = device_->createSampler(renderer::Filter::LINEAR, renderer::SamplerAddressMode::REPEAT, renderer::SamplerMipmapMode::LINEAR, 16.0f);
+    texture_sampler_ = device_->createSampler(
+        engine::renderer::Filter::LINEAR,
+        engine::renderer::SamplerAddressMode::REPEAT,
+        engine::renderer::SamplerMipmapMode::LINEAR, 16.0f);
+}
+
+void RealWorldApplication::loadMtx2Texture(
+    const std::string& input_filename,
+    engine::renderer::TextureInfo& texture) {
+    uint64_t buffer_size;
+    auto mtx2_data = readFile(input_filename, buffer_size);
+    auto src_data = (char*)mtx2_data.data();
+
+    // header block
+    Mtx2HeaderBlock* header_block = reinterpret_cast<Mtx2HeaderBlock*>(src_data);
+    src_data += sizeof(Mtx2HeaderBlock);
+
+    assert(header_block->format == engine::renderer::Format::R16G16B16A16_SFLOAT);
+
+    // index block
+    Mtx2IndexBlock* index_block = reinterpret_cast<Mtx2IndexBlock*>(src_data);
+    src_data += sizeof(Mtx2IndexBlock);
+
+    uint32_t width = header_block->pixel_width;
+    uint32_t height = header_block->pixel_height;
+    // level index block.
+    uint32_t num_level_blocks = std::max(1u, header_block->level_count);
+    std::vector<engine::renderer::BufferImageCopyInfo> copy_regions(num_level_blocks);
+    for (uint32_t i_level = 0; i_level < num_level_blocks; i_level++) {
+        Mtx2LevelIndexBlock* level_block = reinterpret_cast<Mtx2LevelIndexBlock*>(src_data);
+
+        auto& region = copy_regions[i_level];
+        region.buffer_offset = level_block->byte_offset;
+        region.buffer_row_length = 0;
+        region.buffer_image_height = 0;
+
+        region.image_subresource.aspect_mask = SET_FLAG_BIT(ImageAspect, COLOR_BIT);
+        region.image_subresource.mip_level = i_level;
+        region.image_subresource.base_array_layer = 0;
+        region.image_subresource.layer_count = 6;
+
+        region.image_offset = glm::ivec3(0, 0, 0);
+        region.image_extent = glm::uvec3(width, height, 1);
+        width = std::max(1u, width / 2);
+        height = std::max(1u, height / 2);
+
+        src_data += sizeof(Mtx2LevelIndexBlock);
+    }
+
+    char* dfd_data_start = (char*)mtx2_data.data() + index_block->dfd_byte_offset;
+    uint32_t dfd_total_size = *reinterpret_cast<uint32_t*>(dfd_data_start);
+    src_data += sizeof(uint32_t);
+
+    char* kvd_data_start = (char*)mtx2_data.data() + index_block->kvd_byte_offset;
+    uint32_t key_value_byte_length = *reinterpret_cast<uint32_t*>(kvd_data_start);
+    uint8_t* key_value = reinterpret_cast<uint8_t*>(kvd_data_start + 4);
+    for (uint32_t i = 0; i < key_value_byte_length; i++) {
+        auto result = key_value[i];
+        int hit = 1;
+    }
+
+    char* sgd_data_start = nullptr;
+    if (index_block->sgd_byte_length > 0) {
+        sgd_data_start = (char*)mtx2_data.data() + index_block->sgd_byte_offset;
+    }
+
+    engine::renderer::Helper::createCubemapTexture(
+        device_info_,
+        cubemap_render_pass_,
+        header_block->pixel_width,
+        header_block->pixel_height,
+        num_level_blocks,
+        header_block->format,
+        copy_regions,
+        texture,
+        buffer_size,
+        mtx2_data.data());
+}
+
+void RealWorldApplication::mainLoop() {
+    while (!glfwWindowShouldClose(window_) && !s_exit_game) {
+        glfwPollEvents();
+        drawFrame();
+    }
+
+    device_->waitIdle();
+}
+
+void RealWorldApplication::drawScene(
+    std::shared_ptr<engine::renderer::CommandBuffer> command_buffer,
+    std::shared_ptr<engine::renderer::Framebuffer> frame_buffer,
+    std::shared_ptr<engine::renderer::DescriptorSet> frame_desc_set,
+    const glm::uvec2& screen_size) {
+
+    int32_t root_node = gltf_object_->default_scene_ >= 0 ? gltf_object_->default_scene_ : 0;
+    auto min_t = gltf_object_->scenes_[root_node].bbox_min_;
+    auto max_t = gltf_object_->scenes_[root_node].bbox_max_;
+
+    auto center = (min_t + max_t) * 0.5f;
+    auto extent = (max_t - min_t) * 0.5f;
+    float radius = max(max(extent.x, extent.y), extent.z);
+
+    std::vector<engine::renderer::ClearValue> clear_values(2);
+    clear_values[0].color = { 50.0f / 255.0f, 50.0f / 255.0f, 50.0f / 255.0f, 1.0f };
+    clear_values[1].depth_stencil = { 1.0f, 0 };
+
+    auto& cmd_buf = command_buffer;
+
+    if (0)
+    {
+        // generate envmap cubemap from panorama hdr image.
+        cmd_buf->addImageBarrier(
+            rt_envmap_tex_.image,
+            engine::renderer::Helper::getImageAsSource(),
+            engine::renderer::Helper::getImageAsColorAttachment(),
+            0, 1, 0, 6);
+
+        cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::GRAPHICS, envmap_pipeline_);
+
+        std::vector<engine::renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
+        cmd_buf->beginRenderPass(cubemap_render_pass_, rt_envmap_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
+
+        IblParams ibl_params = {};
+        cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
+
+        cmd_buf->bindDescriptorSets(engine::renderer::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { envmap_tex_desc_set_ });
+
+        cmd_buf->draw(3);
+
+        cmd_buf->endRenderPass();
+
+        uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
+
+        engine::renderer::Helper::generateMipmapLevels(
+            cmd_buf,
+            rt_envmap_tex_.image,
+            num_mips,
+            kCubemapSize,
+            kCubemapSize,
+            engine::renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+    }
+    else {
+        // generate envmap from skybox.
+        cmd_buf->addImageBarrier(
+            rt_envmap_tex_.image,
+            engine::renderer::Helper::getImageAsSource(),
+            engine::renderer::Helper::getImageAsColorAttachment(),
+            0, 1, 0, 6);
+
+        cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::GRAPHICS, cube_skybox_pipeline_);
+
+        std::vector<engine::renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
+        cmd_buf->beginRenderPass(cubemap_render_pass_, rt_envmap_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
+
+        SunSkyParams sun_sky_params = {};
+        sun_sky_params.sun_pos = glm::vec3(cos(s_sun_angle), sin(s_sun_angle), -0.3f);
+
+        cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), cube_skybox_pipeline_layout_, &sun_sky_params, sizeof(sun_sky_params));
+
+        cmd_buf->bindDescriptorSets(engine::renderer::PipelineBindPoint::GRAPHICS, cube_skybox_pipeline_layout_, { envmap_tex_desc_set_ });
+
+        cmd_buf->draw(3);
+
+        cmd_buf->endRenderPass();
+
+        uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
+
+        engine::renderer::Helper::generateMipmapLevels(
+            cmd_buf,
+            rt_envmap_tex_.image,
+            num_mips,
+            kCubemapSize,
+            kCubemapSize,
+            engine::renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+    }
+
+    // generate ibl diffuse texture.
+    {
+        cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::GRAPHICS, lambertian_pipeline_);
+
+        cmd_buf->addImageBarrier(
+            rt_ibl_diffuse_tex_.image,
+            engine::renderer::Helper::getImageAsSource(),
+            engine::renderer::Helper::getImageAsColorAttachment(),
+            0, 1, 0, 6);
+
+        std::vector<engine::renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
+        cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_diffuse_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
+
+        IblParams ibl_params = {};
+        ibl_params.roughness = 1.0f;
+        ibl_params.currentMipLevel = 0;
+        ibl_params.width = kCubemapSize;
+        ibl_params.lodBias = 0;
+        cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
+
+        cmd_buf->bindDescriptorSets(engine::renderer::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { ibl_tex_desc_set_ });
+
+        cmd_buf->draw(3);
+
+        cmd_buf->endRenderPass();
+
+        cmd_buf->addImageBarrier(
+            rt_ibl_diffuse_tex_.image,
+            engine::renderer::Helper::getImageAsColorAttachment(),
+            engine::renderer::Helper::getImageAsShaderSampler(),
+            0, 1, 0, 6);
+    }
+
+    // generate ibl specular texture.
+    {
+        uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
+        cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::GRAPHICS, ggx_pipeline_);
+
+        for (int i_mip = num_mips - 1; i_mip >= 0; i_mip--) {
+            cmd_buf->addImageBarrier(
+                rt_ibl_specular_tex_.image,
+                engine::renderer::Helper::getImageAsSource(),
+                engine::renderer::Helper::getImageAsColorAttachment(),
+                i_mip, 1, 0, 6);
+
+            uint32_t width = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
+            uint32_t height = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
+
+            std::vector<engine::renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
+            cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_specular_tex_.framebuffers[i_mip], glm::uvec2(width, height), envmap_clear_values);
+
+            IblParams ibl_params = {};
+            ibl_params.roughness = static_cast<float>(i_mip) / static_cast<float>(num_mips - 1);
+            ibl_params.currentMipLevel = i_mip;
+            ibl_params.width = kCubemapSize;
+            ibl_params.lodBias = 0;
+            cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
+
+            cmd_buf->bindDescriptorSets(engine::renderer::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { ibl_tex_desc_set_ });
+
+            cmd_buf->draw(3);
+
+            cmd_buf->endRenderPass();
+        }
+
+        cmd_buf->addImageBarrier(
+            rt_ibl_specular_tex_.image,
+            engine::renderer::Helper::getImageAsColorAttachment(),
+            engine::renderer::Helper::getImageAsShaderSampler(),
+            0, num_mips, 0, 6);
+    }
+
+    // generate ibl sheen texture.
+    {
+        uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
+        cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::GRAPHICS, charlie_pipeline_);
+
+        for (int i_mip = num_mips - 1; i_mip >= 0; i_mip--) {
+            uint32_t width = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
+            uint32_t height = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
+
+            cmd_buf->addImageBarrier(
+                rt_ibl_sheen_tex_.image,
+                engine::renderer::Helper::getImageAsSource(),
+                engine::renderer::Helper::getImageAsColorAttachment(),
+                i_mip, 1, 0, 6);
+
+            std::vector<engine::renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
+            cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_sheen_tex_.framebuffers[i_mip], glm::uvec2(width, height), envmap_clear_values);
+
+            IblParams ibl_params = {};
+            ibl_params.roughness = static_cast<float>(i_mip) / static_cast<float>(num_mips - 1);
+            ibl_params.currentMipLevel = i_mip;
+            ibl_params.width = kCubemapSize;
+            ibl_params.lodBias = 0;
+            cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
+
+            cmd_buf->bindDescriptorSets(engine::renderer::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { ibl_tex_desc_set_ });
+
+            cmd_buf->draw(3);
+
+            cmd_buf->endRenderPass();
+        }
+
+        cmd_buf->addImageBarrier(
+            rt_ibl_sheen_tex_.image,
+            engine::renderer::Helper::getImageAsColorAttachment(),
+            engine::renderer::Helper::getImageAsShaderSampler(),
+            0, num_mips, 0, 6);
+    }
+
+    {
+        if (0)
+        {
+            cmd_buf->addImageBarrier(
+                rt_ibl_diffuse_tex_.image,
+                engine::renderer::Helper::getImageAsSource(),
+                engine::renderer::Helper::getImageAsStore(),
+                0, 1, 0, 6);
+
+            cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::COMPUTE, blur_comp_pipeline_);
+            IblComputeParams ibl_comp_params = {};
+            ibl_comp_params.size = glm::ivec4(kCubemapSize, kCubemapSize, 0, 0);
+            cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, COMPUTE_BIT), ibl_comp_pipeline_layout_, &ibl_comp_params, sizeof(ibl_comp_params));
+
+            cmd_buf->bindDescriptorSets(engine::renderer::PipelineBindPoint::COMPUTE, ibl_comp_pipeline_layout_, { ibl_diffuse_tex_desc_set_ });
+
+            cmd_buf->dispatch((kCubemapSize + 7) / 8, (kCubemapSize + 7) / 8, 6);
+
+            uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
+            cmd_buf->addImageBarrier(
+                rt_ibl_diffuse_tex_.image,
+                engine::renderer::Helper::getImageAsStore(),
+                engine::renderer::Helper::getImageAsShaderSampler(),
+                0, 1, 0, 6);
+            cmd_buf->addImageBarrier(
+                rt_ibl_specular_tex_.image,
+                engine::renderer::Helper::getImageAsSource(),
+                engine::renderer::Helper::getImageAsShaderSampler(),
+                0, num_mips, 0, 6);
+            cmd_buf->addImageBarrier(
+                rt_ibl_sheen_tex_.image,
+                engine::renderer::Helper::getImageAsSource(),
+                engine::renderer::Helper::getImageAsShaderSampler(),
+                0, num_mips, 0, 6);
+        }
+    }
+
+    {
+        cmd_buf->beginRenderPass(
+            render_pass_,
+            frame_buffer,
+            screen_size, clear_values);
+
+        // render gltf meshes.
+        cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::GRAPHICS, gltf_pipeline_);
+
+        auto model_mat = glm::translate(glm::mat4(1.0f), s_camera_pos + s_camera_dir * 5.0f);
+        for (auto node_idx : gltf_object_->scenes_[root_node].nodes_) {
+            engine::renderer::drawNodes(cmd_buf,
+                gltf_object_,
+                gltf_pipeline_layout_,
+                global_tex_desc_set_,
+                frame_desc_set,
+                node_idx,
+                model_mat);
+        }
+
+        // render terrain.
+        {
+            cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::GRAPHICS, tile_pipeline_);
+            engine::renderer::DescriptorSetList desc_sets{ global_tex_desc_set_, frame_desc_set, skybox_tex_desc_set_ };
+            tile_mesh_->draw(cmd_buf, tile_pipeline_layout_, desc_sets);
+        }
+
+        // render skybox.
+        {
+            cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::GRAPHICS, skybox_pipeline_);
+            std::vector<std::shared_ptr<engine::renderer::Buffer>> buffers(1);
+            std::vector<uint64_t> offsets(1);
+            buffers[0] = vertex_buffer_.buffer;
+            offsets[0] = 0;
+
+            cmd_buf->bindVertexBuffers(0, buffers, offsets);
+            cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, engine::renderer::IndexType::UINT16);
+
+            SunSkyParams sun_sky_params = {};
+            sun_sky_params.sun_pos = glm::vec3(cos(s_sun_angle), sin(s_sun_angle), -0.3f);
+            s_sun_angle += 0.001f;
+            cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), skybox_pipeline_layout_, &sun_sky_params, sizeof(sun_sky_params));
+
+            engine::renderer::DescriptorSetList desc_sets{ skybox_tex_desc_set_, frame_desc_set };
+            cmd_buf->bindDescriptorSets(engine::renderer::PipelineBindPoint::GRAPHICS, skybox_pipeline_layout_, desc_sets);
+
+            cmd_buf->drawIndexed(36);
+        }
+
+        cmd_buf->endRenderPass();
+    }
+}
+
+void RealWorldApplication::drawFrame() {
+    std::vector<std::shared_ptr<engine::renderer::Fence>> in_flight_fences(1);
+    in_flight_fences[0] = in_flight_fences_[current_frame_];
+    device_->waitForFences(in_flight_fences);
+
+    uint32_t image_index = 0;
+    bool need_recreate_swap_chain = engine::renderer::Helper::acquireNextImage(
+        device_, 
+        swap_chain_info_.swap_chain, 
+        image_available_semaphores_[current_frame_],
+        image_index);
+
+    if (need_recreate_swap_chain) {
+        recreateSwapChain();
+        return;
+    }
+
+    if (images_in_flight_[image_index] != VK_NULL_HANDLE) {
+        std::vector<std::shared_ptr<engine::renderer::Fence>> images_in_flight(1);
+        images_in_flight[0] = images_in_flight_[image_index];
+        device_->waitForFences(images_in_flight);
+    }
+    // Mark the image as now being in use by this frame
+    images_in_flight_[image_index] = in_flight_fences_[current_frame_];
+
+    updateViewConstBuffer(image_index);
+
+    device_->resetFences(in_flight_fences);
+
+    auto command_buffer = command_buffers_[image_index];
+    std::vector<std::shared_ptr<engine::renderer::CommandBuffer>>command_buffers(1, command_buffer);
+
+    static auto start_time = std::chrono::high_resolution_clock::now();
+    auto current_time = std::chrono::high_resolution_clock::now();
+    float time = std::chrono::duration<float, std::chrono::seconds::period>(current_time - start_time).count();
+
+    command_buffer->reset(0);
+    command_buffer->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
+
+    drawScene(command_buffer,
+        swap_chain_info_.framebuffers[image_index],
+        desc_sets_[image_index],
+        swap_chain_info_.extent);
+
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    if (ImGui::BeginMainMenuBar())
+    {
+        if (ImGui::BeginMenu("File"))
+        {
+            //ShowExampleMenuFile();
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Edit"))
+        {
+            if (ImGui::MenuItem("Undo", "CTRL+Z")) {}
+            if (ImGui::MenuItem("Redo", "CTRL+Y", false, false)) {}  // Disabled item
+            ImGui::Separator();
+            if (ImGui::MenuItem("Cut", "CTRL+X")) {}
+            if (ImGui::MenuItem("Copy", "CTRL+C")) {}
+            if (ImGui::MenuItem("Paste", "CTRL+V")) {}
+            ImGui::EndMenu();
+        }
+        ImGui::EndMainMenuBar();
+    }
+
+    engine::renderer::Helper::addImGuiToCommandBuffer(command_buffer);
+
+    command_buffer->endCommandBuffer();
+
+    engine::renderer::Helper::submitQueue(
+        graphics_queue_,
+        in_flight_fences_[current_frame_],
+        { image_available_semaphores_[current_frame_] },
+        { command_buffer },
+        { render_finished_semaphores_[current_frame_] });
+
+    need_recreate_swap_chain = engine::renderer::Helper::presentQueue(
+        present_queue_,
+        { swap_chain_info_.swap_chain },
+        { render_finished_semaphores_[current_frame_] },
+        image_index,
+        framebuffer_resized_);
+
+    if (need_recreate_swap_chain) {
+        recreateSwapChain();
+    }
+
+    current_frame_ = (current_frame_ + 1) % kMaxFramesInFlight;
 }
 
 void RealWorldApplication::cleanupSwapChain() {
@@ -2012,9 +1952,6 @@ void RealWorldApplication::cleanup() {
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 
-    auto vk_instance = RENDER_TYPE_CAST(Instance, instance_);
-    auto vk_surface = RENDER_TYPE_CAST(Surface, surface_);
-
     device_->destroyRenderPass(cubemap_render_pass_);
 
     gltf_object_->destroy(device_);
@@ -2022,7 +1959,7 @@ void RealWorldApplication::cleanup() {
     assert(device_);
     device_->destroySampler(texture_sampler_);
     sample_tex_.destroy(device_);
-    renderer::Helper::destroy(device_);
+    engine::renderer::Helper::destroy(device_);
     ggx_lut_tex_.destroy(device_);
     brdf_lut_tex_.destroy(device_);
     charlie_lut_tex_.destroy(device_);
@@ -2058,87 +1995,13 @@ void RealWorldApplication::cleanup() {
 
     device_->destroyCommandPool(command_pool_);
 
-    // todo.
-    auto vk_device = RENDER_TYPE_CAST(Device, device_);
-    vkDestroyDevice(vk_device->get(), nullptr);
+    device_->destroy();
 
-    // todo.
-    vkDestroySurfaceKHR(vk_instance->get(), vk_surface->get(), nullptr);
+    instance_->destroySurface(surface_);
+    instance_->destroy();
 
-    vk_instance->destroy();
     glfwDestroyWindow(window_);
     glfwTerminate();
-}
-
-void RealWorldApplication::loadMtx2Texture(const std::string& input_filename, renderer::TextureInfo& texture) {
-    uint64_t buffer_size;
-    auto mtx2_data = readFile(input_filename, buffer_size);
-    auto src_data = (char*)mtx2_data.data();
-
-    // header block
-    Mtx2HeaderBlock* header_block = reinterpret_cast<Mtx2HeaderBlock*>(src_data);
-    src_data += sizeof(Mtx2HeaderBlock);
-
-    assert(header_block->format == renderer::Format::R16G16B16A16_SFLOAT);
-
-    // index block
-    Mtx2IndexBlock* index_block = reinterpret_cast<Mtx2IndexBlock*>(src_data);
-    src_data += sizeof(Mtx2IndexBlock);
-
-    uint32_t width = header_block->pixel_width;
-    uint32_t height = header_block->pixel_height;
-    // level index block.
-    uint32_t num_level_blocks = std::max(1u, header_block->level_count);
-    std::vector<work::renderer::BufferImageCopyInfo> copy_regions(num_level_blocks);
-    for (uint32_t i_level = 0; i_level < num_level_blocks; i_level++) {
-        Mtx2LevelIndexBlock* level_block = reinterpret_cast<Mtx2LevelIndexBlock*>(src_data);
-
-        auto& region = copy_regions[i_level];
-        region.buffer_offset = level_block->byte_offset;
-        region.buffer_row_length = 0;
-        region.buffer_image_height = 0;
-
-        region.image_subresource.aspect_mask = SET_FLAG_BIT(ImageAspect, COLOR_BIT);
-        region.image_subresource.mip_level = i_level;
-        region.image_subresource.base_array_layer = 0;
-        region.image_subresource.layer_count = 6;
-
-        region.image_offset = glm::ivec3(0, 0, 0);
-        region.image_extent = glm::uvec3(width, height, 1);
-        width = std::max(1u, width / 2);
-        height = std::max(1u, height / 2);
-
-        src_data += sizeof(Mtx2LevelIndexBlock);
-    }
-
-    char* dfd_data_start = (char*)mtx2_data.data() + index_block->dfd_byte_offset;
-    uint32_t dfd_total_size = *reinterpret_cast<uint32_t*>(dfd_data_start);
-    src_data += sizeof(uint32_t);
-
-    char* kvd_data_start = (char*)mtx2_data.data() + index_block->kvd_byte_offset;
-    uint32_t key_value_byte_length = *reinterpret_cast<uint32_t*>(kvd_data_start);
-    uint8_t* key_value = reinterpret_cast<uint8_t*>(kvd_data_start + 4);
-    for (uint32_t i = 0; i < key_value_byte_length; i++) {
-        auto result = key_value[i];
-        int hit = 1;
-    }
-
-    char* sgd_data_start = nullptr;
-    if (index_block->sgd_byte_length > 0) {
-        sgd_data_start = (char*)mtx2_data.data() + index_block->sgd_byte_offset;
-    }
-
-    renderer::Helper::createCubemapTexture(
-        device_info_,
-        cubemap_render_pass_,
-        header_block->pixel_width,
-        header_block->pixel_height,
-        num_level_blocks,
-        header_block->format,
-        copy_regions,
-        texture,
-        buffer_size,
-        mtx2_data.data());
 }
 
 }//namespace app

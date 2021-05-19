@@ -1,4 +1,0 @@
-namespace work {
-namespace engine {
-}
-}

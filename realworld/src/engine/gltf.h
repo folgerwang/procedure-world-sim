@@ -1,7 +1,7 @@
 #pragma once
 #include "renderer/renderer.h"
 
-namespace work {
+namespace engine {
 namespace renderer {
 
 struct MaterialInfo {
@@ -79,9 +79,8 @@ void drawNodes(
     const std::shared_ptr<renderer::ObjectData>& gltf_object,
     const std::shared_ptr<renderer::PipelineLayout>& gltf_pipeline_layout,
     const std::shared_ptr<renderer::DescriptorSet>& global_tex_desc_set,
-    std::vector<std::shared_ptr<renderer::DescriptorSet>>& desc_sets,
+    const std::shared_ptr<renderer::DescriptorSet>& src_desc_set,
     int32_t node_idx,
-    const uint32_t image_index,
     const glm::mat4& parent_matrix);
 
 std::vector<renderer::TextureDescriptor> addGltfTextures(
@@ -90,5 +89,5 @@ std::vector<renderer::TextureDescriptor> addGltfTextures(
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const renderer::TextureInfo& thin_film_lut_tex);
 
-} // renderer
-} // work
+} // namespace renderer
+} // namespace engine

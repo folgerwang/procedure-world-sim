@@ -22,28 +22,31 @@
     <Filter Include="third_party\imgui">
       <UniqueIdentifier>{1f419729-9e55-4c07-b7a8-8fe2837c7c6f}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files\renderer">
+    <Filter Include="Header Files\engine">
+      <UniqueIdentifier>{be037b39-2e0f-4bb1-ace3-026ce913d64d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\engine\renderer">
       <UniqueIdentifier>{0cf5f08b-065a-4674-9764-f698c2f73986}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Source Files\renderer">
+    <Filter Include="Header Files\engine\renderer\vulkan">
+      <UniqueIdentifier>{ca32d4a5-e68b-4d8c-8059-fc060af7ffcd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\engine">
+      <UniqueIdentifier>{b6c08477-0beb-47e7-a85e-9c41b210f9d9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\engine\renderer">
       <UniqueIdentifier>{40d7a48a-9e78-4b03-9edf-44917ffecc0a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\engine\renderer\vulkan">
+      <UniqueIdentifier>{73cb4c92-dd34-4758-9021-041a11564313}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="terrain.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="gltf.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="application.cpp">
       <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="renderer\renderer.cpp">
-      <Filter>Source Files\renderer</Filter>
     </ClCompile>
     <ClCompile Include="third_party\imgui\imgui_tables.cpp">
       <Filter>third_party\imgui</Filter>
@@ -63,15 +66,27 @@
     <ClCompile Include="third_party\imgui\backends\imgui_impl_vulkan.cpp">
       <Filter>third_party\imgui</Filter>
     </ClCompile>
+    <ClCompile Include="engine\renderer\vulkan\vk_renderer_helper.cpp">
+      <Filter>Source Files\engine\renderer\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\renderer\vulkan\vk_command_buffer.cpp">
+      <Filter>Source Files\engine\renderer\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\renderer\vulkan\vk_device.cpp">
+      <Filter>Source Files\engine\renderer\vulkan</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\renderer\renderer.cpp">
+      <Filter>Source Files\engine\renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\terrain.cpp">
+      <Filter>Source Files\engine</Filter>
+    </ClCompile>
+    <ClCompile Include="engine\gltf.cpp">
+      <Filter>Source Files\engine</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="application.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="tiny_mtx2.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="gltf.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\shaders\functions.glsl.h">
@@ -98,12 +113,6 @@
     <ClInclude Include="src\shaders\brdf.glsl.h">
       <Filter>Resource Files\shaders</Filter>
     </ClInclude>
-    <ClInclude Include="terrain.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="renderer\renderer.h">
-      <Filter>Header Files\renderer</Filter>
-    </ClInclude>
     <ClInclude Include="third_party\imgui\imgui_internal.h">
       <Filter>third_party\imgui</Filter>
     </ClInclude>
@@ -112,6 +121,45 @@
     </ClInclude>
     <ClInclude Include="third_party\imgui\imgui.h">
       <Filter>third_party\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\renderer\vulkan\vk_physical_device.h">
+      <Filter>Header Files\engine\renderer\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\renderer\vulkan\vk_renderer_helper.h">
+      <Filter>Header Files\engine\renderer\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\renderer\vulkan\vk_command_buffer.h">
+      <Filter>Header Files\engine\renderer\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\renderer\vulkan\vk_device.h">
+      <Filter>Header Files\engine\renderer\vulkan</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\renderer\device.h">
+      <Filter>Header Files\engine\renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\renderer\physical_device.h">
+      <Filter>Header Files\engine\renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\renderer\renderer.h">
+      <Filter>Header Files\engine\renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\renderer\renderer_definition.h">
+      <Filter>Header Files\engine\renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\renderer\renderer_structs.h">
+      <Filter>Header Files\engine\renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\renderer\command_buffer.h">
+      <Filter>Header Files\engine\renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\tiny_mtx2.h">
+      <Filter>Header Files\engine</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\gltf.h">
+      <Filter>Header Files\engine</Filter>
+    </ClInclude>
+    <ClInclude Include="engine\terrain.h">
+      <Filter>Header Files\engine</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

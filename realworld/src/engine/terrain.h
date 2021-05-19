@@ -1,7 +1,7 @@
 #pragma once
 #include "renderer/renderer.h"
 
-namespace work {
+namespace engine {
 namespace renderer {
 
 class TileMesh {
@@ -31,5 +31,5 @@ public:
         const renderer::DescriptorSetList& desc_set_list);
 };
 
-} // renderer
-} // work
+} // namespace renderer
+} // namespace engine

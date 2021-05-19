@@ -5,12 +5,12 @@
 #include <memory>
 
 #include "gltf.h"
-#include "shaders/global_definition.glsl.h"
+#include "../shaders/global_definition.glsl.h"
 
 #include "tiny_gltf.h"
 #include "tiny_mtx2.h"
 
-namespace work {
+namespace engine {
 namespace {
 static std::string getFilePathExtension(const std::string& file_name) {
     if (file_name.find_last_of(".") != std::string::npos)
@@ -202,13 +202,13 @@ static void setupMesh(
             dst_binding = static_cast<uint32_t>(primitive_info.binding_list_.size());
             primitive_info.binding_list_.push_back(accessor.bufferView);
 
-            work::renderer::VertexInputBindingDescription binding = {};
+            engine::renderer::VertexInputBindingDescription binding = {};
             binding.binding = dst_binding;
             binding.stride = accessor.ByteStride(model.bufferViews[accessor.bufferView]);
             binding.input_rate = renderer::VertexInputRate::VERTEX;
             primitive_info.binding_descs_.push_back(binding);
 
-            work::renderer::VertexInputAttributeDescription attribute = {};
+            engine::renderer::VertexInputAttributeDescription attribute = {};
             attribute.buffer_view = accessor.bufferView;
             attribute.binding = dst_binding;
             attribute.offset = 0;
@@ -253,16 +253,16 @@ static void setupMesh(
 
             if (accessor.componentType == TINYGLTF_PARAMETER_TYPE_FLOAT) {
                 if (accessor.type == TINYGLTF_TYPE_SCALAR) {
-                    attribute.format = work::renderer::Format::R32_SFLOAT;
+                    attribute.format = engine::renderer::Format::R32_SFLOAT;
                 }
                 else if (accessor.type == TINYGLTF_TYPE_VEC2) {
-                    attribute.format = work::renderer::Format::R32G32_SFLOAT;
+                    attribute.format = engine::renderer::Format::R32G32_SFLOAT;
                 }
                 else if (accessor.type == TINYGLTF_TYPE_VEC3) {
-                    attribute.format = work::renderer::Format::R32G32B32_SFLOAT;
+                    attribute.format = engine::renderer::Format::R32G32B32_SFLOAT;
                 }
                 else if (accessor.type == TINYGLTF_TYPE_VEC4) {
-                    attribute.format = work::renderer::Format::R32G32B32A32_SFLOAT;
+                    attribute.format = engine::renderer::Format::R32G32B32A32_SFLOAT;
                 }
                 else {
                     assert(0);
@@ -270,16 +270,16 @@ static void setupMesh(
             }
             else if (accessor.componentType == TINYGLTF_PARAMETER_TYPE_UNSIGNED_SHORT) {
                 if (accessor.type == TINYGLTF_TYPE_SCALAR) {
-                    attribute.format = work::renderer::Format::R16_UINT;
+                    attribute.format = engine::renderer::Format::R16_UINT;
                 }
                 else if (accessor.type == TINYGLTF_TYPE_VEC2) {
-                    attribute.format = work::renderer::Format::R16G16_UINT;
+                    attribute.format = engine::renderer::Format::R16G16_UINT;
                 }
                 else if (accessor.type == TINYGLTF_TYPE_VEC3) {
-                    attribute.format = work::renderer::Format::R16G16B16_UINT;
+                    attribute.format = engine::renderer::Format::R16G16B16_UINT;
                 }
                 else if (accessor.type == TINYGLTF_TYPE_VEC4) {
-                    attribute.format = work::renderer::Format::R16G16B16A16_UINT;
+                    attribute.format = engine::renderer::Format::R16G16B16A16_UINT;
                 }
                 else {
                     assert(0);
@@ -449,10 +449,9 @@ void drawMesh(
     const std::shared_ptr<renderer::ObjectData>& gltf_object,
     const std::shared_ptr<renderer::PipelineLayout>& gltf_pipeline_layout,
     const std::shared_ptr<renderer::DescriptorSet>& global_tex_desc_set,
-    std::vector<std::shared_ptr<renderer::DescriptorSet>>& src_desc_sets,
+    const std::shared_ptr<renderer::DescriptorSet>& src_desc_set,
     const renderer::MeshInfo& mesh_info,
-    const ModelParams& model_params,
-    const uint32_t image_index) {
+    const ModelParams& model_params) {
     for (const auto& prim : mesh_info.primitives_) {
         const auto& attrib_list = prim.attribute_descs_;
 
@@ -469,10 +468,7 @@ void drawMesh(
             prim.index_desc_.offset + index_buffer_view.offset,
             prim.index_desc_.index_type);
 
-        // todo.
-        auto vk_cmd_buf = RENDER_TYPE_CAST(CommandBuffer, cmd_buf);
-
-        renderer::DescriptorSetList desc_sets{ global_tex_desc_set, src_desc_sets[image_index] };
+        renderer::DescriptorSetList desc_sets{ global_tex_desc_set, src_desc_set };
         if (prim.material_idx_ >= 0) {
             const auto& material = gltf_object->materials_[prim.material_idx_];
             desc_sets.push_back(material.desc_set_);
@@ -585,9 +581,8 @@ void drawNodes(
     const std::shared_ptr<renderer::ObjectData>& gltf_object,
     const std::shared_ptr<renderer::PipelineLayout>& gltf_pipeline_layout,
     const std::shared_ptr<renderer::DescriptorSet>& global_tex_desc_set,
-    std::vector<std::shared_ptr<renderer::DescriptorSet>>& desc_sets,
+    const std::shared_ptr<renderer::DescriptorSet>& src_desc_set,
     int32_t node_idx,
-    const uint32_t image_index,
     const glm::mat4& parent_matrix) {
     if (node_idx >= 0) {
         const auto& node = gltf_object->nodes_[node_idx];
@@ -604,10 +599,9 @@ void drawNodes(
                 gltf_object,
                 gltf_pipeline_layout,
                 global_tex_desc_set,
-                desc_sets,
+                src_desc_set,
                 gltf_object->meshes_[node.mesh_idx],
-                model_params,
-                image_index);
+                model_params);
         }
 
         for (auto& child_idx : node.child_idx) {
@@ -615,11 +609,24 @@ void drawNodes(
                 gltf_object,
                 gltf_pipeline_layout,
                 global_tex_desc_set,
-                desc_sets,
+                src_desc_set,
                 child_idx,
-                image_index,
                 cur_matrix);
         }
+    }
+}
+
+void ObjectData::destroy(const std::shared_ptr<Device>& device) {
+    for (auto& texture : textures_) {
+        texture.destroy(device);
+    }
+
+    for (auto& material : materials_) {
+        material.uniform_buffer_.destroy(device);
+    }
+
+    for (auto& buffer : buffers_) {
+        buffer.destroy(device);
     }
 }
 
