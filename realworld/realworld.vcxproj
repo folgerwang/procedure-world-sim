@@ -143,6 +143,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.geom -o $(ProjectDir)lib\shaders\grass_geom.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.frag -o $(ProjectDir)lib\shaders\grass_frag.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.comp -o $(ProjectDir)lib\shaders\grass_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_creator.comp -o $(ProjectDir)lib\shaders\tile_creator_comp.spv
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -214,6 +215,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.geom -o $(ProjectDir)lib\shaders\grass_geom.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.frag -o $(ProjectDir)lib\shaders\grass_frag.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.comp -o $(ProjectDir)lib\shaders\grass_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_creator.comp -o $(ProjectDir)lib\shaders\tile_creator_comp.spv
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -256,6 +258,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass
     <ClInclude Include="src\shaders\punctual.glsl.h" />
     <ClInclude Include="src\shaders\sun.glsl.h" />
     <ClInclude Include="src\shaders\sunlight_scattering.glsl.h" />
+    <ClInclude Include="src\shaders\tile_common.glsl.h" />
     <ClInclude Include="src\third_party\imgui\imconfig.h" />
     <ClInclude Include="src\third_party\imgui\imgui.h" />
     <ClInclude Include="src\third_party\imgui\imgui_internal.h" />
@@ -276,6 +279,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass
     <None Include="src\shaders\skybox.vert" />
     <None Include="src\shaders\tile.frag" />
     <None Include="src\shaders\tile.vert" />
+    <None Include="src\shaders\tile_creator.comp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

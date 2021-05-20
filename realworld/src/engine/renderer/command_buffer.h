@@ -45,6 +45,12 @@ public:
         uint32_t mip_count = 1,
         uint32_t base_layer = 0,
         uint32_t layer_count = 1) = 0;
+    virtual void addBufferBarrier(
+        const std::shared_ptr<Buffer>& buffer,
+        const BufferResourceInfo& src_info,
+        const BufferResourceInfo& dst_info,
+        uint32_t size = 0,
+        uint32_t offset = 0) = 0;
     //virtual void pipelineBarrier() = 0;
 };
 

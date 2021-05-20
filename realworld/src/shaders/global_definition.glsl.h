@@ -54,6 +54,9 @@
 #define SRC_TEX_INDEX               0
 #define DST_TEX_INDEX               1
 
+#define VERTEX_BUFFER_INDEX         0
+#define INDEX_BUFFER_INDEX          1
+
 #define FEATURE_MATERIAL_SPECULARGLOSSINESS     0x00000001
 #define FEATURE_MATERIAL_METALLICROUGHNESS      0x00000002
 #define FEATURE_MATERIAL_SHEEN                  0x00000004
@@ -138,6 +141,10 @@ struct TileParams {
     vec2    max;
     ivec2   segment_count;
     ivec2   pad;
+};
+
+struct TileVertexInfo {
+    vec2 height;
 };
 
 struct SunSkyParams {

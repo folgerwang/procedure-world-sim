@@ -26,10 +26,12 @@ private:
     void createGraphicsPipeline(const glm::uvec2& display_size);
     void createCubeGraphicsPipeline();
     void createComputePipeline();
+    void createTileCreatorComputePipeline();
     void createGraphicPipelineLayout();
     void createCubemapPipelineLayout();
     void createCubeSkyboxPipelineLayout();
     void createCubemapComputePipelineLayout();
+    void createTileCreatorComputePipelineLayout();
     void createRenderPass();
     void createCubemapRenderPass();
     void createFramebuffers(const glm::uvec2& display_size);
@@ -62,6 +64,10 @@ private:
         const std::shared_ptr<engine::renderer::DescriptorSet>& description_set, 
         const engine::renderer::TextureInfo& src_tex,
         const engine::renderer::TextureInfo& dst_tex);
+    std::vector<engine::renderer::BufferDescriptor> addTileCreatorBuffers(
+        const std::shared_ptr<engine::renderer::DescriptorSet>& description_set,
+        const engine::renderer::BufferInfo& src_buffer,
+        const engine::renderer::BufferInfo& dst_buffer);
     void mainLoop();
     void drawScene(
         std::shared_ptr<engine::renderer::CommandBuffer> command_buffer,
@@ -99,6 +105,7 @@ private:
     std::shared_ptr<engine::renderer::DescriptorSetLayout> skybox_desc_set_layout_;
     std::shared_ptr<engine::renderer::DescriptorSetLayout> ibl_desc_set_layout_;
     std::shared_ptr<engine::renderer::DescriptorSetLayout> ibl_comp_desc_set_layout_;
+    std::shared_ptr<engine::renderer::DescriptorSetLayout> tile_creator_desc_set_layout_;
     std::shared_ptr<engine::renderer::DescriptorSet> global_tex_desc_set_;
     std::shared_ptr<engine::renderer::DescriptorSet> skybox_tex_desc_set_;
     std::shared_ptr<engine::renderer::DescriptorSet> envmap_tex_desc_set_;
@@ -114,6 +121,7 @@ private:
     std::shared_ptr<engine::renderer::PipelineLayout> ibl_pipeline_layout_;
     std::shared_ptr<engine::renderer::PipelineLayout> cube_skybox_pipeline_layout_;
     std::shared_ptr<engine::renderer::PipelineLayout> ibl_comp_pipeline_layout_;
+    std::shared_ptr<engine::renderer::PipelineLayout> tile_creator_pipeline_layout_;
     std::shared_ptr<engine::renderer::Pipeline> gltf_pipeline_;
     std::shared_ptr<engine::renderer::Pipeline> tile_pipeline_;
     std::shared_ptr<engine::renderer::Pipeline> skybox_pipeline_;
@@ -123,6 +131,7 @@ private:
     std::shared_ptr<engine::renderer::Pipeline> ggx_pipeline_;
     std::shared_ptr<engine::renderer::Pipeline> charlie_pipeline_;
     std::shared_ptr<engine::renderer::Pipeline> blur_comp_pipeline_;
+    std::shared_ptr<engine::renderer::Pipeline> tile_creator_comp_pipeline_;
     std::shared_ptr<engine::renderer::CommandPool> command_pool_;
     engine::renderer::BufferInfo vertex_buffer_;
     engine::renderer::BufferInfo index_buffer_;

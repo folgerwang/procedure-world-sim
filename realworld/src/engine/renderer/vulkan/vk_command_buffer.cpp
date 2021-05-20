@@ -204,6 +204,35 @@ void VulkanCommandBuffer::addImageBarrier(
     );
 }
 
+void VulkanCommandBuffer::addBufferBarrier(
+    const std::shared_ptr<Buffer>& buffer,
+    const BufferResourceInfo& src_info,
+    const BufferResourceInfo& dst_info,
+    uint32_t size/* = 0*/,
+    uint32_t offset/* = 0*/) {
+    auto vk_buffer = RENDER_TYPE_CAST(Buffer, buffer);
+
+    VkBufferMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    barrier.srcAccessMask = helper::toVkAccessFlags(src_info.access_flags);
+    barrier.dstAccessMask = helper::toVkAccessFlags(dst_info.access_flags);
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.buffer = vk_buffer->get();
+    barrier.offset = offset;
+    barrier.size = size;
+
+    vkCmdPipelineBarrier(
+        cmd_buf_,
+        helper::toVkPipelineStageFlags(src_info.stage_flags),
+        helper::toVkPipelineStageFlags(dst_info.stage_flags),
+        0,
+        0, nullptr,
+        1, &barrier,
+        0, nullptr
+    );
+}
+
 } // namespace vk
 } // namespace renderer
 } // namespace engine

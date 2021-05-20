@@ -138,7 +138,7 @@ void mouseInputCallback(GLFWwindow* window, double xpos, double ypos)
     auto mouse_offset = cur_mouse_pos - s_last_mouse_pos;
     s_last_mouse_pos = cur_mouse_pos;
 
-    float sensitivity = 0.02f;
+    float sensitivity = 0.2f;
     mouse_offset *= sensitivity;
 
     s_yaw += mouse_offset.x;
@@ -202,16 +202,16 @@ void RealWorldApplication::initVulkan() {
     device_info_.cmd_pool = command_pool_;
     engine::renderer::Helper::init(device_info_);
 
-//    loadGltfModel(device_info_, "assets/Avocado.glb");
-//    loadGltfModel(device_info_, "assets/BoomBox.glb");
+//    engine::renderer::loadGltfModel(device_info_, "assets/Avocado.glb");
+//    engine::renderer::loadGltfModel(device_info_, "assets/BoomBox.glb");
     gltf_object_ = engine::renderer::loadGltfModel(device_info_, "assets/DamagedHelmet.glb");
-//    loadGltfModel(device_info_, "assets/Duck.glb");
-//    loadGltfModel(device_info_, "assets/MetalRoughSpheres.glb");
-//    loadGltfModel(device_info_, "assets/BarramundiFish.glb");
-//    loadGltfModel(device_info_, "assets/Lantern.glb");
-//    *loadGltfModel(device_info_, "assets/MetalRoughSpheresNoTextures.glb");
-//    loadGltfModel(device_info_, "assets/BrainStem.glb"); 
-//    *loadGltfModel(device_info_, "assets/AnimatedTriangle.gltf");
+//    engine::renderer::loadGltfModel(device_info_, "assets/Duck.glb");
+//    engine::renderer::loadGltfModel(device_info_, "assets/MetalRoughSpheres.glb");
+//    engine::renderer::loadGltfModel(device_info_, "assets/BarramundiFish.glb");
+//    engine::renderer::loadGltfModel(device_info_, "assets/Lantern.glb");
+//    *engine::renderer::loadGltfModel(device_info_, "assets/MetalRoughSpheresNoTextures.glb");
+//    engine::renderer::loadGltfModel(device_info_, "assets/BrainStem.glb"); 
+//    *engine::renderer::loadGltfModel(device_info_, "assets/AnimatedTriangle.gltf");
     loadMtx2Texture("assets/environments/doge2/lambertian/diffuse.ktx2", ibl_diffuse_tex_);
     loadMtx2Texture("assets/environments/doge2/ggx/specular.ktx2", ibl_specular_tex_);
     loadMtx2Texture("assets/environments/doge2/charlie/sheen.ktx2", ibl_sheen_tex_);
@@ -219,9 +219,11 @@ void RealWorldApplication::initVulkan() {
     createCubemapPipelineLayout();
     createCubeSkyboxPipelineLayout();
     createCubemapComputePipelineLayout();
+    createTileCreatorComputePipelineLayout();
     createGraphicsPipeline(swap_chain_info_.extent);
     createCubeGraphicsPipeline();
     createComputePipeline();
+    createTileCreatorComputePipeline();
     createDepthResources(swap_chain_info_.extent);
     createFramebuffers(swap_chain_info_.extent);
     auto format = engine::renderer::Format::R8G8B8A8_UNORM;
@@ -240,7 +242,14 @@ void RealWorldApplication::initVulkan() {
     createCommandBuffers();
     createSyncObjects();
 
-    tile_mesh_ = std::make_shared<engine::renderer::TileMesh> (device_info_, glm::uvec2(256, 256), glm::vec2(-100.0f, -100.0f), glm::vec2(100.0f, 100.0f));
+    tile_mesh_ = std::make_shared<engine::renderer::TileMesh> (
+        device_info_,
+        descriptor_pool_,
+        tile_creator_desc_set_layout_,
+        glm::uvec2(256, 256),
+        glm::vec2(-100.0f, -100.0f),
+        glm::vec2(100.0f, 100.0f));
+
     engine::renderer::Helper::initImgui(
         device_info_,
         instance_,
@@ -275,15 +284,21 @@ void RealWorldApplication::recreateSwapChain() {
     createGraphicPipelineLayout();
     createCubemapPipelineLayout();
     createCubemapComputePipelineLayout();
+    createTileCreatorComputePipelineLayout();
     createCubeSkyboxPipelineLayout();
     createGraphicsPipeline(swap_chain_info_.extent);
     createComputePipeline();
+    createTileCreatorComputePipeline();
     createDepthResources(swap_chain_info_.extent);
     createFramebuffers(swap_chain_info_.extent);
     createUniformBuffers();
     descriptor_pool_ = device_->createDescriptorPool();
     createDescriptorSets();
     createCommandBuffers();
+
+    tile_mesh_->generateDescriptorSet(
+        descriptor_pool_,
+        tile_creator_desc_set_layout_);
 
     engine::renderer::Helper::initImgui(
         device_info_,
@@ -397,6 +412,20 @@ engine::renderer::DescriptorSetLayoutBinding getTextureSamplerDescriptionSetLayo
     return texture_binding;
 }
 
+engine::renderer::DescriptorSetLayoutBinding getBufferDescriptionSetLayoutBinding(
+    uint32_t binding,
+    engine::renderer::ShaderStageFlags stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
+    engine::renderer::DescriptorType descript_type = engine::renderer::DescriptorType::STORAGE_BUFFER) {
+    engine::renderer::DescriptorSetLayoutBinding buffer_binding{};
+    buffer_binding.binding = binding;
+    buffer_binding.descriptor_count = 1;
+    buffer_binding.descriptor_type = descript_type;
+    buffer_binding.immutable_samplers = nullptr;
+    buffer_binding.stage_flags = stage_flags;
+
+    return buffer_binding;
+}
+
 engine::renderer::ShaderModuleList getGltfShaderModules(
     std::shared_ptr<engine::renderer::Device> device, 
     bool has_normals, 
@@ -475,6 +504,18 @@ engine::renderer::ShaderModuleList getIblComputeShaderModules(
     engine::renderer::ShaderModuleList shader_modules;
     shader_modules.reserve(1);
     auto compute_shader_code = readFile("lib/shaders/ibl_smooth_comp.spv", compute_code_size);
+    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
+
+    return shader_modules;
+}
+
+engine::renderer::ShaderModuleList getTileCreatorCsModules(
+    std::shared_ptr<engine::renderer::Device> device)
+{
+    uint64_t compute_code_size;
+    engine::renderer::ShaderModuleList shader_modules;
+    shader_modules.reserve(1);
+    auto compute_shader_code = readFile("lib/shaders/tile_creator_comp.spv", compute_code_size);
     shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
 
     return shader_modules;
@@ -567,6 +608,19 @@ void RealWorldApplication::createCubemapComputePipelineLayout()
     desc_set_layouts[0] = ibl_comp_desc_set_layout_;
 
     ibl_comp_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
+}
+
+void RealWorldApplication::createTileCreatorComputePipelineLayout()
+{
+    engine::renderer::PushConstantRange push_const_range{};
+    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
+    push_const_range.offset = 0;
+    push_const_range.size = sizeof(TileParams);
+
+    engine::renderer::DescriptorSetLayoutList desc_set_layouts(1);
+    desc_set_layouts[0] = tile_creator_desc_set_layout_;
+
+    tile_creator_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
 
 engine::renderer::PipelineColorBlendAttachmentState fillPipelineColorBlendAttachmentState(
@@ -885,6 +939,20 @@ void RealWorldApplication::createComputePipeline()
         ibl_compute_shader_modules[0]);
 
     for (auto& shader_module : ibl_compute_shader_modules) {
+        device_->destroyShaderModule(shader_module);
+    }
+}
+
+void RealWorldApplication::createTileCreatorComputePipeline()
+{
+    auto tile_creator_compute_shader_modules = getTileCreatorCsModules(device_);
+    assert(tile_creator_compute_shader_modules.size() == 1);
+
+    tile_creator_comp_pipeline_ = device_->createPipeline(
+        tile_creator_pipeline_layout_,
+        tile_creator_compute_shader_modules[0]);
+
+    for (auto& shader_module : tile_creator_compute_shader_modules) {
         device_->destroyShaderModule(shader_module);
     }
 }
@@ -1228,6 +1296,19 @@ void RealWorldApplication::createDescriptorSetLayout() {
             engine::renderer::DescriptorType::STORAGE_IMAGE);
 
         ibl_comp_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
+    }
+
+    // tile creator compute texture descriptor set layout.
+    {
+        std::vector<engine::renderer::DescriptorSetLayoutBinding> bindings(2);
+        bindings[0] = getBufferDescriptionSetLayoutBinding(VERTEX_BUFFER_INDEX,
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            engine::renderer::DescriptorType::STORAGE_BUFFER);
+        bindings[1] = getBufferDescriptionSetLayoutBinding(INDEX_BUFFER_INDEX,
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            engine::renderer::DescriptorType::STORAGE_BUFFER);
+
+        tile_creator_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
     }
 }
 
@@ -1792,6 +1873,13 @@ void RealWorldApplication::drawScene(
     }
 
     {
+        tile_mesh_->generateTileBuffers(
+            cmd_buf,
+            tile_creator_comp_pipeline_,
+            tile_creator_pipeline_layout_);
+    }
+
+    {
         cmd_buf->beginRenderPass(
             render_pass_,
             frame_buffer,
@@ -1947,10 +2035,12 @@ void RealWorldApplication::cleanupSwapChain() {
     device_->freeCommandBuffers(command_pool_, command_buffers_);
     destroyGraphicsPipeline();
     device_->destroyPipeline(blur_comp_pipeline_);
+    device_->destroyPipeline(tile_creator_comp_pipeline_);
     device_->destroyPipelineLayout(gltf_pipeline_layout_);
     device_->destroyPipelineLayout(tile_pipeline_layout_);
     device_->destroyPipelineLayout(skybox_pipeline_layout_);
     device_->destroyPipelineLayout(ibl_comp_pipeline_layout_);
+    device_->destroyPipelineLayout(tile_creator_pipeline_layout_);
     device_->destroyRenderPass(render_pass_);
 
     for (auto image_view : swap_chain_info_.image_views) {
@@ -2010,6 +2100,7 @@ void RealWorldApplication::cleanup() {
     device_->destroyDescriptorSetLayout(skybox_desc_set_layout_);
     device_->destroyDescriptorSetLayout(ibl_desc_set_layout_);
     device_->destroyDescriptorSetLayout(ibl_comp_desc_set_layout_);
+    device_->destroyDescriptorSetLayout(tile_creator_desc_set_layout_);
 
     vertex_buffer_.destroy(device_);
     index_buffer_.destroy(device_);

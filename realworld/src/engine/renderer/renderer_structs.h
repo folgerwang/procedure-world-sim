@@ -108,6 +108,11 @@ struct ImageResourceInfo {
     PipelineStageFlags      stage_flags = 0;;
 };
 
+struct BufferResourceInfo {
+    AccessFlags             access_flags = 0;
+    PipelineStageFlags      stage_flags = 0;
+};
+
 struct PipelineInputAssemblyStateCreateInfo {
     PrimitiveTopology                  topology;
     bool                               restart_enable;

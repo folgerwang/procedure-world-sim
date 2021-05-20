@@ -1564,42 +1564,149 @@ std::vector<uint32_t> generateTileMeshIndex(const glm::uvec2& segment_count) {
 namespace engine {
 namespace renderer {
 
+namespace {
+std::vector<BufferDescriptor> addTileCreatorBuffers(
+    const std::shared_ptr<DescriptorSet>& description_set,
+    uint32_t buffer_size1,
+    const BufferInfo& buffer1,
+    uint32_t buffer_size2,
+    const BufferInfo& buffer2) {
+    std::vector<BufferDescriptor> descriptor_writes;
+    descriptor_writes.reserve(2);
+
+    Helper::addOneBuffer(
+        descriptor_writes,
+        VERTEX_BUFFER_INDEX,
+        buffer1.buffer,
+        description_set,
+        engine::renderer::DescriptorType::STORAGE_BUFFER,
+        buffer_size1);
+
+   Helper::addOneBuffer(
+        descriptor_writes,
+        INDEX_BUFFER_INDEX,
+        buffer2.buffer,
+        description_set,
+        engine::renderer::DescriptorType::STORAGE_BUFFER,
+       buffer_size2);
+
+    return descriptor_writes;
+}
+}
+
 void TileMesh::destory() {
     vertex_buffer_.destroy(device_info_.device);
     index_buffer_.destroy(device_info_.device);
 }
 
-void TileMesh::generateMesh() {
+void TileMesh::createMeshBuffers() {
     glm::vec3 corners[4];
     corners[0] = glm::vec3(min_.x, 0.0f, min_.y);
     corners[1] = glm::vec3(min_.x, 0.0f, max_.y);
     corners[2] = glm::vec3(max_.x, 0.0f, max_.y);
     corners[3] = glm::vec3(max_.x, 0.0f, min_.y);
 
+#if 0
     auto height_map = generateTileMeshVertex(corners, segment_count_);
 
-    uint64_t buffer_size = sizeof(height_map[0]) * height_map.size();
+    vertex_buffer_size_ = sizeof(height_map[0]) * height_map.size();
 
     renderer::Helper::createBufferWithSrcData(
         device_info_,
-        SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT),
-        buffer_size,
+        SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
+        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
+        vertex_buffer_size_,
         height_map.data(),
         vertex_buffer_.buffer,
         vertex_buffer_.memory);
-
+#else
+    auto height_map_size = (segment_count_.x + 1) * (segment_count_.y + 1);
+    vertex_buffer_size_ = sizeof(glm::vec2) * height_map_size;
+    device_info_.device->createBuffer(
+        vertex_buffer_size_,
+        SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
+        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
+        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        vertex_buffer_.buffer,
+        vertex_buffer_.memory);
+#endif
     auto index_buffer = generateTileMeshIndex(segment_count_);
-
-    buffer_size =
-        sizeof(index_buffer[0]) * index_buffer.size();
-
+    index_buffer_size_ = sizeof(index_buffer[0]) * index_buffer.size();
     renderer::Helper::createBufferWithSrcData(
         device_info_,
-        SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT),
-        buffer_size,
+        SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT) |
+        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
+        index_buffer_size_,
         index_buffer.data(),
         index_buffer_.buffer,
         index_buffer_.memory);
+}
+
+void TileMesh::generateDescriptorSet(
+    const std::shared_ptr<DescriptorPool>& descriptor_pool,
+    const std::shared_ptr<DescriptorSetLayout>& desc_set_layout) {
+
+    // tile creator buffer set.
+    buffer_desc_set_ = device_info_.device->createDescriptorSets(descriptor_pool, desc_set_layout, 1)[0];
+
+    // create a global ibl texture descriptor set.
+    auto buffer_descs = addTileCreatorBuffers(
+        buffer_desc_set_,
+        vertex_buffer_size_, vertex_buffer_,
+        index_buffer_size_, index_buffer_);
+    device_info_.device->updateDescriptorSets({}, buffer_descs);
+}
+
+void TileMesh::generateTileBuffers(
+    const std::shared_ptr<CommandBuffer>& cmd_buf,
+    const std::shared_ptr<Pipeline>& pipeline,
+    const std::shared_ptr<PipelineLayout>& pipeline_layout) {
+
+    uint32_t vx_count = segment_count_.x + 1;
+    uint32_t vy_count = segment_count_.y + 1;
+
+    cmd_buf->addBufferBarrier(
+        vertex_buffer_.buffer,
+        { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_SHADER_BIT) },
+        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
+        vertex_buffer_size_);
+
+    cmd_buf->addBufferBarrier(
+        index_buffer_.buffer,
+        { SET_FLAG_BIT(Access, INDEX_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_SHADER_BIT) },
+        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
+        index_buffer_size_);
+
+    cmd_buf->bindPipeline(PipelineBindPoint::COMPUTE, pipeline);
+    TileParams tile_params = {};
+    tile_params.min = min_;
+    tile_params.max = max_;
+    tile_params.segment_count = segment_count_;
+    cmd_buf->pushConstants(
+        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+        pipeline_layout,
+        &tile_params,
+        sizeof(tile_params));
+
+    cmd_buf->bindDescriptorSets(
+        PipelineBindPoint::COMPUTE,
+        pipeline_layout,
+        { buffer_desc_set_ });
+
+    cmd_buf->dispatch((vx_count + 7) / 8, (vy_count + 7) / 8, 1);
+
+    cmd_buf->addBufferBarrier(
+        vertex_buffer_.buffer,
+        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
+        { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_SHADER_BIT) },
+        vertex_buffer_size_);
+
+    cmd_buf->addBufferBarrier(
+        index_buffer_.buffer,
+        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
+        { SET_FLAG_BIT(Access, INDEX_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_SHADER_BIT) },
+        index_buffer_size_);
 }
 
 void TileMesh::draw(const std::shared_ptr<CommandBuffer>& cmd_buf,

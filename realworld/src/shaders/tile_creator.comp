@@ -1,0 +1,31 @@
+#version 450
+#extension GL_ARB_separate_shader_objects : enable
+#include "global_definition.glsl.h"
+#include "tile_common.glsl.h"
+
+layout(push_constant) uniform TileUniformBufferObject {
+  TileParams tile_params;
+};
+
+layout(std430, set = 0, binding = VERTEX_BUFFER_INDEX) buffer TileVertexInfoBuffer {
+  TileVertexInfo vertex_info[];
+};
+
+layout(local_size_x = 8, local_size_y = 8) in;
+void main()
+{
+  // get index in global work group i.e x,y position
+  ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
+  if (all(lessThanEqual(pixel_coords, tile_params.segment_count))) {
+    int index = pixel_coords.y * (tile_params.segment_count.x + 1) + pixel_coords.x;
+    float factor_x = pixel_coords.x / float(tile_params.segment_count.x);
+    float factor_y = pixel_coords.y / float(tile_params.segment_count.y);
+
+    float x = tile_params.min.x + factor_x * (tile_params.max.x - tile_params.min.x);
+    float y = tile_params.min.y + factor_y * (tile_params.max.y - tile_params.min.y);
+
+    vec2 m_d = terrainMap(vec2(x, y));
+    
+    vertex_info[index].height = m_d;
+  }
+}
