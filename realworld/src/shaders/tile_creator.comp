@@ -26,6 +26,6 @@ void main()
 
     vec2 m_d = terrainMap(vec2(x, y));
     
-    vertex_info[index].height = m_d;
+    vertex_info[index].height = uvec2(packHalf2x16(m_d), 0);
   }
 }

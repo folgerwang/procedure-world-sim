@@ -4,6 +4,8 @@
 #include "engine/gltf.h"
 #include "engine/terrain.h"
 
+namespace er = engine::renderer;
+
 struct GLFWwindow;
 namespace work {
 namespace app {
@@ -26,12 +28,10 @@ private:
     void createGraphicsPipeline(const glm::uvec2& display_size);
     void createCubeGraphicsPipeline();
     void createComputePipeline();
-    void createTileCreatorComputePipeline();
     void createGraphicPipelineLayout();
     void createCubemapPipelineLayout();
     void createCubeSkyboxPipelineLayout();
     void createCubemapComputePipelineLayout();
-    void createTileCreatorComputePipelineLayout();
     void createRenderPass();
     void createCubemapRenderPass();
     void createFramebuffers(const glm::uvec2& display_size);
@@ -39,8 +39,8 @@ private:
     void createDepthResources(const glm::uvec2& display_size);
     void createTextureImage(
         const std::string& file_name,
-        engine::renderer::Format format,
-        engine::renderer::TextureInfo& texture);
+        er::Format format,
+        er::TextureInfo& texture);
     void createTextureSampler();
     void createVertexBuffer();
     void createIndexBuffer();
@@ -52,27 +52,27 @@ private:
     void destroyGraphicsPipeline();
     void updateViewConstBuffer(uint32_t current_image, float radius = 2.0f);
     // todo remove vk interface here.
-    std::vector<engine::renderer::TextureDescriptor> addGlobalTextures(
-        const std::shared_ptr<engine::renderer::DescriptorSet>& description_set);
-    std::vector<engine::renderer::TextureDescriptor> addSkyboxTextures(
-        const std::shared_ptr<engine::renderer::DescriptorSet>& description_set);
-    std::vector<engine::renderer::TextureDescriptor> addPanoramaTextures(
-        const std::shared_ptr<engine::renderer::DescriptorSet>& description_set);
-    std::vector<engine::renderer::TextureDescriptor> addIblTextures(
-        const std::shared_ptr<engine::renderer::DescriptorSet>& description_set);
-    std::vector<engine::renderer::TextureDescriptor> addIblComputeTextures(
-        const std::shared_ptr<engine::renderer::DescriptorSet>& description_set, 
-        const engine::renderer::TextureInfo& src_tex,
-        const engine::renderer::TextureInfo& dst_tex);
-    std::vector<engine::renderer::BufferDescriptor> addTileCreatorBuffers(
-        const std::shared_ptr<engine::renderer::DescriptorSet>& description_set,
-        const engine::renderer::BufferInfo& src_buffer,
-        const engine::renderer::BufferInfo& dst_buffer);
+    std::vector<er::TextureDescriptor> addGlobalTextures(
+        const std::shared_ptr<er::DescriptorSet>& description_set);
+    std::vector<er::TextureDescriptor> addSkyboxTextures(
+        const std::shared_ptr<er::DescriptorSet>& description_set);
+    std::vector<er::TextureDescriptor> addPanoramaTextures(
+        const std::shared_ptr<er::DescriptorSet>& description_set);
+    std::vector<er::TextureDescriptor> addIblTextures(
+        const std::shared_ptr<er::DescriptorSet>& description_set);
+    std::vector<er::TextureDescriptor> addIblComputeTextures(
+        const std::shared_ptr<er::DescriptorSet>& description_set, 
+        const er::TextureInfo& src_tex,
+        const er::TextureInfo& dst_tex);
+    std::vector<er::BufferDescriptor> addTileCreatorBuffers(
+        const std::shared_ptr<er::DescriptorSet>& description_set,
+        const er::BufferInfo& src_buffer,
+        const er::BufferInfo& dst_buffer);
     void mainLoop();
     void drawScene(
-        std::shared_ptr<engine::renderer::CommandBuffer> command_buffer,
-        std::shared_ptr<engine::renderer::Framebuffer> frame_buffer,
-        std::shared_ptr<engine::renderer::DescriptorSet> frame_desc_set,
+        std::shared_ptr<er::CommandBuffer> command_buffer,
+        std::shared_ptr<er::Framebuffer> frame_buffer,
+        std::shared_ptr<er::DescriptorSet> frame_desc_set,
         const glm::uvec2& screen_size);
     void drawFrame();
     void cleanup();
@@ -81,88 +81,85 @@ private:
 
     void loadMtx2Texture(
         const std::string& input_filename,
-        engine::renderer::TextureInfo& texture);
+        er::TextureInfo& texture);
 
 private:
     GLFWwindow* window_ = nullptr;
 
-    engine::renderer::DeviceInfo device_info_;
-    engine::renderer::QueueFamilyIndices queue_indices_;
+    er::DeviceInfo device_info_;
+    er::QueueFamilyIndices queue_indices_;
+    er::GraphicPipelineInfo graphic_pipeline_info_;
+    er::GraphicPipelineInfo graphic_cubemap_pipeline_info_;
 
-    std::shared_ptr<engine::renderer::Instance> instance_;
-    engine::renderer::PhysicalDeviceList physical_devices_;
-    std::shared_ptr<engine::renderer::PhysicalDevice> physical_device_;
-    std::shared_ptr<engine::renderer::Device> device_;
-    std::shared_ptr<engine::renderer::Queue> graphics_queue_;
-    std::shared_ptr<engine::renderer::Queue> present_queue_;
-    std::shared_ptr<engine::renderer::Surface> surface_;
-    engine::renderer::SwapChainInfo swap_chain_info_;
-    std::shared_ptr<engine::renderer::DescriptorPool> descriptor_pool_;
-    std::shared_ptr<engine::renderer::DescriptorSetLayout> desc_set_layout_;
-    std::vector<std::shared_ptr<engine::renderer::DescriptorSet>> desc_sets_;
-    std::shared_ptr<engine::renderer::DescriptorSetLayout> global_tex_desc_set_layout_;
-    std::shared_ptr<engine::renderer::DescriptorSetLayout> material_tex_desc_set_layout_;
-    std::shared_ptr<engine::renderer::DescriptorSetLayout> skybox_desc_set_layout_;
-    std::shared_ptr<engine::renderer::DescriptorSetLayout> ibl_desc_set_layout_;
-    std::shared_ptr<engine::renderer::DescriptorSetLayout> ibl_comp_desc_set_layout_;
-    std::shared_ptr<engine::renderer::DescriptorSetLayout> tile_creator_desc_set_layout_;
-    std::shared_ptr<engine::renderer::DescriptorSet> global_tex_desc_set_;
-    std::shared_ptr<engine::renderer::DescriptorSet> skybox_tex_desc_set_;
-    std::shared_ptr<engine::renderer::DescriptorSet> envmap_tex_desc_set_;
-    std::shared_ptr<engine::renderer::DescriptorSet> ibl_tex_desc_set_;
-    std::shared_ptr<engine::renderer::DescriptorSet> ibl_diffuse_tex_desc_set_;
-    std::shared_ptr<engine::renderer::DescriptorSet> ibl_specular_tex_desc_set_;
-    std::shared_ptr<engine::renderer::DescriptorSet> ibl_sheen_tex_desc_set_;
-    std::shared_ptr<engine::renderer::RenderPass> render_pass_;
-    std::shared_ptr<engine::renderer::RenderPass> cubemap_render_pass_;
-    std::shared_ptr<engine::renderer::PipelineLayout> gltf_pipeline_layout_;
-    std::shared_ptr<engine::renderer::PipelineLayout> tile_pipeline_layout_;
-    std::shared_ptr<engine::renderer::PipelineLayout> skybox_pipeline_layout_;
-    std::shared_ptr<engine::renderer::PipelineLayout> ibl_pipeline_layout_;
-    std::shared_ptr<engine::renderer::PipelineLayout> cube_skybox_pipeline_layout_;
-    std::shared_ptr<engine::renderer::PipelineLayout> ibl_comp_pipeline_layout_;
-    std::shared_ptr<engine::renderer::PipelineLayout> tile_creator_pipeline_layout_;
-    std::shared_ptr<engine::renderer::Pipeline> gltf_pipeline_;
-    std::shared_ptr<engine::renderer::Pipeline> tile_pipeline_;
-    std::shared_ptr<engine::renderer::Pipeline> skybox_pipeline_;
-    std::shared_ptr<engine::renderer::Pipeline> envmap_pipeline_;
-    std::shared_ptr<engine::renderer::Pipeline> cube_skybox_pipeline_;
-    std::shared_ptr<engine::renderer::Pipeline> lambertian_pipeline_;
-    std::shared_ptr<engine::renderer::Pipeline> ggx_pipeline_;
-    std::shared_ptr<engine::renderer::Pipeline> charlie_pipeline_;
-    std::shared_ptr<engine::renderer::Pipeline> blur_comp_pipeline_;
-    std::shared_ptr<engine::renderer::Pipeline> tile_creator_comp_pipeline_;
-    std::shared_ptr<engine::renderer::CommandPool> command_pool_;
-    engine::renderer::BufferInfo vertex_buffer_;
-    engine::renderer::BufferInfo index_buffer_;
-    engine::renderer::TextureInfo sample_tex_;
-    engine::renderer::TextureInfo depth_buffer_;
-    engine::renderer::TextureInfo ggx_lut_tex_;
-    engine::renderer::TextureInfo brdf_lut_tex_;
-    engine::renderer::TextureInfo charlie_lut_tex_;
-    engine::renderer::TextureInfo thin_film_lut_tex_;
-    engine::renderer::TextureInfo panorama_tex_;
-    engine::renderer::TextureInfo ibl_diffuse_tex_;
-    engine::renderer::TextureInfo ibl_specular_tex_;
-    engine::renderer::TextureInfo ibl_sheen_tex_;
-    engine::renderer::TextureInfo rt_envmap_tex_;
-    engine::renderer::TextureInfo tmp_ibl_diffuse_tex_;
-    engine::renderer::TextureInfo tmp_ibl_specular_tex_;
-    engine::renderer::TextureInfo tmp_ibl_sheen_tex_;
-    engine::renderer::TextureInfo rt_ibl_diffuse_tex_;
-    engine::renderer::TextureInfo rt_ibl_specular_tex_;
-    engine::renderer::TextureInfo rt_ibl_sheen_tex_;
+    std::shared_ptr<er::Instance> instance_;
+    er::PhysicalDeviceList physical_devices_;
+    std::shared_ptr<er::PhysicalDevice> physical_device_;
+    std::shared_ptr<er::Device> device_;
+    std::shared_ptr<er::Queue> graphics_queue_;
+    std::shared_ptr<er::Queue> present_queue_;
+    std::shared_ptr<er::Surface> surface_;
+    er::SwapChainInfo swap_chain_info_;
+    std::shared_ptr<er::DescriptorPool> descriptor_pool_;
+    std::vector<std::shared_ptr<er::DescriptorSet>> desc_sets_;
+    std::shared_ptr<er::DescriptorSetLayout> view_desc_set_layout_;
+    std::shared_ptr<er::DescriptorSetLayout> global_tex_desc_set_layout_;
+    std::shared_ptr<er::DescriptorSetLayout> material_tex_desc_set_layout_;
+    std::shared_ptr<er::DescriptorSetLayout> skybox_desc_set_layout_;
+    std::shared_ptr<er::DescriptorSetLayout> ibl_desc_set_layout_;
+    std::shared_ptr<er::DescriptorSetLayout> ibl_comp_desc_set_layout_;
+    std::shared_ptr<er::DescriptorSet> global_tex_desc_set_;
+    std::shared_ptr<er::DescriptorSet> skybox_tex_desc_set_;
+    std::shared_ptr<er::DescriptorSet> envmap_tex_desc_set_;
+    std::shared_ptr<er::DescriptorSet> ibl_tex_desc_set_;
+    std::shared_ptr<er::DescriptorSet> ibl_diffuse_tex_desc_set_;
+    std::shared_ptr<er::DescriptorSet> ibl_specular_tex_desc_set_;
+    std::shared_ptr<er::DescriptorSet> ibl_sheen_tex_desc_set_;
+    std::shared_ptr<er::RenderPass> render_pass_;
+    std::shared_ptr<er::RenderPass> cubemap_render_pass_;
+    std::shared_ptr<er::PipelineLayout> gltf_pipeline_layout_;
+    std::shared_ptr<er::PipelineLayout> skybox_pipeline_layout_;
+    std::shared_ptr<er::PipelineLayout> ibl_pipeline_layout_;
+    std::shared_ptr<er::PipelineLayout> cube_skybox_pipeline_layout_;
+    std::shared_ptr<er::PipelineLayout> ibl_comp_pipeline_layout_;
+    std::shared_ptr<er::Pipeline> gltf_pipeline_;
+    std::shared_ptr<er::Pipeline> skybox_pipeline_;
+    std::shared_ptr<er::Pipeline> envmap_pipeline_;
+    std::shared_ptr<er::Pipeline> cube_skybox_pipeline_;
+    std::shared_ptr<er::Pipeline> lambertian_pipeline_;
+    std::shared_ptr<er::Pipeline> ggx_pipeline_;
+    std::shared_ptr<er::Pipeline> charlie_pipeline_;
+    std::shared_ptr<er::Pipeline> blur_comp_pipeline_;
+    std::shared_ptr<er::CommandPool> command_pool_;
+    er::BufferInfo vertex_buffer_;
+    er::BufferInfo index_buffer_;
+    er::TextureInfo sample_tex_;
+    er::TextureInfo depth_buffer_;
+    er::TextureInfo ggx_lut_tex_;
+    er::TextureInfo brdf_lut_tex_;
+    er::TextureInfo charlie_lut_tex_;
+    er::TextureInfo thin_film_lut_tex_;
+    er::TextureInfo panorama_tex_;
+    er::TextureInfo ibl_diffuse_tex_;
+    er::TextureInfo ibl_specular_tex_;
+    er::TextureInfo ibl_sheen_tex_;
+    er::TextureInfo rt_envmap_tex_;
+    er::TextureInfo tmp_ibl_diffuse_tex_;
+    er::TextureInfo tmp_ibl_specular_tex_;
+    er::TextureInfo tmp_ibl_sheen_tex_;
+    er::TextureInfo rt_ibl_diffuse_tex_;
+    er::TextureInfo rt_ibl_specular_tex_;
+    er::TextureInfo rt_ibl_sheen_tex_;
     std::vector<uint32_t> binding_list_;
-    std::shared_ptr<engine::renderer::Sampler> texture_sampler_;
-    std::vector<engine::renderer::BufferInfo> view_const_buffers_;
-    std::vector<std::shared_ptr<engine::renderer::CommandBuffer>> command_buffers_;
-    std::vector<std::shared_ptr<engine::renderer::Semaphore>> image_available_semaphores_;
-    std::vector<std::shared_ptr<engine::renderer::Semaphore>> render_finished_semaphores_;
-    std::vector<std::shared_ptr<engine::renderer::Fence>> in_flight_fences_;
-    std::vector<std::shared_ptr<engine::renderer::Fence>> images_in_flight_;
+    std::shared_ptr<er::Sampler> texture_sampler_;
+    std::vector<er::BufferInfo> view_const_buffers_;
+    std::vector<std::shared_ptr<er::CommandBuffer>> command_buffers_;
+    std::vector<std::shared_ptr<er::Semaphore>> image_available_semaphores_;
+    std::vector<std::shared_ptr<er::Semaphore>> render_finished_semaphores_;
+    std::vector<std::shared_ptr<er::Fence>> in_flight_fences_;
+    std::vector<std::shared_ptr<er::Fence>> images_in_flight_;
 
-    std::shared_ptr<engine::renderer::ObjectData> gltf_object_;
-    std::shared_ptr<engine::renderer::TileMesh> tile_mesh_;
+    std::shared_ptr<er::ObjectData> gltf_object_;
+    std::shared_ptr<er::TileMesh> tile_mesh_;
 
     uint64_t current_frame_ = 0;
     bool framebuffer_resized_ = false;

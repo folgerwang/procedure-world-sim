@@ -19,37 +19,43 @@ class TileMesh {
 
     std::shared_ptr<DescriptorSet> buffer_desc_set_;
 
+    static std::shared_ptr<DescriptorSetLayout> tile_creator_desc_set_layout_;
+    static std::shared_ptr<PipelineLayout> tile_creator_pipeline_layout_;
+    static std::shared_ptr<Pipeline> tile_creator_pipeline_;
+    static std::shared_ptr<PipelineLayout> tile_pipeline_layout_;
+    static std::shared_ptr<Pipeline> tile_pipeline_;
+
 public:
     TileMesh(
         const DeviceInfo& device_info,
+        const std::shared_ptr<RenderPass>& render_pass,
+        const GraphicPipelineInfo& graphic_pipeline_info,
         const std::shared_ptr<DescriptorPool> descriptor_pool,
-        const std::shared_ptr<DescriptorSetLayout> desc_set_layout,
+        const DescriptorSetLayoutList& global_desc_set_layouts,
         const glm::uvec2& segment_count,
         const glm::vec2& min,
-        const glm::vec2& max) :
-        device_info_(device_info),
-        segment_count_(segment_count),
-        min_(min),
-        max_(max) {
-        createMeshBuffers();
-        generateDescriptorSet(descriptor_pool, desc_set_layout);
-    }
+        const glm::vec2& max,
+        const glm::uvec2& display_size);
 
     void destory();
 
-    void generateTileBuffers(
-        const std::shared_ptr<CommandBuffer>& cmd_buf,
-        const std::shared_ptr<Pipeline>& pipeline,
-        const std::shared_ptr<PipelineLayout>& pipeline_layout);
+    static void recreateStaticMembers(
+        const std::shared_ptr<Device>& device,
+        const std::shared_ptr<RenderPass>& render_pass,
+        const GraphicPipelineInfo& graphic_pipeline_info,
+        const DescriptorSetLayoutList& global_desc_set_layouts,
+        const glm::uvec2& display_size);
+
+    static void destoryStaticMembers(const std::shared_ptr<Device>& device);
+
+    void generateTileBuffers(const std::shared_ptr<CommandBuffer>& cmd_buf);
 
     void createMeshBuffers();
         
     void generateDescriptorSet(
-        const std::shared_ptr<DescriptorPool>& descriptor_pool,
-        const std::shared_ptr<DescriptorSetLayout>& desc_set_layout);
+        const std::shared_ptr<DescriptorPool>& descriptor_pool);
 
     void draw(const std::shared_ptr<CommandBuffer>& cmd_buf,
-        const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout,
         const renderer::DescriptorSetList& desc_set_list);
 };
 

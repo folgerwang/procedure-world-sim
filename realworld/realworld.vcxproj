@@ -221,8 +221,10 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\application.cpp" />
+    <ClCompile Include="src\engine\engine_helper.cpp" />
     <ClCompile Include="src\engine\gltf.cpp" />
     <ClCompile Include="src\engine\renderer\renderer.cpp" />
+    <ClCompile Include="src\engine\renderer\renderer_helper.cpp" />
     <ClCompile Include="src\engine\renderer\vulkan\vk_command_buffer.cpp" />
     <ClCompile Include="src\engine\renderer\vulkan\vk_device.cpp" />
     <ClCompile Include="src\engine\renderer\vulkan\vk_renderer_helper.cpp" />
@@ -237,12 +239,14 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\application.h" />
+    <ClInclude Include="src\engine\engine_helper.h" />
     <ClInclude Include="src\engine\gltf.h" />
     <ClInclude Include="src\engine\renderer\command_buffer.h" />
     <ClInclude Include="src\engine\renderer\device.h" />
     <ClInclude Include="src\engine\renderer\physical_device.h" />
     <ClInclude Include="src\engine\renderer\renderer.h" />
     <ClInclude Include="src\engine\renderer\renderer_definition.h" />
+    <ClInclude Include="src\engine\renderer\renderer_helper.h" />
     <ClInclude Include="src\engine\renderer\renderer_structs.h" />
     <ClInclude Include="src\engine\renderer\vulkan\vk_command_buffer.h" />
     <ClInclude Include="src\engine\renderer\vulkan\vk_device.h" />

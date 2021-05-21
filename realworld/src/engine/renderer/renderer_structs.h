@@ -290,6 +290,13 @@ struct BufferInfo {
     void destroy(const std::shared_ptr<Device>& device);
 };
 
+struct GraphicPipelineInfo {
+    std::shared_ptr<PipelineColorBlendStateCreateInfo> blend_state_info;
+    std::shared_ptr<PipelineRasterizationStateCreateInfo> rasterization_info;
+    std::shared_ptr<PipelineMultisampleStateCreateInfo> ms_info;
+    std::shared_ptr<PipelineDepthStencilStateCreateInfo> depth_stencil_info;
+};
+
 typedef std::vector<std::shared_ptr<PhysicalDevice>> PhysicalDeviceList;
 typedef std::vector<std::shared_ptr<DescriptorSetLayout>> DescriptorSetLayoutList;
 typedef std::vector<std::shared_ptr<DescriptorSet>> DescriptorSetList;

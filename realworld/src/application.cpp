@@ -2,10 +2,11 @@
 #include <vector>
 #include <map>
 #include <limits>
-#include <fstream>
 #include <chrono>
 
 #include "engine/renderer/renderer.h"
+#include "engine/renderer/renderer_helper.h"
+#include "engine/engine_helper.h"
 #include "application.h"
 
 #define TINYGLTF_IMPLEMENTATION
@@ -13,6 +14,8 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "tiny_gltf.h"
 #include "engine/tiny_mtx2.h"
+
+namespace er = engine::renderer;
 
 namespace {
 constexpr int kWindowSizeX = 1920;
@@ -22,62 +25,23 @@ static float s_sun_angle = 0.0f;
 struct SkyBoxVertex {
     glm::vec3 pos;
 
-    static std::vector<engine::renderer::VertexInputBindingDescription> getBindingDescription() {
-        std::vector<engine::renderer::VertexInputBindingDescription> binding_description(1);
+    static std::vector<er::VertexInputBindingDescription> getBindingDescription() {
+        std::vector<er::VertexInputBindingDescription> binding_description(1);
         binding_description[0].binding = 0;
         binding_description[0].stride = sizeof(SkyBoxVertex);
-        binding_description[0].input_rate = engine::renderer::VertexInputRate::VERTEX;
+        binding_description[0].input_rate = er::VertexInputRate::VERTEX;
         return binding_description;
     }
 
-    static std::vector<engine::renderer::VertexInputAttributeDescription> getAttributeDescriptions() {
-        std::vector<engine::renderer::VertexInputAttributeDescription> attribute_descriptions(1);
+    static std::vector<er::VertexInputAttributeDescription> getAttributeDescriptions() {
+        std::vector<er::VertexInputAttributeDescription> attribute_descriptions(1);
         attribute_descriptions[0].binding = 0;
         attribute_descriptions[0].location = 0;
-        attribute_descriptions[0].format = engine::renderer::Format::R32G32B32_SFLOAT;
+        attribute_descriptions[0].format = er::Format::R32G32B32_SFLOAT;
         attribute_descriptions[0].offset = offsetof(SkyBoxVertex, pos);
         return attribute_descriptions;
     }
 };
-
-struct TileVertex {
-    glm::vec2 height;
-
-    static std::vector<engine::renderer::VertexInputBindingDescription> getBindingDescription() {
-        std::vector<engine::renderer::VertexInputBindingDescription> binding_description(1);
-        binding_description[0].binding = 0;
-        binding_description[0].stride = sizeof(TileVertex);
-        binding_description[0].input_rate = engine::renderer::VertexInputRate::VERTEX;
-        return binding_description;
-    }
-
-    static std::vector<engine::renderer::VertexInputAttributeDescription> getAttributeDescriptions() {
-        std::vector<engine::renderer::VertexInputAttributeDescription> attribute_descriptions(1);
-        attribute_descriptions[0].binding = 0;
-        attribute_descriptions[0].location = 0;
-        attribute_descriptions[0].format = engine::renderer::Format::R32G32_SFLOAT;
-        attribute_descriptions[0].offset = offsetof(TileVertex, height);
-        return attribute_descriptions;
-    }
-};
-
-std::vector<uint64_t> readFile(const std::string& file_name, uint64_t& file_size) {
-    std::ifstream file(file_name, std::ios::ate | std::ios::binary);
-
-    if (!file.is_open()) {
-        std::string error_message = std::string("failed to open file! :") + file_name;
-        throw std::runtime_error(error_message);
-    }
-
-    file_size = (uint64_t)file.tellg();
-    std::vector<uint64_t> buffer((file_size + sizeof(uint64_t) - 1) / sizeof(uint64_t));
-
-    file.seekg(0);
-    file.read(reinterpret_cast<char*>(buffer.data()), file_size);
-
-    file.close();
-    return buffer;
-}
 
 }
 
@@ -169,8 +133,8 @@ void RealWorldApplication::initWindow() {
 
 void RealWorldApplication::createDepthResources(const glm::uvec2& display_size)
 {
-    auto depth_format = engine::renderer::Helper::findDepthFormat(device_info_.device);
-    engine::renderer::Helper::createDepthResources(
+    auto depth_format = er::Helper::findDepthFormat(device_info_.device);
+    er::Helper::createDepthResources(
         device_info_,
         depth_format,
         display_size,
@@ -178,20 +142,53 @@ void RealWorldApplication::createDepthResources(const glm::uvec2& display_size)
 }
 
 void RealWorldApplication::initVulkan() {
+    auto color_blend_attachment = er::helper::fillPipelineColorBlendAttachmentState();
+    std::vector<er::PipelineColorBlendAttachmentState> color_blend_attachments(1, color_blend_attachment);
+    std::vector<er::PipelineColorBlendAttachmentState> cube_color_blend_attachments(6, color_blend_attachment);
+
+    graphic_pipeline_info_.blend_state_info = 
+        std::make_shared<er::PipelineColorBlendStateCreateInfo>(
+            er::helper::fillPipelineColorBlendStateCreateInfo(color_blend_attachments));
+    graphic_pipeline_info_.rasterization_info = 
+        std::make_shared<er::PipelineRasterizationStateCreateInfo>(
+            er::helper::fillPipelineRasterizationStateCreateInfo());
+    graphic_pipeline_info_.ms_info =
+        std::make_shared<er::PipelineMultisampleStateCreateInfo>(
+            er::helper::fillPipelineMultisampleStateCreateInfo());
+    graphic_pipeline_info_.depth_stencil_info =
+        std::make_shared<er::PipelineDepthStencilStateCreateInfo>(
+            er::helper::fillPipelineDepthStencilStateCreateInfo());
+
+    graphic_cubemap_pipeline_info_.blend_state_info =
+        std::make_shared<er::PipelineColorBlendStateCreateInfo>(
+            er::helper::fillPipelineColorBlendStateCreateInfo(cube_color_blend_attachments));
+    graphic_cubemap_pipeline_info_.rasterization_info =
+        std::make_shared<er::PipelineRasterizationStateCreateInfo>(
+            er::helper::fillPipelineRasterizationStateCreateInfo(
+                false, false, er::PolygonMode::FILL,
+                SET_FLAG_BIT(CullMode, NONE)));
+    graphic_cubemap_pipeline_info_.ms_info =
+        std::make_shared<er::PipelineMultisampleStateCreateInfo>(
+            er::helper::fillPipelineMultisampleStateCreateInfo());
+    graphic_cubemap_pipeline_info_.depth_stencil_info =
+        std::make_shared<er::PipelineDepthStencilStateCreateInfo>(
+            er::helper::fillPipelineDepthStencilStateCreateInfo(
+                false, false, er::CompareOp::ALWAYS, false));
+
     // the initialization order has to be strict.
-    instance_ = engine::renderer::Helper::createInstance();
-    physical_devices_ = engine::renderer::Helper::collectPhysicalDevices(instance_);
-    surface_ = engine::renderer::Helper::createSurface(instance_, window_);
-    physical_device_ = engine::renderer::Helper::pickPhysicalDevice(physical_devices_, surface_);
-    queue_indices_ = engine::renderer::Helper::findQueueFamilies(physical_device_, surface_);
-    device_ = engine::renderer::Helper::createLogicalDevice(physical_device_, surface_, queue_indices_);
+    instance_ = er::Helper::createInstance();
+    physical_devices_ = er::Helper::collectPhysicalDevices(instance_);
+    surface_ = er::Helper::createSurface(instance_, window_);
+    physical_device_ = er::Helper::pickPhysicalDevice(physical_devices_, surface_);
+    queue_indices_ = er::Helper::findQueueFamilies(physical_device_, surface_);
+    device_ = er::Helper::createLogicalDevice(physical_device_, surface_, queue_indices_);
     assert(device_);
     device_info_.device = device_;
     graphics_queue_ = device_->getDeviceQueue(queue_indices_.graphics_family_.value());
     assert(graphics_queue_);
     device_info_.cmd_queue = graphics_queue_;
     present_queue_ = device_->getDeviceQueue(queue_indices_.present_family_.value());
-    engine::renderer::Helper::createSwapChain(window_, device_, surface_, queue_indices_, swap_chain_info_);
+    er::Helper::createSwapChain(window_, device_, surface_, queue_indices_, swap_chain_info_);
     createRenderPass();
     createImageViews();
     createCubemapRenderPass();
@@ -200,18 +197,18 @@ void RealWorldApplication::initVulkan() {
     createCommandPool();
     assert(command_pool_);
     device_info_.cmd_pool = command_pool_;
-    engine::renderer::Helper::init(device_info_);
+    er::Helper::init(device_info_);
 
-//    engine::renderer::loadGltfModel(device_info_, "assets/Avocado.glb");
-//    engine::renderer::loadGltfModel(device_info_, "assets/BoomBox.glb");
-    gltf_object_ = engine::renderer::loadGltfModel(device_info_, "assets/DamagedHelmet.glb");
-//    engine::renderer::loadGltfModel(device_info_, "assets/Duck.glb");
-//    engine::renderer::loadGltfModel(device_info_, "assets/MetalRoughSpheres.glb");
-//    engine::renderer::loadGltfModel(device_info_, "assets/BarramundiFish.glb");
-//    engine::renderer::loadGltfModel(device_info_, "assets/Lantern.glb");
-//    *engine::renderer::loadGltfModel(device_info_, "assets/MetalRoughSpheresNoTextures.glb");
-//    engine::renderer::loadGltfModel(device_info_, "assets/BrainStem.glb"); 
-//    *engine::renderer::loadGltfModel(device_info_, "assets/AnimatedTriangle.gltf");
+//    er::loadGltfModel(device_info_, "assets/Avocado.glb");
+//    er::loadGltfModel(device_info_, "assets/BoomBox.glb");
+    gltf_object_ = er::loadGltfModel(device_info_, "assets/DamagedHelmet.glb");
+//    er::loadGltfModel(device_info_, "assets/Duck.glb");
+//    er::loadGltfModel(device_info_, "assets/MetalRoughSpheres.glb");
+//    er::loadGltfModel(device_info_, "assets/BarramundiFish.glb");
+//    er::loadGltfModel(device_info_, "assets/Lantern.glb");
+//    *er::loadGltfModel(device_info_, "assets/MetalRoughSpheresNoTextures.glb");
+//    er::loadGltfModel(device_info_, "assets/BrainStem.glb"); 
+//    *er::loadGltfModel(device_info_, "assets/AnimatedTriangle.gltf");
     loadMtx2Texture("assets/environments/doge2/lambertian/diffuse.ktx2", ibl_diffuse_tex_);
     loadMtx2Texture("assets/environments/doge2/ggx/specular.ktx2", ibl_specular_tex_);
     loadMtx2Texture("assets/environments/doge2/charlie/sheen.ktx2", ibl_sheen_tex_);
@@ -219,14 +216,12 @@ void RealWorldApplication::initVulkan() {
     createCubemapPipelineLayout();
     createCubeSkyboxPipelineLayout();
     createCubemapComputePipelineLayout();
-    createTileCreatorComputePipelineLayout();
     createGraphicsPipeline(swap_chain_info_.extent);
     createCubeGraphicsPipeline();
     createComputePipeline();
-    createTileCreatorComputePipeline();
     createDepthResources(swap_chain_info_.extent);
     createFramebuffers(swap_chain_info_.extent);
-    auto format = engine::renderer::Format::R8G8B8A8_UNORM;
+    auto format = er::Format::R8G8B8A8_UNORM;
     createTextureImage("assets/statue.jpg", format, sample_tex_);
     createTextureImage("assets/brdfLUT.png", format, brdf_lut_tex_);
     createTextureImage("assets/lut_ggx.png", format, ggx_lut_tex_);
@@ -242,15 +237,19 @@ void RealWorldApplication::initVulkan() {
     createCommandBuffers();
     createSyncObjects();
 
-    tile_mesh_ = std::make_shared<engine::renderer::TileMesh> (
+    auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
+    tile_mesh_ = std::make_shared<er::TileMesh> (
         device_info_,
+        render_pass_,
+        graphic_pipeline_info_,
         descriptor_pool_,
-        tile_creator_desc_set_layout_,
+        desc_set_layouts,
         glm::uvec2(256, 256),
         glm::vec2(-100.0f, -100.0f),
-        glm::vec2(100.0f, 100.0f));
+        glm::vec2(100.0f, 100.0f),
+        swap_chain_info_.extent);
 
-    engine::renderer::Helper::initImgui(
+    er::Helper::initImgui(
         device_info_,
         instance_,
         window_, 
@@ -278,17 +277,22 @@ void RealWorldApplication::recreateSwapChain() {
 
     cleanupSwapChain();
 
-    engine::renderer::Helper::createSwapChain(window_, device_, surface_, queue_indices_, swap_chain_info_);
+    er::Helper::createSwapChain(window_, device_, surface_, queue_indices_, swap_chain_info_);
     createRenderPass();
     createImageViews();
     createGraphicPipelineLayout();
     createCubemapPipelineLayout();
     createCubemapComputePipelineLayout();
-    createTileCreatorComputePipelineLayout();
+    auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
+    er::TileMesh::recreateStaticMembers(
+        device_,
+        render_pass_,
+        graphic_pipeline_info_,
+        desc_set_layouts,
+        swap_chain_info_.extent);
     createCubeSkyboxPipelineLayout();
     createGraphicsPipeline(swap_chain_info_.extent);
     createComputePipeline();
-    createTileCreatorComputePipeline();
     createDepthResources(swap_chain_info_.extent);
     createFramebuffers(swap_chain_info_.extent);
     createUniformBuffers();
@@ -297,10 +301,9 @@ void RealWorldApplication::recreateSwapChain() {
     createCommandBuffers();
 
     tile_mesh_->generateDescriptorSet(
-        descriptor_pool_,
-        tile_creator_desc_set_layout_);
+        descriptor_pool_);
 
-    engine::renderer::Helper::initImgui(
+    er::Helper::initImgui(
         device_info_,
         instance_,
         window_,
@@ -317,7 +320,7 @@ void RealWorldApplication::createImageViews() {
     for (uint64_t i_img = 0; i_img < swap_chain_info_.images.size(); i_img++) {
         swap_chain_info_.image_views[i_img] = device_->createImageView(
             swap_chain_info_.images[i_img],
-            engine::renderer::ImageViewType::VIEW_2D,
+            er::ImageViewType::VIEW_2D,
             swap_chain_info_.format,
             SET_FLAG_BIT(ImageAspect, COLOR_BIT));
     }
@@ -325,84 +328,84 @@ void RealWorldApplication::createImageViews() {
 
 void RealWorldApplication::createCubemapFramebuffers() {
     uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
-    std::vector<engine::renderer::BufferImageCopyInfo> dump_copies;
+    std::vector<er::BufferImageCopyInfo> dump_copies;
 
-    engine::renderer::Helper::createCubemapTexture(
+    er::Helper::createCubemapTexture(
         device_info_,
         cubemap_render_pass_,
         kCubemapSize,
         kCubemapSize,
         num_mips,
-        engine::renderer::Format::R16G16B16A16_SFLOAT,
+        er::Format::R16G16B16A16_SFLOAT,
         dump_copies,
         rt_envmap_tex_);
 
-    engine::renderer::Helper::createCubemapTexture(
+    er::Helper::createCubemapTexture(
         device_info_,
         cubemap_render_pass_,
         kCubemapSize,
         kCubemapSize,
         1,
-        engine::renderer::Format::R16G16B16A16_SFLOAT,
+        er::Format::R16G16B16A16_SFLOAT,
         dump_copies,
         tmp_ibl_diffuse_tex_);
 
-    engine::renderer::Helper::createCubemapTexture(
+    er::Helper::createCubemapTexture(
         device_info_,
         cubemap_render_pass_,
         kCubemapSize,
         kCubemapSize,
         num_mips,
-        engine::renderer::Format::R16G16B16A16_SFLOAT,
+        er::Format::R16G16B16A16_SFLOAT,
         dump_copies,
         tmp_ibl_specular_tex_);
 
-    engine::renderer::Helper::createCubemapTexture(
+    er::Helper::createCubemapTexture(
         device_info_,
         cubemap_render_pass_,
         kCubemapSize,
         kCubemapSize,
         num_mips,
-        engine::renderer::Format::R16G16B16A16_SFLOAT,
+        er::Format::R16G16B16A16_SFLOAT,
         dump_copies,
         tmp_ibl_sheen_tex_);
 
-    engine::renderer::Helper::createCubemapTexture(
+    er::Helper::createCubemapTexture(
         device_info_,
         cubemap_render_pass_,
         kCubemapSize,
         kCubemapSize,
         1,
-        engine::renderer::Format::R16G16B16A16_SFLOAT,
+        er::Format::R16G16B16A16_SFLOAT,
         dump_copies,
         rt_ibl_diffuse_tex_);
 
-    engine::renderer::Helper::createCubemapTexture(
+    er::Helper::createCubemapTexture(
         device_info_,
         cubemap_render_pass_,
         kCubemapSize,
         kCubemapSize,
         num_mips,
-        engine::renderer::Format::R16G16B16A16_SFLOAT,
+        er::Format::R16G16B16A16_SFLOAT,
         dump_copies,
         rt_ibl_specular_tex_);
 
-    engine::renderer::Helper::createCubemapTexture(
+    er::Helper::createCubemapTexture(
         device_info_,
         cubemap_render_pass_,
         kCubemapSize,
         kCubemapSize,
         num_mips,
-        engine::renderer::Format::R16G16B16A16_SFLOAT,
+        er::Format::R16G16B16A16_SFLOAT,
         dump_copies,
         rt_ibl_sheen_tex_);
 }
 
-engine::renderer::DescriptorSetLayoutBinding getTextureSamplerDescriptionSetLayoutBinding(
+er::DescriptorSetLayoutBinding getTextureSamplerDescriptionSetLayoutBinding(
     uint32_t binding, 
-    engine::renderer::ShaderStageFlags stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
-    engine::renderer::DescriptorType descript_type = engine::renderer::DescriptorType::COMBINED_IMAGE_SAMPLER) {
-    engine::renderer::DescriptorSetLayoutBinding texture_binding{};
+    er::ShaderStageFlags stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
+    er::DescriptorType descript_type = er::DescriptorType::COMBINED_IMAGE_SAMPLER) {
+    er::DescriptorSetLayoutBinding texture_binding{};
     texture_binding.binding = binding;
     texture_binding.descriptor_count = 1;
     texture_binding.descriptor_type = descript_type;
@@ -412,34 +415,20 @@ engine::renderer::DescriptorSetLayoutBinding getTextureSamplerDescriptionSetLayo
     return texture_binding;
 }
 
-engine::renderer::DescriptorSetLayoutBinding getBufferDescriptionSetLayoutBinding(
-    uint32_t binding,
-    engine::renderer::ShaderStageFlags stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
-    engine::renderer::DescriptorType descript_type = engine::renderer::DescriptorType::STORAGE_BUFFER) {
-    engine::renderer::DescriptorSetLayoutBinding buffer_binding{};
-    buffer_binding.binding = binding;
-    buffer_binding.descriptor_count = 1;
-    buffer_binding.descriptor_type = descript_type;
-    buffer_binding.immutable_samplers = nullptr;
-    buffer_binding.stage_flags = stage_flags;
-
-    return buffer_binding;
-}
-
-engine::renderer::ShaderModuleList getGltfShaderModules(
-    std::shared_ptr<engine::renderer::Device> device, 
+er::ShaderModuleList getGltfShaderModules(
+    std::shared_ptr<er::Device> device, 
     bool has_normals, 
     bool has_tangent, 
     bool has_texcoord_0,
     bool has_skin_set_0)
 {
-    engine::renderer::ShaderModuleList shader_modules(2);
+    er::ShaderModuleList shader_modules(2);
     std::string feature_str = std::string(has_texcoord_0 ? "_TEX" : "") + 
         (has_tangent ? "_TN" : (has_normals ? "_N" : "")) +
         (has_skin_set_0 ? "_SKIN" : "");
     uint64_t vert_code_size, frag_code_size;
-    auto vert_shader_code = readFile("lib/shaders/base_vert" + feature_str + ".spv", vert_code_size);
-    auto frag_shader_code = readFile("lib/shaders/base_frag" + feature_str + ".spv", frag_code_size);
+    auto vert_shader_code = engine::helper::readFile("lib/shaders/base_vert" + feature_str + ".spv", vert_code_size);
+    auto frag_shader_code = engine::helper::readFile("lib/shaders/base_frag" + feature_str + ".spv", frag_code_size);
 
     shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
     shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
@@ -447,13 +436,13 @@ engine::renderer::ShaderModuleList getGltfShaderModules(
     return shader_modules;
 }
 
-engine::renderer::ShaderModuleList getSkyboxShaderModules(
-    std::shared_ptr<engine::renderer::Device> device)
+er::ShaderModuleList getSkyboxShaderModules(
+    std::shared_ptr<er::Device> device)
 {
     uint64_t vert_code_size, frag_code_size;
-    engine::renderer::ShaderModuleList shader_modules(2);
-    auto vert_shader_code = readFile("lib/shaders/skybox_vert.spv", vert_code_size);
-    auto frag_shader_code = readFile("lib/shaders/skybox_frag.spv", frag_code_size);
+    er::ShaderModuleList shader_modules(2);
+    auto vert_shader_code = engine::helper::readFile("lib/shaders/skybox_vert.spv", vert_code_size);
+    auto frag_shader_code = engine::helper::readFile("lib/shaders/skybox_frag.spv", frag_code_size);
 
     shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
     shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
@@ -461,61 +450,35 @@ engine::renderer::ShaderModuleList getSkyboxShaderModules(
     return shader_modules;
 }
 
-engine::renderer::ShaderModuleList getTileShaderModules(
-    std::shared_ptr<engine::renderer::Device> device)
+er::ShaderModuleList getIblShaderModules(
+    std::shared_ptr<er::Device> device)
 {
     uint64_t vert_code_size, frag_code_size;
-    engine::renderer::ShaderModuleList shader_modules(2);
-    auto vert_shader_code = readFile("lib/shaders/tile_vert.spv", vert_code_size);
-    auto frag_shader_code = readFile("lib/shaders/tile_frag.spv", frag_code_size);
-
-    shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
-    shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
-
-    return shader_modules;
-}
-
-engine::renderer::ShaderModuleList getIblShaderModules(
-    std::shared_ptr<engine::renderer::Device> device)
-{
-    uint64_t vert_code_size, frag_code_size;
-    engine::renderer::ShaderModuleList shader_modules;
+    er::ShaderModuleList shader_modules;
     shader_modules.reserve(7);
-    auto vert_shader_code = readFile("lib/shaders/ibl_vert.spv", vert_code_size);
+    auto vert_shader_code = engine::helper::readFile("lib/shaders/ibl_vert.spv", vert_code_size);
     shader_modules.push_back(device->createShaderModule(vert_code_size, vert_shader_code.data()));
-    auto frag_shader_code = readFile("lib/shaders/panorama_to_cubemap_frag.spv", frag_code_size);
+    auto frag_shader_code = engine::helper::readFile("lib/shaders/panorama_to_cubemap_frag.spv", frag_code_size);
     shader_modules.push_back(device->createShaderModule(frag_code_size, frag_shader_code.data()));
-    auto labertian_frag_shader_code = readFile("lib/shaders/ibl_labertian_frag.spv", frag_code_size);
+    auto labertian_frag_shader_code = engine::helper::readFile("lib/shaders/ibl_labertian_frag.spv", frag_code_size);
     shader_modules.push_back(device->createShaderModule(frag_code_size, labertian_frag_shader_code.data()));
-    auto ggx_frag_shader_code = readFile("lib/shaders/ibl_ggx_frag.spv", frag_code_size);
+    auto ggx_frag_shader_code = engine::helper::readFile("lib/shaders/ibl_ggx_frag.spv", frag_code_size);
     shader_modules.push_back(device->createShaderModule(frag_code_size, ggx_frag_shader_code.data()));
-    auto charlie_frag_shader_code = readFile("lib/shaders/ibl_charlie_frag.spv", frag_code_size);
+    auto charlie_frag_shader_code = engine::helper::readFile("lib/shaders/ibl_charlie_frag.spv", frag_code_size);
     shader_modules.push_back(device->createShaderModule(frag_code_size, charlie_frag_shader_code.data()));
-    auto cube_skybox_shader_code = readFile("lib/shaders/cube_skybox.spv", frag_code_size);
+    auto cube_skybox_shader_code = engine::helper::readFile("lib/shaders/cube_skybox.spv", frag_code_size);
     shader_modules.push_back(device->createShaderModule(frag_code_size, cube_skybox_shader_code.data()));
 
     return shader_modules;
 }
 
-engine::renderer::ShaderModuleList getIblComputeShaderModules(
-    std::shared_ptr<engine::renderer::Device> device)
+er::ShaderModuleList getIblComputeShaderModules(
+    std::shared_ptr<er::Device> device)
 {
     uint64_t compute_code_size;
-    engine::renderer::ShaderModuleList shader_modules;
+    er::ShaderModuleList shader_modules;
     shader_modules.reserve(1);
-    auto compute_shader_code = readFile("lib/shaders/ibl_smooth_comp.spv", compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
-}
-
-engine::renderer::ShaderModuleList getTileCreatorCsModules(
-    std::shared_ptr<engine::renderer::Device> device)
-{
-    uint64_t compute_code_size;
-    engine::renderer::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    auto compute_shader_code = readFile("lib/shaders/tile_creator_comp.spv", compute_code_size);
+    auto compute_shader_code = engine::helper::readFile("lib/shaders/ibl_smooth_comp.spv", compute_code_size);
     shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
 
     return shader_modules;
@@ -524,15 +487,15 @@ engine::renderer::ShaderModuleList getTileCreatorCsModules(
 void RealWorldApplication::createGraphicPipelineLayout()
 {
     {
-        engine::renderer::PushConstantRange push_const_range{};
+        er::PushConstantRange push_const_range{};
         push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT);
         push_const_range.offset = 0;
         push_const_range.size = sizeof(ModelParams);
 
-        engine::renderer::DescriptorSetLayoutList desc_set_layouts;
+        er::DescriptorSetLayoutList desc_set_layouts;
         desc_set_layouts.reserve(3);
         desc_set_layouts.push_back(global_tex_desc_set_layout_);
-        desc_set_layouts.push_back(desc_set_layout_);
+        desc_set_layouts.push_back(view_desc_set_layout_);
         if (gltf_object_->materials_.size() > 0) {
             desc_set_layouts.push_back(material_tex_desc_set_layout_);
         }
@@ -541,31 +504,15 @@ void RealWorldApplication::createGraphicPipelineLayout()
     }
 
     {
-        engine::renderer::PushConstantRange push_const_range{};
-        push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
-            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
-        push_const_range.offset = 0;
-        push_const_range.size = sizeof(TileParams);
-
-        engine::renderer::DescriptorSetLayoutList desc_set_layouts;
-        desc_set_layouts.reserve(3);
-        desc_set_layouts.push_back(global_tex_desc_set_layout_);
-        desc_set_layouts.push_back(desc_set_layout_);
-        desc_set_layouts.push_back(skybox_desc_set_layout_);
-
-        tile_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
-    }
-
-    {
-        engine::renderer::PushConstantRange push_const_range{};
+        er::PushConstantRange push_const_range{};
         push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
         push_const_range.offset = 0;
         push_const_range.size = sizeof(SunSkyParams);
 
-        engine::renderer::DescriptorSetLayoutList desc_set_layouts;
+        er::DescriptorSetLayoutList desc_set_layouts;
         desc_set_layouts.reserve(2);
         desc_set_layouts.push_back(skybox_desc_set_layout_);
-        desc_set_layouts.push_back(desc_set_layout_);
+        desc_set_layouts.push_back(view_desc_set_layout_);
 
         skybox_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
     }
@@ -573,12 +520,12 @@ void RealWorldApplication::createGraphicPipelineLayout()
 
 void RealWorldApplication::createCubemapPipelineLayout()
 {
-    engine::renderer::PushConstantRange push_const_range{};
+    er::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
     push_const_range.offset = 0;
     push_const_range.size = sizeof(IblParams);
 
-    engine::renderer::DescriptorSetLayoutList desc_set_layouts(1);
+    er::DescriptorSetLayoutList desc_set_layouts(1);
     desc_set_layouts[0] = ibl_desc_set_layout_;
 
     ibl_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
@@ -586,12 +533,12 @@ void RealWorldApplication::createCubemapPipelineLayout()
 
 void RealWorldApplication::createCubeSkyboxPipelineLayout()
 {
-    engine::renderer::PushConstantRange push_const_range{};
+    er::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
     push_const_range.offset = 0;
     push_const_range.size = sizeof(SunSkyParams);
 
-    engine::renderer::DescriptorSetLayoutList desc_set_layouts(1);
+    er::DescriptorSetLayoutList desc_set_layouts(1);
     desc_set_layouts[0] = ibl_desc_set_layout_;
 
     cube_skybox_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
@@ -599,164 +546,18 @@ void RealWorldApplication::createCubeSkyboxPipelineLayout()
 
 void RealWorldApplication::createCubemapComputePipelineLayout()
 {
-    engine::renderer::PushConstantRange push_const_range{};
+    er::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
     push_const_range.offset = 0;
     push_const_range.size = sizeof(IblComputeParams);
 
-    engine::renderer::DescriptorSetLayoutList desc_set_layouts(1);
+    er::DescriptorSetLayoutList desc_set_layouts(1);
     desc_set_layouts[0] = ibl_comp_desc_set_layout_;
 
     ibl_comp_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
 
-void RealWorldApplication::createTileCreatorComputePipelineLayout()
-{
-    engine::renderer::PushConstantRange push_const_range{};
-    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
-    push_const_range.offset = 0;
-    push_const_range.size = sizeof(TileParams);
-
-    engine::renderer::DescriptorSetLayoutList desc_set_layouts(1);
-    desc_set_layouts[0] = tile_creator_desc_set_layout_;
-
-    tile_creator_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
-}
-
-engine::renderer::PipelineColorBlendAttachmentState fillPipelineColorBlendAttachmentState(
-    engine::renderer::ColorComponentFlags color_write_mask = SET_FLAG_BIT(ColorComponent, ALL_BITS),
-    bool blend_enable = false,
-    engine::renderer::BlendFactor src_color_blend_factor = engine::renderer::BlendFactor::ONE,
-    engine::renderer::BlendFactor dst_color_blend_factor = engine::renderer::BlendFactor::ZERO,
-    engine::renderer::BlendOp color_blend_op = engine::renderer::BlendOp::ADD,
-    engine::renderer::BlendFactor src_alpha_blend_factor = engine::renderer::BlendFactor::ONE,
-    engine::renderer::BlendFactor dst_alpha_blend_factor = engine::renderer::BlendFactor::ZERO,
-    engine::renderer::BlendOp alpha_blend_op = engine::renderer::BlendOp::ADD) {
-    engine::renderer::PipelineColorBlendAttachmentState color_blend_attachment{};
-    color_blend_attachment.color_write_mask = color_write_mask;
-    color_blend_attachment.blend_enable = blend_enable;
-    color_blend_attachment.src_color_blend_factor = src_color_blend_factor; // Optional
-    color_blend_attachment.dst_color_blend_factor = dst_color_blend_factor; // Optional
-    color_blend_attachment.color_blend_op = color_blend_op; // Optional
-    color_blend_attachment.src_alpha_blend_factor = src_alpha_blend_factor; // Optional
-    color_blend_attachment.dst_alpha_blend_factor = dst_alpha_blend_factor; // Optional
-    color_blend_attachment.alpha_blend_op = alpha_blend_op; // Optional
-
-    return color_blend_attachment;
-}
-
-engine::renderer::PipelineColorBlendStateCreateInfo fillPipelineColorBlendStateCreateInfo(
-    const std::vector<engine::renderer::PipelineColorBlendAttachmentState>& color_blend_attachments,
-    bool logic_op_enable = false,
-    engine::renderer::LogicOp logic_op = engine::renderer::LogicOp::NO_OP,
-    glm::vec4 blend_constants = glm::vec4(0.0f)) {
-    engine::renderer::PipelineColorBlendStateCreateInfo color_blending{};
-    color_blending.logic_op_enable = logic_op_enable;
-    color_blending.logic_op = logic_op; // Optional
-    color_blending.attachment_count = static_cast<uint32_t>(color_blend_attachments.size());
-    color_blending.attachments = color_blend_attachments.data();
-    color_blending.blend_constants = blend_constants; // Optional
-
-    return color_blending;
-}
-
-engine::renderer::PipelineRasterizationStateCreateInfo fillPipelineRasterizationStateCreateInfo(
-    bool depth_clamp_enable = false,
-    bool rasterizer_discard_enable = false,
-    engine::renderer::PolygonMode polygon_mode = engine::renderer::PolygonMode::FILL,
-    engine::renderer::CullModeFlags cull_mode = SET_FLAG_BIT(CullMode, BACK_BIT),
-    engine::renderer::FrontFace front_face = engine::renderer::FrontFace::COUNTER_CLOCKWISE,
-    bool  depth_bias_enable = false,
-    float depth_bias_constant_factor = 0.0f,
-    float depth_bias_clamp = 0.0f,
-    float depth_bias_slope_factor = 0.0f,
-    float line_width = 1.0f) {
-    engine::renderer::PipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.depth_clamp_enable = depth_clamp_enable;
-    rasterizer.rasterizer_discard_enable = rasterizer_discard_enable;
-    rasterizer.polygon_mode = polygon_mode;
-    rasterizer.line_width = line_width;
-    rasterizer.cull_mode = cull_mode;
-    rasterizer.front_face = front_face;
-    rasterizer.depth_bias_enable = depth_bias_enable;
-    rasterizer.depth_bias_constant_factor = depth_bias_constant_factor; // Optional
-    rasterizer.depth_bias_clamp = depth_bias_clamp; // Optional
-    rasterizer.depth_bias_slope_factor = depth_bias_slope_factor; // Optional
-
-    return rasterizer;
-}
-
-engine::renderer::PipelineMultisampleStateCreateInfo fillPipelineMultisampleStateCreateInfo(
-    engine::renderer::SampleCountFlagBits rasterization_samples = engine::renderer::SampleCountFlagBits::SC_1_BIT,
-    bool sample_shading_enable = false,
-    float min_sample_shading = 1.0f,
-    const engine::renderer::SampleMask* sample_mask = nullptr,
-    bool alpha_to_coverage_enable = false,
-    bool alpha_to_one_enable = false) {
-    engine::renderer::PipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sample_shading_enable = sample_shading_enable;
-    multisampling.rasterization_samples = rasterization_samples;
-    multisampling.min_sample_shading = min_sample_shading; // Optional
-    multisampling.sample_mask = sample_mask; // Optional
-    multisampling.alpha_to_coverage_enable = alpha_to_coverage_enable; // Optional
-    multisampling.alpha_to_one_enable = alpha_to_one_enable; // Optional
-
-    return multisampling;
-}
-
-engine::renderer::StencilOpState fillDepthStencilInfo(
-    engine::renderer::StencilOp fail_op = engine::renderer::StencilOp::KEEP,
-    engine::renderer::StencilOp pass_op = engine::renderer::StencilOp::KEEP,
-    engine::renderer::StencilOp depth_fail_op = engine::renderer::StencilOp::KEEP,
-    engine::renderer::CompareOp compare_op = engine::renderer::CompareOp::NEVER,
-    uint32_t        compare_mask = 0xff,
-    uint32_t        write_mask = 0xff,
-    uint32_t        reference = 0x00) {
-    engine::renderer::StencilOpState stencil_op_state;
-    stencil_op_state.fail_op = fail_op;
-    stencil_op_state.pass_op = pass_op;
-    stencil_op_state.depth_fail_op = depth_fail_op;
-    stencil_op_state.compare_op = compare_op;
-    stencil_op_state.compare_mask = compare_mask;
-    stencil_op_state.write_mask = write_mask;
-    stencil_op_state.reference = reference;
-
-    return stencil_op_state;
-}
-
-engine::renderer::PipelineDepthStencilStateCreateInfo fillPipelineDepthStencilStateCreateInfo(
-    bool depth_test_enable = true,
-    bool depth_write_enable = true,
-    engine::renderer::CompareOp depth_compare_op = engine::renderer::CompareOp::LESS,
-    bool depth_bounds_test_enable = false,
-    float min_depth_bounds = 0.0f,
-    float max_depth_bounds = 1.0f,
-    bool stencil_test_enable = false,
-    engine::renderer::StencilOpState front = {},
-    engine::renderer::StencilOpState back = {})
-{
-    engine::renderer::PipelineDepthStencilStateCreateInfo depth_stencil{};
-    depth_stencil.depth_test_enable = depth_test_enable;
-    depth_stencil.depth_write_enable = depth_write_enable;
-    depth_stencil.depth_compare_op = depth_compare_op;
-    depth_stencil.depth_bounds_test_enable = depth_bounds_test_enable;
-    depth_stencil.min_depth_bounds = min_depth_bounds; // Optional
-    depth_stencil.max_depth_bounds = max_depth_bounds; // Optional
-    depth_stencil.stencil_test_enable = stencil_test_enable;
-    depth_stencil.front = front; // Optional
-    depth_stencil.back = back; // Optional
-
-    return depth_stencil;
-}
-
 void RealWorldApplication::createGraphicsPipeline(const glm::uvec2& display_size) {
-    auto color_blend_attachment = fillPipelineColorBlendAttachmentState();
-    std::vector<engine::renderer::PipelineColorBlendAttachmentState> color_blend_attachments(1, color_blend_attachment);
-    auto color_blending = fillPipelineColorBlendStateCreateInfo(color_blend_attachments);
-    auto rasterizer = fillPipelineRasterizationStateCreateInfo();
-    auto multisampling = fillPipelineMultisampleStateCreateInfo();
-    auto depth_stencil_info = fillDepthStencilInfo();
-    auto depth_stencil = fillPipelineDepthStencilStateCreateInfo();
 #if 0
     VkDynamicState dynamic_states[] = {
         VK_DYNAMIC_STATE_VIEWPORT,
@@ -783,10 +584,7 @@ void RealWorldApplication::createGraphicsPipeline(const glm::uvec2& display_size
             primitives.binding_descs_,
             primitives.attribute_descs_,
             primitives.topology_info_,
-            color_blending,
-            rasterizer,
-            multisampling,
-            depth_stencil,
+            graphic_pipeline_info_,
             shader_modules,
             display_size);
 
@@ -795,29 +593,9 @@ void RealWorldApplication::createGraphicsPipeline(const glm::uvec2& display_size
         }
     }
 
-    engine::renderer::PipelineInputAssemblyStateCreateInfo input_assembly;
-    input_assembly.topology = engine::renderer::PrimitiveTopology::TRIANGLE_LIST;
+    er::PipelineInputAssemblyStateCreateInfo input_assembly;
+    input_assembly.topology = er::PrimitiveTopology::TRIANGLE_LIST;
     input_assembly.restart_enable = false;
-    {
-        auto shader_modules = getTileShaderModules(device_);
-        tile_pipeline_ = device_->createPipeline(
-            render_pass_,
-            tile_pipeline_layout_,
-            TileVertex::getBindingDescription(),
-            TileVertex::getAttributeDescriptions(),
-            input_assembly,
-            color_blending,
-            rasterizer,
-            multisampling,
-            depth_stencil,
-            shader_modules,
-            display_size);
-
-        for (auto& shader_module : shader_modules) {
-            device_->destroyShaderModule(shader_module);
-        }
-    }
-
     {
         auto shader_modules = getSkyboxShaderModules(device_);
         skybox_pipeline_ = device_->createPipeline(
@@ -826,10 +604,7 @@ void RealWorldApplication::createGraphicsPipeline(const glm::uvec2& display_size
             SkyBoxVertex::getBindingDescription(),
             SkyBoxVertex::getAttributeDescriptions(),
             input_assembly,
-            color_blending,
-            rasterizer,
-            multisampling,
-            depth_stencil,
+            graphic_pipeline_info_,
             shader_modules,
             display_size);
 
@@ -842,24 +617,12 @@ void RealWorldApplication::createGraphicsPipeline(const glm::uvec2& display_size
 void RealWorldApplication::destroyGraphicsPipeline()
 {
     device_->destroyPipeline(gltf_pipeline_);
-    device_->destroyPipeline(tile_pipeline_);
     device_->destroyPipeline(skybox_pipeline_);
 }
 
 void RealWorldApplication::createCubeGraphicsPipeline() {
-    auto color_blend_attachment = fillPipelineColorBlendAttachmentState();
-    std::vector<engine::renderer::PipelineColorBlendAttachmentState> cube_color_blend_attachments(6, color_blend_attachment);
-    auto cubemap_color_blending = fillPipelineColorBlendStateCreateInfo(cube_color_blend_attachments);
-    auto ibl_rasterizer = fillPipelineRasterizationStateCreateInfo(
-        false, false, engine::renderer::PolygonMode::FILL,
-        SET_FLAG_BIT(CullMode, NONE));
-    auto multisampling = fillPipelineMultisampleStateCreateInfo();
-    auto depth_stencil_info = fillDepthStencilInfo();
-    auto cubemap_depth_stencil = fillPipelineDepthStencilStateCreateInfo(
-        false, false, engine::renderer::CompareOp::ALWAYS, false);
-
-    engine::renderer::PipelineInputAssemblyStateCreateInfo input_assembly;
-    input_assembly.topology = engine::renderer::PrimitiveTopology::TRIANGLE_LIST;
+    er::PipelineInputAssemblyStateCreateInfo input_assembly;
+    input_assembly.topology = er::PrimitiveTopology::TRIANGLE_LIST;
     input_assembly.restart_enable = false;
     {
         auto ibl_shader_modules = getIblShaderModules(device_);
@@ -868,10 +631,7 @@ void RealWorldApplication::createCubeGraphicsPipeline() {
             cube_skybox_pipeline_layout_,
             {}, {},
             input_assembly,
-            cubemap_color_blending,
-            ibl_rasterizer,
-            multisampling,
-            cubemap_depth_stencil,
+            graphic_cubemap_pipeline_info_,
             { ibl_shader_modules[0], ibl_shader_modules[5] },
             glm::uvec2(kCubemapSize, kCubemapSize));
 
@@ -880,10 +640,7 @@ void RealWorldApplication::createCubeGraphicsPipeline() {
             ibl_pipeline_layout_,
             {}, {},
             input_assembly,
-            cubemap_color_blending,
-            ibl_rasterizer,
-            multisampling,
-            cubemap_depth_stencil,
+            graphic_cubemap_pipeline_info_,
             { ibl_shader_modules[0], ibl_shader_modules[1] },
             glm::uvec2(kCubemapSize, kCubemapSize));
 
@@ -892,10 +649,7 @@ void RealWorldApplication::createCubeGraphicsPipeline() {
             ibl_pipeline_layout_,
             {}, {},
             input_assembly,
-            cubemap_color_blending,
-            ibl_rasterizer,
-            multisampling,
-            cubemap_depth_stencil,
+            graphic_cubemap_pipeline_info_,
             { ibl_shader_modules[0], ibl_shader_modules[2] },
             glm::uvec2(kCubemapSize, kCubemapSize));
 
@@ -904,10 +658,7 @@ void RealWorldApplication::createCubeGraphicsPipeline() {
             ibl_pipeline_layout_,
             {}, {},
             input_assembly,
-            cubemap_color_blending,
-            ibl_rasterizer,
-            multisampling,
-            cubemap_depth_stencil,
+            graphic_cubemap_pipeline_info_,
             { ibl_shader_modules[0], ibl_shader_modules[3] },
             glm::uvec2(kCubemapSize, kCubemapSize));
 
@@ -916,10 +667,7 @@ void RealWorldApplication::createCubeGraphicsPipeline() {
             ibl_pipeline_layout_,
             {}, {},
             input_assembly,
-            cubemap_color_blending,
-            ibl_rasterizer,
-            multisampling,
-            cubemap_depth_stencil,
+            graphic_cubemap_pipeline_info_,
             { ibl_shader_modules[0], ibl_shader_modules[4] },
             glm::uvec2(kCubemapSize, kCubemapSize));
 
@@ -943,31 +691,17 @@ void RealWorldApplication::createComputePipeline()
     }
 }
 
-void RealWorldApplication::createTileCreatorComputePipeline()
-{
-    auto tile_creator_compute_shader_modules = getTileCreatorCsModules(device_);
-    assert(tile_creator_compute_shader_modules.size() == 1);
+er::AttachmentDescription FillAttachmentDescription(
+    er::Format format,
+    er::SampleCountFlagBits samples = er::SampleCountFlagBits::SC_1_BIT,
+    er::ImageLayout initial_layout = er::ImageLayout::UNDEFINED,
+    er::ImageLayout final_layout = er::ImageLayout::PRESENT_SRC_KHR,
+    er::AttachmentLoadOp load_op = er::AttachmentLoadOp::CLEAR,
+    er::AttachmentStoreOp store_op = er::AttachmentStoreOp::STORE,
+    er::AttachmentLoadOp stencil_load_op = er::AttachmentLoadOp::DONT_CARE,
+    er::AttachmentStoreOp stencil_store_op = er::AttachmentStoreOp::DONT_CARE) {
 
-    tile_creator_comp_pipeline_ = device_->createPipeline(
-        tile_creator_pipeline_layout_,
-        tile_creator_compute_shader_modules[0]);
-
-    for (auto& shader_module : tile_creator_compute_shader_modules) {
-        device_->destroyShaderModule(shader_module);
-    }
-}
-
-engine::renderer::AttachmentDescription FillAttachmentDescription(
-    engine::renderer::Format format,
-    engine::renderer::SampleCountFlagBits samples = engine::renderer::SampleCountFlagBits::SC_1_BIT,
-    engine::renderer::ImageLayout initial_layout = engine::renderer::ImageLayout::UNDEFINED,
-    engine::renderer::ImageLayout final_layout = engine::renderer::ImageLayout::PRESENT_SRC_KHR,
-    engine::renderer::AttachmentLoadOp load_op = engine::renderer::AttachmentLoadOp::CLEAR,
-    engine::renderer::AttachmentStoreOp store_op = engine::renderer::AttachmentStoreOp::STORE,
-    engine::renderer::AttachmentLoadOp stencil_load_op = engine::renderer::AttachmentLoadOp::DONT_CARE,
-    engine::renderer::AttachmentStoreOp stencil_store_op = engine::renderer::AttachmentStoreOp::DONT_CARE) {
-
-    engine::renderer::AttachmentDescription attachment{};
+    er::AttachmentDescription attachment{};
     attachment.format = format;
     attachment.samples = samples;
     attachment.initial_layout = initial_layout;
@@ -980,14 +714,14 @@ engine::renderer::AttachmentDescription FillAttachmentDescription(
     return attachment;
 }
 
-engine::renderer::SubpassDescription FillSubpassDescription(
-    engine::renderer::PipelineBindPoint pipeline_bind_point,
-    const std::vector<engine::renderer::AttachmentReference>& color_attachments,
-    const engine::renderer::AttachmentReference* depth_stencil_attachment,
-    engine::renderer::SubpassDescriptionFlags flags = static_cast<engine::renderer::SubpassDescriptionFlags>(0),
-    const std::vector<engine::renderer::AttachmentReference>& input_attachments = {},
-    const std::vector<engine::renderer::AttachmentReference>& resolve_attachments = {}) {
-    engine::renderer::SubpassDescription desc{};
+er::SubpassDescription FillSubpassDescription(
+    er::PipelineBindPoint pipeline_bind_point,
+    const std::vector<er::AttachmentReference>& color_attachments,
+    const er::AttachmentReference* depth_stencil_attachment,
+    er::SubpassDescriptionFlags flags = static_cast<er::SubpassDescriptionFlags>(0),
+    const std::vector<er::AttachmentReference>& input_attachments = {},
+    const std::vector<er::AttachmentReference>& resolve_attachments = {}) {
+    er::SubpassDescription desc{};
     desc.flags = flags;
     desc.input_attachments = input_attachments;
     desc.color_attachments = color_attachments;
@@ -1002,15 +736,15 @@ engine::renderer::SubpassDescription FillSubpassDescription(
     return desc;
 }
 
-engine::renderer::SubpassDependency FillSubpassDependency(
+er::SubpassDependency FillSubpassDependency(
     uint32_t src_subpass,
     uint32_t dst_subpass,
-    engine::renderer::PipelineStageFlags src_stage_mask,
-    engine::renderer::PipelineStageFlags dst_stage_mask,
-    engine::renderer::AccessFlags src_access_mask,
-    engine::renderer::AccessFlags dst_access_mask,
-    engine::renderer::DependencyFlags dependency_flags = 0){
-    engine::renderer::SubpassDependency dependency{};
+    er::PipelineStageFlags src_stage_mask,
+    er::PipelineStageFlags dst_stage_mask,
+    er::AccessFlags src_access_mask,
+    er::AccessFlags dst_access_mask,
+    er::DependencyFlags dependency_flags = 0){
+    er::SubpassDependency dependency{};
     dependency.src_subpass = src_subpass;
     dependency.dst_subpass = dst_subpass;
     dependency.src_stage_mask = src_stage_mask;
@@ -1022,21 +756,21 @@ engine::renderer::SubpassDependency FillSubpassDependency(
 }
 
 void RealWorldApplication::createRenderPass() {
-    engine::renderer::AttachmentDescription color_attachment = FillAttachmentDescription(
+    er::AttachmentDescription color_attachment = FillAttachmentDescription(
         swap_chain_info_.format);
 
-    engine::renderer::AttachmentReference color_attachment_ref(0, engine::renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+    er::AttachmentReference color_attachment_ref(0, er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
     auto depth_attachment = FillAttachmentDescription(
-        engine::renderer::Helper::findDepthFormat(device_),
-        engine::renderer::SampleCountFlagBits::SC_1_BIT,
-        engine::renderer::ImageLayout::UNDEFINED,
-        engine::renderer::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        er::Helper::findDepthFormat(device_),
+        er::SampleCountFlagBits::SC_1_BIT,
+        er::ImageLayout::UNDEFINED,
+        er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
-    engine::renderer::AttachmentReference depth_attachment_ref(1, engine::renderer::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    er::AttachmentReference depth_attachment_ref(1, er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
     auto subpass = FillSubpassDescription(
-        engine::renderer::PipelineBindPoint::GRAPHICS,
+        er::PipelineBindPoint::GRAPHICS,
         { color_attachment_ref },
         &depth_attachment_ref);
 
@@ -1047,7 +781,7 @@ void RealWorldApplication::createRenderPass() {
         SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT) |
         SET_FLAG_BIT(Access, COLOR_ATTACHMENT_READ_BIT));
 
-    std::vector<engine::renderer::AttachmentDescription> attachments(2);
+    std::vector<er::AttachmentDescription> attachments(2);
     attachments[0] = color_attachment;
     attachments[1] = depth_attachment;
 
@@ -1056,19 +790,19 @@ void RealWorldApplication::createRenderPass() {
 
 void RealWorldApplication::createCubemapRenderPass() {
     auto color_attachment = FillAttachmentDescription(
-        engine::renderer::Format::R16G16B16A16_SFLOAT,
-        engine::renderer::SampleCountFlagBits::SC_1_BIT,
-        engine::renderer::ImageLayout::UNDEFINED,
-        engine::renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+        er::Format::R16G16B16A16_SFLOAT,
+        er::SampleCountFlagBits::SC_1_BIT,
+        er::ImageLayout::UNDEFINED,
+        er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-    std::vector<engine::renderer::AttachmentReference> color_attachment_refs(6);
+    std::vector<er::AttachmentReference> color_attachment_refs(6);
     for (uint32_t i = 0; i < 6; i++) {
         color_attachment_refs[i].attachment_ = i;
-        color_attachment_refs[i].layout_ = engine::renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+        color_attachment_refs[i].layout_ = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
     }
 
     auto subpass = FillSubpassDescription(
-        engine::renderer::PipelineBindPoint::GRAPHICS,
+        er::PipelineBindPoint::GRAPHICS,
         color_attachment_refs,
         nullptr);
 
@@ -1078,7 +812,7 @@ void RealWorldApplication::createCubemapRenderPass() {
         0,
         SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT));
 
-    std::vector<engine::renderer::AttachmentDescription> attachments = {6, color_attachment};
+    std::vector<er::AttachmentDescription> attachments = {6, color_attachment};
 
     cubemap_render_pass_ = device_->createRenderPass(attachments, { subpass }, { depency });
 }
@@ -1089,7 +823,7 @@ void RealWorldApplication::createFramebuffers(const glm::uvec2& display_size) {
         assert(swap_chain_info_.image_views[i]);
         assert(depth_buffer_.view);
         assert(render_pass_);
-        std::vector<std::shared_ptr<engine::renderer::ImageView>> attachments(2);
+        std::vector<std::shared_ptr<er::ImageView>> attachments(2);
         attachments[0] = swap_chain_info_.image_views[i];
         attachments[1] = depth_buffer_.view;
 
@@ -1185,7 +919,7 @@ void RealWorldApplication::createVertexBuffer() {
 
     uint64_t buffer_size = sizeof(vertices[0]) * vertices.size();
 
-    engine::renderer::Helper::createBufferWithSrcData(
+    er::Helper::createBufferWithSrcData(
         device_info_,
         SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT),
         buffer_size,
@@ -1206,7 +940,7 @@ void RealWorldApplication::createIndexBuffer() {
     uint64_t buffer_size =
         sizeof(indices[0]) * indices.size();
 
-    engine::renderer::Helper::createBufferWithSrcData(
+    er::Helper::createBufferWithSrcData(
         device_info_,
         SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT),
         buffer_size,
@@ -1218,7 +952,7 @@ void RealWorldApplication::createIndexBuffer() {
 void RealWorldApplication::createDescriptorSetLayout() {
     // global texture descriptor set layout.
     {
-        std::vector<engine::renderer::DescriptorSetLayoutBinding> bindings;
+        std::vector<er::DescriptorSetLayoutBinding> bindings;
         bindings.reserve(5);
 
         bindings.push_back(getTextureSamplerDescriptionSetLayoutBinding(GGX_LUT_INDEX));
@@ -1232,13 +966,13 @@ void RealWorldApplication::createDescriptorSetLayout() {
 
     // material texture descriptor set layout.
     {
-        std::vector<engine::renderer::DescriptorSetLayoutBinding> bindings;
+        std::vector<er::DescriptorSetLayoutBinding> bindings;
         bindings.reserve(7);
 
-        engine::renderer::DescriptorSetLayoutBinding ubo_pbr_layout_binding{};
+        er::DescriptorSetLayoutBinding ubo_pbr_layout_binding{};
         ubo_pbr_layout_binding.binding = PBR_CONSTANT_INDEX;
         ubo_pbr_layout_binding.descriptor_count = 1;
-        ubo_pbr_layout_binding.descriptor_type = engine::renderer::DescriptorType::UNIFORM_BUFFER;
+        ubo_pbr_layout_binding.descriptor_type = er::DescriptorType::UNIFORM_BUFFER;
         ubo_pbr_layout_binding.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
         ubo_pbr_layout_binding.immutable_samplers = nullptr; // Optional
         bindings.push_back(ubo_pbr_layout_binding);
@@ -1254,23 +988,23 @@ void RealWorldApplication::createDescriptorSetLayout() {
     }
 
     {
-        std::vector<engine::renderer::DescriptorSetLayoutBinding> bindings(1);
+        std::vector<er::DescriptorSetLayoutBinding> bindings(1);
 
-        engine::renderer::DescriptorSetLayoutBinding ubo_layout_binding{};
+        er::DescriptorSetLayoutBinding ubo_layout_binding{};
         ubo_layout_binding.binding = VIEW_CONSTANT_INDEX;
         ubo_layout_binding.descriptor_count = 1;
-        ubo_layout_binding.descriptor_type = engine::renderer::DescriptorType::UNIFORM_BUFFER;
-        ubo_layout_binding.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
+        ubo_layout_binding.descriptor_type = er::DescriptorType::UNIFORM_BUFFER;
+        ubo_layout_binding.stage_flags = 
+            SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
             SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
         ubo_layout_binding.immutable_samplers = nullptr; // Optional
         bindings[0] = ubo_layout_binding;
 
-        desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
+        view_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
     }
 
     {
-        std::vector<engine::renderer::DescriptorSetLayoutBinding> bindings(1);
-
+        std::vector<er::DescriptorSetLayoutBinding> bindings(1);
         bindings[0] = getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX);
 
         skybox_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
@@ -1278,7 +1012,7 @@ void RealWorldApplication::createDescriptorSetLayout() {
 
     // ibl texture descriptor set layout.
     {
-        std::vector<engine::renderer::DescriptorSetLayoutBinding> bindings(1);
+        std::vector<er::DescriptorSetLayoutBinding> bindings(1);
         bindings[0] = getTextureSamplerDescriptionSetLayoutBinding(PANORAMA_TEX_INDEX);
         //bindings[1] = getTextureSamplerDescriptionSetLayoutBinding(ENVMAP_TEX_INDEX);
 
@@ -1287,28 +1021,15 @@ void RealWorldApplication::createDescriptorSetLayout() {
 
     // ibl compute texture descriptor set layout.
     {
-        std::vector<engine::renderer::DescriptorSetLayoutBinding> bindings(2);
+        std::vector<er::DescriptorSetLayoutBinding> bindings(2);
         bindings[0] = getTextureSamplerDescriptionSetLayoutBinding(SRC_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-            engine::renderer::DescriptorType::STORAGE_IMAGE);
+            er::DescriptorType::STORAGE_IMAGE);
         bindings[1] = getTextureSamplerDescriptionSetLayoutBinding(DST_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-            engine::renderer::DescriptorType::STORAGE_IMAGE);
+            er::DescriptorType::STORAGE_IMAGE);
 
         ibl_comp_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
-    }
-
-    // tile creator compute texture descriptor set layout.
-    {
-        std::vector<engine::renderer::DescriptorSetLayoutBinding> bindings(2);
-        bindings[0] = getBufferDescriptionSetLayoutBinding(VERTEX_BUFFER_INDEX,
-            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-            engine::renderer::DescriptorType::STORAGE_BUFFER);
-        bindings[1] = getBufferDescriptionSetLayoutBinding(INDEX_BUFFER_INDEX,
-            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-            engine::renderer::DescriptorType::STORAGE_BUFFER);
-
-        tile_creator_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
     }
 }
 
@@ -1341,79 +1062,79 @@ void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, float r
     device_->updateBufferMemory(view_const_buffers_[current_image].memory, sizeof(view_params), &view_params);
 }
 
-std::vector<engine::renderer::TextureDescriptor> RealWorldApplication::addGlobalTextures(
-    const std::shared_ptr<engine::renderer::DescriptorSet>& description_set)
+std::vector<er::TextureDescriptor> RealWorldApplication::addGlobalTextures(
+    const std::shared_ptr<er::DescriptorSet>& description_set)
 {
-    std::vector<engine::renderer::TextureDescriptor> descriptor_writes;
+    std::vector<er::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(5);
-    engine::renderer::Helper::addOneTexture(descriptor_writes, GGX_LUT_INDEX, texture_sampler_, ggx_lut_tex_.view, description_set);
-    engine::renderer::Helper::addOneTexture(descriptor_writes, CHARLIE_LUT_INDEX, texture_sampler_, charlie_lut_tex_.view, description_set);
-    engine::renderer::Helper::addOneTexture(descriptor_writes, LAMBERTIAN_ENV_TEX_INDEX, texture_sampler_, rt_ibl_diffuse_tex_.view, description_set);
-    engine::renderer::Helper::addOneTexture(descriptor_writes, GGX_ENV_TEX_INDEX, texture_sampler_, rt_ibl_specular_tex_.view, description_set);
-    engine::renderer::Helper::addOneTexture(descriptor_writes, CHARLIE_ENV_TEX_INDEX, texture_sampler_, rt_ibl_sheen_tex_.view, description_set);
+    er::Helper::addOneTexture(descriptor_writes, GGX_LUT_INDEX, texture_sampler_, ggx_lut_tex_.view, description_set);
+    er::Helper::addOneTexture(descriptor_writes, CHARLIE_LUT_INDEX, texture_sampler_, charlie_lut_tex_.view, description_set);
+    er::Helper::addOneTexture(descriptor_writes, LAMBERTIAN_ENV_TEX_INDEX, texture_sampler_, rt_ibl_diffuse_tex_.view, description_set);
+    er::Helper::addOneTexture(descriptor_writes, GGX_ENV_TEX_INDEX, texture_sampler_, rt_ibl_specular_tex_.view, description_set);
+    er::Helper::addOneTexture(descriptor_writes, CHARLIE_ENV_TEX_INDEX, texture_sampler_, rt_ibl_sheen_tex_.view, description_set);
 
     return descriptor_writes;
 }
 
-std::vector<engine::renderer::TextureDescriptor> RealWorldApplication::addSkyboxTextures(
-    const std::shared_ptr<engine::renderer::DescriptorSet>& description_set)
+std::vector<er::TextureDescriptor> RealWorldApplication::addSkyboxTextures(
+    const std::shared_ptr<er::DescriptorSet>& description_set)
 {
-    std::vector<engine::renderer::TextureDescriptor> descriptor_writes;
+    std::vector<er::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(1);
 
     // envmap texture.
-    engine::renderer::Helper::addOneTexture(descriptor_writes, BASE_COLOR_TEX_INDEX, texture_sampler_, rt_envmap_tex_.view, description_set);
+    er::Helper::addOneTexture(descriptor_writes, BASE_COLOR_TEX_INDEX, texture_sampler_, rt_envmap_tex_.view, description_set);
 
     return descriptor_writes;
 }
 
-std::vector<engine::renderer::TextureDescriptor> RealWorldApplication::addPanoramaTextures(
-    const std::shared_ptr<engine::renderer::DescriptorSet>& description_set)
+std::vector<er::TextureDescriptor> RealWorldApplication::addPanoramaTextures(
+    const std::shared_ptr<er::DescriptorSet>& description_set)
 {
-    std::vector<engine::renderer::TextureDescriptor> descriptor_writes;
+    std::vector<er::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(1);
 
     // envmap texture.
-    engine::renderer::Helper::addOneTexture(descriptor_writes, PANORAMA_TEX_INDEX, texture_sampler_, panorama_tex_.view, description_set);
+    er::Helper::addOneTexture(descriptor_writes, PANORAMA_TEX_INDEX, texture_sampler_, panorama_tex_.view, description_set);
 
     return descriptor_writes;
 }
 
-std::vector<engine::renderer::TextureDescriptor> RealWorldApplication::addIblTextures(
-    const std::shared_ptr<engine::renderer::DescriptorSet>& description_set)
+std::vector<er::TextureDescriptor> RealWorldApplication::addIblTextures(
+    const std::shared_ptr<er::DescriptorSet>& description_set)
 {
-    std::vector<engine::renderer::TextureDescriptor> descriptor_writes;
+    std::vector<er::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(1);
 
-    engine::renderer::Helper::addOneTexture(descriptor_writes, ENVMAP_TEX_INDEX, texture_sampler_, rt_envmap_tex_.view, description_set);
+    er::Helper::addOneTexture(descriptor_writes, ENVMAP_TEX_INDEX, texture_sampler_, rt_envmap_tex_.view, description_set);
 
     return descriptor_writes;
 }
 
-std::vector<engine::renderer::TextureDescriptor> RealWorldApplication::addIblComputeTextures(
-    const std::shared_ptr<engine::renderer::DescriptorSet>& description_set,
-    const engine::renderer::TextureInfo& src_tex,
-    const engine::renderer::TextureInfo& dst_tex)
+std::vector<er::TextureDescriptor> RealWorldApplication::addIblComputeTextures(
+    const std::shared_ptr<er::DescriptorSet>& description_set,
+    const er::TextureInfo& src_tex,
+    const er::TextureInfo& dst_tex)
 {
-    std::vector<engine::renderer::TextureDescriptor> descriptor_writes;
+    std::vector<er::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(2);
 
-    engine::renderer::Helper::addOneTexture(
+    er::Helper::addOneTexture(
         descriptor_writes,
         SRC_TEX_INDEX,
         texture_sampler_,
         src_tex.view,
         description_set,
-        engine::renderer::DescriptorType::STORAGE_IMAGE,
-        engine::renderer::ImageLayout::GENERAL);
-    engine::renderer::Helper::addOneTexture(
+        er::DescriptorType::STORAGE_IMAGE,
+        er::ImageLayout::GENERAL);
+    er::Helper::addOneTexture(
         descriptor_writes,
         DST_TEX_INDEX,
         texture_sampler_,
         dst_tex.view,
         description_set,
-        engine::renderer::DescriptorType::STORAGE_IMAGE,
-        engine::renderer::ImageLayout::GENERAL);
+        er::DescriptorType::STORAGE_IMAGE,
+        er::ImageLayout::GENERAL);
 
     return descriptor_writes;
 }
@@ -1434,32 +1155,32 @@ void RealWorldApplication::createDescriptorSets() {
             auto& material = gltf_object_->materials_[i_mat];
             material.desc_set_ = device_->createDescriptorSets(descriptor_pool_, material_tex_desc_set_layout_, 1)[0];
 
-            std::vector<engine::renderer::BufferDescriptor> material_buffer_descs;
-            engine::renderer::Helper::addOneBuffer(
+            std::vector<er::BufferDescriptor> material_buffer_descs;
+            er::Helper::addOneBuffer(
                 material_buffer_descs,
                 PBR_CONSTANT_INDEX,
                 material.uniform_buffer_.buffer,
                 material.desc_set_,
-                engine::renderer::DescriptorType::UNIFORM_BUFFER,
+                er::DescriptorType::UNIFORM_BUFFER,
                 sizeof(PbrMaterialParams));
 
             // create a global ibl texture descriptor set.
-            auto material_tex_descs = engine::renderer::addGltfTextures(gltf_object_, material, texture_sampler_, thin_film_lut_tex_);
+            auto material_tex_descs = er::addGltfTextures(gltf_object_, material, texture_sampler_, thin_film_lut_tex_);
 
             device_->updateDescriptorSets(material_tex_descs, material_buffer_descs);
         }
     }
 
     {
-        desc_sets_ = device_->createDescriptorSets(descriptor_pool_, desc_set_layout_, buffer_count);
+        desc_sets_ = device_->createDescriptorSets(descriptor_pool_, view_desc_set_layout_, buffer_count);
         for (uint64_t i = 0; i < buffer_count; i++) {
-            std::vector<engine::renderer::BufferDescriptor> buffer_descs;
-            engine::renderer::Helper::addOneBuffer(
+            std::vector<er::BufferDescriptor> buffer_descs;
+            er::Helper::addOneBuffer(
                 buffer_descs,
                 VIEW_CONSTANT_INDEX,
                 view_const_buffers_[i].buffer,
                 desc_sets_[i],
-                engine::renderer::DescriptorType::UNIFORM_BUFFER,
+                er::DescriptorType::UNIFORM_BUFFER,
                 sizeof(ViewParams));
 
             device_->updateDescriptorSets({}, buffer_descs);
@@ -1528,44 +1249,44 @@ void RealWorldApplication::createDescriptorSets() {
 
 void RealWorldApplication::createTextureImage(
     const std::string& file_name,
-    engine::renderer::Format format,
-    engine::renderer::TextureInfo& texture) {
+    er::Format format,
+    er::TextureInfo& texture) {
     int tex_width, tex_height, tex_channels;
     stbi_uc* pixels = stbi_load(file_name.c_str(), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
 
     if (!pixels) {
         throw std::runtime_error("failed to load texture image!");
     }
-    engine::renderer::Helper::create2DTextureImage(device_info_, format, tex_width, tex_height, tex_channels, pixels, texture.image, texture.memory);
+    er::Helper::create2DTextureImage(device_info_, format, tex_width, tex_height, tex_channels, pixels, texture.image, texture.memory);
 
     stbi_image_free(pixels);
 
     texture.view = device_->createImageView(
         texture.image,
-        engine::renderer::ImageViewType::VIEW_2D,
+        er::ImageViewType::VIEW_2D,
         format,
         SET_FLAG_BIT(ImageAspect, COLOR_BIT));
 }
 
 void RealWorldApplication::createTextureSampler() {
     texture_sampler_ = device_->createSampler(
-        engine::renderer::Filter::LINEAR,
-        engine::renderer::SamplerAddressMode::REPEAT,
-        engine::renderer::SamplerMipmapMode::LINEAR, 16.0f);
+        er::Filter::LINEAR,
+        er::SamplerAddressMode::REPEAT,
+        er::SamplerMipmapMode::LINEAR, 16.0f);
 }
 
 void RealWorldApplication::loadMtx2Texture(
     const std::string& input_filename,
-    engine::renderer::TextureInfo& texture) {
+    er::TextureInfo& texture) {
     uint64_t buffer_size;
-    auto mtx2_data = readFile(input_filename, buffer_size);
+    auto mtx2_data = engine::helper::readFile(input_filename, buffer_size);
     auto src_data = (char*)mtx2_data.data();
 
     // header block
     Mtx2HeaderBlock* header_block = reinterpret_cast<Mtx2HeaderBlock*>(src_data);
     src_data += sizeof(Mtx2HeaderBlock);
 
-    assert(header_block->format == engine::renderer::Format::R16G16B16A16_SFLOAT);
+    assert(header_block->format == er::Format::R16G16B16A16_SFLOAT);
 
     // index block
     Mtx2IndexBlock* index_block = reinterpret_cast<Mtx2IndexBlock*>(src_data);
@@ -1575,7 +1296,7 @@ void RealWorldApplication::loadMtx2Texture(
     uint32_t height = header_block->pixel_height;
     // level index block.
     uint32_t num_level_blocks = std::max(1u, header_block->level_count);
-    std::vector<engine::renderer::BufferImageCopyInfo> copy_regions(num_level_blocks);
+    std::vector<er::BufferImageCopyInfo> copy_regions(num_level_blocks);
     for (uint32_t i_level = 0; i_level < num_level_blocks; i_level++) {
         Mtx2LevelIndexBlock* level_block = reinterpret_cast<Mtx2LevelIndexBlock*>(src_data);
 
@@ -1614,7 +1335,7 @@ void RealWorldApplication::loadMtx2Texture(
         sgd_data_start = (char*)mtx2_data.data() + index_block->sgd_byte_offset;
     }
 
-    engine::renderer::Helper::createCubemapTexture(
+    er::Helper::createCubemapTexture(
         device_info_,
         cubemap_render_pass_,
         header_block->pixel_width,
@@ -1637,9 +1358,9 @@ void RealWorldApplication::mainLoop() {
 }
 
 void RealWorldApplication::drawScene(
-    std::shared_ptr<engine::renderer::CommandBuffer> command_buffer,
-    std::shared_ptr<engine::renderer::Framebuffer> frame_buffer,
-    std::shared_ptr<engine::renderer::DescriptorSet> frame_desc_set,
+    std::shared_ptr<er::CommandBuffer> command_buffer,
+    std::shared_ptr<er::Framebuffer> frame_buffer,
+    std::shared_ptr<er::DescriptorSet> frame_desc_set,
     const glm::uvec2& screen_size) {
 
     int32_t root_node = gltf_object_->default_scene_ >= 0 ? gltf_object_->default_scene_ : 0;
@@ -1650,7 +1371,7 @@ void RealWorldApplication::drawScene(
     auto extent = (max_t - min_t) * 0.5f;
     float radius = max(max(extent.x, extent.y), extent.z);
 
-    std::vector<engine::renderer::ClearValue> clear_values(2);
+    std::vector<er::ClearValue> clear_values(2);
     clear_values[0].color = { 50.0f / 255.0f, 50.0f / 255.0f, 50.0f / 255.0f, 1.0f };
     clear_values[1].depth_stencil = { 1.0f, 0 };
 
@@ -1661,19 +1382,19 @@ void RealWorldApplication::drawScene(
         // generate envmap cubemap from panorama hdr image.
         cmd_buf->addImageBarrier(
             rt_envmap_tex_.image,
-            engine::renderer::Helper::getImageAsSource(),
-            engine::renderer::Helper::getImageAsColorAttachment(),
+            er::Helper::getImageAsSource(),
+            er::Helper::getImageAsColorAttachment(),
             0, 1, 0, 6);
 
-        cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::GRAPHICS, envmap_pipeline_);
+        cmd_buf->bindPipeline(er::PipelineBindPoint::GRAPHICS, envmap_pipeline_);
 
-        std::vector<engine::renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
+        std::vector<er::ClearValue> envmap_clear_values(6, clear_values[0]);
         cmd_buf->beginRenderPass(cubemap_render_pass_, rt_envmap_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
 
         IblParams ibl_params = {};
         cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
 
-        cmd_buf->bindDescriptorSets(engine::renderer::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { envmap_tex_desc_set_ });
+        cmd_buf->bindDescriptorSets(er::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { envmap_tex_desc_set_ });
 
         cmd_buf->draw(3);
 
@@ -1681,25 +1402,25 @@ void RealWorldApplication::drawScene(
 
         uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
 
-        engine::renderer::Helper::generateMipmapLevels(
+        er::Helper::generateMipmapLevels(
             cmd_buf,
             rt_envmap_tex_.image,
             num_mips,
             kCubemapSize,
             kCubemapSize,
-            engine::renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+            er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
     }
     else {
         // generate envmap from skybox.
         cmd_buf->addImageBarrier(
             rt_envmap_tex_.image,
-            engine::renderer::Helper::getImageAsSource(),
-            engine::renderer::Helper::getImageAsColorAttachment(),
+            er::Helper::getImageAsSource(),
+            er::Helper::getImageAsColorAttachment(),
             0, 1, 0, 6);
 
-        cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::GRAPHICS, cube_skybox_pipeline_);
+        cmd_buf->bindPipeline(er::PipelineBindPoint::GRAPHICS, cube_skybox_pipeline_);
 
-        std::vector<engine::renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
+        std::vector<er::ClearValue> envmap_clear_values(6, clear_values[0]);
         cmd_buf->beginRenderPass(cubemap_render_pass_, rt_envmap_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
 
         SunSkyParams sun_sky_params = {};
@@ -1707,7 +1428,7 @@ void RealWorldApplication::drawScene(
 
         cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), cube_skybox_pipeline_layout_, &sun_sky_params, sizeof(sun_sky_params));
 
-        cmd_buf->bindDescriptorSets(engine::renderer::PipelineBindPoint::GRAPHICS, cube_skybox_pipeline_layout_, { envmap_tex_desc_set_ });
+        cmd_buf->bindDescriptorSets(er::PipelineBindPoint::GRAPHICS, cube_skybox_pipeline_layout_, { envmap_tex_desc_set_ });
 
         cmd_buf->draw(3);
 
@@ -1715,26 +1436,26 @@ void RealWorldApplication::drawScene(
 
         uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
 
-        engine::renderer::Helper::generateMipmapLevels(
+        er::Helper::generateMipmapLevels(
             cmd_buf,
             rt_envmap_tex_.image,
             num_mips,
             kCubemapSize,
             kCubemapSize,
-            engine::renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+            er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
     }
 
     // generate ibl diffuse texture.
     {
-        cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::GRAPHICS, lambertian_pipeline_);
+        cmd_buf->bindPipeline(er::PipelineBindPoint::GRAPHICS, lambertian_pipeline_);
 
         cmd_buf->addImageBarrier(
             rt_ibl_diffuse_tex_.image,
-            engine::renderer::Helper::getImageAsSource(),
-            engine::renderer::Helper::getImageAsColorAttachment(),
+            er::Helper::getImageAsSource(),
+            er::Helper::getImageAsColorAttachment(),
             0, 1, 0, 6);
 
-        std::vector<engine::renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
+        std::vector<er::ClearValue> envmap_clear_values(6, clear_values[0]);
         cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_diffuse_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
 
         IblParams ibl_params = {};
@@ -1744,7 +1465,7 @@ void RealWorldApplication::drawScene(
         ibl_params.lodBias = 0;
         cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
 
-        cmd_buf->bindDescriptorSets(engine::renderer::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { ibl_tex_desc_set_ });
+        cmd_buf->bindDescriptorSets(er::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { ibl_tex_desc_set_ });
 
         cmd_buf->draw(3);
 
@@ -1752,27 +1473,27 @@ void RealWorldApplication::drawScene(
 
         cmd_buf->addImageBarrier(
             rt_ibl_diffuse_tex_.image,
-            engine::renderer::Helper::getImageAsColorAttachment(),
-            engine::renderer::Helper::getImageAsShaderSampler(),
+            er::Helper::getImageAsColorAttachment(),
+            er::Helper::getImageAsShaderSampler(),
             0, 1, 0, 6);
     }
 
     // generate ibl specular texture.
     {
         uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
-        cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::GRAPHICS, ggx_pipeline_);
+        cmd_buf->bindPipeline(er::PipelineBindPoint::GRAPHICS, ggx_pipeline_);
 
         for (int i_mip = num_mips - 1; i_mip >= 0; i_mip--) {
             cmd_buf->addImageBarrier(
                 rt_ibl_specular_tex_.image,
-                engine::renderer::Helper::getImageAsSource(),
-                engine::renderer::Helper::getImageAsColorAttachment(),
+                er::Helper::getImageAsSource(),
+                er::Helper::getImageAsColorAttachment(),
                 i_mip, 1, 0, 6);
 
             uint32_t width = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
             uint32_t height = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
 
-            std::vector<engine::renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
+            std::vector<er::ClearValue> envmap_clear_values(6, clear_values[0]);
             cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_specular_tex_.framebuffers[i_mip], glm::uvec2(width, height), envmap_clear_values);
 
             IblParams ibl_params = {};
@@ -1782,7 +1503,7 @@ void RealWorldApplication::drawScene(
             ibl_params.lodBias = 0;
             cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
 
-            cmd_buf->bindDescriptorSets(engine::renderer::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { ibl_tex_desc_set_ });
+            cmd_buf->bindDescriptorSets(er::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { ibl_tex_desc_set_ });
 
             cmd_buf->draw(3);
 
@@ -1791,15 +1512,15 @@ void RealWorldApplication::drawScene(
 
         cmd_buf->addImageBarrier(
             rt_ibl_specular_tex_.image,
-            engine::renderer::Helper::getImageAsColorAttachment(),
-            engine::renderer::Helper::getImageAsShaderSampler(),
+            er::Helper::getImageAsColorAttachment(),
+            er::Helper::getImageAsShaderSampler(),
             0, num_mips, 0, 6);
     }
 
     // generate ibl sheen texture.
     {
         uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
-        cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::GRAPHICS, charlie_pipeline_);
+        cmd_buf->bindPipeline(er::PipelineBindPoint::GRAPHICS, charlie_pipeline_);
 
         for (int i_mip = num_mips - 1; i_mip >= 0; i_mip--) {
             uint32_t width = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
@@ -1807,11 +1528,11 @@ void RealWorldApplication::drawScene(
 
             cmd_buf->addImageBarrier(
                 rt_ibl_sheen_tex_.image,
-                engine::renderer::Helper::getImageAsSource(),
-                engine::renderer::Helper::getImageAsColorAttachment(),
+                er::Helper::getImageAsSource(),
+                er::Helper::getImageAsColorAttachment(),
                 i_mip, 1, 0, 6);
 
-            std::vector<engine::renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
+            std::vector<er::ClearValue> envmap_clear_values(6, clear_values[0]);
             cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_sheen_tex_.framebuffers[i_mip], glm::uvec2(width, height), envmap_clear_values);
 
             IblParams ibl_params = {};
@@ -1821,7 +1542,7 @@ void RealWorldApplication::drawScene(
             ibl_params.lodBias = 0;
             cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
 
-            cmd_buf->bindDescriptorSets(engine::renderer::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { ibl_tex_desc_set_ });
+            cmd_buf->bindDescriptorSets(er::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { ibl_tex_desc_set_ });
 
             cmd_buf->draw(3);
 
@@ -1830,8 +1551,8 @@ void RealWorldApplication::drawScene(
 
         cmd_buf->addImageBarrier(
             rt_ibl_sheen_tex_.image,
-            engine::renderer::Helper::getImageAsColorAttachment(),
-            engine::renderer::Helper::getImageAsShaderSampler(),
+            er::Helper::getImageAsColorAttachment(),
+            er::Helper::getImageAsShaderSampler(),
             0, num_mips, 0, 6);
     }
 
@@ -1840,43 +1561,40 @@ void RealWorldApplication::drawScene(
         {
             cmd_buf->addImageBarrier(
                 rt_ibl_diffuse_tex_.image,
-                engine::renderer::Helper::getImageAsSource(),
-                engine::renderer::Helper::getImageAsStore(),
+                er::Helper::getImageAsSource(),
+                er::Helper::getImageAsStore(),
                 0, 1, 0, 6);
 
-            cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::COMPUTE, blur_comp_pipeline_);
+            cmd_buf->bindPipeline(er::PipelineBindPoint::COMPUTE, blur_comp_pipeline_);
             IblComputeParams ibl_comp_params = {};
             ibl_comp_params.size = glm::ivec4(kCubemapSize, kCubemapSize, 0, 0);
             cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, COMPUTE_BIT), ibl_comp_pipeline_layout_, &ibl_comp_params, sizeof(ibl_comp_params));
 
-            cmd_buf->bindDescriptorSets(engine::renderer::PipelineBindPoint::COMPUTE, ibl_comp_pipeline_layout_, { ibl_diffuse_tex_desc_set_ });
+            cmd_buf->bindDescriptorSets(er::PipelineBindPoint::COMPUTE, ibl_comp_pipeline_layout_, { ibl_diffuse_tex_desc_set_ });
 
             cmd_buf->dispatch((kCubemapSize + 7) / 8, (kCubemapSize + 7) / 8, 6);
 
             uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
             cmd_buf->addImageBarrier(
                 rt_ibl_diffuse_tex_.image,
-                engine::renderer::Helper::getImageAsStore(),
-                engine::renderer::Helper::getImageAsShaderSampler(),
+                er::Helper::getImageAsStore(),
+                er::Helper::getImageAsShaderSampler(),
                 0, 1, 0, 6);
             cmd_buf->addImageBarrier(
                 rt_ibl_specular_tex_.image,
-                engine::renderer::Helper::getImageAsSource(),
-                engine::renderer::Helper::getImageAsShaderSampler(),
+                er::Helper::getImageAsSource(),
+                er::Helper::getImageAsShaderSampler(),
                 0, num_mips, 0, 6);
             cmd_buf->addImageBarrier(
                 rt_ibl_sheen_tex_.image,
-                engine::renderer::Helper::getImageAsSource(),
-                engine::renderer::Helper::getImageAsShaderSampler(),
+                er::Helper::getImageAsSource(),
+                er::Helper::getImageAsShaderSampler(),
                 0, num_mips, 0, 6);
         }
     }
 
     {
-        tile_mesh_->generateTileBuffers(
-            cmd_buf,
-            tile_creator_comp_pipeline_,
-            tile_creator_pipeline_layout_);
+        tile_mesh_->generateTileBuffers(cmd_buf);
     }
 
     {
@@ -1886,11 +1604,11 @@ void RealWorldApplication::drawScene(
             screen_size, clear_values);
 
         // render gltf meshes.
-        cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::GRAPHICS, gltf_pipeline_);
+        cmd_buf->bindPipeline(er::PipelineBindPoint::GRAPHICS, gltf_pipeline_);
 
         auto model_mat = glm::translate(glm::mat4(1.0f), s_camera_pos + s_camera_dir * 5.0f);
         for (auto node_idx : gltf_object_->scenes_[root_node].nodes_) {
-            engine::renderer::drawNodes(cmd_buf,
+            er::drawNodes(cmd_buf,
                 gltf_object_,
                 gltf_pipeline_layout_,
                 global_tex_desc_set_,
@@ -1901,29 +1619,28 @@ void RealWorldApplication::drawScene(
 
         // render terrain.
         {
-            cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::GRAPHICS, tile_pipeline_);
-            engine::renderer::DescriptorSetList desc_sets{ global_tex_desc_set_, frame_desc_set, skybox_tex_desc_set_ };
-            tile_mesh_->draw(cmd_buf, tile_pipeline_layout_, desc_sets);
+            er::DescriptorSetList desc_sets{ global_tex_desc_set_, frame_desc_set };
+            tile_mesh_->draw(cmd_buf, desc_sets);
         }
 
         // render skybox.
         {
-            cmd_buf->bindPipeline(engine::renderer::PipelineBindPoint::GRAPHICS, skybox_pipeline_);
-            std::vector<std::shared_ptr<engine::renderer::Buffer>> buffers(1);
+            cmd_buf->bindPipeline(er::PipelineBindPoint::GRAPHICS, skybox_pipeline_);
+            std::vector<std::shared_ptr<er::Buffer>> buffers(1);
             std::vector<uint64_t> offsets(1);
             buffers[0] = vertex_buffer_.buffer;
             offsets[0] = 0;
 
             cmd_buf->bindVertexBuffers(0, buffers, offsets);
-            cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, engine::renderer::IndexType::UINT16);
+            cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, er::IndexType::UINT16);
 
             SunSkyParams sun_sky_params = {};
             sun_sky_params.sun_pos = glm::vec3(cos(s_sun_angle), sin(s_sun_angle), -0.3f);
             s_sun_angle += 0.001f;
             cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), skybox_pipeline_layout_, &sun_sky_params, sizeof(sun_sky_params));
 
-            engine::renderer::DescriptorSetList desc_sets{ skybox_tex_desc_set_, frame_desc_set };
-            cmd_buf->bindDescriptorSets(engine::renderer::PipelineBindPoint::GRAPHICS, skybox_pipeline_layout_, desc_sets);
+            er::DescriptorSetList desc_sets{ skybox_tex_desc_set_, frame_desc_set };
+            cmd_buf->bindDescriptorSets(er::PipelineBindPoint::GRAPHICS, skybox_pipeline_layout_, desc_sets);
 
             cmd_buf->drawIndexed(36);
         }
@@ -1933,12 +1650,12 @@ void RealWorldApplication::drawScene(
 }
 
 void RealWorldApplication::drawFrame() {
-    std::vector<std::shared_ptr<engine::renderer::Fence>> in_flight_fences(1);
+    std::vector<std::shared_ptr<er::Fence>> in_flight_fences(1);
     in_flight_fences[0] = in_flight_fences_[current_frame_];
     device_->waitForFences(in_flight_fences);
 
     uint32_t image_index = 0;
-    bool need_recreate_swap_chain = engine::renderer::Helper::acquireNextImage(
+    bool need_recreate_swap_chain = er::Helper::acquireNextImage(
         device_, 
         swap_chain_info_.swap_chain, 
         image_available_semaphores_[current_frame_],
@@ -1950,7 +1667,7 @@ void RealWorldApplication::drawFrame() {
     }
 
     if (images_in_flight_[image_index] != VK_NULL_HANDLE) {
-        std::vector<std::shared_ptr<engine::renderer::Fence>> images_in_flight(1);
+        std::vector<std::shared_ptr<er::Fence>> images_in_flight(1);
         images_in_flight[0] = images_in_flight_[image_index];
         device_->waitForFences(images_in_flight);
     }
@@ -1962,7 +1679,7 @@ void RealWorldApplication::drawFrame() {
     device_->resetFences(in_flight_fences);
 
     auto command_buffer = command_buffers_[image_index];
-    std::vector<std::shared_ptr<engine::renderer::CommandBuffer>>command_buffers(1, command_buffer);
+    std::vector<std::shared_ptr<er::CommandBuffer>>command_buffers(1, command_buffer);
 
     static auto start_time = std::chrono::high_resolution_clock::now();
     auto current_time = std::chrono::high_resolution_clock::now();
@@ -1999,18 +1716,18 @@ void RealWorldApplication::drawFrame() {
         ImGui::EndMainMenuBar();
     }
 
-    engine::renderer::Helper::addImGuiToCommandBuffer(command_buffer);
+    er::Helper::addImGuiToCommandBuffer(command_buffer);
 
     command_buffer->endCommandBuffer();
 
-    engine::renderer::Helper::submitQueue(
+    er::Helper::submitQueue(
         graphics_queue_,
         in_flight_fences_[current_frame_],
         { image_available_semaphores_[current_frame_] },
         { command_buffer },
         { render_finished_semaphores_[current_frame_] });
 
-    need_recreate_swap_chain = engine::renderer::Helper::presentQueue(
+    need_recreate_swap_chain = er::Helper::presentQueue(
         present_queue_,
         { swap_chain_info_.swap_chain },
         { render_finished_semaphores_[current_frame_] },
@@ -2035,12 +1752,9 @@ void RealWorldApplication::cleanupSwapChain() {
     device_->freeCommandBuffers(command_pool_, command_buffers_);
     destroyGraphicsPipeline();
     device_->destroyPipeline(blur_comp_pipeline_);
-    device_->destroyPipeline(tile_creator_comp_pipeline_);
     device_->destroyPipelineLayout(gltf_pipeline_layout_);
-    device_->destroyPipelineLayout(tile_pipeline_layout_);
     device_->destroyPipelineLayout(skybox_pipeline_layout_);
     device_->destroyPipelineLayout(ibl_comp_pipeline_layout_);
-    device_->destroyPipelineLayout(tile_creator_pipeline_layout_);
     device_->destroyRenderPass(render_pass_);
 
     for (auto image_view : swap_chain_info_.image_views) {
@@ -2078,7 +1792,7 @@ void RealWorldApplication::cleanup() {
     assert(device_);
     device_->destroySampler(texture_sampler_);
     sample_tex_.destroy(device_);
-    engine::renderer::Helper::destroy(device_);
+    er::Helper::destroy(device_);
     ggx_lut_tex_.destroy(device_);
     brdf_lut_tex_.destroy(device_);
     charlie_lut_tex_.destroy(device_);
@@ -2094,13 +1808,13 @@ void RealWorldApplication::cleanup() {
     rt_ibl_diffuse_tex_.destroy(device_);
     rt_ibl_specular_tex_.destroy(device_);
     rt_ibl_sheen_tex_.destroy(device_);
-    device_->destroyDescriptorSetLayout(desc_set_layout_);
+    device_->destroyDescriptorSetLayout(view_desc_set_layout_);
     device_->destroyDescriptorSetLayout(global_tex_desc_set_layout_);
     device_->destroyDescriptorSetLayout(material_tex_desc_set_layout_);
     device_->destroyDescriptorSetLayout(skybox_desc_set_layout_);
     device_->destroyDescriptorSetLayout(ibl_desc_set_layout_);
     device_->destroyDescriptorSetLayout(ibl_comp_desc_set_layout_);
-    device_->destroyDescriptorSetLayout(tile_creator_desc_set_layout_);
+    er::TileMesh::destoryStaticMembers(device_);
 
     vertex_buffer_.destroy(device_);
     index_buffer_.destroy(device_);

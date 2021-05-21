@@ -35,10 +35,7 @@ public:
         const std::vector<VertexInputBindingDescription>& binding_descs,
         const std::vector<VertexInputAttributeDescription>& attribute_descs,
         const PipelineInputAssemblyStateCreateInfo& topology_info,
-        const PipelineColorBlendStateCreateInfo& blend_state_info,
-        const PipelineRasterizationStateCreateInfo& rasterization_info,
-        const PipelineMultisampleStateCreateInfo& ms_info,
-        const PipelineDepthStencilStateCreateInfo& depth_stencil_info,
+        const GraphicPipelineInfo& graphic_pipeline_info,
         const ShaderModuleList& shader_modules,
         const glm::uvec2& extent) = 0;
     virtual std::shared_ptr<Pipeline> createPipeline(

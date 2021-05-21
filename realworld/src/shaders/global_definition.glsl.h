@@ -144,7 +144,7 @@ struct TileParams {
 };
 
 struct TileVertexInfo {
-    vec2 height;
+    uvec2 height;
 };
 
 struct SunSkyParams {

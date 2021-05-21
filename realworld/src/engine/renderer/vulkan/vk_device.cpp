@@ -364,10 +364,7 @@ std::shared_ptr<Pipeline> VulkanDevice::createPipeline(
     const std::vector<VertexInputBindingDescription>& binding_descs,
     const std::vector<VertexInputAttributeDescription>& attribute_descs,
     const PipelineInputAssemblyStateCreateInfo& topology_info,
-    const PipelineColorBlendStateCreateInfo& blend_state_info,
-    const PipelineRasterizationStateCreateInfo& rasterization_info,
-    const PipelineMultisampleStateCreateInfo& ms_info,
-    const PipelineDepthStencilStateCreateInfo& depth_stencil_info,
+    const GraphicPipelineInfo& graphic_pipeline_info,
     const ShaderModuleList& shader_modules,
     const glm::uvec2& extent) {
 
@@ -376,11 +373,11 @@ std::shared_ptr<Pipeline> VulkanDevice::createPipeline(
     auto viewport = helper::fillViewport(extent);
     auto scissor = helper::fillScissor(extent);
 
-    auto vk_blend_attachments = helper::fillVkPipelineColorBlendAttachments(blend_state_info);
-    auto vk_color_blending = helper::fillVkPipelineColorBlendStateCreateInfo(blend_state_info, vk_blend_attachments);
-    auto vk_rasterizer = helper::fillVkPipelineRasterizationStateCreateInfo(rasterization_info);
-    auto vk_multisampling = helper::fillVkPipelineMultisampleStateCreateInfo(ms_info);
-    auto vk_depth_stencil = helper::fillVkPipelineDepthStencilStateCreateInfo(depth_stencil_info);
+    auto vk_blend_attachments = helper::fillVkPipelineColorBlendAttachments(*graphic_pipeline_info.blend_state_info);
+    auto vk_color_blending = helper::fillVkPipelineColorBlendStateCreateInfo(*graphic_pipeline_info.blend_state_info, vk_blend_attachments);
+    auto vk_rasterizer = helper::fillVkPipelineRasterizationStateCreateInfo(*graphic_pipeline_info.rasterization_info);
+    auto vk_multisampling = helper::fillVkPipelineMultisampleStateCreateInfo(*graphic_pipeline_info.ms_info);
+    auto vk_depth_stencil = helper::fillVkPipelineDepthStencilStateCreateInfo(*graphic_pipeline_info.depth_stencil_info);
 
     auto viewport_state = helper::fillVkPipelineViewportStateCreateInfo(&viewport, &scissor);
 

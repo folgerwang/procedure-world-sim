@@ -84,6 +84,12 @@
     <ClCompile Include="src\third_party\imgui\backends\imgui_impl_vulkan.cpp">
       <Filter>third_party\imgui</Filter>
     </ClCompile>
+    <ClCompile Include="src\engine\renderer\renderer_helper.cpp">
+      <Filter>Source Files\engine\renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\engine\engine_helper.cpp">
+      <Filter>Source Files\engine</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\shaders\functions.glsl.h">
@@ -163,6 +169,12 @@
     </ClInclude>
     <ClInclude Include="src\shaders\tile_common.glsl.h">
       <Filter>Resource Files\shaders</Filter>
+    </ClInclude>
+    <ClInclude Include="src\engine\renderer\renderer_helper.h">
+      <Filter>Header Files\engine\renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="src\engine\engine_helper.h">
+      <Filter>Header Files\engine</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
