@@ -2,12 +2,20 @@
 #include <memory>
 #include <vector>
 #include <optional>
+#include <functional>
 
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include "renderer_definition.h"
+
+template <class T>
+inline void hash_combine(std::size_t& seed, const T& v)
+{
+    std::hash<T> hasher;
+    seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+}
 
 namespace engine {
 namespace renderer {

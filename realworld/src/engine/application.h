@@ -1,11 +1,10 @@
 #pragma once
 #include "engine/renderer/renderer.h"
 #include "shaders/global_definition.glsl.h"
-#include "engine/game_object/gltf.h"
-#include "engine/game_object/terrain.h"
+#include "engine/gltf.h"
+#include "engine/terrain.h"
 
 namespace er = engine::renderer;
-namespace ego = engine::game_object;
 
 struct GLFWwindow;
 namespace work {
@@ -50,6 +49,7 @@ private:
     void createDescriptorSets();
     void createCommandBuffers();
     void createSyncObjects();
+    void destroyGraphicsPipeline();
     void updateViewConstBuffer(uint32_t current_image, float radius = 2.0f);
     // todo remove vk interface here.
     std::vector<er::TextureDescriptor> addGlobalTextures(
@@ -103,6 +103,7 @@ private:
     std::vector<std::shared_ptr<er::DescriptorSet>> desc_sets_;
     std::shared_ptr<er::DescriptorSetLayout> view_desc_set_layout_;
     std::shared_ptr<er::DescriptorSetLayout> global_tex_desc_set_layout_;
+    std::shared_ptr<er::DescriptorSetLayout> material_tex_desc_set_layout_;
     std::shared_ptr<er::DescriptorSetLayout> skybox_desc_set_layout_;
     std::shared_ptr<er::DescriptorSetLayout> ibl_desc_set_layout_;
     std::shared_ptr<er::DescriptorSetLayout> ibl_comp_desc_set_layout_;
@@ -115,10 +116,12 @@ private:
     std::shared_ptr<er::DescriptorSet> ibl_sheen_tex_desc_set_;
     std::shared_ptr<er::RenderPass> render_pass_;
     std::shared_ptr<er::RenderPass> cubemap_render_pass_;
+    std::shared_ptr<er::PipelineLayout> gltf_pipeline_layout_;
     std::shared_ptr<er::PipelineLayout> skybox_pipeline_layout_;
     std::shared_ptr<er::PipelineLayout> ibl_pipeline_layout_;
     std::shared_ptr<er::PipelineLayout> cube_skybox_pipeline_layout_;
     std::shared_ptr<er::PipelineLayout> ibl_comp_pipeline_layout_;
+    std::shared_ptr<er::Pipeline> gltf_pipeline_;
     std::shared_ptr<er::Pipeline> skybox_pipeline_;
     std::shared_ptr<er::Pipeline> envmap_pipeline_;
     std::shared_ptr<er::Pipeline> cube_skybox_pipeline_;
@@ -155,14 +158,8 @@ private:
     std::vector<std::shared_ptr<er::Fence>> in_flight_fences_;
     std::vector<std::shared_ptr<er::Fence>> images_in_flight_;
 
-    std::vector<std::shared_ptr<ego::GltfObject>> gltf_objects_;
-    std::vector<std::shared_ptr<ego::TileObject>> tile_objects_;
-    std::vector<std::string> gltf_file_names_;
-
-    ViewParams view_params_{};
-
-    // menu
-    bool show_gltf_selection_ = false;
+    std::shared_ptr<er::ObjectData> gltf_object_;
+    std::shared_ptr<er::TileMesh> tile_mesh_;
 
     uint64_t current_frame_ = 0;
     bool framebuffer_resized_ = false;
@@ -170,3 +167,6 @@ private:
 
 }// namespace app
 }// namespace work
+
+extern std::vector<glm::vec2> generateTileMeshVertex(const glm::vec3 corners[4], const glm::uvec2& segment_count);
+extern std::vector<uint16_t> generateTileMeshIndex(const glm::uvec2& segment_count);

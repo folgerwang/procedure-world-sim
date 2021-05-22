@@ -3,7 +3,6 @@
 #include <map>
 #include <limits>
 #include <chrono>
-#include <filesystem>
 
 #include "engine/renderer/renderer.h"
 #include "engine/renderer/renderer_helper.h"
@@ -17,7 +16,6 @@
 #include "engine/tiny_mtx2.h"
 
 namespace er = engine::renderer;
-namespace ego = engine::game_object;
 
 namespace {
 constexpr int kWindowSizeX = 1920;
@@ -144,9 +142,9 @@ void RealWorldApplication::createDepthResources(const glm::uvec2& display_size)
 }
 
 void RealWorldApplication::initVulkan() {
-    static auto color_blend_attachment = er::helper::fillPipelineColorBlendAttachmentState();
-    static std::vector<er::PipelineColorBlendAttachmentState> color_blend_attachments(1, color_blend_attachment);
-    static std::vector<er::PipelineColorBlendAttachmentState> cube_color_blend_attachments(6, color_blend_attachment);
+    auto color_blend_attachment = er::helper::fillPipelineColorBlendAttachmentState();
+    std::vector<er::PipelineColorBlendAttachmentState> color_blend_attachments(1, color_blend_attachment);
+    std::vector<er::PipelineColorBlendAttachmentState> cube_color_blend_attachments(6, color_blend_attachment);
 
     graphic_pipeline_info_.blend_state_info = 
         std::make_shared<er::PipelineColorBlendStateCreateInfo>(
@@ -201,6 +199,16 @@ void RealWorldApplication::initVulkan() {
     device_info_.cmd_pool = command_pool_;
     er::Helper::init(device_info_);
 
+//    er::loadGltfModel(device_info_, "assets/Avocado.glb");
+//    er::loadGltfModel(device_info_, "assets/BoomBox.glb");
+    gltf_object_ = er::loadGltfModel(device_info_, "assets/DamagedHelmet.glb");
+//    er::loadGltfModel(device_info_, "assets/Duck.glb");
+//    er::loadGltfModel(device_info_, "assets/MetalRoughSpheres.glb");
+//    er::loadGltfModel(device_info_, "assets/BarramundiFish.glb");
+//    er::loadGltfModel(device_info_, "assets/Lantern.glb");
+//    *er::loadGltfModel(device_info_, "assets/MetalRoughSpheresNoTextures.glb");
+//    er::loadGltfModel(device_info_, "assets/BrainStem.glb"); 
+//    *er::loadGltfModel(device_info_, "assets/AnimatedTriangle.gltf");
     loadMtx2Texture("assets/environments/doge2/lambertian/diffuse.ktx2", ibl_diffuse_tex_);
     loadMtx2Texture("assets/environments/doge2/ggx/specular.ktx2", ibl_specular_tex_);
     loadMtx2Texture("assets/environments/doge2/charlie/sheen.ktx2", ibl_sheen_tex_);
@@ -230,30 +238,16 @@ void RealWorldApplication::initVulkan() {
     createSyncObjects();
 
     auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
-    ego::TileObject::initStaticMembers(device_, render_pass_, graphic_pipeline_info_, desc_set_layouts, swap_chain_info_.extent);
-    ego::GltfObject::initStaticMembers(device_, desc_set_layouts);
-    
-    for (int y = -1; y <= 1; y++) {
-        for (int x = -1; x <= 1; x++) {
-            auto tile_obj = std::make_shared<ego::TileObject>(
-                device_info_,
-                descriptor_pool_,
-                glm::uvec2(256, 256),
-                glm::vec2(-256.0f + x * 512, -256.0f + y * 512),
-                glm::vec2(256.0f + x * 512, 256.0f + y * 512));
-
-            tile_objects_.push_back(tile_obj);
-        }
-    }
-
-    std::string path = "assets";
-    for (const auto& entry : std::filesystem::directory_iterator(path)) {
-        auto path_string = entry.path();
-        auto ext_string = std::filesystem::path(path_string).extension();
-        if (ext_string == ".glb" || ext_string == ".gltf") {
-            gltf_file_names_.push_back(path_string.filename().string());
-        }
-    }
+    tile_mesh_ = std::make_shared<er::TileMesh> (
+        device_info_,
+        render_pass_,
+        graphic_pipeline_info_,
+        descriptor_pool_,
+        desc_set_layouts,
+        glm::uvec2(256, 256),
+        glm::vec2(-100.0f, -100.0f),
+        glm::vec2(100.0f, 100.0f),
+        swap_chain_info_.extent);
 
     er::Helper::initImgui(
         device_info_,
@@ -290,13 +284,7 @@ void RealWorldApplication::recreateSwapChain() {
     createCubemapPipelineLayout();
     createCubemapComputePipelineLayout();
     auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
-    ego::TileObject::recreateStaticMembers(
-        device_,
-        render_pass_,
-        graphic_pipeline_info_,
-        desc_set_layouts,
-        swap_chain_info_.extent);
-    ego::GltfObject::recreateStaticMembers(
+    er::TileMesh::recreateStaticMembers(
         device_,
         render_pass_,
         graphic_pipeline_info_,
@@ -312,15 +300,8 @@ void RealWorldApplication::recreateSwapChain() {
     createDescriptorSets();
     createCommandBuffers();
 
-    for (auto& tile_obj : tile_objects_) {
-        tile_obj->generateDescriptorSet(descriptor_pool_);
-    }
-
-    ego::GltfObject::generateDescriptorSet(
-        device_,
-        descriptor_pool_,
-        texture_sampler_,
-        thin_film_lut_tex_);
+    tile_mesh_->generateDescriptorSet(
+        descriptor_pool_);
 
     er::Helper::initImgui(
         device_info_,
@@ -420,6 +401,41 @@ void RealWorldApplication::createCubemapFramebuffers() {
         rt_ibl_sheen_tex_);
 }
 
+er::DescriptorSetLayoutBinding getTextureSamplerDescriptionSetLayoutBinding(
+    uint32_t binding, 
+    er::ShaderStageFlags stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
+    er::DescriptorType descript_type = er::DescriptorType::COMBINED_IMAGE_SAMPLER) {
+    er::DescriptorSetLayoutBinding texture_binding{};
+    texture_binding.binding = binding;
+    texture_binding.descriptor_count = 1;
+    texture_binding.descriptor_type = descript_type;
+    texture_binding.immutable_samplers = nullptr;
+    texture_binding.stage_flags = stage_flags;
+
+    return texture_binding;
+}
+
+er::ShaderModuleList getGltfShaderModules(
+    std::shared_ptr<er::Device> device, 
+    bool has_normals, 
+    bool has_tangent, 
+    bool has_texcoord_0,
+    bool has_skin_set_0)
+{
+    er::ShaderModuleList shader_modules(2);
+    std::string feature_str = std::string(has_texcoord_0 ? "_TEX" : "") + 
+        (has_tangent ? "_TN" : (has_normals ? "_N" : "")) +
+        (has_skin_set_0 ? "_SKIN" : "");
+    uint64_t vert_code_size, frag_code_size;
+    auto vert_shader_code = engine::helper::readFile("lib/shaders/base_vert" + feature_str + ".spv", vert_code_size);
+    auto frag_shader_code = engine::helper::readFile("lib/shaders/base_frag" + feature_str + ".spv", frag_code_size);
+
+    shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
+    shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
+
+    return shader_modules;
+}
+
 er::ShaderModuleList getSkyboxShaderModules(
     std::shared_ptr<er::Device> device)
 {
@@ -470,6 +486,23 @@ er::ShaderModuleList getIblComputeShaderModules(
 
 void RealWorldApplication::createGraphicPipelineLayout()
 {
+    {
+        er::PushConstantRange push_const_range{};
+        push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT);
+        push_const_range.offset = 0;
+        push_const_range.size = sizeof(ModelParams);
+
+        er::DescriptorSetLayoutList desc_set_layouts;
+        desc_set_layouts.reserve(3);
+        desc_set_layouts.push_back(global_tex_desc_set_layout_);
+        desc_set_layouts.push_back(view_desc_set_layout_);
+        if (gltf_object_->materials_.size() > 0) {
+            desc_set_layouts.push_back(material_tex_desc_set_layout_);
+        }
+
+        gltf_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
+    }
+
     {
         er::PushConstantRange push_const_range{};
         push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
@@ -536,6 +569,30 @@ void RealWorldApplication::createGraphicsPipeline(const glm::uvec2& display_size
     dynamic_state.dynamicStateCount = 2;
     dynamic_state.pDynamicStates = dynamic_states;
 #endif
+    {
+        auto shader_modules = getGltfShaderModules(
+            device_,
+            gltf_object_->meshes_[0].primitives_[0].has_normal_,
+            gltf_object_->meshes_[0].primitives_[0].has_tangent_,
+            gltf_object_->meshes_[0].primitives_[0].has_texcoord_0_,
+            gltf_object_->meshes_[0].primitives_[0].has_skin_set_0_);
+
+        const auto& primitives = gltf_object_->meshes_[0].primitives_[0];
+        gltf_pipeline_ = device_->createPipeline(
+            render_pass_,
+            gltf_pipeline_layout_,
+            primitives.binding_descs_,
+            primitives.attribute_descs_,
+            primitives.topology_info_,
+            graphic_pipeline_info_,
+            shader_modules,
+            display_size);
+
+        for (auto& shader_module : shader_modules) {
+            device_->destroyShaderModule(shader_module);
+        }
+    }
+
     er::PipelineInputAssemblyStateCreateInfo input_assembly;
     input_assembly.topology = er::PrimitiveTopology::TRIANGLE_LIST;
     input_assembly.restart_enable = false;
@@ -555,6 +612,12 @@ void RealWorldApplication::createGraphicsPipeline(const glm::uvec2& display_size
             device_->destroyShaderModule(shader_module);
         }
     }
+}
+
+void RealWorldApplication::destroyGraphicsPipeline()
+{
+    device_->destroyPipeline(gltf_pipeline_);
+    device_->destroyPipeline(skybox_pipeline_);
 }
 
 void RealWorldApplication::createCubeGraphicsPipeline() {
@@ -892,13 +955,36 @@ void RealWorldApplication::createDescriptorSetLayout() {
         std::vector<er::DescriptorSetLayoutBinding> bindings;
         bindings.reserve(5);
 
-        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(GGX_LUT_INDEX));
-        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(CHARLIE_LUT_INDEX));
-        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(LAMBERTIAN_ENV_TEX_INDEX));
-        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(GGX_ENV_TEX_INDEX));
-        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(CHARLIE_ENV_TEX_INDEX));
+        bindings.push_back(getTextureSamplerDescriptionSetLayoutBinding(GGX_LUT_INDEX));
+        bindings.push_back(getTextureSamplerDescriptionSetLayoutBinding(CHARLIE_LUT_INDEX));
+        bindings.push_back(getTextureSamplerDescriptionSetLayoutBinding(LAMBERTIAN_ENV_TEX_INDEX));
+        bindings.push_back(getTextureSamplerDescriptionSetLayoutBinding(GGX_ENV_TEX_INDEX));
+        bindings.push_back(getTextureSamplerDescriptionSetLayoutBinding(CHARLIE_ENV_TEX_INDEX));
 
         global_tex_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
+    }
+
+    // material texture descriptor set layout.
+    {
+        std::vector<er::DescriptorSetLayoutBinding> bindings;
+        bindings.reserve(7);
+
+        er::DescriptorSetLayoutBinding ubo_pbr_layout_binding{};
+        ubo_pbr_layout_binding.binding = PBR_CONSTANT_INDEX;
+        ubo_pbr_layout_binding.descriptor_count = 1;
+        ubo_pbr_layout_binding.descriptor_type = er::DescriptorType::UNIFORM_BUFFER;
+        ubo_pbr_layout_binding.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
+        ubo_pbr_layout_binding.immutable_samplers = nullptr; // Optional
+        bindings.push_back(ubo_pbr_layout_binding);
+
+        bindings.push_back(getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX));
+        bindings.push_back(getTextureSamplerDescriptionSetLayoutBinding(NORMAL_TEX_INDEX));
+        bindings.push_back(getTextureSamplerDescriptionSetLayoutBinding(METAL_ROUGHNESS_TEX_INDEX));
+        bindings.push_back(getTextureSamplerDescriptionSetLayoutBinding(EMISSIVE_TEX_INDEX));
+        bindings.push_back(getTextureSamplerDescriptionSetLayoutBinding(OCCLUSION_TEX_INDEX));
+        bindings.push_back(getTextureSamplerDescriptionSetLayoutBinding(THIN_FILM_LUT_INDEX));
+
+        material_tex_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
     }
 
     {
@@ -919,7 +1005,7 @@ void RealWorldApplication::createDescriptorSetLayout() {
 
     {
         std::vector<er::DescriptorSetLayoutBinding> bindings(1);
-        bindings[0] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX);
+        bindings[0] = getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX);
 
         skybox_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
     }
@@ -927,8 +1013,8 @@ void RealWorldApplication::createDescriptorSetLayout() {
     // ibl texture descriptor set layout.
     {
         std::vector<er::DescriptorSetLayoutBinding> bindings(1);
-        bindings[0] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(PANORAMA_TEX_INDEX);
-        //bindings[1] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(ENVMAP_TEX_INDEX);
+        bindings[0] = getTextureSamplerDescriptionSetLayoutBinding(PANORAMA_TEX_INDEX);
+        //bindings[1] = getTextureSamplerDescriptionSetLayoutBinding(ENVMAP_TEX_INDEX);
 
         ibl_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
     }
@@ -936,10 +1022,10 @@ void RealWorldApplication::createDescriptorSetLayout() {
     // ibl compute texture descriptor set layout.
     {
         std::vector<er::DescriptorSetLayoutBinding> bindings(2);
-        bindings[0] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_TEX_INDEX,
+        bindings[0] = getTextureSamplerDescriptionSetLayoutBinding(SRC_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
-        bindings[1] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(DST_TEX_INDEX,
+        bindings[1] = getTextureSamplerDescriptionSetLayoutBinding(DST_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
 
@@ -966,16 +1052,14 @@ void RealWorldApplication::createUniformBuffers() {
 void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, float radius) {
     auto aspect = swap_chain_info_.extent.x / (float)swap_chain_info_.extent.y;
 
-    view_params_.camera_pos = glm::vec4(s_camera_pos, 0);
-    view_params_.view = glm::lookAt(s_camera_pos, s_camera_pos + s_camera_dir, s_camera_up);
-    view_params_.proj = glm::perspective(glm::radians(45.0f), aspect, 1.0f * radius, 10000.0f);
-    view_params_.proj[1][1] *= -1;
-    view_params_.input_features = glm::vec4(0, 0, 0, 0);
+    ViewParams view_params{};
+    view_params.camera_pos = glm::vec4(s_camera_pos, 0);
+    view_params.view = glm::lookAt(s_camera_pos, s_camera_pos + s_camera_dir, s_camera_up);
+    view_params.proj = glm::perspective(glm::radians(45.0f), aspect, 1.0f * radius, 10000.0f);
+    view_params.proj[1][1] *= -1;
+    view_params.input_features = glm::vec4(gltf_object_->meshes_[0].primitives_[0].has_tangent_ ? FEATURE_INPUT_HAS_TANGENT : 0, 0, 0, 0);
 
-    device_->updateBufferMemory(
-        view_const_buffers_[current_image].memory,
-        sizeof(view_params_),
-        &view_params_);
+    device_->updateBufferMemory(view_const_buffers_[current_image].memory, sizeof(view_params), &view_params);
 }
 
 std::vector<er::TextureDescriptor> RealWorldApplication::addGlobalTextures(
@@ -1064,6 +1148,27 @@ void RealWorldApplication::createDescriptorSets() {
         // create a global ibl texture descriptor set.
         auto global_texture_descs = addGlobalTextures(global_tex_desc_set_);
         device_->updateDescriptorSets(global_texture_descs, {});
+    }
+
+    {
+        for (uint32_t i_mat = 0; i_mat < gltf_object_->materials_.size(); i_mat++) {
+            auto& material = gltf_object_->materials_[i_mat];
+            material.desc_set_ = device_->createDescriptorSets(descriptor_pool_, material_tex_desc_set_layout_, 1)[0];
+
+            std::vector<er::BufferDescriptor> material_buffer_descs;
+            er::Helper::addOneBuffer(
+                material_buffer_descs,
+                PBR_CONSTANT_INDEX,
+                material.uniform_buffer_.buffer,
+                material.desc_set_,
+                er::DescriptorType::UNIFORM_BUFFER,
+                sizeof(PbrMaterialParams));
+
+            // create a global ibl texture descriptor set.
+            auto material_tex_descs = er::addGltfTextures(gltf_object_, material, texture_sampler_, thin_film_lut_tex_);
+
+            device_->updateDescriptorSets(material_tex_descs, material_buffer_descs);
+        }
     }
 
     {
@@ -1257,6 +1362,14 @@ void RealWorldApplication::drawScene(
     std::shared_ptr<er::Framebuffer> frame_buffer,
     std::shared_ptr<er::DescriptorSet> frame_desc_set,
     const glm::uvec2& screen_size) {
+
+    int32_t root_node = gltf_object_->default_scene_ >= 0 ? gltf_object_->default_scene_ : 0;
+    auto min_t = gltf_object_->scenes_[root_node].bbox_min_;
+    auto max_t = gltf_object_->scenes_[root_node].bbox_max_;
+
+    auto center = (min_t + max_t) * 0.5f;
+    auto extent = (max_t - min_t) * 0.5f;
+    float radius = max(max(extent.x, extent.y), extent.z);
 
     std::vector<er::ClearValue> clear_values(2);
     clear_values[0].color = { 50.0f / 255.0f, 50.0f / 255.0f, 50.0f / 255.0f, 1.0f };
@@ -1481,31 +1594,33 @@ void RealWorldApplication::drawScene(
     }
 
     {
-        for (auto& tile_obj : tile_objects_) {
-            tile_obj->generateTileBuffers(cmd_buf);
-        }
+        tile_mesh_->generateTileBuffers(cmd_buf);
     }
 
     {
         cmd_buf->beginRenderPass(
             render_pass_,
             frame_buffer,
-            screen_size,
-            clear_values);
+            screen_size, clear_values);
 
-        er::DescriptorSetList desc_sets{ global_tex_desc_set_, frame_desc_set };
-        // render gltf.
-        {
-            for (auto& gltf_obj : gltf_objects_) {
-                gltf_obj->draw(cmd_buf, desc_sets);
-            }
+        // render gltf meshes.
+        cmd_buf->bindPipeline(er::PipelineBindPoint::GRAPHICS, gltf_pipeline_);
+
+        auto model_mat = glm::translate(glm::mat4(1.0f), s_camera_pos + s_camera_dir * 5.0f);
+        for (auto node_idx : gltf_object_->scenes_[root_node].nodes_) {
+            er::drawNodes(cmd_buf,
+                gltf_object_,
+                gltf_pipeline_layout_,
+                global_tex_desc_set_,
+                frame_desc_set,
+                node_idx,
+                model_mat);
         }
 
         // render terrain.
         {
-            for (auto& tile_obj : tile_objects_) {
-                tile_obj->draw(cmd_buf, desc_sets);
-            }
+            er::DescriptorSetList desc_sets{ global_tex_desc_set_, frame_desc_set };
+            tile_mesh_->draw(cmd_buf, desc_sets);
         }
 
         // render skybox.
@@ -1581,15 +1696,11 @@ void RealWorldApplication::drawFrame() {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    static bool s_select_load_gltf = false;
     if (ImGui::BeginMainMenuBar())
     {
-        if (ImGui::BeginMenu("Game Objects"))
+        if (ImGui::BeginMenu("File"))
         {
-            if (ImGui::MenuItem("Load gltf", NULL)) {
-                s_select_load_gltf = true;
-            }
-
+            //ShowExampleMenuFile();
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Edit"))
@@ -1605,45 +1716,7 @@ void RealWorldApplication::drawFrame() {
         ImGui::EndMainMenuBar();
     }
 
-    if (s_select_load_gltf) {
-        ImGui::OpenPopup("select gltf object");
-        if (ImGui::BeginPopup("select gltf object"))
-        {
-            std::vector<const char*> listbox_items;
-            for (const auto& name : gltf_file_names_) {
-                listbox_items.push_back(name.c_str());
-            }
-            static int s_listbox_item_current = -1;
-            ImGui::ListBox("", &s_listbox_item_current, listbox_items.data(), listbox_items.size(), listbox_items.size());
-
-            if (s_listbox_item_current >= 0) {
-                auto file_name = "assets/" + gltf_file_names_[s_listbox_item_current];
-
-                auto gltf_obj = std::make_shared<ego::GltfObject>(
-                    device_info_,
-                    descriptor_pool_,
-                    render_pass_,
-                    graphic_pipeline_info_,
-                    texture_sampler_,
-                    thin_film_lut_tex_,
-                    file_name,
-                    swap_chain_info_.extent,
-                    glm::inverse(view_params_.view));
-
-                gltf_objects_.push_back(gltf_obj);
-                s_listbox_item_current = -1;
-                s_select_load_gltf = false;
-            }
-
-            ImGui::EndPopup();
-        }
-
-        if (!s_select_load_gltf) {
-            ImGui::CloseCurrentPopup();
-        }
-    }
-
-     er::Helper::addImGuiToCommandBuffer(command_buffer);
+    er::Helper::addImGuiToCommandBuffer(command_buffer);
 
     command_buffer->endCommandBuffer();
 
@@ -1677,8 +1750,9 @@ void RealWorldApplication::cleanupSwapChain() {
     }
 
     device_->freeCommandBuffers(command_pool_, command_buffers_);
-    device_->destroyPipeline(skybox_pipeline_);
+    destroyGraphicsPipeline();
     device_->destroyPipeline(blur_comp_pipeline_);
+    device_->destroyPipelineLayout(gltf_pipeline_layout_);
     device_->destroyPipelineLayout(skybox_pipeline_layout_);
     device_->destroyPipelineLayout(ibl_comp_pipeline_layout_);
     device_->destroyRenderPass(render_pass_);
@@ -1713,6 +1787,8 @@ void RealWorldApplication::cleanup() {
 
     device_->destroyRenderPass(cubemap_render_pass_);
 
+    gltf_object_->destroy(device_);
+
     assert(device_);
     device_->destroySampler(texture_sampler_);
     sample_tex_.destroy(device_);
@@ -1734,17 +1810,16 @@ void RealWorldApplication::cleanup() {
     rt_ibl_sheen_tex_.destroy(device_);
     device_->destroyDescriptorSetLayout(view_desc_set_layout_);
     device_->destroyDescriptorSetLayout(global_tex_desc_set_layout_);
+    device_->destroyDescriptorSetLayout(material_tex_desc_set_layout_);
     device_->destroyDescriptorSetLayout(skybox_desc_set_layout_);
     device_->destroyDescriptorSetLayout(ibl_desc_set_layout_);
     device_->destroyDescriptorSetLayout(ibl_comp_desc_set_layout_);
-    
-    tile_objects_.clear();
-    ego::TileObject::destoryStaticMembers(device_);
-    gltf_objects_.clear();
-    ego::GltfObject::destoryStaticMembers(device_);
+    er::TileMesh::destoryStaticMembers(device_);
 
     vertex_buffer_.destroy(device_);
     index_buffer_.destroy(device_);
+
+    tile_mesh_->destory();
 
     for (uint64_t i = 0; i < kMaxFramesInFlight; i++) {
         device_->destroySemaphore(render_finished_semaphores_[i]);

@@ -40,6 +40,12 @@
     <Filter Include="Source Files\engine\renderer\vulkan">
       <UniqueIdentifier>{73cb4c92-dd34-4758-9021-041a11564313}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\engine\game_object">
+      <UniqueIdentifier>{d5f1ec59-2f64-42c7-8c55-b3e213fd94c3}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\engine\game_object">
+      <UniqueIdentifier>{4d651780-1210-41fe-bba1-9c624d70df0b}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\engine\renderer\vulkan\vk_command_buffer.cpp">
@@ -53,12 +59,6 @@
     </ClCompile>
     <ClCompile Include="src\engine\renderer\renderer.cpp">
       <Filter>Source Files\engine\renderer</Filter>
-    </ClCompile>
-    <ClCompile Include="src\engine\gltf.cpp">
-      <Filter>Source Files\engine</Filter>
-    </ClCompile>
-    <ClCompile Include="src\engine\terrain.cpp">
-      <Filter>Source Files\engine</Filter>
     </ClCompile>
     <ClCompile Include="src\application.cpp">
       <Filter>Source Files</Filter>
@@ -89,6 +89,12 @@
     </ClCompile>
     <ClCompile Include="src\engine\engine_helper.cpp">
       <Filter>Source Files\engine</Filter>
+    </ClCompile>
+    <ClCompile Include="src\engine\game_object\terrain.cpp">
+      <Filter>Source Files\engine\game_object</Filter>
+    </ClCompile>
+    <ClCompile Include="src\engine\game_object\gltf.cpp">
+      <Filter>Source Files\engine\game_object</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -146,12 +152,6 @@
     <ClInclude Include="src\engine\renderer\renderer_structs.h">
       <Filter>Header Files\engine\renderer</Filter>
     </ClInclude>
-    <ClInclude Include="src\engine\gltf.h">
-      <Filter>Header Files\engine</Filter>
-    </ClInclude>
-    <ClInclude Include="src\engine\terrain.h">
-      <Filter>Header Files\engine</Filter>
-    </ClInclude>
     <ClInclude Include="src\engine\tiny_mtx2.h">
       <Filter>Header Files\engine</Filter>
     </ClInclude>
@@ -175,6 +175,12 @@
     </ClInclude>
     <ClInclude Include="src\engine\engine_helper.h">
       <Filter>Header Files\engine</Filter>
+    </ClInclude>
+    <ClInclude Include="src\engine\game_object\gltf.h">
+      <Filter>Header Files\engine\game_object</Filter>
+    </ClInclude>
+    <ClInclude Include="src\engine\game_object\terrain.h">
+      <Filter>Header Files\engine\game_object</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

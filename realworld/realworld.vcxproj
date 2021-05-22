@@ -103,7 +103,7 @@
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)src\third_party\imgui;$(ProjectDir)src\third_party\glfw\include;$(ProjectDir)src\third_party\glm;$(ProjectDir)src\third_party\Vulkan-Headers\Include;$(ProjectDir)src\third_party\tinygltf;$(ProjectDir)src\third_party\imgui\backends;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src\third_party\imgui;$(ProjectDir)src\third_party\glfw\include;$(ProjectDir)src\third_party\glm;$(ProjectDir)src\third_party\Vulkan-Headers\Include;$(ProjectDir)src\third_party\tinygltf;$(ProjectDir)src\third_party\imgui\backends;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -173,7 +173,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)src\third_party\imgui;$(ProjectDir)src\third_party\glfw\include;$(ProjectDir)src\third_party\glm;$(ProjectDir)src\third_party\Vulkan-Headers\Include;$(ProjectDir)src\third_party\tinygltf;$(ProjectDir)src\third_party\imgui\backends;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src\third_party\imgui;$(ProjectDir)src\third_party\glfw\include;$(ProjectDir)src\third_party\glm;$(ProjectDir)src\third_party\Vulkan-Headers\Include;$(ProjectDir)src\third_party\tinygltf;$(ProjectDir)src\third_party\imgui\backends;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -222,13 +222,13 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_
   <ItemGroup>
     <ClCompile Include="src\application.cpp" />
     <ClCompile Include="src\engine\engine_helper.cpp" />
-    <ClCompile Include="src\engine\gltf.cpp" />
+    <ClCompile Include="src\engine\game_object\gltf.cpp" />
+    <ClCompile Include="src\engine\game_object\terrain.cpp" />
     <ClCompile Include="src\engine\renderer\renderer.cpp" />
     <ClCompile Include="src\engine\renderer\renderer_helper.cpp" />
     <ClCompile Include="src\engine\renderer\vulkan\vk_command_buffer.cpp" />
     <ClCompile Include="src\engine\renderer\vulkan\vk_device.cpp" />
     <ClCompile Include="src\engine\renderer\vulkan\vk_renderer_helper.cpp" />
-    <ClCompile Include="src\engine\terrain.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\third_party\imgui\backends\imgui_impl_glfw.cpp" />
     <ClCompile Include="src\third_party\imgui\backends\imgui_impl_vulkan.cpp" />
@@ -240,7 +240,8 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_
   <ItemGroup>
     <ClInclude Include="src\application.h" />
     <ClInclude Include="src\engine\engine_helper.h" />
-    <ClInclude Include="src\engine\gltf.h" />
+    <ClInclude Include="src\engine\game_object\gltf.h" />
+    <ClInclude Include="src\engine\game_object\terrain.h" />
     <ClInclude Include="src\engine\renderer\command_buffer.h" />
     <ClInclude Include="src\engine\renderer\device.h" />
     <ClInclude Include="src\engine\renderer\physical_device.h" />
@@ -252,7 +253,6 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_
     <ClInclude Include="src\engine\renderer\vulkan\vk_device.h" />
     <ClInclude Include="src\engine\renderer\vulkan\vk_physical_device.h" />
     <ClInclude Include="src\engine\renderer\vulkan\vk_renderer_helper.h" />
-    <ClInclude Include="src\engine\terrain.h" />
     <ClInclude Include="src\engine\tiny_mtx2.h" />
     <ClInclude Include="src\shaders\brdf.glsl.h" />
     <ClInclude Include="src\shaders\functions.glsl.h" />

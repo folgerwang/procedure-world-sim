@@ -23,8 +23,8 @@ void main() {
     uint col = gl_VertexIndex % size_x;
     uint row = gl_VertexIndex / size_x;
 
-    float factor_x = col / float(size_x);
-    float factor_y = row / float(size_y);
+    float factor_x = col / float(tile_params.segment_count.x);
+    float factor_y = row / float(tile_params.segment_count.y);
 
     float x = tile_params.min.x + factor_x * (tile_params.max.x - tile_params.min.x);
     float y = tile_params.min.y + factor_y * (tile_params.max.y - tile_params.min.y);

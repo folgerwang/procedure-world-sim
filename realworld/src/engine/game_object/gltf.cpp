@@ -4,13 +4,17 @@
 #include <stdexcept>
 #include <memory>
 
-#include "gltf.h"
-#include "../shaders/global_definition.glsl.h"
+#include "engine/engine_helper.h"
+#include "engine/game_object/gltf.h"
+#include "engine/renderer/renderer_helper.h"
+#include "shaders/global_definition.glsl.h"
 
 #include "tiny_gltf.h"
-#include "tiny_mtx2.h"
+#include "engine/tiny_mtx2.h"
 
+namespace ego = engine::game_object;
 namespace engine {
+
 namespace {
 static std::string getFilePathExtension(const std::string& file_name) {
     if (file_name.find_last_of(".") != std::string::npos)
@@ -18,10 +22,71 @@ static std::string getFilePathExtension(const std::string& file_name) {
     return "";
 }
 
+static void transformBbox(
+    const glm::mat4& mat,
+    const glm::vec3& bbox_min,
+    const glm::vec3& bbox_max,
+    glm::vec3& output_bbox_min,
+    glm::vec3& output_bbox_max) {
+
+    glm::vec3 extent = bbox_max - bbox_min;
+    glm::vec3 base = glm::vec3(mat * glm::vec4(bbox_min, 1.0f));
+    output_bbox_min = base;
+    output_bbox_max = base;
+    auto mat_1 = glm::mat3(mat);
+    glm::vec3 vec_x = mat_1 * glm::vec3(extent.x, 0, 0);
+    glm::vec3 vec_y = mat_1 * glm::vec3(0, extent.y, 0);
+    glm::vec3 vec_z = mat_1 * glm::vec3(0, 0, extent.z);
+
+    glm::vec3 points[7];
+    points[0] = base + vec_x;
+    points[1] = base + vec_y;
+    points[2] = base + vec_z;
+    points[3] = points[0] + vec_y;
+    points[4] = points[0] + vec_z;
+    points[5] = points[1] + vec_z;
+    points[6] = points[3] + vec_z;
+
+    for (int i = 0; i < 7; i++) {
+        output_bbox_min = min(output_bbox_min, points[i]);
+        output_bbox_max = max(output_bbox_max, points[i]);
+    }
+}
+
+static void calculateBbox(
+    std::shared_ptr<ego::ObjectData>& gltf_object,
+    int32_t node_idx,
+    const glm::mat4& parent_matrix,
+    glm::vec3& output_bbox_min,
+    glm::vec3& output_bbox_max) {
+    if (node_idx >= 0) {
+        const auto& node = gltf_object->nodes_[node_idx];
+        auto cur_matrix = parent_matrix;
+        if (node.matrix) {
+            cur_matrix *= *node.matrix;
+        }
+        if (node.mesh_idx >= 0) {
+            glm::vec3 bbox_min, bbox_max;
+            transformBbox(
+                cur_matrix,
+                gltf_object->meshes_[node.mesh_idx].bbox_min_,
+                gltf_object->meshes_[node.mesh_idx].bbox_max_,
+                bbox_min,
+                bbox_max);
+            output_bbox_min = min(output_bbox_min, bbox_min);
+            output_bbox_max = max(output_bbox_max, bbox_max);
+        }
+
+        for (auto& child_idx : node.child_idx) {
+            calculateBbox(gltf_object, child_idx, cur_matrix, output_bbox_min, output_bbox_max);
+        }
+    }
+}
+
 static void setupMeshState(
     const renderer::DeviceInfo& device_info,
     const tinygltf::Model& model,
-    std::shared_ptr<renderer::ObjectData>& gltf_object) {
+    std::shared_ptr<ego::ObjectData>& gltf_object) {
 
     const auto& device = device_info.device;
 
@@ -156,17 +221,16 @@ static void setupMeshState(
 static void setupMesh(
     const tinygltf::Model& model,
     const tinygltf::Mesh& mesh,
-    renderer::MeshInfo& mesh_info) {
+    ego::MeshInfo& mesh_info) {
 
     for (size_t i = 0; i < mesh.primitives.size(); i++) {
         const tinygltf::Primitive& primitive = mesh.primitives[i];
 
-        renderer::PrimitiveInfo primitive_info;
-        primitive_info.topology_info_.restart_enable = false;
+        ego::PrimitiveInfo primitive_info;
+        primitive_info.tag_.restart_enable = false;
         primitive_info.material_idx_ = primitive.material;
 
-        auto& mode = primitive_info.topology_info_.topology;
-        mode = renderer::PrimitiveTopology::MAX_ENUM;
+        auto mode = renderer::PrimitiveTopology::MAX_ENUM;
         if (primitive.mode == TINYGLTF_MODE_TRIANGLES) {
             mode = renderer::PrimitiveTopology::TRIANGLE_LIST;
         }
@@ -188,6 +252,8 @@ static void setupMesh(
         else {
             assert(0);
         }
+
+        primitive_info.tag_.topology = static_cast<uint32_t>(mode);
 
         if (primitive.indices < 0) return;
 
@@ -222,15 +288,15 @@ static void setupMesh(
             }
             else if (it->first.compare("TEXCOORD_0") == 0) {
                 attribute.location = VINPUT_TEXCOORD0;
-                primitive_info.has_texcoord_0_ = true;
+                primitive_info.tag_.has_texcoord_0 = true;
             }
             else if (it->first.compare("NORMAL") == 0) {
                 attribute.location = VINPUT_NORMAL;
-                primitive_info.has_normal_ = true;
+                primitive_info.tag_.has_normal = true;
             }
             else if (it->first.compare("TANGENT") == 0) {
                 attribute.location = VINPUT_TANGENT;
-                primitive_info.has_tangent_ = true;
+                primitive_info.tag_.has_tangent = true;
             }
             else if (it->first.compare("TEXCOORD_1") == 0) {
                 attribute.location = VINPUT_TEXCOORD1;
@@ -240,11 +306,11 @@ static void setupMesh(
             }
             else if (it->first.compare("JOINTS_0") == 0) {
                 attribute.location = VINPUT_JOINTS_0;
-                primitive_info.has_skin_set_0_ = true;
+                primitive_info.tag_.has_skin_set_0 = true;
             }
             else if (it->first.compare("WEIGHTS_0") == 0) {
                 attribute.location = VINPUT_WEIGHTS_0;
-                primitive_info.has_skin_set_0_ = true;
+                primitive_info.tag_.has_skin_set_0 = true;
             }
             else {
                 // add support here.
@@ -300,11 +366,14 @@ static void setupMesh(
         primitive_info.index_desc_.index_type = indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ? renderer::IndexType::UINT16 : renderer::IndexType::UINT32;
         primitive_info.index_desc_.index_count = indexAccessor.count;
 
+        primitive_info.generateHash();
         mesh_info.primitives_.push_back(primitive_info);
     }
 }
 
-static void setupMeshes(const tinygltf::Model& model, std::shared_ptr<renderer::ObjectData>& gltf_object) {
+static void setupMeshes(
+    const tinygltf::Model& model,
+    std::shared_ptr<ego::ObjectData>& gltf_object) {
     gltf_object->meshes_.resize(model.meshes.size());
     for (int i_mesh = 0; i_mesh < model.meshes.size(); i_mesh++) {
         setupMesh(model, model.meshes[i_mesh], gltf_object->meshes_[i_mesh]);
@@ -314,7 +383,7 @@ static void setupMeshes(const tinygltf::Model& model, std::shared_ptr<renderer::
 static void setupNode(
     const tinygltf::Model& model,
     const tinygltf::Node& node,
-    renderer::NodeInfo& node_info) {
+    ego::NodeInfo& node_info) {
 
     bool has_matrix = false;
     glm::mat4 mesh_matrix(1);
@@ -359,7 +428,9 @@ static void setupNode(
     }
 }
 
-static void setupNodes(const tinygltf::Model& model, std::shared_ptr<renderer::ObjectData>& gltf_object) {
+static void setupNodes(
+    const tinygltf::Model& model, 
+    std::shared_ptr<ego::ObjectData>& gltf_object) {
     gltf_object->nodes_.resize(model.nodes.size());
     for (int i_node = 0; i_node < model.nodes.size(); i_node++) {
         setupNode(model, model.nodes[i_node], gltf_object->nodes_[i_node]);
@@ -368,7 +439,7 @@ static void setupNodes(const tinygltf::Model& model, std::shared_ptr<renderer::O
 
 static void setupModel(
     const tinygltf::Model& model,
-    std::shared_ptr<renderer::ObjectData>& gltf_object) {
+    std::shared_ptr<ego::ObjectData>& gltf_object) {
     assert(model.scenes.size() > 0);
     gltf_object->default_scene_ = model.defaultScene;
     gltf_object->scenes_.resize(model.scenes.size());
@@ -383,109 +454,7 @@ static void setupModel(
     }
 }
 
-static void transformBbox(
-    const glm::mat4& mat,
-    const glm::vec3& bbox_min,
-    const glm::vec3& bbox_max,
-    glm::vec3& output_bbox_min,
-    glm::vec3& output_bbox_max) {
-
-    glm::vec3 extent = bbox_max - bbox_min;
-    glm::vec3 base = glm::vec3(mat * glm::vec4(bbox_min, 1.0f));
-    output_bbox_min = base;
-    output_bbox_max = base;
-    auto mat_1 = glm::mat3(mat);
-    glm::vec3 vec_x = mat_1 * glm::vec3(extent.x, 0, 0);
-    glm::vec3 vec_y = mat_1 * glm::vec3(0, extent.y, 0);
-    glm::vec3 vec_z = mat_1 * glm::vec3(0, 0, extent.z);
-
-    glm::vec3 points[7];
-    points[0] = base + vec_x;
-    points[1] = base + vec_y;
-    points[2] = base + vec_z;
-    points[3] = points[0] + vec_y;
-    points[4] = points[0] + vec_z;
-    points[5] = points[1] + vec_z;
-    points[6] = points[3] + vec_z;
-
-    for (int i = 0; i < 7; i++) {
-        output_bbox_min = min(output_bbox_min, points[i]);
-        output_bbox_max = max(output_bbox_max, points[i]);
-    }
-}
-
-static void calculateBbox(
-    std::shared_ptr<renderer::ObjectData>& gltf_object,
-    int32_t node_idx,
-    const glm::mat4& parent_matrix,
-    glm::vec3& output_bbox_min,
-    glm::vec3& output_bbox_max) {
-    if (node_idx >= 0) {
-        const auto& node = gltf_object->nodes_[node_idx];
-        auto cur_matrix = parent_matrix;
-        if (node.matrix) {
-            cur_matrix *= *node.matrix;
-        }
-        if (node.mesh_idx >= 0) {
-            glm::vec3 bbox_min, bbox_max;
-            transformBbox(
-                cur_matrix,
-                gltf_object->meshes_[node.mesh_idx].bbox_min_,
-                gltf_object->meshes_[node.mesh_idx].bbox_max_,
-                bbox_min,
-                bbox_max);
-            output_bbox_min = min(output_bbox_min, bbox_min);
-            output_bbox_max = max(output_bbox_max, bbox_max);
-        }
-
-        for (auto& child_idx : node.child_idx) {
-            calculateBbox(gltf_object, child_idx, cur_matrix, output_bbox_min, output_bbox_max);
-        }
-    }
-}
-
-void drawMesh(
-    std::shared_ptr<renderer::CommandBuffer> cmd_buf,
-    const std::shared_ptr<renderer::ObjectData>& gltf_object,
-    const std::shared_ptr<renderer::PipelineLayout>& gltf_pipeline_layout,
-    const std::shared_ptr<renderer::DescriptorSet>& global_tex_desc_set,
-    const std::shared_ptr<renderer::DescriptorSet>& src_desc_set,
-    const renderer::MeshInfo& mesh_info,
-    const ModelParams& model_params) {
-    for (const auto& prim : mesh_info.primitives_) {
-        const auto& attrib_list = prim.attribute_descs_;
-
-        std::vector<std::shared_ptr<renderer::Buffer>> buffers(attrib_list.size());
-        std::vector<uint64_t> offsets(attrib_list.size());
-        for (int i_attrib = 0; i_attrib < attrib_list.size(); i_attrib++) {
-            const auto& buffer_view = gltf_object->buffer_views_[attrib_list[i_attrib].buffer_view];
-            buffers[i_attrib] = gltf_object->buffers_[buffer_view.buffer_idx].buffer;
-            offsets[i_attrib] = attrib_list[i_attrib].buffer_offset;
-        }
-        cmd_buf->bindVertexBuffers(0, buffers, offsets);
-        const auto& index_buffer_view = gltf_object->buffer_views_[prim.index_desc_.binding];
-        cmd_buf->bindIndexBuffer(gltf_object->buffers_[index_buffer_view.buffer_idx].buffer,
-            prim.index_desc_.offset + index_buffer_view.offset,
-            prim.index_desc_.index_type);
-
-        renderer::DescriptorSetList desc_sets{ global_tex_desc_set, src_desc_set };
-        if (prim.material_idx_ >= 0) {
-            const auto& material = gltf_object->materials_[prim.material_idx_];
-            desc_sets.push_back(material.desc_set_);
-        }
-        cmd_buf->bindDescriptorSets(renderer::PipelineBindPoint::GRAPHICS, gltf_pipeline_layout, desc_sets);
-
-        cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, VERTEX_BIT), gltf_pipeline_layout, &model_params, sizeof(model_params));
-
-        cmd_buf->drawIndexed(static_cast<uint32_t>(prim.index_desc_.index_count));
-    }
-}
-
-}
-
-namespace renderer {
-
-std::shared_ptr<renderer::ObjectData> loadGltfModel(
+static std::shared_ptr<ego::ObjectData> loadGltfModel(
     const renderer::DeviceInfo& device_info,
     const std::string& input_filename)
 {
@@ -519,7 +488,7 @@ std::shared_ptr<renderer::ObjectData> loadGltfModel(
         return nullptr;
     }
 
-    auto gltf_object = std::make_shared<renderer::ObjectData>();
+    auto gltf_object = std::make_shared<ego::ObjectData>(device_info.device);
     gltf_object->meshes_.reserve(model.meshes.size());
 
     setupMeshState(device_info, model, gltf_object);
@@ -535,9 +504,9 @@ std::shared_ptr<renderer::ObjectData> loadGltfModel(
     return gltf_object;
 }
 
-std::vector<renderer::TextureDescriptor> addGltfTextures(
-    const std::shared_ptr<renderer::ObjectData>& gltf_object,
-    const renderer::MaterialInfo& material,
+static std::vector<renderer::TextureDescriptor> addGltfTextures(
+    const std::shared_ptr<ego::ObjectData>& gltf_object,
+    const ego::MaterialInfo& material,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const renderer::TextureInfo& thin_film_lut_tex) {
 
@@ -576,12 +545,76 @@ std::vector<renderer::TextureDescriptor> addGltfTextures(
     return descriptor_writes;
 }
 
-void drawNodes(
+static void updateDescriptorSets(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+    const std::shared_ptr<renderer::DescriptorSetLayout>& desc_set_layout,
+    const std::shared_ptr<ego::ObjectData>& gltf_object,
+    const std::shared_ptr<renderer::Sampler>& texture_sampler,
+    const renderer::TextureInfo& thin_film_lut_tex)
+{
+    for (uint32_t i_mat = 0; i_mat < gltf_object->materials_.size(); i_mat++) {
+        auto& material = gltf_object->materials_[i_mat];
+        material.desc_set_ = device->createDescriptorSets(
+            descriptor_pool, desc_set_layout, 1)[0];
+
+        std::vector<renderer::BufferDescriptor> material_buffer_descs;
+        renderer::Helper::addOneBuffer(
+            material_buffer_descs,
+            PBR_CONSTANT_INDEX,
+            material.uniform_buffer_.buffer,
+            material.desc_set_,
+            renderer::DescriptorType::UNIFORM_BUFFER,
+            sizeof(PbrMaterialParams));
+
+        // create a global ibl texture descriptor set.
+        auto material_tex_descs = addGltfTextures(gltf_object, material, texture_sampler, thin_film_lut_tex);
+
+        device->updateDescriptorSets(material_tex_descs, material_buffer_descs);
+    }
+}
+
+static void drawMesh(
     std::shared_ptr<renderer::CommandBuffer> cmd_buf,
-    const std::shared_ptr<renderer::ObjectData>& gltf_object,
+    const std::shared_ptr<ego::ObjectData>& gltf_object,
     const std::shared_ptr<renderer::PipelineLayout>& gltf_pipeline_layout,
-    const std::shared_ptr<renderer::DescriptorSet>& global_tex_desc_set,
-    const std::shared_ptr<renderer::DescriptorSet>& src_desc_set,
+    const renderer::DescriptorSetList& desc_set_list,
+    const ego::MeshInfo& mesh_info,
+    const ModelParams& model_params) {
+    for (const auto& prim : mesh_info.primitives_) {
+        const auto& attrib_list = prim.attribute_descs_;
+
+        std::vector<std::shared_ptr<renderer::Buffer>> buffers(attrib_list.size());
+        std::vector<uint64_t> offsets(attrib_list.size());
+        for (int i_attrib = 0; i_attrib < attrib_list.size(); i_attrib++) {
+            const auto& buffer_view = gltf_object->buffer_views_[attrib_list[i_attrib].buffer_view];
+            buffers[i_attrib] = gltf_object->buffers_[buffer_view.buffer_idx].buffer;
+            offsets[i_attrib] = attrib_list[i_attrib].buffer_offset;
+        }
+        cmd_buf->bindVertexBuffers(0, buffers, offsets);
+        const auto& index_buffer_view = gltf_object->buffer_views_[prim.index_desc_.binding];
+        cmd_buf->bindIndexBuffer(gltf_object->buffers_[index_buffer_view.buffer_idx].buffer,
+            prim.index_desc_.offset + index_buffer_view.offset,
+            prim.index_desc_.index_type);
+
+        renderer::DescriptorSetList desc_sets = desc_set_list;
+        if (prim.material_idx_ >= 0) {
+            const auto& material = gltf_object->materials_[prim.material_idx_];
+            desc_sets.push_back(material.desc_set_);
+        }
+        cmd_buf->bindDescriptorSets(renderer::PipelineBindPoint::GRAPHICS, gltf_pipeline_layout, desc_sets);
+
+        cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, VERTEX_BIT), gltf_pipeline_layout, &model_params, sizeof(model_params));
+
+        cmd_buf->drawIndexed(static_cast<uint32_t>(prim.index_desc_.index_count));
+    }
+}
+
+static void drawNodes(
+    std::shared_ptr<renderer::CommandBuffer> cmd_buf,
+    const std::shared_ptr<ego::ObjectData>& gltf_object,
+    const std::shared_ptr<renderer::PipelineLayout>& gltf_pipeline_layout,
+    const renderer::DescriptorSetList& desc_set_list,
     int32_t node_idx,
     const glm::mat4& parent_matrix) {
     if (node_idx >= 0) {
@@ -598,8 +631,7 @@ void drawNodes(
             drawMesh(cmd_buf,
                 gltf_object,
                 gltf_pipeline_layout,
-                global_tex_desc_set,
-                src_desc_set,
+                desc_set_list,
                 gltf_object->meshes_[node.mesh_idx],
                 model_params);
         }
@@ -608,27 +640,290 @@ void drawNodes(
             drawNodes(cmd_buf,
                 gltf_object,
                 gltf_pipeline_layout,
-                global_tex_desc_set,
-                src_desc_set,
+                desc_set_list,
                 child_idx,
                 cur_matrix);
         }
     }
 }
 
-void ObjectData::destroy(const std::shared_ptr<Device>& device) {
-    for (auto& texture : textures_) {
-        texture.destroy(device);
+// material texture descriptor set layout.
+static std::shared_ptr<renderer::DescriptorSetLayout> createDescriptorSetLayout(
+    const std::shared_ptr<renderer::Device>& device) {
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings;
+    bindings.reserve(7);
+
+    renderer::DescriptorSetLayoutBinding ubo_pbr_layout_binding{};
+    ubo_pbr_layout_binding.binding = PBR_CONSTANT_INDEX;
+    ubo_pbr_layout_binding.descriptor_count = 1;
+    ubo_pbr_layout_binding.descriptor_type = renderer::DescriptorType::UNIFORM_BUFFER;
+    ubo_pbr_layout_binding.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
+    ubo_pbr_layout_binding.immutable_samplers = nullptr; // Optional
+    bindings.push_back(ubo_pbr_layout_binding);
+
+    bindings.push_back(renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX));
+    bindings.push_back(renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(NORMAL_TEX_INDEX));
+    bindings.push_back(renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(METAL_ROUGHNESS_TEX_INDEX));
+    bindings.push_back(renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(EMISSIVE_TEX_INDEX));
+    bindings.push_back(renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(OCCLUSION_TEX_INDEX));
+    bindings.push_back(renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(THIN_FILM_LUT_INDEX));
+
+    return device->createDescriptorSetLayout(bindings);
+}
+
+static std::shared_ptr<renderer::PipelineLayout> createGltfPipelineLayout(
+    const std::shared_ptr<renderer::Device>& device,
+    const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
+    const std::shared_ptr<renderer::DescriptorSetLayout>& material_desc_set_layout) {
+    renderer::PushConstantRange push_const_range{};
+    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT);
+    push_const_range.offset = 0;
+    push_const_range.size = sizeof(ModelParams);
+
+    renderer::DescriptorSetLayoutList desc_set_layouts = global_desc_set_layouts;
+    desc_set_layouts.push_back(material_desc_set_layout);
+
+    return device->createPipelineLayout(desc_set_layouts, { push_const_range });
+}
+
+static renderer::ShaderModuleList getGltfShaderModules(
+    std::shared_ptr<renderer::Device> device,
+    bool has_normals,
+    bool has_tangent,
+    bool has_texcoord_0,
+    bool has_skin_set_0) {
+    renderer::ShaderModuleList shader_modules(2);
+    std::string feature_str = std::string(has_texcoord_0 ? "_TEX" : "") +
+        (has_tangent ? "_TN" : (has_normals ? "_N" : "")) +
+        (has_skin_set_0 ? "_SKIN" : "");
+    uint64_t vert_code_size, frag_code_size;
+    auto vert_shader_code = engine::helper::readFile("lib/shaders/base_vert" + feature_str + ".spv", vert_code_size);
+    auto frag_shader_code = engine::helper::readFile("lib/shaders/base_frag" + feature_str + ".spv", frag_code_size);
+
+    shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
+    shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
+
+    return shader_modules;
+}
+
+static std::shared_ptr<renderer::Pipeline> createGltfPipeline(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::RenderPass>& render_pass,
+    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout,
+    const renderer::GraphicPipelineInfo& graphic_pipeline_info,
+    const glm::uvec2& display_size,
+    const ego::PrimitiveInfo& primitive) {
+    auto shader_modules = getGltfShaderModules(
+        device,
+        primitive.tag_.has_normal,
+        primitive.tag_.has_tangent,
+        primitive.tag_.has_texcoord_0,
+        primitive.tag_.has_skin_set_0);
+
+    renderer::PipelineInputAssemblyStateCreateInfo topology_info;
+    topology_info.restart_enable = primitive.tag_.restart_enable;
+    topology_info.topology = static_cast<renderer::PrimitiveTopology>(primitive.tag_.topology);
+
+    auto gltf_pipeline = device->createPipeline(
+        render_pass,
+        pipeline_layout,
+        primitive.binding_descs_,
+        primitive.attribute_descs_,
+        topology_info,
+        graphic_pipeline_info,
+        shader_modules,
+        display_size);
+
+    for (auto& shader_module : shader_modules) {
+        device->destroyShaderModule(shader_module);
     }
 
-    for (auto& material : materials_) {
-        material.uniform_buffer_.destroy(device);
-    }
+    return gltf_pipeline;
+}
 
-    for (auto& buffer : buffers_) {
-        buffer.destroy(device);
+} // namespace
+
+namespace game_object {
+
+// static member definition.
+std::shared_ptr<renderer::DescriptorSetLayout> GltfObject::material_desc_set_layout_;
+std::shared_ptr<renderer::PipelineLayout> GltfObject::gltf_pipeline_layout_;
+std::unordered_map<size_t, std::shared_ptr<renderer::Pipeline>> GltfObject::gltf_pipeline_list_;
+std::unordered_map<std::string, std::shared_ptr<ObjectData>> GltfObject::object_list_;
+
+void PrimitiveInfo::generateHash() {
+    hash_ = std::hash<uint32_t>{}(tag_.data);
+    for (auto& item : binding_descs_) {
+        hash_combine(hash_, item.binding);
+        hash_combine(hash_, item.input_rate);
+        hash_combine(hash_, item.stride);
+    }
+    for (auto& item : attribute_descs_) {
+        hash_combine(hash_, item.binding);
+        hash_combine(hash_, item.buffer_offset);
+        hash_combine(hash_, item.buffer_view);
+        hash_combine(hash_, item.format);
+        hash_combine(hash_, item.location);
+        hash_combine(hash_, item.offset);
     }
 }
 
-} // renderer
-} // work
+void ObjectData::destroy() {
+    for (auto& texture : textures_) {
+        texture.destroy(device_);
+    }
+
+    for (auto& material : materials_) {
+        material.uniform_buffer_.destroy(device_);
+    }
+
+    for (auto& buffer : buffers_) {
+        buffer.destroy(device_);
+    }
+}
+
+GltfObject::GltfObject(
+    const renderer::DeviceInfo& device_info,
+    const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+    const std::shared_ptr<renderer::RenderPass>& render_pass,
+    const renderer::GraphicPipelineInfo& graphic_pipeline_info,
+    const std::shared_ptr<renderer::Sampler>& texture_sampler,
+    const renderer::TextureInfo& thin_film_lut_tex,
+    const std::string& file_name,
+    const glm::uvec2& display_size,
+    glm::mat4 location/* = glm::mat4(1.0f)*/) {
+
+    location_ = location;
+
+    auto result = object_list_.find(file_name);
+    if (result == object_list_.end()) {
+        object_ = loadGltfModel(device_info, file_name);
+
+        updateDescriptorSets(
+            device_info.device,
+            descriptor_pool,
+            material_desc_set_layout_,
+            object_,
+            texture_sampler,
+            thin_film_lut_tex);
+
+        const auto& primitive = object_->meshes_[0].primitives_[0];
+        auto hash_value = primitive.getHash();
+        auto result = gltf_pipeline_list_.find(hash_value);
+        if (result == gltf_pipeline_list_.end()) {
+            gltf_pipeline_list_[hash_value] =
+                createGltfPipeline(
+                    device_info.device,
+                    render_pass,
+                    gltf_pipeline_layout_,
+                    graphic_pipeline_info,
+                    display_size,
+                    primitive);
+        }
+
+        object_list_[file_name] = object_;
+    }
+    else {
+        object_ = result->second;
+    }
+}
+
+void GltfObject::initStaticMembers(
+    const std::shared_ptr<renderer::Device>& device,
+    const renderer::DescriptorSetLayoutList& global_desc_set_layouts) {
+    if (material_desc_set_layout_ == nullptr) {
+        material_desc_set_layout_ =
+            createDescriptorSetLayout(device);
+    }
+
+    if (gltf_pipeline_layout_ == nullptr) {
+        assert(material_desc_set_layout_);
+        gltf_pipeline_layout_ =
+            createGltfPipelineLayout(
+                device,
+                global_desc_set_layouts,
+                material_desc_set_layout_);
+    }
+}
+
+void GltfObject::recreateStaticMembers(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::RenderPass>& render_pass,
+    const renderer::GraphicPipelineInfo& graphic_pipeline_info,
+    const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
+    const glm::uvec2& display_size) {
+
+    if (gltf_pipeline_layout_) {
+        device->destroyPipelineLayout(gltf_pipeline_layout_);
+        assert(material_desc_set_layout_);
+        gltf_pipeline_layout_ =
+            createGltfPipelineLayout(device, global_desc_set_layouts, material_desc_set_layout_);
+    }
+
+    gltf_pipeline_list_.clear();
+
+    for (auto& object : object_list_) {
+        const auto& primitive = object.second->meshes_[0].primitives_[0];
+        auto hash_value = primitive.getHash();
+        auto result = gltf_pipeline_list_.find(hash_value);
+        if (result == gltf_pipeline_list_.end()) {
+            gltf_pipeline_list_[hash_value] = 
+                createGltfPipeline(
+                    device,
+                    render_pass,
+                    gltf_pipeline_layout_,
+                    graphic_pipeline_info,
+                    display_size,
+                    primitive);
+        }
+    }
+}
+
+void GltfObject::generateDescriptorSet(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+    const std::shared_ptr<renderer::Sampler>& texture_sampler,
+    const renderer::TextureInfo& thin_film_lut_tex) {
+
+    for (auto& object : object_list_) {
+        updateDescriptorSets(
+            device,
+            descriptor_pool,
+            material_desc_set_layout_,
+            object.second,
+            texture_sampler,
+            thin_film_lut_tex);
+    }
+}
+
+void GltfObject::destoryStaticMembers(
+    const std::shared_ptr<renderer::Device>& device) {
+    device->destroyDescriptorSetLayout(material_desc_set_layout_);
+    device->destroyPipelineLayout(gltf_pipeline_layout_);
+    gltf_pipeline_list_.clear();
+    object_list_.clear();
+}
+
+void GltfObject::draw(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    const renderer::DescriptorSetList& desc_set_list) {
+
+    const auto& primitive = object_->meshes_[0].primitives_[0];
+    cmd_buf->bindPipeline(
+        renderer::PipelineBindPoint::GRAPHICS,
+        gltf_pipeline_list_[primitive.getHash()]);
+
+    int32_t root_node = object_->default_scene_ >= 0 ? object_->default_scene_ : 0;
+    for (auto node_idx : object_->scenes_[root_node].nodes_) {
+        drawNodes(
+            cmd_buf,
+            object_,
+            gltf_pipeline_layout_,
+            desc_set_list,
+            node_idx,
+            location_);
+    }
+}
+
+} // game_object
+} // engine

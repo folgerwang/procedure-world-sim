@@ -7,6 +7,20 @@ namespace engine {
 namespace renderer {
 namespace helper {
 
+DescriptorSetLayoutBinding getTextureSamplerDescriptionSetLayoutBinding(
+    uint32_t binding, 
+    ShaderStageFlags stage_flags/* = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT)*/,
+    DescriptorType descript_type/* = DescriptorType::COMBINED_IMAGE_SAMPLER*/) {
+    DescriptorSetLayoutBinding texture_binding{};
+    texture_binding.binding = binding;
+    texture_binding.descriptor_count = 1;
+    texture_binding.descriptor_type = descript_type;
+    texture_binding.immutable_samplers = nullptr;
+    texture_binding.stage_flags = stage_flags;
+
+    return texture_binding;
+}
+
 DescriptorSetLayoutBinding getBufferDescriptionSetLayoutBinding(
     uint32_t binding,
     ShaderStageFlags stage_flags/* = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT)*/,

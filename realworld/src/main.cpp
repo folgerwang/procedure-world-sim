@@ -39,6 +39,7 @@ void fillBlock(FillBlockParams* params) {
 
 
 int main() {
+#if 0
     if (0) {
         std::ofstream myfile;
         myfile.open("out.bmp", std::ios::binary);
@@ -109,6 +110,7 @@ int main() {
         myfile.write((char*)image.data(), w * h * 3);
         myfile.close();
     }
+#endif
 
     auto app = std::make_shared<work::app::RealWorldApplication>();
 

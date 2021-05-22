@@ -16,11 +16,11 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
-#include "renderer/renderer.h"
-#include "renderer/renderer_helper.h"
-#include "engine_helper.h"
+#include "engine/renderer/renderer.h"
+#include "engine/renderer/renderer_helper.h"
+#include "engine/engine_helper.h"
 #include "terrain.h"
-#include "../shaders/global_definition.glsl.h"
+#include "shaders/global_definition.glsl.h"
 
 #if 0
 float tree_line = 0.0f;
@@ -1514,28 +1514,6 @@ static void generateTileMesh(const glm::vec3 corners[4], const glm::uvec2& segme
 }
 #endif
 
-std::vector<glm::vec2> generateTileMeshVertex(const glm::vec3 corners[4], const glm::uvec2& segment_count) {
-    std::vector<glm::vec2> height_map;
-    auto height_map_size = (segment_count.x + 1) * (segment_count.y + 1);
-    height_map.resize(height_map_size);
-
-    for (uint32_t y = 0; y <= segment_count.y; y++) {
-        float r_y = float(y) / segment_count.y;
-        auto p_y0 = glm::mix(corners[0], corners[1], r_y);
-        auto p_y1 = glm::mix(corners[3], corners[2], r_y);
-        for (uint32_t x = 0; x <= segment_count.x; x++) {
-            float r_x = float(x) / (segment_count.x);
-            auto p_x = glm::mix(p_y0, p_y1, r_x);
-
-            auto m_d = terrainMap(glm::vec2(p_x.x, p_x.z));
-            auto index = y * (segment_count.x + 1) + x;
-            height_map[index] = m_d;
-        }
-    }
-
-    return height_map;
-}
-
 std::vector<uint32_t> generateTileMeshIndex(const glm::uvec2& segment_count) {
     std::vector<uint32_t> index_buffer;
     index_buffer.resize(segment_count.x * segment_count.y * 6);
@@ -1557,46 +1535,45 @@ std::vector<uint32_t> generateTileMeshIndex(const glm::uvec2& segment_count) {
     }
 
     uint32_t index_buffer_size = static_cast<uint32_t>(p_index_buffer - index_buffer.data());
-
     assert(index_buffer_size == segment_count.x * segment_count.y * 6);
 
     return index_buffer;
 }
 
 namespace engine {
-namespace renderer {
+namespace game_object {
 namespace {
 struct TileVertex {
     TileVertexInfo vertex_info;
 
-    static std::vector<VertexInputBindingDescription> getBindingDescription() {
-        std::vector<VertexInputBindingDescription> binding_description(1);
+    static std::vector<renderer::VertexInputBindingDescription> getBindingDescription() {
+        std::vector<renderer::VertexInputBindingDescription> binding_description(1);
         binding_description[0].binding = 0;
         binding_description[0].stride = sizeof(TileVertex);
-        binding_description[0].input_rate = VertexInputRate::VERTEX;
+        binding_description[0].input_rate = renderer::VertexInputRate::VERTEX;
         return binding_description;
     }
 
-    static std::vector<VertexInputAttributeDescription> getAttributeDescriptions() {
-        std::vector<VertexInputAttributeDescription> attribute_descriptions(1);
+    static std::vector<renderer::VertexInputAttributeDescription> getAttributeDescriptions() {
+        std::vector<renderer::VertexInputAttributeDescription> attribute_descriptions(1);
         attribute_descriptions[0].binding = 0;
         attribute_descriptions[0].location = 0;
-        attribute_descriptions[0].format = Format::R16G16_SFLOAT;
+        attribute_descriptions[0].format = renderer::Format::R16G16_SFLOAT;
         attribute_descriptions[0].offset = offsetof(TileVertex, vertex_info);
         return attribute_descriptions;
     }
 };
 
-std::vector<BufferDescriptor> addTileCreatorBuffers(
-    const std::shared_ptr<DescriptorSet>& description_set,
+std::vector<renderer::BufferDescriptor> addTileCreatorBuffers(
+    const std::shared_ptr<renderer::DescriptorSet>& description_set,
     uint32_t buffer_size1,
-    const BufferInfo& buffer1,
+    const renderer::BufferInfo& buffer1,
     uint32_t buffer_size2,
-    const BufferInfo& buffer2) {
-    std::vector<BufferDescriptor> descriptor_writes;
+    const renderer::BufferInfo& buffer2) {
+    std::vector<renderer::BufferDescriptor> descriptor_writes;
     descriptor_writes.reserve(2);
 
-    Helper::addOneBuffer(
+    renderer::Helper::addOneBuffer(
         descriptor_writes,
         VERTEX_BUFFER_INDEX,
         buffer1.buffer,
@@ -1604,7 +1581,7 @@ std::vector<BufferDescriptor> addTileCreatorBuffers(
         engine::renderer::DescriptorType::STORAGE_BUFFER,
         buffer_size1);
 
-   Helper::addOneBuffer(
+    renderer::Helper::addOneBuffer(
         descriptor_writes,
         INDEX_BUFFER_INDEX,
         buffer2.buffer,
@@ -1615,10 +1592,10 @@ std::vector<BufferDescriptor> addTileCreatorBuffers(
     return descriptor_writes;
 }
 
-static ShaderModuleList getTileCreatorCsModules(
-    const std::shared_ptr<Device>& device) {
+static renderer::ShaderModuleList getTileCreatorCsModules(
+    const std::shared_ptr<renderer::Device>& device) {
     uint64_t compute_code_size;
-    ShaderModuleList shader_modules;
+    renderer::ShaderModuleList shader_modules;
     shader_modules.reserve(1);
     auto compute_shader_code = engine::helper::readFile("lib/shaders/tile_creator_comp.spv", compute_code_size);
     shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
@@ -1626,10 +1603,10 @@ static ShaderModuleList getTileCreatorCsModules(
     return shader_modules;
 }
 
-static ShaderModuleList getTileShaderModules(
-    std::shared_ptr<Device> device) {
+static renderer::ShaderModuleList getTileShaderModules(
+    std::shared_ptr<renderer::Device> device) {
     uint64_t vert_code_size, frag_code_size;
-    ShaderModuleList shader_modules(2);
+    renderer::ShaderModuleList shader_modules(2);
     auto vert_shader_code = engine::helper::readFile("lib/shaders/tile_vert.spv", vert_code_size);
     auto frag_shader_code = engine::helper::readFile("lib/shaders/tile_frag.spv", frag_code_size);
 
@@ -1639,23 +1616,23 @@ static ShaderModuleList getTileShaderModules(
     return shader_modules;
 }
 
-static std::shared_ptr<DescriptorSetLayout> createDescriptorSetLayout(
-    const std::shared_ptr<Device>& device) {
-    std::vector<DescriptorSetLayoutBinding> bindings(2);
-    bindings[0] = helper::getBufferDescriptionSetLayoutBinding(VERTEX_BUFFER_INDEX,
+static std::shared_ptr<renderer::DescriptorSetLayout> createDescriptorSetLayout(
+    const std::shared_ptr<renderer::Device>& device) {
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings(2);
+    bindings[0] = renderer::helper::getBufferDescriptionSetLayoutBinding(VERTEX_BUFFER_INDEX,
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-        DescriptorType::STORAGE_BUFFER);
-    bindings[1] = helper::getBufferDescriptionSetLayoutBinding(INDEX_BUFFER_INDEX,
+        renderer::DescriptorType::STORAGE_BUFFER);
+    bindings[1] = renderer::helper::getBufferDescriptionSetLayoutBinding(INDEX_BUFFER_INDEX,
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-        DescriptorType::STORAGE_BUFFER);
+        renderer::DescriptorType::STORAGE_BUFFER);
 
     return device->createDescriptorSetLayout(bindings);
 }
 
-static std::shared_ptr<PipelineLayout> createTileCreatorPipelineLayout(
-    const std::shared_ptr<Device>& device,
-    const DescriptorSetLayoutList& desc_set_layouts) {
-    PushConstantRange push_const_range{};
+static std::shared_ptr<renderer::PipelineLayout> createTileCreatorPipelineLayout(
+    const std::shared_ptr<renderer::Device>& device,
+    const renderer::DescriptorSetLayoutList& desc_set_layouts) {
+    renderer::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
     push_const_range.offset = 0;
     push_const_range.size = sizeof(TileParams);
@@ -1663,9 +1640,9 @@ static std::shared_ptr<PipelineLayout> createTileCreatorPipelineLayout(
     return device->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
 
-static std::shared_ptr<Pipeline> createTileCreatorPipeline(
-    const std::shared_ptr<Device>& device,
-    const std::shared_ptr<PipelineLayout>& pipeline_layout) {
+static std::shared_ptr<renderer::Pipeline> createTileCreatorPipeline(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout) {
     auto tile_creator_compute_shader_modules = getTileCreatorCsModules(device);
     assert(tile_creator_compute_shader_modules.size() == 1);
 
@@ -1680,10 +1657,10 @@ static std::shared_ptr<Pipeline> createTileCreatorPipeline(
     return pipeline;
 }
 
-static std::shared_ptr<PipelineLayout> createTilePipelineLayout(
-    const std::shared_ptr<Device>& device,
-    const DescriptorSetLayoutList& desc_set_layouts) {
-    PushConstantRange push_const_range{};
+static std::shared_ptr<renderer::PipelineLayout> createTilePipelineLayout(
+    const std::shared_ptr<renderer::Device>& device,
+    const renderer::DescriptorSetLayoutList& desc_set_layouts) {
+    renderer::PushConstantRange push_const_range{};
     push_const_range.stage_flags =
         SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
@@ -1693,20 +1670,20 @@ static std::shared_ptr<PipelineLayout> createTilePipelineLayout(
     return device->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
 
-static std::shared_ptr<Pipeline> createTilePipeline(
-    const std::shared_ptr<Device>& device,
-    const std::shared_ptr<RenderPass>& render_pass,
-    const std::shared_ptr<PipelineLayout>& pipeline_layout,
-    const GraphicPipelineInfo& graphic_pipeline_info,
+static std::shared_ptr<renderer::Pipeline> createTilePipeline(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::RenderPass>& render_pass,
+    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout,
+    const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const glm::uvec2& display_size) {
-    PipelineInputAssemblyStateCreateInfo input_assembly;
-    input_assembly.topology = PrimitiveTopology::TRIANGLE_LIST;
+    renderer::PipelineInputAssemblyStateCreateInfo input_assembly;
+    input_assembly.topology = renderer::PrimitiveTopology::TRIANGLE_LIST;
     input_assembly.restart_enable = false;
 
-    auto color_blending = helper::fillPipelineColorBlendStateCreateInfo(
-        { helper::fillPipelineColorBlendAttachmentState() });
+    auto color_blending = renderer::helper::fillPipelineColorBlendStateCreateInfo(
+        { renderer::helper::fillPipelineColorBlendAttachmentState() });
 
-    auto rasterizer = helper::fillPipelineRasterizationStateCreateInfo();
+    auto rasterizer = renderer::helper::fillPipelineRasterizationStateCreateInfo();
 
     auto shader_modules = getTileShaderModules(device);
     auto pipeline = device->createPipeline(
@@ -1726,157 +1703,135 @@ static std::shared_ptr<Pipeline> createTilePipeline(
     return pipeline;
 }
 
-}
+} // namespace
 
-// static member declaration.
-std::shared_ptr<DescriptorSetLayout> TileMesh::tile_creator_desc_set_layout_;
-std::shared_ptr<PipelineLayout> TileMesh::tile_creator_pipeline_layout_;
-std::shared_ptr<Pipeline> TileMesh::tile_creator_pipeline_;
-std::shared_ptr<PipelineLayout> TileMesh::tile_pipeline_layout_;
-std::shared_ptr<Pipeline> TileMesh::tile_pipeline_;
+// static member definition.
+std::shared_ptr<renderer::DescriptorSetLayout> TileObject::tile_creator_desc_set_layout_;
+std::shared_ptr<renderer::PipelineLayout> TileObject::tile_creator_pipeline_layout_;
+std::shared_ptr<renderer::Pipeline> TileObject::tile_creator_pipeline_;
+std::shared_ptr<renderer::PipelineLayout> TileObject::tile_pipeline_layout_;
+std::shared_ptr<renderer::Pipeline> TileObject::tile_pipeline_;
 
-TileMesh::TileMesh(
-    const DeviceInfo& device_info,
-    const std::shared_ptr<RenderPass>& render_pass,
-    const GraphicPipelineInfo& graphic_pipeline_info,
-    const std::shared_ptr<DescriptorPool> descriptor_pool,
-    const DescriptorSetLayoutList& global_desc_set_layouts,
+TileObject::TileObject(
+    const renderer::DeviceInfo& device_info,
+    const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,
     const glm::uvec2& segment_count,
     const glm::vec2& min,
-    const glm::vec2& max,
-    const glm::uvec2& display_size) :
+    const glm::vec2& max) :
     device_info_(device_info),
     segment_count_(segment_count),
     min_(min),
     max_(max) {
     createMeshBuffers();
-
-    if (TileMesh::tile_creator_desc_set_layout_ == nullptr) {
-        TileMesh::tile_creator_desc_set_layout_ =
-            createDescriptorSetLayout(device_info.device);
-    }
-
-    if (TileMesh::tile_creator_pipeline_layout_ == nullptr) {
-        assert(TileMesh::tile_creator_desc_set_layout_);
-        TileMesh::tile_creator_pipeline_layout_ =
-            createTileCreatorPipelineLayout(
-                device_info.device,
-                { TileMesh::tile_creator_desc_set_layout_ });
-    }
-
-    if (TileMesh::tile_creator_pipeline_ == nullptr) {
-        assert(TileMesh::tile_creator_pipeline_layout_);
-        TileMesh::tile_creator_pipeline_ =
-            createTileCreatorPipeline(
-                device_info.device,
-                TileMesh::tile_creator_pipeline_layout_);
-    }
-
-    if (TileMesh::tile_pipeline_layout_ == nullptr) {
-        TileMesh::tile_pipeline_layout_ =
-            createTilePipelineLayout(
-                device_info.device,
-                global_desc_set_layouts);
-    }
-
-    if (TileMesh::tile_pipeline_ == nullptr) {
-        assert(TileMesh::tile_pipeline_layout_);
-        TileMesh::tile_pipeline_ =
-            createTilePipeline(
-                device_info.device,
-                render_pass,
-                TileMesh::tile_pipeline_layout_,
-                graphic_pipeline_info,
-                display_size);
-    }
-
+    assert(tile_creator_desc_set_layout_);
     generateDescriptorSet(descriptor_pool);
 }
 
-void TileMesh::destory() {
+void TileObject::destory() {
     vertex_buffer_.destroy(device_info_.device);
     index_buffer_.destroy(device_info_.device);
 }
 
-void TileMesh::recreateStaticMembers(
-    const std::shared_ptr<Device>& device,
-    const std::shared_ptr<RenderPass>& render_pass,
-    const GraphicPipelineInfo& graphic_pipeline_info,
-    const DescriptorSetLayoutList& global_desc_set_layouts,
+void TileObject::createStaticMembers(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::RenderPass>& render_pass,
+    const renderer::GraphicPipelineInfo& graphic_pipeline_info,
+    const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
     const glm::uvec2& display_size) {
-    if (TileMesh::tile_creator_pipeline_layout_) {
-        device->destroyPipelineLayout(TileMesh::tile_creator_pipeline_layout_);
-        assert(TileMesh::tile_creator_desc_set_layout_);
-
-        TileMesh::tile_creator_pipeline_layout_ =
+    if (tile_creator_pipeline_layout_ == nullptr) {
+        assert(tile_creator_desc_set_layout_);
+        tile_creator_pipeline_layout_ =
             createTileCreatorPipelineLayout(
                 device,
-                { TileMesh::tile_creator_desc_set_layout_ });
+                { tile_creator_desc_set_layout_ });
     }
 
-    if (TileMesh::tile_creator_pipeline_) {
-        device->destroyPipeline(TileMesh::tile_creator_pipeline_);
-        assert(TileMesh::tile_creator_pipeline_layout_);
-
-        TileMesh::tile_creator_pipeline_ =
+    if (tile_creator_pipeline_ == nullptr) {
+        assert(tile_creator_pipeline_layout_);
+        tile_creator_pipeline_ =
             createTileCreatorPipeline(
                 device,
-                TileMesh::tile_creator_pipeline_layout_);
+                tile_creator_pipeline_layout_);
     }
 
-    if (TileMesh::tile_pipeline_layout_) {
-        device->destroyPipelineLayout(TileMesh::tile_pipeline_layout_);
-
-        TileMesh::tile_pipeline_layout_ =
+    if (tile_pipeline_layout_ == nullptr) {
+        tile_pipeline_layout_ =
             createTilePipelineLayout(
                 device,
                 global_desc_set_layouts);
     }
 
-    if (TileMesh::tile_pipeline_) {
-        device->destroyPipeline(TileMesh::tile_pipeline_);
-        assert(TileMesh::tile_pipeline_layout_);
-
-        TileMesh::tile_pipeline_ =
+    if (tile_pipeline_ == nullptr) {
+        assert(tile_pipeline_layout_);
+        tile_pipeline_ =
             createTilePipeline(
                 device,
                 render_pass,
-                TileMesh::tile_pipeline_layout_,
+                tile_pipeline_layout_,
                 graphic_pipeline_info,
                 display_size);
     }
 }
 
-void TileMesh::destoryStaticMembers(
-    const std::shared_ptr<Device>& device) {
-    device->destroyDescriptorSetLayout(TileMesh::tile_creator_desc_set_layout_);
-    device->destroyPipelineLayout(TileMesh::tile_creator_pipeline_layout_);
-    device->destroyPipeline(TileMesh::tile_creator_pipeline_);
-    device->destroyPipelineLayout(TileMesh::tile_pipeline_layout_);
-    device->destroyPipeline(TileMesh::tile_pipeline_);
+void TileObject::initStaticMembers(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::RenderPass>& render_pass,
+    const renderer::GraphicPipelineInfo& graphic_pipeline_info,
+    const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
+    const glm::uvec2& display_size) {
+    if (tile_creator_desc_set_layout_ == nullptr) {
+        tile_creator_desc_set_layout_ =
+            createDescriptorSetLayout(device);
+    }
+
+    createStaticMembers(device, render_pass, graphic_pipeline_info, global_desc_set_layouts, display_size);
 }
 
-void TileMesh::createMeshBuffers() {
+void TileObject::recreateStaticMembers(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::RenderPass>& render_pass,
+    const renderer::GraphicPipelineInfo& graphic_pipeline_info,
+    const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
+    const glm::uvec2& display_size) {
+    if (tile_creator_pipeline_layout_) {
+        device->destroyPipelineLayout(tile_creator_pipeline_layout_);
+        tile_creator_pipeline_layout_ = nullptr;
+    }
+
+    if (tile_creator_pipeline_) {
+        device->destroyPipeline(tile_creator_pipeline_);
+        tile_creator_pipeline_ = nullptr;
+    }
+
+    if (tile_pipeline_layout_) {
+        device->destroyPipelineLayout(tile_pipeline_layout_);
+        tile_pipeline_layout_ = nullptr;
+    }
+
+    if (tile_pipeline_) {
+        device->destroyPipeline(tile_pipeline_);
+        tile_pipeline_ = nullptr;
+    }
+
+    createStaticMembers(device, render_pass, graphic_pipeline_info, global_desc_set_layouts, display_size);
+}
+
+void TileObject::destoryStaticMembers(
+    const std::shared_ptr<renderer::Device>& device) {
+    device->destroyDescriptorSetLayout(tile_creator_desc_set_layout_);
+    device->destroyPipelineLayout(tile_creator_pipeline_layout_);
+    device->destroyPipeline(tile_creator_pipeline_);
+    device->destroyPipelineLayout(tile_pipeline_layout_);
+    device->destroyPipeline(tile_pipeline_);
+}
+
+void TileObject::createMeshBuffers() {
     glm::vec3 corners[4];
     corners[0] = glm::vec3(min_.x, 0.0f, min_.y);
     corners[1] = glm::vec3(min_.x, 0.0f, max_.y);
     corners[2] = glm::vec3(max_.x, 0.0f, max_.y);
     corners[3] = glm::vec3(max_.x, 0.0f, min_.y);
 
-#if 0
-    auto height_map = generateTileMeshVertex(corners, segment_count_);
-
-    vertex_buffer_size_ = sizeof(height_map[0]) * height_map.size();
-
-    renderer::Helper::createBufferWithSrcData(
-        device_info_,
-        SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
-        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
-        vertex_buffer_size_,
-        height_map.data(),
-        vertex_buffer_.buffer,
-        vertex_buffer_.memory);
-#else
     auto height_map_size = (segment_count_.x + 1) * (segment_count_.y + 1);
     vertex_buffer_size_ = sizeof(TileVertexInfo) * height_map_size;
     device_info_.device->createBuffer(
@@ -1887,7 +1842,7 @@ void TileMesh::createMeshBuffers() {
         SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
         vertex_buffer_.buffer,
         vertex_buffer_.memory);
-#endif
+
     auto index_buffer = generateTileMeshIndex(segment_count_);
     index_buffer_size_ = sizeof(index_buffer[0]) * index_buffer.size();
     renderer::Helper::createBufferWithSrcData(
@@ -1900,12 +1855,12 @@ void TileMesh::createMeshBuffers() {
         index_buffer_.memory);
 }
 
-void TileMesh::generateDescriptorSet(
-    const std::shared_ptr<DescriptorPool>& descriptor_pool) {
+void TileObject::generateDescriptorSet(
+    const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool) {
 
     // tile creator buffer set.
     buffer_desc_set_ = device_info_.device->createDescriptorSets(
-        descriptor_pool, TileMesh::tile_creator_desc_set_layout_, 1)[0];
+        descriptor_pool, tile_creator_desc_set_layout_, 1)[0];
 
     // create a global ibl texture descriptor set.
     auto buffer_descs = addTileCreatorBuffers(
@@ -1915,8 +1870,8 @@ void TileMesh::generateDescriptorSet(
     device_info_.device->updateDescriptorSets({}, buffer_descs);
 }
 
-void TileMesh::generateTileBuffers(
-    const std::shared_ptr<CommandBuffer>& cmd_buf) {
+void TileObject::generateTileBuffers(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
 
     uint32_t vx_count = segment_count_.x + 1;
     uint32_t vy_count = segment_count_.y + 1;
@@ -1933,20 +1888,20 @@ void TileMesh::generateTileBuffers(
         { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
         index_buffer_size_);
 
-    cmd_buf->bindPipeline(PipelineBindPoint::COMPUTE, TileMesh::tile_creator_pipeline_);
+    cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, tile_creator_pipeline_);
     TileParams tile_params = {};
     tile_params.min = min_;
     tile_params.max = max_;
     tile_params.segment_count = segment_count_;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-        TileMesh::tile_creator_pipeline_layout_,
+        tile_creator_pipeline_layout_,
         &tile_params,
         sizeof(tile_params));
 
     cmd_buf->bindDescriptorSets(
-        PipelineBindPoint::COMPUTE,
-        TileMesh::tile_creator_pipeline_layout_,
+        renderer::PipelineBindPoint::COMPUTE,
+        tile_creator_pipeline_layout_,
         { buffer_desc_set_ });
 
     cmd_buf->dispatch((vx_count + 7) / 8, (vy_count + 7) / 8, 1);
@@ -1964,15 +1919,15 @@ void TileMesh::generateTileBuffers(
         index_buffer_size_);
 }
 
-void TileMesh::draw(
-    const std::shared_ptr<CommandBuffer>& cmd_buf,
+void TileObject::draw(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const renderer::DescriptorSetList& desc_set_list) {
-    std::vector<std::shared_ptr<Buffer>> buffers(1);
+    std::vector<std::shared_ptr<renderer::Buffer>> buffers(1);
     std::vector<uint64_t> offsets(1);
     buffers[0] = vertex_buffer_.buffer;
     offsets[0] = 0;
 
-    cmd_buf->bindPipeline(PipelineBindPoint::GRAPHICS, TileMesh::tile_pipeline_);
+    cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, tile_pipeline_);
 
     cmd_buf->bindVertexBuffers(0, buffers, offsets);
     cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, renderer::IndexType::UINT32);
@@ -1984,17 +1939,17 @@ void TileMesh::draw(
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | 
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
-        TileMesh::tile_pipeline_layout_, 
+        tile_pipeline_layout_, 
         &tile_params, 
         sizeof(tile_params));
 
     cmd_buf->bindDescriptorSets(
-        PipelineBindPoint::GRAPHICS, 
-        TileMesh::tile_pipeline_layout_, 
+        renderer::PipelineBindPoint::GRAPHICS,
+        tile_pipeline_layout_, 
         desc_set_list);
 
     cmd_buf->drawIndexed(segment_count_.x * segment_count_.y * 6);
 }
 
-} // namespace renderer
+} // namespace game_object
 } // namespace engine
