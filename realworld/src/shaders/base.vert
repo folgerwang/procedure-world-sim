@@ -45,6 +45,11 @@ layout(location = VINPUT_JOINTS_1) in uvec4 in_joints_1;
 layout(location = VINPUT_WEIGHTS_1) in vec4 in_weights_1;
 #endif
 
+layout(location = IINPUT_MAT_ROT_0) in vec3 in_loc_rot_mat_0;
+layout(location = IINPUT_MAT_ROT_1) in vec3 in_loc_rot_mat_1;
+layout(location = IINPUT_MAT_ROT_2) in vec3 in_loc_rot_mat_2;
+layout(location = IINPUT_MAT_POS_SCALE) in vec4 in_loc_pos_scale;
+
 layout(location = 0) out VsPsData {
     vec3 vertex_position;
     vec4 vertex_tex_coord;
@@ -98,9 +103,17 @@ vec3 getTangent()
 #endif
 
 void main() {
-    vec4 position_ws = model_params.model_mat * vec4(in_position, 1.0);
-    gl_Position = view_params.proj * view_params.view * position_ws;
-    out_data.vertex_position = position_ws.xyz;
+    vec3 position_ls = (model_params.model_mat * vec4(in_position, 1.0)).xyz;
+    mat3 local_world_rot_mat =
+        mat3x3(in_loc_rot_mat_0,
+               in_loc_rot_mat_1,
+               in_loc_rot_mat_2);
+    vec3 position_ws =
+        local_world_rot_mat *
+        position_ls +
+        in_loc_pos_scale.xyz;
+    gl_Position = view_params.proj * view_params.view * vec4(position_ws, 1.0);
+    out_data.vertex_position = position_ws;
     out_data.vertex_tex_coord = vec4(0);
 #ifdef HAS_UV_SET0
     out_data.vertex_tex_coord.xy = in_tex_coord;
@@ -110,9 +123,11 @@ void main() {
 #endif
 
 #ifdef HAS_NORMALS
-    out_data.vertex_normal = normalize(mat3(model_params.normal_mat) * getNormal());
+    vec3 normal_ls = mat3(model_params.normal_mat) * getNormal();
+    out_data.vertex_normal = normalize(local_world_rot_mat * normal_ls);
 #ifdef HAS_TANGENT
-    out_data.vertex_tangent = normalize(mat3(model_params.model_mat) * getTangent());
+    vec3 tangent_ls = mat3(model_params.model_mat) * getTangent();
+    out_data.vertex_tangent = normalize(local_world_rot_mat * tangent_ls);
     out_data.vertex_binormal = cross(out_data.vertex_normal, out_data.vertex_tangent) * in_tangent.w;
 #endif
 #endif // !HAS_NORMALS

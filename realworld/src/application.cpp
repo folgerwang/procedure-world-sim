@@ -1614,7 +1614,10 @@ void RealWorldApplication::drawFrame() {
                 listbox_items.push_back(name.c_str());
             }
             static int s_listbox_item_current = -1;
-            ImGui::ListBox("", &s_listbox_item_current, listbox_items.data(), listbox_items.size(), listbox_items.size());
+            ImGui::ListBox("",
+                &s_listbox_item_current, listbox_items.data(),
+                static_cast<int>(listbox_items.size()),
+                static_cast<int>(listbox_items.size()));
 
             if (s_listbox_item_current >= 0) {
                 auto file_name = "assets/" + gltf_file_names_[s_listbox_item_current];
@@ -1643,7 +1646,7 @@ void RealWorldApplication::drawFrame() {
         }
     }
 
-     er::Helper::addImGuiToCommandBuffer(command_buffer);
+    er::Helper::addImGuiToCommandBuffer(command_buffer);
 
     command_buffer->endCommandBuffer();
 

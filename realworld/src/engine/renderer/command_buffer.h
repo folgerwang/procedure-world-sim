@@ -27,9 +27,30 @@ public:
         const void* data,
         uint32_t size,
         uint32_t offset = 0) = 0;
-    virtual void draw(uint32_t vertex_count, uint32_t instance_count = 1, uint32_t first_vertex = 0, uint32_t first_instance = 0) = 0;
-    virtual void drawIndexed(uint32_t index_count, uint32_t instance_count = 1, uint32_t first_index = 0, uint32_t vertex_offset = 0, uint32_t first_instance = 0) = 0;
-    virtual void dispatch(uint32_t group_count_x, uint32_t group_count_y, uint32_t group_count_z = 1) = 0;
+    virtual void draw(uint32_t vertex_count, 
+        uint32_t instance_count = 1, 
+        uint32_t first_vertex = 0, 
+        uint32_t first_instance = 0) = 0;
+    virtual void drawIndexed(
+        uint32_t index_count, 
+        uint32_t instance_count = 1, 
+        uint32_t first_index = 0, 
+        uint32_t vertex_offset = 0, 
+        uint32_t first_instance = 0) = 0;
+    virtual void drawIndexedIndirect(
+        const renderer::BufferInfo& indirect_draw_cmd_buf,
+        uint32_t buffer_offset = 0,
+        uint32_t draw_count = 1,
+        uint32_t stride = sizeof(DrawIndexedIndirectCommand)) = 0;
+    virtual void drawIndirect(
+        const renderer::BufferInfo& indirect_draw_cmd_buf,
+        uint32_t buffer_offset = 0,
+        uint32_t draw_count = 1,
+        uint32_t stride = sizeof(DrawIndirectCommand)) = 0;
+    virtual void dispatch(
+        uint32_t group_count_x, 
+        uint32_t group_count_y, 
+        uint32_t group_count_z = 1) = 0;
     virtual void beginRenderPass(
         std::shared_ptr<RenderPass> render_pass,
         std::shared_ptr<Framebuffer> frame_buffer,

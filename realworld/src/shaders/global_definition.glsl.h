@@ -10,6 +10,8 @@
 
 //#define MATERIAL_UNLIT
 
+#define VINPUT_INSTANCE_BINDING_START     30
+
 // Vertex input attribute location.
 #define VINPUT_POSITION             0
 #define VINPUT_TEXCOORD0            1
@@ -21,6 +23,11 @@
 #define VINPUT_JOINTS_1             7
 #define VINPUT_WEIGHTS_1            8
 #define VINPUT_TEXCOORD1            9
+
+#define IINPUT_MAT_ROT_0            10
+#define IINPUT_MAT_ROT_1            12
+#define IINPUT_MAT_ROT_2            13
+#define IINPUT_MAT_POS_SCALE        14
 
 #define PBR_GLOBAL_PARAMS_SET       0
 #define VIEW_PARAMS_SET             1

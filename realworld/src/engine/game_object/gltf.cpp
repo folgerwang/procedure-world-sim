@@ -266,6 +266,7 @@ static void setupMesh(
             const tinygltf::Accessor& accessor = model.accessors[it->second];
 
             dst_binding = static_cast<uint32_t>(primitive_info.binding_list_.size());
+            assert(dst_binding < VINPUT_INSTANCE_BINDING_START);
             primitive_info.binding_list_.push_back(accessor.bufferView);
 
             engine::renderer::VertexInputBindingDescription binding = {};
@@ -363,7 +364,10 @@ static void setupMesh(
         const tinygltf::Accessor& indexAccessor = model.accessors[primitive.indices];
         primitive_info.index_desc_.binding = indexAccessor.bufferView;
         primitive_info.index_desc_.offset = indexAccessor.byteOffset;
-        primitive_info.index_desc_.index_type = indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ? renderer::IndexType::UINT16 : renderer::IndexType::UINT32;
+        primitive_info.index_desc_.index_type = 
+            indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ? 
+            renderer::IndexType::UINT16 : 
+            renderer::IndexType::UINT32;
         primitive_info.index_desc_.index_count = indexAccessor.count;
 
         primitive_info.generateHash();
@@ -390,10 +394,11 @@ static void setupNode(
     if (node.matrix.size() == 16) {
         // Use 'matrix' attribute
         const auto& m = node.matrix.data();
-        mesh_matrix = glm::mat4(m[0], m[1], m[2], m[3],
-            m[4], m[5], m[6], m[7],
-            m[8], m[9], m[10], m[11],
-            m[12], m[13], m[14], m[15]);
+        mesh_matrix =
+            glm::mat4(m[0], m[1], m[2], m[3],
+                m[4], m[5], m[6], m[7],
+                m[8], m[9], m[10], m[11],
+                m[12], m[13], m[14], m[15]);
         has_matrix = true;
     }
     else {
@@ -501,6 +506,38 @@ static std::shared_ptr<ego::ObjectData> loadGltfModel(
         }
     }
 
+    // init indirect draw buffer.
+    uint32_t num_prims = 0;
+    for (auto& mesh : gltf_object->meshes_) {
+        for (auto& prim : mesh.primitives_) {
+            prim.indirect_draw_cmd_ofs_ =
+                num_prims * sizeof(renderer::DrawIndexedIndirectCommand);
+            num_prims++;
+        }
+    }
+
+    std::vector<renderer::DrawIndexedIndirectCommand> indirect_draw_cmd_buffer(num_prims);
+    uint32_t prim_idx = 0;
+    for (const auto& mesh : gltf_object->meshes_) {
+        for (const auto& prim : mesh.primitives_) {
+            indirect_draw_cmd_buffer[prim_idx].first_index = 0;
+            indirect_draw_cmd_buffer[prim_idx].first_instance = 0;
+            indirect_draw_cmd_buffer[prim_idx].index_count =
+                static_cast<uint32_t>(prim.index_desc_.index_count);
+            indirect_draw_cmd_buffer[prim_idx].instance_count = 2;
+            indirect_draw_cmd_buffer[prim_idx].vertex_offset = 0;
+            prim_idx++;
+        }
+    }
+
+    renderer::Helper::createBufferWithSrcData(
+        device_info,
+        SET_FLAG_BIT(BufferUsage, INDIRECT_BUFFER_BIT),
+        num_prims * sizeof(renderer::DrawIndexedIndirectCommand),
+        indirect_draw_cmd_buffer.data(),
+        gltf_object->indirect_draw_cmd_.buffer,
+        gltf_object->indirect_draw_cmd_.memory);
+
     return gltf_object;
 }
 
@@ -606,7 +643,10 @@ static void drawMesh(
 
         cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, VERTEX_BIT), gltf_pipeline_layout, &model_params, sizeof(model_params));
 
-        cmd_buf->drawIndexed(static_cast<uint32_t>(prim.index_desc_.index_count));
+        //cmd_buf->drawIndexed(static_cast<uint32_t>(prim.index_desc_.index_count));
+        cmd_buf->drawIndexedIndirect(
+            gltf_object->indirect_draw_cmd_,
+            prim.indirect_draw_cmd_ofs_);
     }
 }
 
@@ -724,11 +764,39 @@ static std::shared_ptr<renderer::Pipeline> createGltfPipeline(
     topology_info.restart_enable = primitive.tag_.restart_enable;
     topology_info.topology = static_cast<renderer::PrimitiveTopology>(primitive.tag_.topology);
 
+    auto binding_descs = primitive.binding_descs_;
+    auto attribute_descs = primitive.attribute_descs_;
+
+    renderer::VertexInputBindingDescription desc;
+    desc.binding = VINPUT_INSTANCE_BINDING_START;
+    desc.input_rate = renderer::VertexInputRate::INSTANCE;
+    desc.stride = sizeof(game_object::InstanceDataInfo);
+    binding_descs.push_back(desc);
+
+    renderer::VertexInputAttributeDescription attr;
+    attr.binding = VINPUT_INSTANCE_BINDING_START;
+    attr.buffer_offset = 0;
+    attr.format = renderer::Format::R32G32B32_SFLOAT;
+    attr.buffer_view = 0;
+    attr.location = IINPUT_MAT_ROT_0;
+    attr.offset = offsetof(game_object::InstanceDataInfo, mat_rot_0);
+    attribute_descs.push_back(attr);
+    attr.location = IINPUT_MAT_ROT_1;
+    attr.offset = offsetof(game_object::InstanceDataInfo, mat_rot_1);
+    attribute_descs.push_back(attr);
+    attr.location = IINPUT_MAT_ROT_2;
+    attr.offset = offsetof(game_object::InstanceDataInfo, mat_rot_2);
+    attribute_descs.push_back(attr);
+    attr.format = renderer::Format::R32G32B32A32_SFLOAT;
+    attr.location = IINPUT_MAT_POS_SCALE;
+    attr.offset = offsetof(game_object::InstanceDataInfo, mat_pos_scale);
+    attribute_descs.push_back(attr);
+
     auto gltf_pipeline = device->createPipeline(
         render_pass,
         pipeline_layout,
-        primitive.binding_descs_,
-        primitive.attribute_descs_,
+        binding_descs,
+        attribute_descs,
         topology_info,
         graphic_pipeline_info,
         shader_modules,
@@ -826,6 +894,25 @@ GltfObject::GltfObject(
     else {
         object_ = result->second;
     }
+
+    std::vector<InstanceDataInfo> instance_data(2);
+    instance_data[0].mat_rot_0 = location[0];
+    instance_data[0].mat_rot_1 = location[1];
+    instance_data[0].mat_rot_2 = location[2];
+    instance_data[0].mat_pos_scale = location[3];
+
+    instance_data[1].mat_rot_0 = location[0];
+    instance_data[1].mat_rot_1 = location[1];
+    instance_data[1].mat_rot_2 = location[2];
+    instance_data[1].mat_pos_scale = location[3] + glm::vec4(1, 0, 0, 0);
+
+    renderer::Helper::createBufferWithSrcData(
+        device_info,
+        SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT),
+        instance_data.size() * sizeof(InstanceDataInfo),
+        instance_data.data(),
+        instance_buffer_.buffer,
+        instance_buffer_.memory);
 }
 
 void GltfObject::initStaticMembers(
@@ -904,6 +991,57 @@ void GltfObject::destoryStaticMembers(
     object_list_.clear();
 }
 
+#if 0
+void GltfObject::generateInstanceBuffers(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
+
+    uint32_t vx_count = segment_count_.x + 1;
+    uint32_t vy_count = segment_count_.y + 1;
+
+    cmd_buf->addBufferBarrier(
+        vertex_buffer_.buffer,
+        { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
+        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
+        vertex_buffer_size_);
+
+    cmd_buf->addBufferBarrier(
+        index_buffer_.buffer,
+        { SET_FLAG_BIT(Access, INDIRECT_COMMAND_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
+        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
+        index_buffer_size_);
+
+    cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, tile_creator_pipeline_);
+    TileParams tile_params = {};
+    tile_params.min = min_;
+    tile_params.max = max_;
+    tile_params.segment_count = segment_count_;
+    cmd_buf->pushConstants(
+        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+        tile_creator_pipeline_layout_,
+        &tile_params,
+        sizeof(tile_params));
+
+    cmd_buf->bindDescriptorSets(
+        renderer::PipelineBindPoint::COMPUTE,
+        tile_creator_pipeline_layout_,
+        { buffer_desc_set_ });
+
+    cmd_buf->dispatch((vx_count + 7) / 8, (vy_count + 7) / 8, 1);
+
+    cmd_buf->addBufferBarrier(
+        vertex_buffer_.buffer,
+        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
+        { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
+        vertex_buffer_size_);
+
+    cmd_buf->addBufferBarrier(
+        index_buffer_.buffer,
+        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
+        { SET_FLAG_BIT(Access, INDIRECT_COMMAND_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
+        index_buffer_size_);
+}
+#endif
+
 void GltfObject::draw(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const renderer::DescriptorSetList& desc_set_list) {
@@ -913,6 +1051,12 @@ void GltfObject::draw(
         renderer::PipelineBindPoint::GRAPHICS,
         gltf_pipeline_list_[primitive.getHash()]);
 
+    std::vector<std::shared_ptr<renderer::Buffer>> buffers(1);
+    std::vector<uint64_t> offsets(1);
+    buffers[0] = instance_buffer_.buffer;
+    offsets[0] = 0;
+    cmd_buf->bindVertexBuffers(VINPUT_INSTANCE_BINDING_START, buffers, offsets);
+
     int32_t root_node = object_->default_scene_ >= 0 ? object_->default_scene_ : 0;
     for (auto node_idx : object_->scenes_[root_node].nodes_) {
         drawNodes(
@@ -921,7 +1065,7 @@ void GltfObject::draw(
             gltf_pipeline_layout_,
             desc_set_list,
             node_idx,
-            location_);
+            glm::mat4(1));
     }
 }
 

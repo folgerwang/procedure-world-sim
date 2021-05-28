@@ -1844,7 +1844,7 @@ void TileObject::createMeshBuffers() {
         vertex_buffer_.memory);
 
     auto index_buffer = generateTileMeshIndex(segment_count_);
-    index_buffer_size_ = sizeof(index_buffer[0]) * index_buffer.size();
+    index_buffer_size_ = static_cast<uint32_t>(sizeof(index_buffer[0]) * index_buffer.size());
     renderer::Helper::createBufferWithSrcData(
         device_info_,
         SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT) |
@@ -1878,13 +1878,13 @@ void TileObject::generateTileBuffers(
 
     cmd_buf->addBufferBarrier(
         vertex_buffer_.buffer,
-        { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_SHADER_BIT) },
+        { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
         { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
         vertex_buffer_size_);
 
     cmd_buf->addBufferBarrier(
         index_buffer_.buffer,
-        { SET_FLAG_BIT(Access, INDEX_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_SHADER_BIT) },
+        { SET_FLAG_BIT(Access, INDEX_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
         { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
         index_buffer_size_);
 
@@ -1909,13 +1909,13 @@ void TileObject::generateTileBuffers(
     cmd_buf->addBufferBarrier(
         vertex_buffer_.buffer,
         { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
-        { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_SHADER_BIT) },
+        { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
         vertex_buffer_size_);
 
     cmd_buf->addBufferBarrier(
         index_buffer_.buffer,
         { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
-        { SET_FLAG_BIT(Access, INDEX_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_SHADER_BIT) },
+        { SET_FLAG_BIT(Access, INDEX_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
         index_buffer_size_);
 }
 

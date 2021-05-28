@@ -120,12 +120,39 @@ void VulkanCommandBuffer::pushConstants(
         data);
 }
 
-void VulkanCommandBuffer::draw(uint32_t vertex_count, uint32_t instance_count/* = 1*/, uint32_t first_vertex/* = 0*/, uint32_t first_instance/* = 0*/) {
+void VulkanCommandBuffer::draw(
+    uint32_t vertex_count,
+    uint32_t instance_count/* = 1*/,
+    uint32_t first_vertex/* = 0*/,
+    uint32_t first_instance/* = 0*/) {
     vkCmdDraw(cmd_buf_, vertex_count, instance_count, first_vertex, first_instance);
 }
 
-void VulkanCommandBuffer::drawIndexed(uint32_t index_count, uint32_t instance_count/* = 1*/, uint32_t first_index/* = 0*/, uint32_t vertex_offset/* = 0*/, uint32_t first_instance/* = 0*/) {
+void VulkanCommandBuffer::drawIndexed(
+    uint32_t index_count,
+    uint32_t instance_count/* = 1*/,
+    uint32_t first_index/* = 0*/,
+    uint32_t vertex_offset/* = 0*/,
+    uint32_t first_instance/* = 0*/) {
     vkCmdDrawIndexed(cmd_buf_, index_count, instance_count, first_index, vertex_offset, first_instance);
+}
+
+void VulkanCommandBuffer::drawIndexedIndirect(
+    const renderer::BufferInfo& indirect_draw_cmd_buf,
+    uint32_t buffer_offset/* = 0*/,
+    uint32_t draw_count/* = 1*/,
+    uint32_t stride/* = sizeof(DrawIndexedIndirectCommand)*/) {
+    auto vk_indirect_buffer = RENDER_TYPE_CAST(Buffer, indirect_draw_cmd_buf.buffer);
+    vkCmdDrawIndexedIndirect(cmd_buf_, vk_indirect_buffer->get(), buffer_offset, draw_count, stride);
+}
+
+void VulkanCommandBuffer::drawIndirect(
+    const renderer::BufferInfo& indirect_draw_cmd_buf,
+    uint32_t buffer_offset/* = 0*/,
+    uint32_t draw_count/* = 1*/,
+    uint32_t stride/* = sizeof(DrawIndirectCommand)*/) {
+    auto vk_indirect_buffer = RENDER_TYPE_CAST(Buffer, indirect_draw_cmd_buf.buffer);
+    vkCmdDrawIndirect(cmd_buf_, vk_indirect_buffer->get(), buffer_offset, draw_count, stride);
 }
 
 void VulkanCommandBuffer::dispatch(uint32_t group_count_x, uint32_t group_count_y, uint32_t group_count_z/* = 1*/) {

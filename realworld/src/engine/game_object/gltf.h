@@ -5,6 +5,13 @@
 namespace engine {
 namespace game_object {
 
+struct InstanceDataInfo {
+    glm::vec3              mat_rot_0;
+    glm::vec3              mat_rot_1;
+    glm::vec3              mat_rot_2;
+    glm::vec4              mat_pos_scale;
+};
+
 struct MaterialInfo {
     int32_t                base_color_idx_ = -1;
     int32_t                normal_idx_ = -1;
@@ -41,6 +48,7 @@ private:
 public:
     std::vector<uint32_t>   binding_list_;
     int32_t                 material_idx_;
+    int32_t                 indirect_draw_cmd_ofs_;
     PrimitiveHashTag        tag_;
     glm::vec3               bbox_min_ = glm::vec3(std::numeric_limits<float>::max());
     glm::vec3               bbox_max_ = glm::vec3(std::numeric_limits<float>::min());
@@ -82,6 +90,8 @@ struct ObjectData {
     std::vector<renderer::TextureInfo>    textures_;
     std::vector<MaterialInfo>   materials_;
 
+    renderer::BufferInfo        indirect_draw_cmd_;
+
 public:
     ObjectData(const std::shared_ptr<renderer::Device>& device) : device_(device) {}
     ~ObjectData() { destroy(); }
@@ -91,6 +101,7 @@ public:
 class GltfObject {
     std::shared_ptr<ObjectData> object_;
     glm::mat4                   location_;
+    renderer::BufferInfo        instance_buffer_;
 
     // static members.
     static std::shared_ptr<renderer::DescriptorSetLayout> material_desc_set_layout_;
