@@ -20,12 +20,12 @@ const std::vector<const char*> validation_layers = {
 
 const std::vector<const char*> device_extensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-    VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+/*    VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
     VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
     VK_KHR_MAINTENANCE3_EXTENSION_NAME,
     VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
     VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
-    VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME
+    VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME*/
 };
 
 #ifdef NDEBUG
@@ -1192,7 +1192,7 @@ std::vector<const char*> getRequiredExtensions() {
     std::vector<const char*> extensions(glfw_extensions, glfw_extensions + glfw_extensionCount);
 
     if (hasEnabledValidationLayers()) {
-        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+       extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     }
 
     return extensions;
@@ -1281,11 +1281,18 @@ std::shared_ptr<renderer::Instance> createInstance() {
     auto result = vkCreateInstance(&create_info, nullptr, &instance);
     if (result != VK_SUCCESS) {
         // validation layer doesn't exist.
-        if (result == VK_ERROR_LAYER_NOT_PRESENT && hasEnabledValidationLayers()) {
-            create_info.enabledLayerCount = 0;
-            create_info.pNext = nullptr;
-            result = vkCreateInstance(&create_info, nullptr, &instance);
-            s_enable_validation_layers = false;
+        if (hasEnabledValidationLayers()) {
+            if (result == VK_ERROR_LAYER_NOT_PRESENT) {
+                create_info.enabledLayerCount = 0;
+                create_info.pNext = nullptr;
+                result = vkCreateInstance(&create_info, nullptr, &instance);
+                s_enable_validation_layers = false;
+            }
+            else if (result == VK_ERROR_EXTENSION_NOT_PRESENT) {
+                create_info.enabledExtensionCount--;
+                result = vkCreateInstance(&create_info, nullptr, &instance);
+                s_enable_validation_layers = false;
+            }
         }
     }
 
