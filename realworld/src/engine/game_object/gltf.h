@@ -90,6 +90,7 @@ struct ObjectData {
     std::vector<renderer::TextureInfo>    textures_;
     std::vector<MaterialInfo>   materials_;
 
+    uint32_t                    num_prims_ = 0;
     renderer::BufferInfo        indirect_draw_cmd_;
 
 public:
@@ -99,15 +100,20 @@ public:
 };
 
 class GltfObject {
+    const renderer::DeviceInfo& device_info_;
     std::shared_ptr<ObjectData> object_;
     glm::mat4                   location_;
     renderer::BufferInfo        instance_buffer_;
+    std::shared_ptr<renderer::DescriptorSet> buffer_desc_set_;
 
     // static members.
     static std::shared_ptr<renderer::DescriptorSetLayout> material_desc_set_layout_;
     static std::shared_ptr<renderer::PipelineLayout> gltf_pipeline_layout_;
     static std::unordered_map<size_t, std::shared_ptr<renderer::Pipeline>> gltf_pipeline_list_;
     static std::unordered_map<std::string, std::shared_ptr<ObjectData>> object_list_;
+    static std::shared_ptr<renderer::DescriptorSetLayout> gltf_indirect_draw_desc_set_layout_;
+    static std::shared_ptr<renderer::PipelineLayout> gltf_indirect_draw_pipeline_layout_;
+    static std::shared_ptr<renderer::Pipeline> gltf_indirect_draw_pipeline_;
 
 public:
     GltfObject() = delete;
@@ -121,6 +127,12 @@ public:
         const std::string& file_name,
         const glm::uvec2& display_size,
         glm::mat4 location = glm::mat4(1.0f));
+
+    void generateDescriptorSet(
+        const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool);
+
+    void updateIndirectDrawBuffer(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
 
     void draw(const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const renderer::DescriptorSetList& desc_set_list);

@@ -1566,9 +1566,7 @@ struct TileVertex {
 
 std::vector<renderer::BufferDescriptor> addTileCreatorBuffers(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
-    uint32_t buffer_size1,
     const renderer::BufferInfo& buffer1,
-    uint32_t buffer_size2,
     const renderer::BufferInfo& buffer2) {
     std::vector<renderer::BufferDescriptor> descriptor_writes;
     descriptor_writes.reserve(2);
@@ -1579,7 +1577,7 @@ std::vector<renderer::BufferDescriptor> addTileCreatorBuffers(
         buffer1.buffer,
         description_set,
         engine::renderer::DescriptorType::STORAGE_BUFFER,
-        buffer_size1);
+        buffer1.buffer->getSize());
 
     renderer::Helper::addOneBuffer(
         descriptor_writes,
@@ -1587,7 +1585,7 @@ std::vector<renderer::BufferDescriptor> addTileCreatorBuffers(
         buffer2.buffer,
         description_set,
         engine::renderer::DescriptorType::STORAGE_BUFFER,
-       buffer_size2);
+        buffer2.buffer->getSize());
 
     return descriptor_writes;
 }
@@ -1833,9 +1831,9 @@ void TileObject::createMeshBuffers() {
     corners[3] = glm::vec3(max_.x, 0.0f, min_.y);
 
     auto height_map_size = (segment_count_.x + 1) * (segment_count_.y + 1);
-    vertex_buffer_size_ = sizeof(TileVertexInfo) * height_map_size;
+    auto vertex_buffer_size = sizeof(TileVertexInfo) * height_map_size;
     device_info_.device->createBuffer(
-        vertex_buffer_size_,
+        vertex_buffer_size,
         SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
         SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
         SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
@@ -1844,12 +1842,12 @@ void TileObject::createMeshBuffers() {
         vertex_buffer_.memory);
 
     auto index_buffer = generateTileMeshIndex(segment_count_);
-    index_buffer_size_ = static_cast<uint32_t>(sizeof(index_buffer[0]) * index_buffer.size());
+    auto index_buffer_size = static_cast<uint32_t>(sizeof(index_buffer[0]) * index_buffer.size());
     renderer::Helper::createBufferWithSrcData(
         device_info_,
         SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT) |
         SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
-        index_buffer_size_,
+        index_buffer_size,
         index_buffer.data(),
         index_buffer_.buffer,
         index_buffer_.memory);
@@ -1865,8 +1863,8 @@ void TileObject::generateDescriptorSet(
     // create a global ibl texture descriptor set.
     auto buffer_descs = addTileCreatorBuffers(
         buffer_desc_set_,
-        vertex_buffer_size_, vertex_buffer_,
-        index_buffer_size_, index_buffer_);
+        vertex_buffer_,
+        index_buffer_);
     device_info_.device->updateDescriptorSets({}, buffer_descs);
 }
 
@@ -1880,13 +1878,13 @@ void TileObject::generateTileBuffers(
         vertex_buffer_.buffer,
         { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
         { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
-        vertex_buffer_size_);
+        vertex_buffer_.buffer->getSize());
 
     cmd_buf->addBufferBarrier(
         index_buffer_.buffer,
         { SET_FLAG_BIT(Access, INDEX_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
         { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
-        index_buffer_size_);
+        index_buffer_.buffer->getSize());
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, tile_creator_pipeline_);
     TileParams tile_params = {};
@@ -1910,13 +1908,13 @@ void TileObject::generateTileBuffers(
         vertex_buffer_.buffer,
         { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
         { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
-        vertex_buffer_size_);
+        vertex_buffer_.buffer->getSize());
 
     cmd_buf->addBufferBarrier(
         index_buffer_.buffer,
         { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
         { SET_FLAG_BIT(Access, INDEX_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
-        index_buffer_size_);
+        index_buffer_.buffer->getSize());
 }
 
 void TileObject::draw(

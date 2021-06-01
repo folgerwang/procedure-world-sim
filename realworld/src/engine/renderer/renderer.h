@@ -66,6 +66,8 @@ class Image {
 };
 
 class Buffer {
+public:
+    virtual uint32_t getSize() = 0;
 };
 
 class Semaphore {
@@ -203,10 +205,14 @@ public:
 };
 
 class VulkanBuffer : public Buffer {
+    uint32_t         size_;
     VkBuffer         buffer_;
 public:
     VkBuffer get() { return buffer_; }
-    void set(const VkBuffer& buffer) { buffer_ = buffer; }
+    void set(const VkBuffer& buffer, uint32_t size) { buffer_ = buffer; size_ = size; }
+    virtual uint32_t getSize() final {
+        return size_;
+    }
 };
 
 class VulkanSemaphore : public Semaphore {

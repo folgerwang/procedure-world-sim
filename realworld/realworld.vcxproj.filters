@@ -232,5 +232,8 @@
     <None Include="src\shaders\tile_creator.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
+    <None Include="src\shaders\update_gltf_indirect_draw.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

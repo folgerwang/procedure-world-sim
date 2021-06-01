@@ -1521,7 +1521,7 @@ void RealWorldApplication::drawScene(
 
             SunSkyParams sun_sky_params = {};
             sun_sky_params.sun_pos = glm::vec3(cos(s_sun_angle), sin(s_sun_angle), -0.3f);
-            s_sun_angle += 0.001f;
+            s_sun_angle += 0.0001f;
             cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), skybox_pipeline_layout_, &sun_sky_params, sizeof(sun_sky_params));
 
             er::DescriptorSetList desc_sets{ skybox_tex_desc_set_, frame_desc_set };

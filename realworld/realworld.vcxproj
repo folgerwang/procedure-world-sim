@@ -144,6 +144,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.frag -o $(ProjectDir)lib\shaders\grass_frag.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.comp -o $(ProjectDir)lib\shaders\grass_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_creator.comp -o $(ProjectDir)lib\shaders\tile_creator_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_gltf_indirect_draw.comp -o $(ProjectDir)lib\shaders\update_gltf_indirect_draw_comp.spv
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -216,6 +217,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.frag -o $(ProjectDir)lib\shaders\grass_frag.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.comp -o $(ProjectDir)lib\shaders\grass_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_creator.comp -o $(ProjectDir)lib\shaders\tile_creator_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_gltf_indirect_draw.comp -o $(ProjectDir)lib\shaders\update_gltf_indirect_draw_comp.spv
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -284,6 +286,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_
     <None Include="src\shaders\tile.frag" />
     <None Include="src\shaders\tile.vert" />
     <None Include="src\shaders\tile_creator.comp" />
+    <None Include="src\shaders\update_gltf_indirect_draw.comp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

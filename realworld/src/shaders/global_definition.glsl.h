@@ -64,6 +64,8 @@
 #define VERTEX_BUFFER_INDEX         0
 #define INDEX_BUFFER_INDEX          1
 
+#define INDIRECT_DRAW_BUFFER_INDEX  0
+
 #define FEATURE_MATERIAL_SPECULARGLOSSINESS     0x00000001
 #define FEATURE_MATERIAL_METALLICROUGHNESS      0x00000002
 #define FEATURE_MATERIAL_SHEEN                  0x00000004
@@ -90,6 +92,8 @@
 #define TONEMAP_UNCHARTED       1
 #define TONEMAP_HEJLRICHARD     2
 #define TONEMAP_ACES            3
+
+#define INDIRECT_DRAW_BUF_OFS   4
 
 #ifdef __cplusplus
 #include "glm/glm.hpp"

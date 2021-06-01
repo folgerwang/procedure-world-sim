@@ -22,7 +22,7 @@ std::shared_ptr<Buffer> VulkanDevice::createBuffer(uint64_t buf_size, BufferUsag
     }
 
     auto result = std::make_shared<VulkanBuffer>();
-    result->set(buffer);
+    result->set(buffer, buf_size);
 
     return result;
 }

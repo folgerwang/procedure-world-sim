@@ -11,9 +11,6 @@ class TileObject {
     glm::vec2 min_;
     glm::vec2 max_;
 
-    uint32_t vertex_buffer_size_ = 0;
-    uint32_t index_buffer_size_ = 0;
-
     renderer::BufferInfo vertex_buffer_;
     renderer::BufferInfo index_buffer_;
 

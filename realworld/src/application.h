@@ -12,7 +12,7 @@ namespace work {
 namespace app {
 
 const int kMaxFramesInFlight = 2;
-const int kCubemapSize = 1024;
+const int kCubemapSize = 512;
 const int kDifuseCubemapSize = 256;
 
 class RealWorldApplication {
