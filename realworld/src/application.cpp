@@ -63,6 +63,8 @@ static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
 }
 
 static bool s_exit_game = false;
+static bool s_game_paused = false;
+static bool s_camera_paused = false;
 static bool s_mouse_init = false;
 static glm::vec2 s_last_mouse_pos;
 static float s_yaw = 0.0f;
@@ -76,7 +78,7 @@ static void keyInputCallback(GLFWwindow* window, int key, int scancode, int acti
 {
     auto up_vector = abs(s_camera_dir[1]) < glm::min(abs(s_camera_dir[0]), abs(s_camera_dir[2])) ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
     auto camera_right = glm::normalize(glm::cross(s_camera_dir, s_camera_up));
-    if (action != GLFW_RELEASE) {
+    if (action != GLFW_RELEASE && !s_camera_paused) {
         if (key == GLFW_KEY_W)
             s_camera_pos += s_camera_speed * s_camera_dir;
         if (key == GLFW_KEY_S)
@@ -89,6 +91,10 @@ static void keyInputCallback(GLFWwindow* window, int key, int scancode, int acti
 
     if (action == GLFW_PRESS && key == GLFW_KEY_ESCAPE) {
         s_exit_game = true;
+    }
+
+    if (action == GLFW_PRESS && key == GLFW_KEY_SPACE) {
+        s_camera_paused = !s_camera_paused;
     }
 }
 
@@ -107,19 +113,21 @@ void mouseInputCallback(GLFWwindow* window, double xpos, double ypos)
     float sensitivity = 0.2f;
     mouse_offset *= sensitivity;
 
-    s_yaw += mouse_offset.x;
-    s_pitch += mouse_offset.y;
+    if (!s_camera_paused) {
+        s_yaw += mouse_offset.x;
+        s_pitch += mouse_offset.y;
 
-    if (s_pitch > 89.0f)
-        s_pitch = 89.0f;
-    if (s_pitch < -89.0f)
-        s_pitch = -89.0f;
+        if (s_pitch > 89.0f)
+            s_pitch = 89.0f;
+        if (s_pitch < -89.0f)
+            s_pitch = -89.0f;
 
-    glm::vec3 direction;
-    direction.x = cos(glm::radians(-s_yaw)) * cos(glm::radians(s_pitch));
-    direction.y = sin(glm::radians(s_pitch));
-    direction.z = sin(glm::radians(-s_yaw)) * cos(glm::radians(s_pitch));
-    s_camera_dir = glm::normalize(direction);
+        glm::vec3 direction;
+        direction.x = cos(glm::radians(-s_yaw)) * cos(glm::radians(s_pitch));
+        direction.y = sin(glm::radians(s_pitch));
+        direction.z = sin(glm::radians(-s_yaw)) * cos(glm::radians(s_pitch));
+        s_camera_dir = glm::normalize(direction);
+    }
 }
 
 void RealWorldApplication::initWindow() {
@@ -1604,6 +1612,10 @@ void RealWorldApplication::drawFrame() {
         }
         ImGui::EndMainMenuBar();
     }
+
+    s_camera_paused =
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow) ||
+        ImGui::IsWindowFocused(ImGuiHoveredFlags_AnyWindow);
 
     if (s_select_load_gltf) {
         ImGui::OpenPopup("select gltf object");
