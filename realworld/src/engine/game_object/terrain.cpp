@@ -1544,7 +1544,7 @@ namespace engine {
 namespace game_object {
 namespace {
 struct TileVertex {
-    TileVertexInfo vertex_info;
+    glsl::TileVertexInfo vertex_info;
 
     static std::vector<renderer::VertexInputBindingDescription> getBindingDescription() {
         std::vector<renderer::VertexInputBindingDescription> binding_description(1);
@@ -1633,7 +1633,7 @@ static std::shared_ptr<renderer::PipelineLayout> createTileCreatorPipelineLayout
     renderer::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
     push_const_range.offset = 0;
-    push_const_range.size = sizeof(TileParams);
+    push_const_range.size = sizeof(glsl::TileParams);
 
     return device->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
@@ -1663,7 +1663,7 @@ static std::shared_ptr<renderer::PipelineLayout> createTilePipelineLayout(
         SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
     push_const_range.offset = 0;
-    push_const_range.size = sizeof(TileParams);
+    push_const_range.size = sizeof(glsl::TileParams);
 
     return device->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
@@ -1831,7 +1831,7 @@ void TileObject::createMeshBuffers() {
     corners[3] = glm::vec3(max_.x, 0.0f, min_.y);
 
     auto height_map_size = (segment_count_.x + 1) * (segment_count_.y + 1);
-    auto vertex_buffer_size = sizeof(TileVertexInfo) * height_map_size;
+    auto vertex_buffer_size = sizeof(glsl::TileVertexInfo) * height_map_size;
     device_info_.device->createBuffer(
         vertex_buffer_size,
         SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
@@ -1887,7 +1887,7 @@ void TileObject::generateTileBuffers(
         index_buffer_.buffer->getSize());
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, tile_creator_pipeline_);
-    TileParams tile_params = {};
+    glsl::TileParams tile_params = {};
     tile_params.min = min_;
     tile_params.max = max_;
     tile_params.segment_count = segment_count_;
@@ -1930,7 +1930,7 @@ void TileObject::draw(
     cmd_buf->bindVertexBuffers(0, buffers, offsets);
     cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, renderer::IndexType::UINT32);
 
-    TileParams tile_params = {};
+    glsl::TileParams tile_params = {};
     tile_params.min = min_;
     tile_params.max = max_;
     tile_params.segment_count = segment_count_;

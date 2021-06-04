@@ -24,8 +24,7 @@ void main()
     float x = tile_params.min.x + factor_x * (tile_params.max.x - tile_params.min.x);
     float y = tile_params.min.y + factor_y * (tile_params.max.y - tile_params.min.y);
 
-    vec2 m_d = terrainMap(vec2(x, y));
-    
-    vertex_info[index].height = uvec2(packHalf2x16(m_d), 0);
+    vec2 height_info = terrainMap(vec2(x, y));
+    vertex_info[index].height = uvec2(packHalf2x16(height_info), 0);
   }
 }

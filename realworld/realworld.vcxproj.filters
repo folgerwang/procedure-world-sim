@@ -235,5 +235,11 @@
     <None Include="src\shaders\update_gltf_indirect_draw.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
+    <None Include="src\shaders\update_game_objects.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\update_instance_buffer.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

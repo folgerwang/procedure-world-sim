@@ -74,6 +74,8 @@ private:
         std::shared_ptr<er::Framebuffer> frame_buffer,
         std::shared_ptr<er::DescriptorSet> frame_desc_set,
         const glm::uvec2& screen_size);
+    void drawMenu(
+        std::shared_ptr<er::CommandBuffer> command_buffer);
     void drawFrame();
     void cleanup();
     void cleanupSwapChain();
@@ -159,7 +161,7 @@ private:
     std::vector<std::shared_ptr<ego::TileObject>> tile_objects_;
     std::vector<std::string> gltf_file_names_;
 
-    ViewParams view_params_{};
+    glsl::ViewParams view_params_{};
 
     // menu
     bool show_gltf_selection_ = false;

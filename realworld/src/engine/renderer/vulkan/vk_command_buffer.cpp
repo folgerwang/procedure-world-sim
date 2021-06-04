@@ -62,12 +62,17 @@ void VulkanCommandBuffer::copyBufferToImage(
     vkCmdCopyBufferToImage(cmd_buf_, vk_src_buf->get(), vk_dst_image->get(), helper::toVkImageLayout(layout), static_cast<uint32_t>(vk_copy_regions.size()), vk_copy_regions.data());
 }
 
-void VulkanCommandBuffer::bindPipeline(PipelineBindPoint bind, std::shared_ptr< Pipeline> pipeline) {
+void VulkanCommandBuffer::bindPipeline(
+    PipelineBindPoint bind,
+    std::shared_ptr< Pipeline> pipeline) {
     auto vk_pipeline = RENDER_TYPE_CAST(Pipeline, pipeline);
     vkCmdBindPipeline(cmd_buf_, helper::toVkPipelineBindPoint(bind), vk_pipeline->get());
 }
 
-void VulkanCommandBuffer::bindVertexBuffers(uint32_t first_bind, const std::vector<std::shared_ptr<Buffer>>& vertex_buffers, std::vector<uint64_t> offsets) {
+void VulkanCommandBuffer::bindVertexBuffers(
+    uint32_t first_bind,
+    const std::vector<std::shared_ptr<Buffer>>& vertex_buffers,
+    std::vector<uint64_t> offsets) {
     std::vector<VkDeviceSize> vk_offsets(vertex_buffers.size());
     std::vector<VkBuffer> vk_vertex_buffers(vertex_buffers.size());
 
@@ -79,7 +84,10 @@ void VulkanCommandBuffer::bindVertexBuffers(uint32_t first_bind, const std::vect
     vkCmdBindVertexBuffers(cmd_buf_, first_bind, static_cast<uint32_t>(vk_vertex_buffers.size()), vk_vertex_buffers.data(), vk_offsets.data());
 }
 
-void VulkanCommandBuffer::bindIndexBuffer(std::shared_ptr<Buffer> index_buffer, uint64_t offset, IndexType index_type) {
+void VulkanCommandBuffer::bindIndexBuffer(
+    std::shared_ptr<Buffer> index_buffer,
+    uint64_t offset,
+    IndexType index_type) {
     auto vk_index_buffer = RENDER_TYPE_CAST(Buffer, index_buffer);
     vkCmdBindIndexBuffer(cmd_buf_, vk_index_buffer->get(), offset, helper::toVkIndexType(index_type));
 }

@@ -66,6 +66,7 @@ static bool s_exit_game = false;
 static bool s_game_paused = false;
 static bool s_camera_paused = false;
 static bool s_mouse_init = false;
+static bool s_mouse_right_button_pressed = false;
 static glm::vec2 s_last_mouse_pos;
 static float s_yaw = 0.0f;
 static float s_pitch = 0.0f;
@@ -113,7 +114,7 @@ void mouseInputCallback(GLFWwindow* window, double xpos, double ypos)
     float sensitivity = 0.2f;
     mouse_offset *= sensitivity;
 
-    if (!s_camera_paused) {
+    if (!s_camera_paused && s_mouse_right_button_pressed) {
         s_yaw += mouse_offset.x;
         s_pitch += mouse_offset.y;
 
@@ -130,6 +131,18 @@ void mouseInputCallback(GLFWwindow* window, double xpos, double ypos)
     }
 }
 
+void mouseButtonCallback(GLFWwindow* window, int button, int action, int) {
+    if (button == GLFW_MOUSE_BUTTON_RIGHT)
+    {
+        if (action == GLFW_PRESS) {
+            s_mouse_right_button_pressed = true;
+        }
+        else if (action == GLFW_RELEASE) {
+            s_mouse_right_button_pressed = false;
+        }
+    }
+}
+
 void RealWorldApplication::initWindow() {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -139,6 +152,7 @@ void RealWorldApplication::initWindow() {
     glfwSetKeyCallback(window_, keyInputCallback);
     glfwSetInputMode(window_, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
     glfwSetCursorPosCallback(window_, mouseInputCallback);
+    glfwSetMouseButtonCallback(window_, mouseButtonCallback);
 }
 
 void RealWorldApplication::createDepthResources(const glm::uvec2& display_size)
@@ -239,7 +253,7 @@ void RealWorldApplication::initVulkan() {
 
     auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
     ego::TileObject::initStaticMembers(device_, render_pass_, graphic_pipeline_info_, desc_set_layouts, swap_chain_info_.extent);
-    ego::GltfObject::initStaticMembers(device_, desc_set_layouts);
+    ego::GltfObject::initStaticMembers(device_, descriptor_pool_, desc_set_layouts);
     
     for (int y = -1; y <= 1; y++) {
         for (int x = -1; x <= 1; x++) {
@@ -482,7 +496,7 @@ void RealWorldApplication::createGraphicPipelineLayout()
         er::PushConstantRange push_const_range{};
         push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
         push_const_range.offset = 0;
-        push_const_range.size = sizeof(SunSkyParams);
+        push_const_range.size = sizeof(glsl::SunSkyParams);
 
         er::DescriptorSetLayoutList desc_set_layouts;
         desc_set_layouts.reserve(2);
@@ -498,7 +512,7 @@ void RealWorldApplication::createCubemapPipelineLayout()
     er::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
     push_const_range.offset = 0;
-    push_const_range.size = sizeof(IblParams);
+    push_const_range.size = sizeof(glsl::IblParams);
 
     er::DescriptorSetLayoutList desc_set_layouts(1);
     desc_set_layouts[0] = ibl_desc_set_layout_;
@@ -511,7 +525,7 @@ void RealWorldApplication::createCubeSkyboxPipelineLayout()
     er::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
     push_const_range.offset = 0;
-    push_const_range.size = sizeof(SunSkyParams);
+    push_const_range.size = sizeof(glsl::SunSkyParams);
 
     er::DescriptorSetLayoutList desc_set_layouts(1);
     desc_set_layouts[0] = ibl_desc_set_layout_;
@@ -524,7 +538,7 @@ void RealWorldApplication::createCubemapComputePipelineLayout()
     er::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
     push_const_range.offset = 0;
-    push_const_range.size = sizeof(IblComputeParams);
+    push_const_range.size = sizeof(glsl::IblComputeParams);
 
     er::DescriptorSetLayoutList desc_set_layouts(1);
     desc_set_layouts[0] = ibl_comp_desc_set_layout_;
@@ -956,7 +970,7 @@ void RealWorldApplication::createDescriptorSetLayout() {
 }
 
 void RealWorldApplication::createUniformBuffers() {
-    uint64_t buffer_size = sizeof(ViewParams);
+    uint64_t buffer_size = sizeof(glsl::ViewParams);
     const auto& images_count = swap_chain_info_.images.size();
 
     view_const_buffers_.resize(images_count);
@@ -1084,7 +1098,7 @@ void RealWorldApplication::createDescriptorSets() {
                 view_const_buffers_[i].buffer,
                 desc_sets_[i],
                 er::DescriptorType::UNIFORM_BUFFER,
-                sizeof(ViewParams));
+                sizeof(glsl::ViewParams));
 
             device_->updateDescriptorSets({}, buffer_descs);
         }
@@ -1286,7 +1300,7 @@ void RealWorldApplication::drawScene(
         std::vector<er::ClearValue> envmap_clear_values(6, clear_values[0]);
         cmd_buf->beginRenderPass(cubemap_render_pass_, rt_envmap_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
 
-        IblParams ibl_params = {};
+        glsl::IblParams ibl_params = {};
         cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
 
         cmd_buf->bindDescriptorSets(er::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { envmap_tex_desc_set_ });
@@ -1318,7 +1332,7 @@ void RealWorldApplication::drawScene(
         std::vector<er::ClearValue> envmap_clear_values(6, clear_values[0]);
         cmd_buf->beginRenderPass(cubemap_render_pass_, rt_envmap_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
 
-        SunSkyParams sun_sky_params = {};
+        glsl::SunSkyParams sun_sky_params = {};
         sun_sky_params.sun_pos = glm::vec3(cos(s_sun_angle), sin(s_sun_angle), -0.3f);
 
         cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), cube_skybox_pipeline_layout_, &sun_sky_params, sizeof(sun_sky_params));
@@ -1353,7 +1367,7 @@ void RealWorldApplication::drawScene(
         std::vector<er::ClearValue> envmap_clear_values(6, clear_values[0]);
         cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_diffuse_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
 
-        IblParams ibl_params = {};
+        glsl::IblParams ibl_params = {};
         ibl_params.roughness = 1.0f;
         ibl_params.currentMipLevel = 0;
         ibl_params.width = kCubemapSize;
@@ -1391,7 +1405,7 @@ void RealWorldApplication::drawScene(
             std::vector<er::ClearValue> envmap_clear_values(6, clear_values[0]);
             cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_specular_tex_.framebuffers[i_mip], glm::uvec2(width, height), envmap_clear_values);
 
-            IblParams ibl_params = {};
+            glsl::IblParams ibl_params = {};
             ibl_params.roughness = static_cast<float>(i_mip) / static_cast<float>(num_mips - 1);
             ibl_params.currentMipLevel = i_mip;
             ibl_params.width = kCubemapSize;
@@ -1430,7 +1444,7 @@ void RealWorldApplication::drawScene(
             std::vector<er::ClearValue> envmap_clear_values(6, clear_values[0]);
             cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_sheen_tex_.framebuffers[i_mip], glm::uvec2(width, height), envmap_clear_values);
 
-            IblParams ibl_params = {};
+            glsl::IblParams ibl_params = {};
             ibl_params.roughness = static_cast<float>(i_mip) / static_cast<float>(num_mips - 1);
             ibl_params.currentMipLevel = i_mip;
             ibl_params.width = kCubemapSize;
@@ -1461,7 +1475,7 @@ void RealWorldApplication::drawScene(
                 0, 1, 0, 6);
 
             cmd_buf->bindPipeline(er::PipelineBindPoint::COMPUTE, blur_comp_pipeline_);
-            IblComputeParams ibl_comp_params = {};
+            glsl::IblComputeParams ibl_comp_params = {};
             ibl_comp_params.size = glm::ivec4(kCubemapSize, kCubemapSize, 0, 0);
             cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, COMPUTE_BIT), ibl_comp_pipeline_layout_, &ibl_comp_params, sizeof(ibl_comp_params));
 
@@ -1492,6 +1506,10 @@ void RealWorldApplication::drawScene(
         for (auto& tile_obj : tile_objects_) {
             tile_obj->generateTileBuffers(cmd_buf);
         }
+    }
+
+    {
+        ego::GltfObject::updateGameObjectsBuffer(cmd_buf);
     }
 
     {
@@ -1527,7 +1545,7 @@ void RealWorldApplication::drawScene(
             cmd_buf->bindVertexBuffers(0, buffers, offsets);
             cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, er::IndexType::UINT16);
 
-            SunSkyParams sun_sky_params = {};
+            glsl::SunSkyParams sun_sky_params = {};
             sun_sky_params.sun_pos = glm::vec3(cos(s_sun_angle), sin(s_sun_angle), -0.3f);
             s_sun_angle += 0.0001f;
             cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), skybox_pipeline_layout_, &sun_sky_params, sizeof(sun_sky_params));
@@ -1542,50 +1560,8 @@ void RealWorldApplication::drawScene(
     }
 }
 
-void RealWorldApplication::drawFrame() {
-    std::vector<std::shared_ptr<er::Fence>> in_flight_fences(1);
-    in_flight_fences[0] = in_flight_fences_[current_frame_];
-    device_->waitForFences(in_flight_fences);
-
-    uint32_t image_index = 0;
-    bool need_recreate_swap_chain = er::Helper::acquireNextImage(
-        device_, 
-        swap_chain_info_.swap_chain, 
-        image_available_semaphores_[current_frame_],
-        image_index);
-
-    if (need_recreate_swap_chain) {
-        recreateSwapChain();
-        return;
-    }
-
-    if (images_in_flight_[image_index] != VK_NULL_HANDLE) {
-        std::vector<std::shared_ptr<er::Fence>> images_in_flight(1);
-        images_in_flight[0] = images_in_flight_[image_index];
-        device_->waitForFences(images_in_flight);
-    }
-    // Mark the image as now being in use by this frame
-    images_in_flight_[image_index] = in_flight_fences_[current_frame_];
-
-    updateViewConstBuffer(image_index);
-
-    device_->resetFences(in_flight_fences);
-
-    auto command_buffer = command_buffers_[image_index];
-    std::vector<std::shared_ptr<er::CommandBuffer>>command_buffers(1, command_buffer);
-
-    static auto start_time = std::chrono::high_resolution_clock::now();
-    auto current_time = std::chrono::high_resolution_clock::now();
-    float time = std::chrono::duration<float, std::chrono::seconds::period>(current_time - start_time).count();
-
-    command_buffer->reset(0);
-    command_buffer->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
-
-    drawScene(command_buffer,
-        swap_chain_info_.framebuffers[image_index],
-        desc_sets_[image_index],
-        swap_chain_info_.extent);
-
+void RealWorldApplication::drawMenu(
+    std::shared_ptr<er::CommandBuffer> command_buffer) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
@@ -1659,6 +1635,53 @@ void RealWorldApplication::drawFrame() {
     }
 
     er::Helper::addImGuiToCommandBuffer(command_buffer);
+}
+
+void RealWorldApplication::drawFrame() {
+    std::vector<std::shared_ptr<er::Fence>> in_flight_fences(1);
+    in_flight_fences[0] = in_flight_fences_[current_frame_];
+    device_->waitForFences(in_flight_fences);
+
+    uint32_t image_index = 0;
+    bool need_recreate_swap_chain = er::Helper::acquireNextImage(
+        device_,
+        swap_chain_info_.swap_chain,
+        image_available_semaphores_[current_frame_],
+        image_index);
+
+    if (need_recreate_swap_chain) {
+        recreateSwapChain();
+        return;
+    }
+
+    if (images_in_flight_[image_index] != VK_NULL_HANDLE) {
+        std::vector<std::shared_ptr<er::Fence>> images_in_flight(1);
+        images_in_flight[0] = images_in_flight_[image_index];
+        device_->waitForFences(images_in_flight);
+    }
+    // Mark the image as now being in use by this frame
+    images_in_flight_[image_index] = in_flight_fences_[current_frame_];
+
+    updateViewConstBuffer(image_index);
+
+    device_->resetFences(in_flight_fences);
+
+    auto command_buffer = command_buffers_[image_index];
+    std::vector<std::shared_ptr<er::CommandBuffer>>command_buffers(1, command_buffer);
+
+    static auto start_time = std::chrono::high_resolution_clock::now();
+    auto current_time = std::chrono::high_resolution_clock::now();
+    float time = std::chrono::duration<float, std::chrono::seconds::period>(current_time - start_time).count();
+
+    command_buffer->reset(0);
+    command_buffer->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
+
+    drawScene(command_buffer,
+        swap_chain_info_.framebuffers[image_index],
+        desc_sets_[image_index],
+        swap_chain_info_.extent);
+
+    drawMenu(command_buffer);
 
     command_buffer->endCommandBuffer();
 

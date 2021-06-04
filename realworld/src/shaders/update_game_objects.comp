@@ -1,0 +1,95 @@
+#version 460
+#extension GL_ARB_separate_shader_objects : enable
+#include "global_definition.glsl.h"
+#include "tile_common.glsl.h"
+
+layout(push_constant) uniform TileUniformBufferObject {
+  GameObjectsUpdateParams params;
+};
+
+layout(std430, set = 0, binding = GAME_OBJECTS_BUFFER_INDEX) buffer GameObjectsBuffer {
+  GameObjectInfo items[];
+};
+
+struct UnpackedGameObjectInfo {
+    vec3        position;
+    float       scale;
+    vec3        up_vector;
+    vec3        facing_dir;
+    vec3        moving_dir;
+    float       mass;
+    float       speed;
+    float       awareness_radius;
+    float       awareness_coneangle;
+    uint        status;
+};
+
+vec3 unpackNormalizedVector(uint packed_vector, uint sign) {
+    vec3 result;
+    result.xy = unpackHalf2x16(packed_vector);
+    result.z = sqrt(max(1.0f - dot(result.xy, result.xy), 0.0f)) * (sign > 0 ? -1.0f : 1.0f);
+    return result;
+}
+
+UnpackedGameObjectInfo unpackGameObjectInfo(GameObjectInfo info) {
+    UnpackedGameObjectInfo ugo_info;
+    ugo_info.position = info.position;
+    ugo_info.speed = unpackHalf2x16(info.packed_speed_signs).x;
+    ugo_info.up_vector = unpackNormalizedVector(info.packed_up_vector, info.packed_speed_signs & 0x00010000);
+    ugo_info.facing_dir = unpackNormalizedVector(info.packed_facing_dir, info.packed_speed_signs & 0x00020000);
+    ugo_info.moving_dir = unpackNormalizedVector(info.packed_moving_dir, info.packed_speed_signs & 0x00040000);
+    vec2 mass_scale = unpackHalf2x16(info.packed_mass_scale);
+    ugo_info.mass = mass_scale.x;
+    ugo_info.scale = mass_scale.y;
+    vec2 radius_angle = unpackHalf2x16(info.packed_radius_angle);
+    ugo_info.awareness_radius = radius_angle.x;
+    ugo_info.awareness_coneangle = radius_angle.y;
+    ugo_info.status = info.status;
+
+    return ugo_info;
+}
+
+GameObjectInfo packGameObjectInfo(UnpackedGameObjectInfo info) {
+    GameObjectInfo go_info;
+    go_info.packed_mass_scale = packHalf2x16(vec2(info.mass, info.scale));
+    go_info.packed_radius_angle = packHalf2x16(vec2(info.awareness_radius, info.awareness_coneangle));
+    go_info.position = info.position;
+    go_info.packed_up_vector = packHalf2x16(info.up_vector.xy);
+    go_info.packed_facing_dir = packHalf2x16(info.facing_dir.xy);
+    go_info.packed_moving_dir = packHalf2x16(info.moving_dir.xy);
+    go_info.packed_speed_signs = packHalf2x16(vec2(info.speed, 0));
+    go_info.packed_speed_signs |= (info.up_vector.z < 0.0f ? 0x00010000 : 0x00);
+    go_info.packed_speed_signs |= (info.facing_dir.z < 0.0f ? 0x00020000 : 0x00);
+    go_info.packed_speed_signs |= (info.moving_dir.z < 0.0f ? 0x00040000 : 0x00);
+    go_info.status = info.status;
+
+    return go_info;
+}
+
+layout(local_size_x = 64, local_size_y = 1) in;
+void main()
+{
+  // get index in global work group i.e x,y position
+  uint obj_idx = gl_GlobalInvocationID.x;
+  if (obj_idx < params.num_objects) {
+    float nx = hash1(obj_idx);
+    float ny = hash1(obj_idx + 0.3);
+    float nz = hash1(obj_idx + 0.6);
+
+    UnpackedGameObjectInfo info = unpackGameObjectInfo(items[obj_idx]);
+    info.speed = 0;
+    vec2 height_info = terrainMap(info.position.xz);
+    vec3 contact_normal = terrainNormal(info.position.xz);
+
+
+    info.position = vec3((nx * 2.0f - 1.0f) * 200.0f, 0, (nz * 2.0f - 1.0f) * 200.0f);//vec4(info.position, info.scale)
+    info.position.y = height_info.x + 0.1f;
+
+    info.up_vector = vec3(0, 1, 0);
+    info.facing_dir = vec3(0, 0, 1);
+    info.scale = 1.0f;
+
+
+    items[obj_idx] = packGameObjectInfo(info);
+  }
+}

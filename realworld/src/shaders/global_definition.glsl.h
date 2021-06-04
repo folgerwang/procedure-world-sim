@@ -65,6 +65,8 @@
 #define INDEX_BUFFER_INDEX          1
 
 #define INDIRECT_DRAW_BUFFER_INDEX  0
+#define GAME_OBJECTS_BUFFER_INDEX   0
+#define INSTANCE_BUFFER_INDEX       1
 
 #define FEATURE_MATERIAL_SPECULARGLOSSINESS     0x00000001
 #define FEATURE_MATERIAL_METALLICROUGHNESS      0x00000002
@@ -98,7 +100,7 @@
 #ifdef __cplusplus
 #include "glm/glm.hpp"
 using namespace glm;
-#else
+namespace glsl {
 #endif
 
 // KHR_lights_punctual extension.
@@ -163,6 +165,15 @@ struct SunSkyParams {
     float   pad;
 };
 
+struct GameObjectsUpdateParams {
+    uint num_objects;
+    float delta_t;
+};
+
+struct InstanceBufferUpdateParams {
+    uint num_instances;
+};
+
 struct PbrMaterialParams {
     vec4    base_color_factor;
 
@@ -216,3 +227,29 @@ struct PbrMaterialParams {
     mat3    normal_uv_transform;
     mat3    metallic_roughness_uv_transform;
 };
+
+struct InstanceDataInfo {
+    vec4              mat_rot_0;
+    vec4              mat_rot_1;
+    vec4              mat_rot_2;
+    vec4              mat_pos_scale;
+};
+
+struct GameObjectInfo {
+    // could be updated from frame to frame.
+    vec3              position;                 // 32-bits float position.
+    uint              packed_up_vector;         // 2 half x, y for up vector.
+
+    uint              packed_facing_dir;        // 2 half x, y for facing vector.
+    uint              packed_moving_dir;        // 2 half x, y for moving vector.
+    uint              packed_speed_signs;        // 2 half mass and speed.
+    uint              status;                   // 32 bits for status, todo. 
+
+    uint              packed_mass_scale;        // 2 half mass and scale.
+    uint              packed_radius_angle;      // 2 half awareness radius and angle.
+    uint              pad[2];
+};
+
+#ifdef __cplusplus
+} //namespace glsl
+#endif

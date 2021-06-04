@@ -5,13 +5,6 @@
 namespace engine {
 namespace game_object {
 
-struct InstanceDataInfo {
-    glm::vec3              mat_rot_0;
-    glm::vec3              mat_rot_1;
-    glm::vec3              mat_rot_2;
-    glm::vec4              mat_pos_scale;
-};
-
 struct MaterialInfo {
     int32_t                base_color_idx_ = -1;
     int32_t                normal_idx_ = -1;
@@ -100,13 +93,19 @@ public:
 };
 
 class GltfObject {
+    enum {
+        kMaxNumObjects = 10240
+    };
     const renderer::DeviceInfo& device_info_;
     std::shared_ptr<ObjectData> object_;
     glm::mat4                   location_;
     renderer::BufferInfo        instance_buffer_;
     std::shared_ptr<renderer::DescriptorSet> buffer_desc_set_;
+    std::shared_ptr<renderer::DescriptorSet> update_instance_buffer_desc_set_;
 
     // static members.
+    static uint32_t max_alloc_game_objects_in_buffer;
+
     static std::shared_ptr<renderer::DescriptorSetLayout> material_desc_set_layout_;
     static std::shared_ptr<renderer::PipelineLayout> gltf_pipeline_layout_;
     static std::unordered_map<size_t, std::shared_ptr<renderer::Pipeline>> gltf_pipeline_list_;
@@ -114,6 +113,15 @@ class GltfObject {
     static std::shared_ptr<renderer::DescriptorSetLayout> gltf_indirect_draw_desc_set_layout_;
     static std::shared_ptr<renderer::PipelineLayout> gltf_indirect_draw_pipeline_layout_;
     static std::shared_ptr<renderer::Pipeline> gltf_indirect_draw_pipeline_;
+    static std::shared_ptr<renderer::DescriptorSet> update_game_objects_buffer_desc_set_;
+    static std::shared_ptr<renderer::DescriptorSetLayout> update_game_objects_desc_set_layout_;
+    static std::shared_ptr<renderer::PipelineLayout> update_game_objects_pipeline_layout_;
+    static std::shared_ptr<renderer::Pipeline> update_game_objects_pipeline_;
+    static std::shared_ptr<renderer::DescriptorSetLayout> update_instance_buffer_desc_set_layout_;
+    static std::shared_ptr<renderer::PipelineLayout> update_instance_buffer_pipeline_layout_;
+    static std::shared_ptr<renderer::Pipeline> update_instance_buffer_pipeline_;
+    static std::shared_ptr<renderer::BufferInfo> game_objects_buffer_;
+
 
 public:
     GltfObject() = delete;
@@ -131,6 +139,9 @@ public:
     void generateDescriptorSet(
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool);
 
+    void updateInstanceBuffer(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
+
     void updateIndirectDrawBuffer(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
 
@@ -138,6 +149,11 @@ public:
         const renderer::DescriptorSetList& desc_set_list);
 
     static void initStaticMembers(
+        const std::shared_ptr<renderer::Device>& device,
+        const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+        const renderer::DescriptorSetLayoutList& global_desc_set_layouts);
+
+    static void createStaticMembers(
         const std::shared_ptr<renderer::Device>& device,
         const renderer::DescriptorSetLayoutList& global_desc_set_layouts);
 
@@ -156,6 +172,9 @@ public:
 
     static void destoryStaticMembers(
         const std::shared_ptr<renderer::Device>& device);
+
+    static void updateGameObjectsBuffer(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
 };
 
 } // namespace game_object
