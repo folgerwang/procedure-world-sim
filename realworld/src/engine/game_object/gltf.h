@@ -180,7 +180,8 @@ public:
         const std::shared_ptr<renderer::Device>& device);
 
     static void updateGameObjectsBuffer(
-        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+        int update_frame_count);
 };
 
 } // namespace game_object

@@ -1413,7 +1413,8 @@ void GltfObject::destoryStaticMembers(
 }
 
 void GltfObject::updateGameObjectsBuffer(
-    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    int update_frame_count) {
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, update_game_objects_pipeline_);
 
@@ -1425,6 +1426,7 @@ void GltfObject::updateGameObjectsBuffer(
     glsl::GameObjectsUpdateParams params;
     params.num_objects = max_alloc_game_objects_in_buffer;
     params.delta_t = static_cast<float>(elapsed_seconds.count());
+    params.frame_count = update_frame_count;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         update_game_objects_pipeline_layout_,

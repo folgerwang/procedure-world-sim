@@ -168,6 +168,7 @@ struct SunSkyParams {
 struct GameObjectsUpdateParams {
     uint num_objects;
     float delta_t;
+    int frame_count;
 };
 
 struct InstanceBufferUpdateParams {

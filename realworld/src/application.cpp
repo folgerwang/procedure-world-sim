@@ -23,6 +23,7 @@ namespace {
 constexpr int kWindowSizeX = 1920;
 constexpr int kWindowSizeY = 1080;
 static float s_sun_angle = 0.0f;
+static float s_update_frame_count = -1;
 
 struct SkyBoxVertex {
     glm::vec3 pos;
@@ -1509,7 +1510,10 @@ void RealWorldApplication::drawScene(
     }
 
     {
-        ego::GltfObject::updateGameObjectsBuffer(cmd_buf);
+        ego::GltfObject::updateGameObjectsBuffer(cmd_buf, s_update_frame_count);
+        if (s_update_frame_count >= 0) {
+            s_update_frame_count++;
+        }
     }
 
     {
@@ -1624,6 +1628,9 @@ void RealWorldApplication::drawMenu(
                 gltf_objects_.push_back(gltf_obj);
                 s_listbox_item_current = -1;
                 s_select_load_gltf = false;
+                if (s_update_frame_count < 0) {
+                    s_update_frame_count = 0;
+                }
             }
 
             ImGui::EndPopup();
