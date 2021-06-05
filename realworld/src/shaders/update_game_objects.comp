@@ -92,7 +92,7 @@ void main()
     vec3 contact_normal = terrainNormal(info.position.xz);
 
     if (info.status == 0) {
-        info.position = vec3((nx * 2.0f - 1.0f) * 300.0f, 200.0f, (nz * 2.0f - 1.0f) * 300.0f);
+        info.position = vec3((nx * 2.0f - 1.0f) * 400.0f, 200.0f, (nz * 2.0f - 1.0f) * 400.0f);
         info.moving_dir = vec3(0, 0, 0);
         info.mass = 0.1f;
         info.awareness_radius = 20.0f;
@@ -110,16 +110,19 @@ void main()
         if (height_to_fall > moving_on_height) {
             float fall_delta_t = getDeltaTByDistance(info.moving_dir.y, height_to_fall);
             info.moving_dir.y += kGravityConst * fall_delta_t;
+            info.position.xz += info.moving_dir.xz * fall_delta_t;
             info.position.y = ground_height;
 
             // bouncing.
             float delta_t = max(params.delta_t - fall_delta_t, 0.0f);
-            info.moving_dir.y = -0.5f * info.moving_dir.y;
+            float moving_len = length(info.moving_dir);
+            info.moving_dir = reflect(normalize(info.moving_dir), contact_normal) * moving_len * 0.8f;
             moving_on_height = getMovingOnHeight(info.moving_dir.y, delta_t);
         }
 
         if (delta_t > 0) {
             info.position += vec3(0, moving_on_height, 0);
+            info.position.xz += info.moving_dir.xz * delta_t;
             info.moving_dir.y += kGravityConst * delta_t;
         }
     }

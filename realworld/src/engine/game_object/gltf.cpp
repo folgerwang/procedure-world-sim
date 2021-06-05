@@ -1036,7 +1036,7 @@ static std::shared_ptr<renderer::Pipeline> createInstanceBufferPipeline(
 namespace game_object {
 
 // static member definition.
-uint32_t GltfObject::max_alloc_game_objects_in_buffer = 1024;
+uint32_t GltfObject::max_alloc_game_objects_in_buffer = 4096;
 
 std::shared_ptr<renderer::DescriptorSetLayout> GltfObject::material_desc_set_layout_;
 std::shared_ptr<renderer::PipelineLayout> GltfObject::gltf_pipeline_layout_;
@@ -1124,7 +1124,7 @@ GltfObject::GltfObject(
                     primitive);
         }
 
-        constexpr uint32_t kMaxNumInstance = 1024;
+        constexpr uint32_t kMaxNumInstance = 4096;
         device_info.device->createBuffer(
             kMaxNumInstance * sizeof(glsl::InstanceDataInfo),
             SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT),
@@ -1457,7 +1457,7 @@ void GltfObject::updateInstanceBuffer(
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, update_instance_buffer_pipeline_);
 
     glsl::InstanceBufferUpdateParams params;
-    params.num_instances = 1024;
+    params.num_instances = 4096;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         update_instance_buffer_pipeline_layout_,
