@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <stdexcept>
 #include <memory>
+#include <chrono>
 
 #include "engine/engine_helper.h"
 #include "engine/game_object/gltf.h"
@@ -1123,57 +1124,56 @@ GltfObject::GltfObject(
                     primitive);
         }
 
+        constexpr uint32_t kMaxNumInstance = 1024;
+        device_info.device->createBuffer(
+            kMaxNumInstance * sizeof(glsl::InstanceDataInfo),
+            SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT),
+            SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+            object_->instance_buffer_.buffer,
+            object_->instance_buffer_.memory);
+
+        object_->generateSharedDescriptorSet(
+            device_info.device,
+            descriptor_pool,
+            gltf_indirect_draw_desc_set_layout_,
+            update_instance_buffer_desc_set_layout_,
+            game_objects_buffer_);
+
         object_list_[file_name] = object_;
     }
     else {
         object_ = result->second;
     }
-
-/*    std::vector<glsl::InstanceDataInfo> instance_data(1024);
-    for (int i = 0; i < 1024; i++) {
-        instance_data[i].mat_rot_0 = location[0];
-        instance_data[i].mat_rot_1 = location[1];
-        instance_data[i].mat_rot_2 = location[2];
-        instance_data[i].mat_pos_scale = location[3] +
-            glm::vec4(((rand() % 65536) / 32768.0f - 1.0f) * 200.0f, ((rand() % 65536) / 32768.0f - 1.0f) * 5.0f + 100.0f,
-                ((rand() % 65536) / 32768.0f - 1.0f) * 200.0f, 0);
-    }*/
-
-    constexpr uint32_t kMaxNumInstance = 1024;
-    device_info.device->createBuffer(
-        kMaxNumInstance * sizeof(glsl::InstanceDataInfo),
-        SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT),
-        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
-        instance_buffer_.buffer,
-        instance_buffer_.memory);
-
-    generateDescriptorSet(descriptor_pool);
 }
 
-void GltfObject::generateDescriptorSet(
-    const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool) {
+void ObjectData::generateSharedDescriptorSet(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+    const std::shared_ptr<renderer::DescriptorSetLayout>& gltf_indirect_draw_desc_set_layout,
+    const std::shared_ptr<renderer::DescriptorSetLayout>& update_instance_buffer_desc_set_layout,
+    const std::shared_ptr<renderer::BufferInfo>& game_objects_buffer) {
 
     // create indirect draw buffer set.
-    buffer_desc_set_ = device_info_.device->createDescriptorSets(
-        descriptor_pool, gltf_indirect_draw_desc_set_layout_, 1)[0];
+    indirect_draw_cmd_buffer_desc_set_ = device->createDescriptorSets(
+        descriptor_pool, gltf_indirect_draw_desc_set_layout, 1)[0];
 
     // create a global ibl texture descriptor set.
     auto buffer_descs = addGltfIndirectDrawBuffers(
-        buffer_desc_set_,
-        object_->indirect_draw_cmd_);
-    device_info_.device->updateDescriptorSets({}, buffer_descs);
+        indirect_draw_cmd_buffer_desc_set_,
+        indirect_draw_cmd_);
+    device->updateDescriptorSets({}, buffer_descs);
 
     // update instance buffer set.
-    update_instance_buffer_desc_set_ = device_info_.device->createDescriptorSets(
-        descriptor_pool, update_instance_buffer_desc_set_layout_, 1)[0];
+    update_instance_buffer_desc_set_ = device->createDescriptorSets(
+        descriptor_pool, update_instance_buffer_desc_set_layout, 1)[0];
 
     // create a global ibl texture descriptor set.
-    assert(game_objects_buffer_);
+    assert(game_objects_buffer);
     buffer_descs = addUpdateInstanceBuffers(
         update_instance_buffer_desc_set_,
-        *game_objects_buffer_,
+        *game_objects_buffer,
         instance_buffer_);
-    device_info_.device->updateDescriptorSets({}, buffer_descs);
+    device->updateDescriptorSets({}, buffer_descs);
 }
 
 void GltfObject::initStaticMembers(
@@ -1374,6 +1374,13 @@ void GltfObject::generateDescriptorSet(
             object.second,
             texture_sampler,
             thin_film_lut_tex);
+
+        object.second->generateSharedDescriptorSet(
+            device,
+            descriptor_pool,
+            gltf_indirect_draw_desc_set_layout_,
+            update_instance_buffer_desc_set_layout_,
+            game_objects_buffer_);;
     }
 
     // game objects buffer update set.
@@ -1410,9 +1417,14 @@ void GltfObject::updateGameObjectsBuffer(
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, update_game_objects_pipeline_);
 
+    static std::chrono::time_point s_last_time = std::chrono::steady_clock::now();
+    auto cur_time = std::chrono::steady_clock::now();
+    std::chrono::duration<double> elapsed_seconds = cur_time - s_last_time;
+    s_last_time = cur_time;
+
     glsl::GameObjectsUpdateParams params;
     params.num_objects = max_alloc_game_objects_in_buffer;
-    params.delta_t = 0.0f;
+    params.delta_t = static_cast<float>(elapsed_seconds.count());
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         update_game_objects_pipeline_layout_,
@@ -1437,10 +1449,10 @@ void GltfObject::updateInstanceBuffer(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
 
     cmd_buf->addBufferBarrier(
-        instance_buffer_.buffer,
+        object_->instance_buffer_.buffer,
         { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
         { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
-        instance_buffer_.buffer->getSize());
+        object_->instance_buffer_.buffer->getSize());
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, update_instance_buffer_pipeline_);
 
@@ -1455,15 +1467,15 @@ void GltfObject::updateInstanceBuffer(
     cmd_buf->bindDescriptorSets(
         renderer::PipelineBindPoint::COMPUTE,
         update_instance_buffer_pipeline_layout_,
-        { update_instance_buffer_desc_set_ });
+        { object_->update_instance_buffer_desc_set_ });
 
     cmd_buf->dispatch((params.num_instances + 63) / 64, 1);
 
     cmd_buf->addBufferBarrier(
-        instance_buffer_.buffer,
+        object_->instance_buffer_.buffer,
         { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
         { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
-        instance_buffer_.buffer->getSize());
+        object_->instance_buffer_.buffer->getSize());
 }
 
 void GltfObject::updateIndirectDrawBuffer(
@@ -1486,7 +1498,7 @@ void GltfObject::updateIndirectDrawBuffer(
     cmd_buf->bindDescriptorSets(
         renderer::PipelineBindPoint::COMPUTE,
         gltf_indirect_draw_pipeline_layout_,
-        { buffer_desc_set_ });
+        { object_->indirect_draw_cmd_buffer_desc_set_ });
 
     cmd_buf->dispatch((object_->num_prims_ + 63) / 64, 1);
 
@@ -1511,7 +1523,7 @@ void GltfObject::draw(
 
     std::vector<std::shared_ptr<renderer::Buffer>> buffers(1);
     std::vector<uint64_t> offsets(1);
-    buffers[0] = instance_buffer_.buffer;
+    buffers[0] = object_->instance_buffer_.buffer;
     offsets[0] = 0;
     cmd_buf->bindVertexBuffers(VINPUT_INSTANCE_BINDING_START, buffers, offsets);
 

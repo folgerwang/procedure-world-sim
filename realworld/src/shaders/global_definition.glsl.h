@@ -241,8 +241,8 @@ struct GameObjectInfo {
     uint              packed_up_vector;         // 2 half x, y for up vector.
 
     uint              packed_facing_dir;        // 2 half x, y for facing vector.
-    uint              packed_moving_dir;        // 2 half x, y for moving vector.
-    uint              packed_speed_signs;        // 2 half mass and speed.
+    uint              packed_moving_dir_xy;     // 2 half x, y for moving vector.
+    uint              packed_moving_dir_z_signs;// 2 half z and signs.
     uint              status;                   // 32 bits for status, todo. 
 
     uint              packed_mass_scale;        // 2 half mass and scale.

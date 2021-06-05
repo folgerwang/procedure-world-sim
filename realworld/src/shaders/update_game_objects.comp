@@ -11,6 +11,8 @@ layout(std430, set = 0, binding = GAME_OBJECTS_BUFFER_INDEX) buffer GameObjectsB
   GameObjectInfo items[];
 };
 
+const float kGravityConst = -9.8f;
+
 struct UnpackedGameObjectInfo {
     vec3        position;
     float       scale;
@@ -18,7 +20,6 @@ struct UnpackedGameObjectInfo {
     vec3        facing_dir;
     vec3        moving_dir;
     float       mass;
-    float       speed;
     float       awareness_radius;
     float       awareness_coneangle;
     uint        status;
@@ -34,10 +35,10 @@ vec3 unpackNormalizedVector(uint packed_vector, uint sign) {
 UnpackedGameObjectInfo unpackGameObjectInfo(GameObjectInfo info) {
     UnpackedGameObjectInfo ugo_info;
     ugo_info.position = info.position;
-    ugo_info.speed = unpackHalf2x16(info.packed_speed_signs).x;
-    ugo_info.up_vector = unpackNormalizedVector(info.packed_up_vector, info.packed_speed_signs & 0x00010000);
-    ugo_info.facing_dir = unpackNormalizedVector(info.packed_facing_dir, info.packed_speed_signs & 0x00020000);
-    ugo_info.moving_dir = unpackNormalizedVector(info.packed_moving_dir, info.packed_speed_signs & 0x00040000);
+    ugo_info.up_vector = unpackNormalizedVector(info.packed_up_vector, info.packed_moving_dir_z_signs & 0x00010000);
+    ugo_info.facing_dir = unpackNormalizedVector(info.packed_facing_dir, info.packed_moving_dir_z_signs & 0x00020000);
+    ugo_info.moving_dir.xy = unpackHalf2x16(info.packed_moving_dir_xy);
+    ugo_info.moving_dir.z = unpackHalf2x16(info.packed_moving_dir_z_signs).x;
     vec2 mass_scale = unpackHalf2x16(info.packed_mass_scale);
     ugo_info.mass = mass_scale.x;
     ugo_info.scale = mass_scale.y;
@@ -56,14 +57,24 @@ GameObjectInfo packGameObjectInfo(UnpackedGameObjectInfo info) {
     go_info.position = info.position;
     go_info.packed_up_vector = packHalf2x16(info.up_vector.xy);
     go_info.packed_facing_dir = packHalf2x16(info.facing_dir.xy);
-    go_info.packed_moving_dir = packHalf2x16(info.moving_dir.xy);
-    go_info.packed_speed_signs = packHalf2x16(vec2(info.speed, 0));
-    go_info.packed_speed_signs |= (info.up_vector.z < 0.0f ? 0x00010000 : 0x00);
-    go_info.packed_speed_signs |= (info.facing_dir.z < 0.0f ? 0x00020000 : 0x00);
-    go_info.packed_speed_signs |= (info.moving_dir.z < 0.0f ? 0x00040000 : 0x00);
+    go_info.packed_moving_dir_xy = packHalf2x16(info.moving_dir.xy);
+    go_info.packed_moving_dir_z_signs = packHalf2x16(vec2(info.moving_dir.z, 0));
+    go_info.packed_moving_dir_z_signs |= (info.up_vector.z < 0.0f ? 0x00010000 : 0x00);
+    go_info.packed_moving_dir_z_signs |= (info.facing_dir.z < 0.0f ? 0x00020000 : 0x00);
     go_info.status = info.status;
 
     return go_info;
+}
+
+float getMovingOnHeight(float v0, float delta_t) {
+    return (v0 + 0.5f * kGravityConst * delta_t) * delta_t;
+}
+
+float getDeltaTByDistance(float v0, float h) {
+    float B = v0 / kGravityConst;
+    float C = -2.0f * h / kGravityConst;
+
+    return -B + sqrt(max(B * B - C, 0.0f));
 }
 
 layout(local_size_x = 64, local_size_y = 1) in;
@@ -77,18 +88,41 @@ void main()
     float nz = hash1(obj_idx + 0.6);
 
     UnpackedGameObjectInfo info = unpackGameObjectInfo(items[obj_idx]);
-    info.speed = 0;
     vec2 height_info = terrainMap(info.position.xz);
     vec3 contact_normal = terrainNormal(info.position.xz);
 
+    if (info.status == 0) {
+        info.position = vec3((nx * 2.0f - 1.0f) * 300.0f, 200.0f, (nz * 2.0f - 1.0f) * 300.0f);
+        info.moving_dir = vec3(0, 0, 0);
+        info.mass = 0.1f;
+        info.awareness_radius = 20.0f;
+        info.awareness_coneangle = 30.0f;
+        info.up_vector = vec3(0, 1, 0);
+        info.facing_dir = vec3(0, 0, 1);
+        info.scale = 1.0f;
+        info.status |= 0x00000001;
+    }
+    else {
+        float moving_on_height = getMovingOnHeight(info.moving_dir.y, params.delta_t);
+        float ground_height = height_info.x + 0.05f;
+        float height_to_fall = ground_height - info.position.y;
+        float delta_t = params.delta_t;
+        if (height_to_fall > moving_on_height) {
+            float fall_delta_t = getDeltaTByDistance(info.moving_dir.y, height_to_fall);
+            info.moving_dir.y += kGravityConst * fall_delta_t;
+            info.position.y = ground_height;
 
-    info.position = vec3((nx * 2.0f - 1.0f) * 200.0f, 0, (nz * 2.0f - 1.0f) * 200.0f);//vec4(info.position, info.scale)
-    info.position.y = height_info.x + 0.1f;
+            // bouncing.
+            float delta_t = max(params.delta_t - fall_delta_t, 0.0f);
+            info.moving_dir.y = -0.8f * info.moving_dir.y;
+            moving_on_height = getMovingOnHeight(info.moving_dir.y, delta_t);
+        }
 
-    info.up_vector = vec3(0, 1, 0);
-    info.facing_dir = vec3(0, 0, 1);
-    info.scale = 1.0f;
-
+        if (delta_t > 0) {
+            info.position += vec3(0, moving_on_height, 0);
+            info.moving_dir.y += kGravityConst * delta_t;
+        }
+    }
 
     items[obj_idx] = packGameObjectInfo(info);
   }

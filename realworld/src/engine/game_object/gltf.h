@@ -85,10 +85,22 @@ struct ObjectData {
 
     uint32_t                    num_prims_ = 0;
     renderer::BufferInfo        indirect_draw_cmd_;
+    renderer::BufferInfo        instance_buffer_;
+
+    std::shared_ptr<renderer::DescriptorSet> indirect_draw_cmd_buffer_desc_set_;
+    std::shared_ptr<renderer::DescriptorSet> update_instance_buffer_desc_set_;
 
 public:
     ObjectData(const std::shared_ptr<renderer::Device>& device) : device_(device) {}
     ~ObjectData() { destroy(); }
+
+    void generateSharedDescriptorSet(
+        const std::shared_ptr<renderer::Device>& device,
+        const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+        const std::shared_ptr<renderer::DescriptorSetLayout>& gltf_indirect_draw_desc_set_layout,
+        const std::shared_ptr<renderer::DescriptorSetLayout>& update_instance_buffer_desc_set_layout,
+        const std::shared_ptr<renderer::BufferInfo>& game_objects_buffer);
+
     void destroy();
 };
 
@@ -99,9 +111,6 @@ class GltfObject {
     const renderer::DeviceInfo& device_info_;
     std::shared_ptr<ObjectData> object_;
     glm::mat4                   location_;
-    renderer::BufferInfo        instance_buffer_;
-    std::shared_ptr<renderer::DescriptorSet> buffer_desc_set_;
-    std::shared_ptr<renderer::DescriptorSet> update_instance_buffer_desc_set_;
 
     // static members.
     static uint32_t max_alloc_game_objects_in_buffer;
@@ -135,9 +144,6 @@ public:
         const std::string& file_name,
         const glm::uvec2& display_size,
         glm::mat4 location = glm::mat4(1.0f));
-
-    void generateDescriptorSet(
-        const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool);
 
     void updateInstanceBuffer(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);

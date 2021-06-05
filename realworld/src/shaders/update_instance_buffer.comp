@@ -43,12 +43,12 @@ layout(local_size_x = 64, local_size_y = 1) in;
 void main()
 {
   // get index in global work group i.e x,y position
-  uint instance_idx = gl_GlobalInvocationID.x;
-  if (instance_idx < params.num_instances) {
-    UnpackedGameObjectInfo info = unpackGameObjectInfo(items[instance_idx]);
-    insts[instance_idx].mat_rot_0 = vec4(cross(info.up_vector, info.facing_dir) * info.scale, 0.0f);
-    insts[instance_idx].mat_rot_1 = vec4(info.up_vector * info.scale, 0.0f);
-    insts[instance_idx].mat_rot_2 = vec4(info.facing_dir * info.scale, 0.0f);
-    insts[instance_idx].mat_pos_scale = vec4(info.position * info.scale, 1.0f);
+  uint inst_idx = gl_GlobalInvocationID.x;
+  if (inst_idx < params.num_instances) {
+    UnpackedGameObjectInfo info = unpackGameObjectInfo(items[inst_idx]);
+    insts[inst_idx].mat_rot_0 = vec4(cross(info.up_vector, info.facing_dir) * info.scale, 0.0f);
+    insts[inst_idx].mat_rot_1 = vec4(info.up_vector * info.scale, 0.0f);
+    insts[inst_idx].mat_rot_2 = vec4(info.facing_dir * info.scale, 0.0f);
+    insts[inst_idx].mat_pos_scale = vec4(info.position, 1.0f);
   }
 }
