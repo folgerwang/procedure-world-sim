@@ -97,6 +97,11 @@
 
 #define INDIRECT_DRAW_BUF_OFS   4
 
+#define SOIL_LAYER_MAX_THICKNESS    5.0f
+#define GRASS_LAYER_MAX_THICKNESS   1.5f
+#define SNOW_LAYER_MAX_THICKNESS    2.0f
+#define WATER_LAYER_MAX_THICKNESS   10.0f
+
 #ifdef __cplusplus
 #include "glm/glm.hpp"
 using namespace glm;
@@ -156,8 +161,13 @@ struct TileParams {
     ivec2   pad;
 };
 
+// 1 float base layer, rock.
+// 1 half soil layer.
+// 1 half grass layer.
+// 1 half snow layer.
+// 1 half water layer.
 struct TileVertexInfo {
-    uvec2 height;
+    uvec2   packed_land_layers;
 };
 
 struct SunSkyParams {

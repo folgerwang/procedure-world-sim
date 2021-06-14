@@ -21,6 +21,7 @@ class TileObject {
     static std::shared_ptr<renderer::Pipeline> tile_creator_pipeline_;
     static std::shared_ptr<renderer::PipelineLayout> tile_pipeline_layout_;
     static std::shared_ptr<renderer::Pipeline> tile_pipeline_;
+    static std::shared_ptr<renderer::Pipeline> tile_water_pipeline_;
 
 public:
     TileObject() = delete;
@@ -70,7 +71,8 @@ public:
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool);
 
     void draw(const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
-        const renderer::DescriptorSetList& desc_set_list);
+        const renderer::DescriptorSetList& desc_set_list,
+        bool is_base_pass);
 };
 
 } // namespace game_object

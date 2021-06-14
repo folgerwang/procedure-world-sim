@@ -498,7 +498,7 @@ glm::vec4 getMainImage(const glm::vec2& frag_coord, const glm::ivec2& screen_siz
 //==========================================================================================
 // general utilities
 //==========================================================================================
-#define ZERO (min(iFrame,0))
+#define kZero (min(iFrame,0))
 
 float sdEllipsoidY(const glm::vec3& p, const glm::vec2& r)
 {
@@ -1555,11 +1555,15 @@ struct TileVertex {
     }
 
     static std::vector<renderer::VertexInputAttributeDescription> getAttributeDescriptions() {
-        std::vector<renderer::VertexInputAttributeDescription> attribute_descriptions(1);
+        std::vector<renderer::VertexInputAttributeDescription> attribute_descriptions(2);
         attribute_descriptions[0].binding = 0;
         attribute_descriptions[0].location = 0;
-        attribute_descriptions[0].format = renderer::Format::R16G16_SFLOAT;
-        attribute_descriptions[0].offset = offsetof(TileVertex, vertex_info);
+        attribute_descriptions[0].format = renderer::Format::R32_SFLOAT;
+        attribute_descriptions[0].offset = 0;
+        attribute_descriptions[1].binding = 0;
+        attribute_descriptions[1].location = 1;
+        attribute_descriptions[1].format = renderer::Format::R8G8B8A8_UNORM;
+        attribute_descriptions[1].offset = 4;
         return attribute_descriptions;
     }
 };
@@ -1607,6 +1611,19 @@ static renderer::ShaderModuleList getTileShaderModules(
     renderer::ShaderModuleList shader_modules(2);
     auto vert_shader_code = engine::helper::readFile("lib/shaders/tile_vert.spv", vert_code_size);
     auto frag_shader_code = engine::helper::readFile("lib/shaders/tile_frag.spv", frag_code_size);
+
+    shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
+    shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
+
+    return shader_modules;
+}
+
+static renderer::ShaderModuleList getTileWaterShaderModules(
+    std::shared_ptr<renderer::Device> device) {
+    uint64_t vert_code_size, frag_code_size;
+    renderer::ShaderModuleList shader_modules(2);
+    auto vert_shader_code = engine::helper::readFile("lib/shaders/tile_water_vert.spv", vert_code_size);
+    auto frag_shader_code = engine::helper::readFile("lib/shaders/tile_water_frag.spv", frag_code_size);
 
     shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
     shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
@@ -1678,11 +1695,6 @@ static std::shared_ptr<renderer::Pipeline> createTilePipeline(
     input_assembly.topology = renderer::PrimitiveTopology::TRIANGLE_LIST;
     input_assembly.restart_enable = false;
 
-    auto color_blending = renderer::helper::fillPipelineColorBlendStateCreateInfo(
-        { renderer::helper::fillPipelineColorBlendAttachmentState() });
-
-    auto rasterizer = renderer::helper::fillPipelineRasterizationStateCreateInfo();
-
     auto shader_modules = getTileShaderModules(device);
     auto pipeline = device->createPipeline(
         render_pass,
@@ -1701,6 +1713,45 @@ static std::shared_ptr<renderer::Pipeline> createTilePipeline(
     return pipeline;
 }
 
+static std::shared_ptr<renderer::Pipeline> createTileWaterPipeline(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::RenderPass>& render_pass,
+    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout,
+    const renderer::GraphicPipelineInfo& graphic_pipeline_info,
+    const glm::uvec2& display_size) {
+    renderer::PipelineInputAssemblyStateCreateInfo input_assembly;
+    input_assembly.topology = renderer::PrimitiveTopology::TRIANGLE_LIST;
+    input_assembly.restart_enable = false;
+
+    auto color_blending = renderer::helper::fillPipelineColorBlendStateCreateInfo(
+        { renderer::helper::fillPipelineColorBlendAttachmentState(
+            SET_FLAG_BIT(ColorComponent, ALL_BITS),
+            true,
+            renderer::BlendFactor::SRC_ALPHA,
+            renderer::BlendFactor::ONE_MINUS_SRC_ALPHA,
+            renderer::BlendOp::ADD) });
+
+    renderer::GraphicPipelineInfo new_graphic_pipeline_info = graphic_pipeline_info;
+    new_graphic_pipeline_info.blend_state_info = std::make_shared<renderer::PipelineColorBlendStateCreateInfo>(color_blending);
+
+    auto shader_modules = getTileWaterShaderModules(device);
+    auto pipeline = device->createPipeline(
+        render_pass,
+        pipeline_layout,
+        TileVertex::getBindingDescription(),
+        TileVertex::getAttributeDescriptions(),
+        input_assembly,
+        new_graphic_pipeline_info,
+        shader_modules,
+        display_size);
+
+    for (auto& shader_module : shader_modules) {
+        device->destroyShaderModule(shader_module);
+    }
+
+    return pipeline;
+}
+
 } // namespace
 
 // static member definition.
@@ -1709,6 +1760,7 @@ std::shared_ptr<renderer::PipelineLayout> TileObject::tile_creator_pipeline_layo
 std::shared_ptr<renderer::Pipeline> TileObject::tile_creator_pipeline_;
 std::shared_ptr<renderer::PipelineLayout> TileObject::tile_pipeline_layout_;
 std::shared_ptr<renderer::Pipeline> TileObject::tile_pipeline_;
+std::shared_ptr<renderer::Pipeline> TileObject::tile_water_pipeline_;
 
 TileObject::TileObject(
     const renderer::DeviceInfo& device_info,
@@ -1769,6 +1821,17 @@ void TileObject::createStaticMembers(
                 graphic_pipeline_info,
                 display_size);
     }
+
+    if (tile_water_pipeline_ == nullptr) {
+        assert(tile_pipeline_layout_);
+        tile_water_pipeline_ =
+            createTileWaterPipeline(
+                device,
+                render_pass,
+                tile_pipeline_layout_,
+                graphic_pipeline_info,
+                display_size);
+    }
 }
 
 void TileObject::initStaticMembers(
@@ -1811,6 +1874,11 @@ void TileObject::recreateStaticMembers(
         tile_pipeline_ = nullptr;
     }
 
+    if (tile_water_pipeline_) {
+        device->destroyPipeline(tile_water_pipeline_);
+        tile_water_pipeline_ = nullptr;
+    }
+
     createStaticMembers(device, render_pass, graphic_pipeline_info, global_desc_set_layouts, display_size);
 }
 
@@ -1821,6 +1889,7 @@ void TileObject::destoryStaticMembers(
     device->destroyPipeline(tile_creator_pipeline_);
     device->destroyPipelineLayout(tile_pipeline_layout_);
     device->destroyPipeline(tile_pipeline_);
+    device->destroyPipeline(tile_water_pipeline_);
 }
 
 void TileObject::createMeshBuffers() {
@@ -1919,13 +1988,14 @@ void TileObject::generateTileBuffers(
 
 void TileObject::draw(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
-    const renderer::DescriptorSetList& desc_set_list) {
+    const renderer::DescriptorSetList& desc_set_list,
+    bool is_base_pass) {
     std::vector<std::shared_ptr<renderer::Buffer>> buffers(1);
     std::vector<uint64_t> offsets(1);
     buffers[0] = vertex_buffer_.buffer;
     offsets[0] = 0;
 
-    cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, tile_pipeline_);
+    cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, is_base_pass ? tile_pipeline_ : tile_water_pipeline_);
 
     cmd_buf->bindVertexBuffers(0, buffers, offsets);
     cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, renderer::IndexType::UINT32);

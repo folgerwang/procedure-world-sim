@@ -122,6 +122,12 @@ void main() {
     #endif
 
     vec3 color = f_diffuse + f_specular;
+    float alpha = 1.0f;
 
-    outColor = vec4(linearTosRGB(color), 1.0);
+    #if defined(WATER_PASS)
+    color = vec3(0.4f, 0.4f, 0.9f);
+    alpha = 0.5;
+    #endif
+
+    outColor = vec4(linearTosRGB(color), alpha);
 }

@@ -84,9 +84,6 @@
     <ClCompile Include="src\third_party\imgui\backends\imgui_impl_vulkan.cpp">
       <Filter>third_party\imgui</Filter>
     </ClCompile>
-    <ClCompile Include="src\engine\renderer\renderer_helper.cpp">
-      <Filter>Source Files\engine\renderer</Filter>
-    </ClCompile>
     <ClCompile Include="src\engine\engine_helper.cpp">
       <Filter>Source Files\engine</Filter>
     </ClCompile>
@@ -95,6 +92,9 @@
     </ClCompile>
     <ClCompile Include="src\engine\game_object\gltf.cpp">
       <Filter>Source Files\engine\game_object</Filter>
+    </ClCompile>
+    <ClCompile Include="src\engine\renderer\renderer_helper.cpp">
+      <Filter>Source Files\engine\renderer</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

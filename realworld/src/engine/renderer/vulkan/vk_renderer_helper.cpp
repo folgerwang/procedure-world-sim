@@ -20,12 +20,12 @@ const std::vector<const char*> validation_layers = {
 
 const std::vector<const char*> device_extensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-/*    VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+    VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
     VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
     VK_KHR_MAINTENANCE3_EXTENSION_NAME,
     VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
     VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
-    VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME*/
+    VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME
 };
 
 #ifdef NDEBUG
@@ -1528,7 +1528,7 @@ std::shared_ptr<renderer::PhysicalDevice> pickPhysicalDevice(
     for (const auto& device : physical_devices) {
         if (isDeviceSuitable(device, surface)) {
             picked_device = device;
-            break;
+            //break;
         }
     }
 

@@ -23,7 +23,7 @@ namespace {
 constexpr int kWindowSizeX = 1920;
 constexpr int kWindowSizeY = 1080;
 static float s_sun_angle = 0.0f;
-static float s_update_frame_count = -1;
+static int s_update_frame_count = -1;
 
 struct SkyBoxVertex {
     glm::vec3 pos;
@@ -1534,7 +1534,10 @@ void RealWorldApplication::drawScene(
         // render terrain.
         {
             for (auto& tile_obj : tile_objects_) {
-                tile_obj->draw(cmd_buf, desc_sets);
+                tile_obj->draw(cmd_buf, desc_sets, true);
+            }
+            for (auto& tile_obj : tile_objects_) {
+                tile_obj->draw(cmd_buf, desc_sets, false);
             }
         }
 
