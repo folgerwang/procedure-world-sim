@@ -55,6 +55,10 @@
 #define EMISSIVE_TEX_INDEX          (BASE_COLOR_TEX_INDEX + 3)
 #define OCCLUSION_TEX_INDEX         (BASE_COLOR_TEX_INDEX + 4)
 
+// TILE_TEXTURE_PARAMS_SET
+#define SRC_COLOR_TEX_INDEX         0
+#define SRC_DEPTH_TEX_INDEX         1
+
 // IBL texure index
 #define PANORAMA_TEX_INDEX          0
 #define ENVMAP_TEX_INDEX            0

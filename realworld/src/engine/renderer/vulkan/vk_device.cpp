@@ -448,14 +448,15 @@ std::shared_ptr<Pipeline> VulkanDevice::createPipeline(
 }
 
 std::shared_ptr<Swapchain> VulkanDevice::createSwapchain(
-    std::shared_ptr<Surface> surface,
-    uint32_t image_count,
-    Format format,
-    glm::uvec2 buf_size,
-    ColorSpace color_space,
-    SurfaceTransformFlagBits transform,
-    PresentMode present_mode,
-    std::vector<uint32_t> queue_index) {
+    const std::shared_ptr<Surface>& surface,
+    const uint32_t& image_count,
+    const Format& format,
+    const glm::uvec2& buf_size,
+    const ColorSpace& color_space,
+    const SurfaceTransformFlagBits& transform,
+    const PresentMode& present_mode,
+    const ImageUsageFlags& usage,
+    const std::vector<uint32_t>& queue_index) {
 
     auto vk_surface = RENDER_TYPE_CAST(Surface, surface);
 
@@ -467,7 +468,7 @@ std::shared_ptr<Swapchain> VulkanDevice::createSwapchain(
     create_info.imageColorSpace = helper::toVkColorSpace(color_space);
     create_info.imageExtent = { buf_size.x, buf_size.y };
     create_info.imageArrayLayers = 1;
-    create_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; //VK_IMAGE_USAGE_TRANSFER_DST_BIT
+    create_info.imageUsage = helper::toVkImageUsageFlags(usage);
 
     create_info.imageSharingMode = queue_index.size() > 1 ? VK_SHARING_MODE_CONCURRENT : VK_SHARING_MODE_EXCLUSIVE;
     create_info.queueFamilyIndexCount = static_cast<uint32_t>(queue_index.size() <= 1 ? 0 : queue_index.size());

@@ -8,7 +8,29 @@ class CommandBuffer {
 public:
     virtual void beginCommandBuffer(CommandBufferUsageFlags flags) = 0;
     virtual void endCommandBuffer() = 0;
-    virtual void copyBuffer(std::shared_ptr<Buffer> src_buf, std::shared_ptr<Buffer> dst_buf, std::vector<BufferCopyInfo> copy_regions) = 0;
+    virtual void copyBuffer(
+        std::shared_ptr<Buffer> src_buf,
+        std::shared_ptr<Buffer> dst_buf,
+        std::vector<BufferCopyInfo> copy_regions) = 0;
+    virtual void copyImage(
+        std::shared_ptr<Image> src_img,
+        ImageLayout src_img_layout,
+        std::shared_ptr<Image> dst_img,
+        ImageLayout dst_img_layout,
+        std::vector<ImageCopyInfo> copy_regions) = 0;
+    virtual void blitImage(
+        std::shared_ptr<Image> src_img,
+        ImageLayout src_img_layout,
+        std::shared_ptr<Image> dst_img,
+        ImageLayout dst_img_layout,
+        std::vector<ImageBlitInfo> copy_regions,
+        const Filter& filter) = 0;
+    virtual void resolveImage(
+        std::shared_ptr<Image> src_img,
+        ImageLayout src_img_layout,
+        std::shared_ptr<Image> dst_img,
+        ImageLayout dst_img_layout,
+        std::vector<ImageResolveInfo> copy_regions) = 0;
     virtual void copyBufferToImage(
         std::shared_ptr<Buffer> src_buf,
         std::shared_ptr<Image> dst_image,
@@ -58,6 +80,10 @@ public:
         const std::vector<ClearValue>& clear_values) = 0;
     virtual void endRenderPass() = 0;
     virtual void reset(uint32_t flags) = 0;
+    virtual void addBarriers(
+        const BarrierList& barrier_list,
+        PipelineStageFlags src_stage_flags,
+        PipelineStageFlags dst_stage_flags) = 0;
     virtual void addImageBarrier(
         const std::shared_ptr<Image>& image,
         const ImageResourceInfo& src_info,

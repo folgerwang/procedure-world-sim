@@ -14,7 +14,29 @@ public:
 
     virtual void beginCommandBuffer(CommandBufferUsageFlags flags) final;
     virtual void endCommandBuffer() final;
-    virtual void copyBuffer(std::shared_ptr<Buffer> src_buf, std::shared_ptr<Buffer> dst_buf, std::vector<BufferCopyInfo> copy_regions) final;
+    virtual void copyBuffer(
+        std::shared_ptr<Buffer> src_buf,
+        std::shared_ptr<Buffer> dst_buf,
+        std::vector<BufferCopyInfo> copy_regions) final;
+    virtual void copyImage(
+        std::shared_ptr<Image> src_img,
+        ImageLayout src_img_layout,
+        std::shared_ptr<Image> dst_img,
+        ImageLayout dst_img_layout,
+        std::vector<ImageCopyInfo> copy_regions) final;
+    virtual void blitImage(
+        std::shared_ptr<Image> src_img,
+        ImageLayout src_img_layout,
+        std::shared_ptr<Image> dst_img,
+        ImageLayout dst_img_layout,
+        std::vector<ImageBlitInfo> copy_regions,
+        const Filter& filter) final;
+    virtual void resolveImage(
+        std::shared_ptr<Image> src_img,
+        ImageLayout src_img_layout,
+        std::shared_ptr<Image> dst_img,
+        ImageLayout dst_img_layout,
+        std::vector<ImageResolveInfo> copy_regions) final;
     virtual void copyBufferToImage(
         std::shared_ptr<Buffer> src_buf,
         std::shared_ptr<Image> dst_image,
@@ -64,6 +86,10 @@ public:
         const std::vector<ClearValue>& clear_values) final;
     virtual void endRenderPass() final;
     virtual void reset(uint32_t flags) final;
+    virtual void addBarriers(
+        const BarrierList& barrier_list,
+        PipelineStageFlags src_stage_flags,
+        PipelineStageFlags dst_stage_flags) final;
     virtual void addImageBarrier(
         const std::shared_ptr<Image>& image,
         const ImageResourceInfo& src_info,

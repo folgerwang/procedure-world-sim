@@ -116,7 +116,7 @@ void main()
             // bouncing.
             float delta_t = max(params.delta_t - fall_delta_t, 0.0f);
             float moving_len = length(info.moving_dir);
-            info.moving_dir = reflect(normalize(info.moving_dir), contact_normal) * moving_len * 0.8f;
+            info.moving_dir = reflect(normalize(info.moving_dir), contact_normal) * moving_len * 0.6f;
             moving_on_height = getMovingOnHeight(info.moving_dir.y, delta_t);
         }
 

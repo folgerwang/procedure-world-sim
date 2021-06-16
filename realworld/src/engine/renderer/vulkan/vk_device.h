@@ -53,14 +53,15 @@ public:
         const std::shared_ptr<PipelineLayout>& pipeline_layout,
         const std::shared_ptr<renderer::ShaderModule>& shader_module) final;
     virtual std::shared_ptr<Swapchain> createSwapchain(
-        std::shared_ptr<Surface> surface,
-        uint32_t image_count,
-        Format format,
-        glm::uvec2 buf_size,
-        ColorSpace color_space,
-        SurfaceTransformFlagBits transform,
-        PresentMode present_mode,
-        std::vector<uint32_t> queue_index) final;
+        const std::shared_ptr<Surface>& surface,
+        const uint32_t& image_count,
+        const Format& format,
+        const glm::uvec2& buf_size,
+        const ColorSpace& color_space,
+        const SurfaceTransformFlagBits& transform,
+        const PresentMode& present_mode,
+        const ImageUsageFlags& usage,
+        const std::vector<uint32_t>& queue_index) final;
     virtual void updateBufferMemory(
         const std::shared_ptr<DeviceMemory>& memory,
         uint64_t size,

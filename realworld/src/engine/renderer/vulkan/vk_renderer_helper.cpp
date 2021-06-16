@@ -1159,6 +1159,114 @@ std::vector<VkVertexInputAttributeDescription> toVkVertexInputAttributeDescripti
     return result;
 }
 
+VkImageSubresourceLayers toVkImageSubresourceLayers(
+    const ImageSubresourceLayers& layers)
+{
+    VkImageSubresourceLayers vk_layers;
+    vk_layers.aspectMask = helper::toVkImageAspectFlags(layers.aspect_mask);
+    vk_layers.mipLevel = layers.mip_level;
+    vk_layers.baseArrayLayer = layers.base_array_layer;
+    vk_layers.layerCount = layers.layer_count;
+    return vk_layers;
+}
+
+VkBufferCopy toVkBufferCopy(const BufferCopyInfo& copy_info) {
+    VkBufferCopy vk_copy_info;
+    vk_copy_info.srcOffset = copy_info.src_offset;
+    vk_copy_info.dstOffset = copy_info.dst_offset;
+    vk_copy_info.size = copy_info.size;
+    return vk_copy_info;
+}
+
+VkImageCopy toVkImageCopy(const ImageCopyInfo& copy_info) {
+    VkImageCopy vk_copy_info;
+    vk_copy_info.srcSubresource = toVkImageSubresourceLayers(copy_info.src_subresource);
+    vk_copy_info.srcOffset = toVkOffset3D(copy_info.src_offset);
+    vk_copy_info.dstSubresource = toVkImageSubresourceLayers(copy_info.dst_subresource);
+    vk_copy_info.dstOffset = toVkOffset3D(copy_info.dst_offset);
+    vk_copy_info.extent = toVkExtent3D(copy_info.extent);
+    return vk_copy_info;
+}
+ 
+VkImageBlit toVkImageBlit(const ImageBlitInfo& blit_info) {
+    VkImageBlit vk_blit_info;
+    vk_blit_info.srcSubresource = toVkImageSubresourceLayers(blit_info.src_subresource);
+    vk_blit_info.srcOffsets[0] = toVkOffset3D(blit_info.src_offsets[0]);
+    vk_blit_info.srcOffsets[1] = toVkOffset3D(blit_info.src_offsets[1]);
+    vk_blit_info.dstSubresource = toVkImageSubresourceLayers(blit_info.dst_subresource);
+    vk_blit_info.dstOffsets[0] = toVkOffset3D(blit_info.dst_offsets[0]);
+    vk_blit_info.dstOffsets[1] = toVkOffset3D(blit_info.dst_offsets[1]);
+    return vk_blit_info;
+}
+
+VkImageResolve toVkImageResolve(const ImageResolveInfo& resolve_info) {
+    VkImageResolve vk_resolve_info;
+    vk_resolve_info.srcSubresource = toVkImageSubresourceLayers(resolve_info.src_subresource);
+    vk_resolve_info.srcOffset = toVkOffset3D(resolve_info.src_offset);
+    vk_resolve_info.dstSubresource = toVkImageSubresourceLayers(resolve_info.dst_subresource);
+    vk_resolve_info.dstOffset = toVkOffset3D(resolve_info.dst_offset);
+    vk_resolve_info.extent = toVkExtent3D(resolve_info.extent);
+    return vk_resolve_info;
+}
+
+VkBufferImageCopy toVkBufferImageCopy(const BufferImageCopyInfo& copy_info) {
+    VkBufferImageCopy vk_copy_info;
+    vk_copy_info.bufferOffset = copy_info.buffer_offset;
+    vk_copy_info.bufferRowLength = copy_info.buffer_row_length;
+    vk_copy_info.bufferImageHeight = copy_info.buffer_image_height;
+    vk_copy_info.imageSubresource = toVkImageSubresourceLayers(copy_info.image_subresource);
+    vk_copy_info.imageOffset = toVkOffset3D(copy_info.image_offset);
+    vk_copy_info.imageExtent = toVkExtent3D(copy_info.image_extent);
+    return vk_copy_info;
+}
+
+VkImageSubresourceRange toVkImageSubresourceRange(const ImageSubresourceRange& range) {
+    VkImageSubresourceRange vk_range;
+    vk_range.aspectMask = helper::toVkImageAspectFlags(range.aspect_mask);
+    vk_range.baseMipLevel = range.base_mip_level;
+    vk_range.levelCount = range.level_count;
+    vk_range.baseArrayLayer = range.base_array_layer;
+    vk_range.layerCount = range.layer_count;
+    return vk_range;
+}
+
+VkMemoryBarrier toVkMemoryBarrier(const MemoryBarrier& barrier) {
+    VkMemoryBarrier vk_barrier{};
+    vk_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    vk_barrier.srcAccessMask = helper::toVkAccessFlags(barrier.src_access_mask);
+    vk_barrier.dstAccessMask = helper::toVkAccessFlags(barrier.dst_access_mask);
+    return vk_barrier;
+}
+
+VkBufferMemoryBarrier toVkBufferMemoryBarrier(const BufferMemoryBarrier& barrier) {
+    VkBufferMemoryBarrier vk_barrier{};
+    vk_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    vk_barrier.srcAccessMask = helper::toVkAccessFlags(barrier.src_access_mask);
+    vk_barrier.dstAccessMask = helper::toVkAccessFlags(barrier.dst_access_mask);
+    vk_barrier.srcQueueFamilyIndex = barrier.src_queue_family_index;
+    vk_barrier.dstQueueFamilyIndex = barrier.dst_queue_family_index;
+    auto vk_buffer = RENDER_TYPE_CAST(Buffer, barrier.buffer);
+    vk_barrier.buffer = vk_buffer->get();
+    vk_barrier.offset = barrier.offset;
+    vk_barrier.size = barrier.size;
+    return vk_barrier;
+}
+
+VkImageMemoryBarrier toVkImageMemoryBarrier(const ImageMemoryBarrier& barrier) {
+    VkImageMemoryBarrier vk_barrier{};
+    vk_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    vk_barrier.oldLayout = helper::toVkImageLayout(barrier.old_layout);
+    vk_barrier.newLayout = helper::toVkImageLayout(barrier.new_layout);
+    vk_barrier.srcQueueFamilyIndex = barrier.src_queue_family_index;
+    vk_barrier.dstQueueFamilyIndex = barrier.dst_queue_family_index;
+    auto vk_image = RENDER_TYPE_CAST(Image, barrier.image);
+    vk_barrier.image = vk_image->get();
+    vk_barrier.subresourceRange = toVkImageSubresourceRange(barrier.subresource_range);
+    vk_barrier.srcAccessMask = helper::toVkAccessFlags(barrier.src_access_mask);
+    vk_barrier.dstAccessMask = helper::toVkAccessFlags(barrier.dst_access_mask);
+    return vk_barrier;
+}
+
 bool checkValidationLayerSupport() {
     uint32_t layer_count;
     vkEnumerateInstanceLayerProperties(&layer_count, nullptr);
@@ -1690,6 +1798,14 @@ renderer::Format findDepthFormat(
     );
 }
 
+bool isDepthFormat(const renderer::Format& format) {
+    return (format == renderer::Format::D32_SFLOAT_S8_UINT ||
+        format == renderer::Format::D32_SFLOAT ||
+        format == renderer::Format::D24_UNORM_S8_UINT ||
+        format == renderer::Format::D16_UNORM_S8_UINT ||
+        format == renderer::Format::D16_UNORM);
+}
+
 std::vector<VkPipelineShaderStageCreateInfo> getShaderStages(
     const std::vector<std::shared_ptr<renderer::ShaderModule>>& shader_modules) {
     std::vector<VkPipelineShaderStageCreateInfo> shader_stages(shader_modules.size());
@@ -1878,12 +1994,35 @@ void transitionImageLayout(
                 source_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
                 destination_stage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
             }
+            else if (old_layout == renderer::ImageLayout::UNDEFINED &&
+                new_layout == renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL) {
+                barrier.srcAccessMask = 0;
+                barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+                source_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+                destination_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            }
+            else if (old_layout == renderer::ImageLayout::UNDEFINED &&
+                new_layout == renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL) {
+                barrier.srcAccessMask = 0;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+                source_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+                destination_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+            }
+            else if (old_layout == renderer::ImageLayout::UNDEFINED &&
+                new_layout == renderer::ImageLayout::PRESENT_SRC_KHR) {
+                barrier.srcAccessMask = 0;
+                barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+                source_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+                destination_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            }
             else {
                 throw std::invalid_argument("unsupported layout transition!");
             }
 
-            // todo.
-            //cmd_buf->pipelineBarrier();
             auto vk_cmd_Buf = RENDER_TYPE_CAST(CommandBuffer, cmd_buf);
             assert(vk_cmd_Buf);
             vkCmdPipelineBarrier(
@@ -1961,21 +2100,19 @@ void generateMipmapLevels(
     auto vk_cmd_buf = RENDER_TYPE_CAST(CommandBuffer, cmd_buf);
     auto vk_image = RENDER_TYPE_CAST(Image, image);
 
-    renderer::ImageResourceInfo src_info = {
-        cur_image_layout,
-        SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
-        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT)};
-
-    renderer::ImageResourceInfo src_as_transfer = {
-        renderer::ImageLayout::TRANSFER_SRC_OPTIMAL,
-        SET_FLAG_BIT(Access, TRANSFER_READ_BIT),
-        SET_FLAG_BIT(PipelineStage, TRANSFER_BIT)};
-
-    cmd_buf->addImageBarrier(
-        image,
-        src_info,
-        src_as_transfer,
-        0, 1, 0, 6);
+    BarrierList barrier_list;
+    barrier_list.image_barriers.resize(1);
+    barrier_list.image_barriers[0].image = image;
+    barrier_list.image_barriers[0].old_layout = cur_image_layout;
+    barrier_list.image_barriers[0].new_layout = renderer::ImageLayout::TRANSFER_SRC_OPTIMAL;
+    barrier_list.image_barriers[0].src_access_mask = SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT);
+    barrier_list.image_barriers[0].dst_access_mask = SET_FLAG_BIT(Access, TRANSFER_READ_BIT);
+    barrier_list.image_barriers[0].subresource_range =
+        { SET_FLAG_BIT(ImageAspect, COLOR_BIT), 0, 1, 0, 6 };
+    cmd_buf->addBarriers(
+        barrier_list,
+        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT),
+        SET_FLAG_BIT(PipelineStage, TRANSFER_BIT));
 
     for (uint32_t i = 1; i < mip_count; i++)
     {
@@ -1997,21 +2134,16 @@ void generateMipmapLevels(
         imageBlit.dstOffsets[1].y = int32_t(height >> i);
         imageBlit.dstOffsets[1].z = 1;
 
-        renderer::ImageResourceInfo src_mip_info = { 
-            renderer::ImageLayout::UNDEFINED,
-            SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
-            SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT)};
-
-        renderer::ImageResourceInfo dst_transfer_info = {
-            renderer::ImageLayout::TRANSFER_DST_OPTIMAL,
-            SET_FLAG_BIT(Access, TRANSFER_WRITE_BIT),
-            SET_FLAG_BIT(PipelineStage, TRANSFER_BIT)};
-
-        cmd_buf->addImageBarrier(
-            image,
-            src_mip_info,
-            dst_transfer_info,
-            i, 1, 0, 6);
+        barrier_list.image_barriers[0].old_layout = renderer::ImageLayout::UNDEFINED;
+        barrier_list.image_barriers[0].new_layout = renderer::ImageLayout::TRANSFER_DST_OPTIMAL;
+        barrier_list.image_barriers[0].src_access_mask = SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT);
+        barrier_list.image_barriers[0].dst_access_mask = SET_FLAG_BIT(Access, TRANSFER_WRITE_BIT);
+        barrier_list.image_barriers[0].subresource_range =
+        { SET_FLAG_BIT(ImageAspect, COLOR_BIT), i, 1, 0, 6 };
+        cmd_buf->addBarriers(
+            barrier_list,
+            SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT),
+            SET_FLAG_BIT(PipelineStage, TRANSFER_BIT));
 
         vkCmdBlitImage(
             vk_cmd_buf->get(),
@@ -2023,19 +2155,30 @@ void generateMipmapLevels(
             &imageBlit,
             VK_FILTER_LINEAR);
 
-        cmd_buf->addImageBarrier(
-            image,
-            dst_transfer_info,
-            src_as_transfer,
-            i, 1, 0, 6);
+        barrier_list.image_barriers[0].old_layout = renderer::ImageLayout::TRANSFER_DST_OPTIMAL;
+        barrier_list.image_barriers[0].new_layout = renderer::ImageLayout::TRANSFER_SRC_OPTIMAL;
+        barrier_list.image_barriers[0].src_access_mask = SET_FLAG_BIT(Access, TRANSFER_WRITE_BIT);
+        barrier_list.image_barriers[0].dst_access_mask = SET_FLAG_BIT(Access, TRANSFER_READ_BIT);
+        barrier_list.image_barriers[0].subresource_range =
+        { SET_FLAG_BIT(ImageAspect, COLOR_BIT), i, 1, 0, 6 };
+        cmd_buf->addBarriers(
+            barrier_list,
+            SET_FLAG_BIT(PipelineStage, TRANSFER_BIT),
+            SET_FLAG_BIT(PipelineStage, TRANSFER_BIT));
     }
 
     {
-        cmd_buf->addImageBarrier(
-            image,
-            src_as_transfer,
-            renderer::Helper::getImageAsShaderSampler(),
-            0, mip_count, 0, 6);
+        barrier_list.image_barriers[0].old_layout = renderer::ImageLayout::TRANSFER_SRC_OPTIMAL;
+        barrier_list.image_barriers[0].new_layout = renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+        barrier_list.image_barriers[0].src_access_mask = SET_FLAG_BIT(Access, TRANSFER_READ_BIT);
+        barrier_list.image_barriers[0].dst_access_mask = SET_FLAG_BIT(Access, SHADER_READ_BIT);
+        barrier_list.image_barriers[0].subresource_range =
+        { SET_FLAG_BIT(ImageAspect, COLOR_BIT), 0, mip_count, 0, 6 };
+        cmd_buf->addBarriers(
+            barrier_list,
+            SET_FLAG_BIT(PipelineStage, TRANSFER_BIT),
+            SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) |
+            SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT));
     }
 }
 

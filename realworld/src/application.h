@@ -33,11 +33,17 @@ private:
     void createCubemapPipelineLayout();
     void createCubeSkyboxPipelineLayout();
     void createCubemapComputePipelineLayout();
-    void createRenderPass();
+    std::shared_ptr<er::RenderPass> createRenderPass(
+        er::Format format,
+        er::SampleCountFlagBits sample_count = er::SampleCountFlagBits::SC_1_BIT,
+        er::ImageLayout color_image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
     void createCubemapRenderPass();
     void createFramebuffers(const glm::uvec2& display_size);
     void createCommandPool();
     void createDepthResources(const glm::uvec2& display_size);
+    void createHdrColorBuffer(const glm::uvec2& display_size);
+    void createColorBufferCopy(const glm::uvec2& display_size);
+    void recreateRenderBuffer(const glm::uvec2& display_size);
     void createTextureImage(
         const std::string& file_name,
         er::Format format,
@@ -71,9 +77,10 @@ private:
     void mainLoop();
     void drawScene(
         std::shared_ptr<er::CommandBuffer> command_buffer,
-        std::shared_ptr<er::Framebuffer> frame_buffer,
-        std::shared_ptr<er::DescriptorSet> frame_desc_set,
-        const glm::uvec2& screen_size);
+        const er::SwapChainInfo& swap_chain_info,
+        const std::vector<std::shared_ptr<er::DescriptorSet>>& frame_desc_sets,
+        const glm::uvec2& screen_size,
+        uint32_t image_index);
     void drawMenu(
         std::shared_ptr<er::CommandBuffer> command_buffer);
     void drawFrame();
@@ -129,10 +136,17 @@ private:
     std::shared_ptr<er::Pipeline> charlie_pipeline_;
     std::shared_ptr<er::Pipeline> blur_comp_pipeline_;
     std::shared_ptr<er::CommandPool> command_pool_;
+
+    er::Format hdr_format_ = er::Format::B10G11R11_UFLOAT_PACK32;// E5B9G9R9_UFLOAT_PACK32; this format not supported here.
+    er::TextureInfo hdr_color_buffer_;
+    er::TextureInfo hdr_color_buffer_copy_;
+    er::TextureInfo depth_buffer_;
+    std::shared_ptr<er::Framebuffer> hdr_frame_buffer_;
+    std::shared_ptr<er::RenderPass> hdr_render_pass_;
+
     er::BufferInfo vertex_buffer_;
     er::BufferInfo index_buffer_;
     er::TextureInfo sample_tex_;
-    er::TextureInfo depth_buffer_;
     er::TextureInfo ggx_lut_tex_;
     er::TextureInfo brdf_lut_tex_;
     er::TextureInfo charlie_lut_tex_;

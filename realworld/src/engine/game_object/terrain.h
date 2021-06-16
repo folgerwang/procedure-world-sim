@@ -21,6 +21,8 @@ class TileObject {
     static std::shared_ptr<renderer::Pipeline> tile_creator_pipeline_;
     static std::shared_ptr<renderer::PipelineLayout> tile_pipeline_layout_;
     static std::shared_ptr<renderer::Pipeline> tile_pipeline_;
+    static std::shared_ptr<renderer::DescriptorSetLayout> tile_res_desc_set_layout_;
+    static std::shared_ptr<renderer::DescriptorSet> tile_res_desc_set_;
     static std::shared_ptr<renderer::Pipeline> tile_water_pipeline_;
 
 public:
@@ -61,6 +63,13 @@ public:
 
     static void destoryStaticMembers(
         const std::shared_ptr<renderer::Device>& device);
+
+    static void updateStaticDescriptorSet(
+        const std::shared_ptr<renderer::Device>& device,
+        const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+        const std::shared_ptr<renderer::Sampler>& texture_sampler,
+        const std::shared_ptr<renderer::ImageView>& src_texture,
+        const std::shared_ptr<renderer::ImageView>& src_depth);
 
     void generateTileBuffers(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);

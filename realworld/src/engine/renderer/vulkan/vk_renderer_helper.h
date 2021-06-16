@@ -64,6 +64,22 @@ std::vector<VkVertexInputBindingDescription> toVkVertexInputBindingDescription(
     const std::vector<renderer::VertexInputBindingDescription>& description);
 std::vector<VkVertexInputAttributeDescription> toVkVertexInputAttributeDescription(
     const std::vector<renderer::VertexInputAttributeDescription>& description);
+VkImageSubresourceLayers toVkImageSubresourceLayers(
+    const ImageSubresourceLayers& layers);
+inline VkOffset3D toVkOffset3D(const glm::ivec3& offset) {
+    return { offset.x, offset.y, offset.z };
+}
+inline VkExtent3D toVkExtent3D(const glm::uvec3& extent) {
+    return { extent.x, extent.y, extent.z };
+}
+VkBufferCopy toVkBufferCopy(const BufferCopyInfo& copy_info);
+VkImageCopy toVkImageCopy(const ImageCopyInfo& copy_info);
+VkImageBlit toVkImageBlit(const ImageBlitInfo& blit_info);
+VkImageResolve toVkImageResolve(const ImageResolveInfo& resolve_info);
+VkBufferImageCopy toVkBufferImageCopy(const BufferImageCopyInfo& copy_info);
+VkMemoryBarrier toVkMemoryBarrier(const MemoryBarrier& barrier);
+VkImageMemoryBarrier toVkImageMemoryBarrier(const ImageMemoryBarrier& barrier);
+VkBufferMemoryBarrier toVkBufferMemoryBarrier(const BufferMemoryBarrier& barrier);
 
 // convert from vulkan data type.
 renderer::Format fromVkFormat(VkFormat format);
@@ -108,6 +124,7 @@ renderer::PresentMode chooseSwapPresentMode(const std::vector<VkPresentModeKHR>&
 VkExtent2D chooseSwapExtent(GLFWwindow* window, const VkSurfaceCapabilitiesKHR& capabilities);
 
 renderer::Format findDepthFormat(const std::shared_ptr<renderer::Device>& device);
+bool isDepthFormat(const renderer::Format& format);
 
 std::vector<VkPipelineShaderStageCreateInfo> getShaderStages(
     const std::vector<std::shared_ptr<renderer::ShaderModule>>& shader_modules);

@@ -24,6 +24,10 @@ layout(location = 0) out vec4 outColor;
 
 vec3  kSunDir = vec3(-0.624695f, 0.468521f, -0.624695f);
 
+layout(set = PBR_MATERIAL_PARAMS_SET, binding = SRC_COLOR_TEX_INDEX) uniform sampler2D src_tex;
+layout(set = PBR_MATERIAL_PARAMS_SET, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
+
+
 struct MaterialInfo
 {
     float perceptualRoughness;      // roughness value, as authored by the model creator (input to shader)
@@ -125,7 +129,9 @@ void main() {
     float alpha = 1.0f;
 
     #if defined(WATER_PASS)
-    color = vec3(0.4f, 0.4f, 0.9f);
+    vec2 screen_uv = vec2(gl_FragCoord.x / 1920.0f, gl_FragCoord.y / 1080.0f);
+    color = texture(src_tex, screen_uv).xyz;
+
     alpha = 0.5;
     #endif
 

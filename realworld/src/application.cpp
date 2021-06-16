@@ -156,14 +156,42 @@ void RealWorldApplication::initWindow() {
     glfwSetMouseButtonCallback(window_, mouseButtonCallback);
 }
 
-void RealWorldApplication::createDepthResources(const glm::uvec2& display_size)
-{
+void RealWorldApplication::createDepthResources(const glm::uvec2& display_size) {
     auto depth_format = er::Helper::findDepthFormat(device_info_.device);
     er::Helper::createDepthResources(
         device_info_,
         depth_format,
         display_size,
         depth_buffer_);
+}
+
+void RealWorldApplication::createHdrColorBuffer(const glm::uvec2& display_size) {
+    er::Helper::create2DTextureImage(
+        device_info_,
+        hdr_format_,
+        display_size,
+        hdr_color_buffer_,
+        SET_FLAG_BIT(ImageUsage, COLOR_ATTACHMENT_BIT) |
+        SET_FLAG_BIT(ImageUsage, TRANSFER_SRC_BIT),
+        er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+}
+
+void RealWorldApplication::createColorBufferCopy(const glm::uvec2& display_size) {
+    er::Helper::create2DTextureImage(
+        device_info_,
+        hdr_format_,
+        display_size,
+        hdr_color_buffer_copy_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, TRANSFER_DST_BIT),
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+}
+
+void RealWorldApplication::recreateRenderBuffer(const glm::uvec2& display_size) {
+    createDepthResources(display_size);
+    createHdrColorBuffer(display_size);
+    createColorBufferCopy(display_size);
+    createFramebuffers(display_size);
 }
 
 void RealWorldApplication::initVulkan() {
@@ -213,8 +241,19 @@ void RealWorldApplication::initVulkan() {
     assert(graphics_queue_);
     device_info_.cmd_queue = graphics_queue_;
     present_queue_ = device_->getDeviceQueue(queue_indices_.present_family_.value());
-    er::Helper::createSwapChain(window_, device_, surface_, queue_indices_, swap_chain_info_);
-    createRenderPass();
+    er::Helper::createSwapChain(
+        window_,
+        device_,
+        surface_,
+        queue_indices_,
+        swap_chain_info_,
+        SET_FLAG_BIT(ImageUsage, COLOR_ATTACHMENT_BIT)|
+        SET_FLAG_BIT(ImageUsage, TRANSFER_DST_BIT));
+    render_pass_ = createRenderPass(
+        swap_chain_info_.format,
+        er::SampleCountFlagBits::SC_1_BIT,
+        er::ImageLayout::PRESENT_SRC_KHR);
+    hdr_render_pass_ = createRenderPass(hdr_format_);
     createImageViews();
     createCubemapRenderPass();
     createCubemapFramebuffers();
@@ -234,8 +273,7 @@ void RealWorldApplication::initVulkan() {
     createGraphicsPipeline(swap_chain_info_.extent);
     createCubeGraphicsPipeline();
     createComputePipeline();
-    createDepthResources(swap_chain_info_.extent);
-    createFramebuffers(swap_chain_info_.extent);
+    recreateRenderBuffer(swap_chain_info_.extent);
     auto format = er::Format::R8G8B8A8_UNORM;
     createTextureImage("assets/statue.jpg", format, sample_tex_);
     createTextureImage("assets/brdfLUT.png", format, brdf_lut_tex_);
@@ -252,8 +290,17 @@ void RealWorldApplication::initVulkan() {
     createCommandBuffers();
     createSyncObjects();
 
+    for (auto& image : swap_chain_info_.images) {
+        er::Helper::transitionImageLayout(
+            device_info_,
+            image,
+            swap_chain_info_.format,
+            er::ImageLayout::UNDEFINED,
+            er::ImageLayout::PRESENT_SRC_KHR);
+    }
+
     auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
-    ego::TileObject::initStaticMembers(device_, render_pass_, graphic_pipeline_info_, desc_set_layouts, swap_chain_info_.extent);
+    ego::TileObject::initStaticMembers(device_, hdr_render_pass_, graphic_pipeline_info_, desc_set_layouts, swap_chain_info_.extent);
     ego::GltfObject::initStaticMembers(device_, descriptor_pool_, desc_set_layouts);
     
     for (int y = -1; y <= 1; y++) {
@@ -268,6 +315,13 @@ void RealWorldApplication::initVulkan() {
             tile_objects_.push_back(tile_obj);
         }
     }
+
+    ego::TileObject::updateStaticDescriptorSet(
+        device_,
+        descriptor_pool_,
+        texture_sampler_,
+        hdr_color_buffer_copy_.view,
+        depth_buffer_.view);
 
     std::string path = "assets";
     for (const auto& entry : std::filesystem::directory_iterator(path)) {
@@ -306,8 +360,19 @@ void RealWorldApplication::recreateSwapChain() {
 
     cleanupSwapChain();
 
-    er::Helper::createSwapChain(window_, device_, surface_, queue_indices_, swap_chain_info_);
-    createRenderPass();
+    er::Helper::createSwapChain(
+        window_,
+        device_,
+        surface_,
+        queue_indices_,
+        swap_chain_info_,
+        SET_FLAG_BIT(ImageUsage, COLOR_ATTACHMENT_BIT) |
+        SET_FLAG_BIT(ImageUsage, TRANSFER_DST_BIT));
+    render_pass_ = createRenderPass(
+        swap_chain_info_.format,
+        er::SampleCountFlagBits::SC_1_BIT,
+        er::ImageLayout::PRESENT_SRC_KHR);
+    hdr_render_pass_ = createRenderPass(hdr_format_);
     createImageViews();
     createGraphicPipelineLayout();
     createCubemapPipelineLayout();
@@ -315,25 +380,33 @@ void RealWorldApplication::recreateSwapChain() {
     auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
     ego::TileObject::recreateStaticMembers(
         device_,
-        render_pass_,
+        hdr_render_pass_,
         graphic_pipeline_info_,
         desc_set_layouts,
         swap_chain_info_.extent);
     ego::GltfObject::recreateStaticMembers(
         device_,
-        render_pass_,
+        hdr_render_pass_,
         graphic_pipeline_info_,
         desc_set_layouts,
         swap_chain_info_.extent);
     createCubeSkyboxPipelineLayout();
     createGraphicsPipeline(swap_chain_info_.extent);
     createComputePipeline();
-    createDepthResources(swap_chain_info_.extent);
-    createFramebuffers(swap_chain_info_.extent);
+    recreateRenderBuffer(swap_chain_info_.extent);
     createUniformBuffers();
     descriptor_pool_ = device_->createDescriptorPool();
     createDescriptorSets();
     createCommandBuffers();
+
+    for (auto& image : swap_chain_info_.images) {
+        er::Helper::transitionImageLayout(
+            device_info_,
+            image,
+            swap_chain_info_.format,
+            er::ImageLayout::UNDEFINED,
+            er::ImageLayout::PRESENT_SRC_KHR);
+    }
 
     for (auto& tile_obj : tile_objects_) {
         tile_obj->generateDescriptorSet(descriptor_pool_);
@@ -344,6 +417,13 @@ void RealWorldApplication::recreateSwapChain() {
         descriptor_pool_,
         texture_sampler_,
         thin_film_lut_tex_);
+
+    ego::TileObject::updateStaticDescriptorSet(
+        device_,
+        descriptor_pool_,
+        texture_sampler_,
+        hdr_color_buffer_copy_.view,
+        depth_buffer_.view);
 
     er::Helper::initImgui(
         device_info_,
@@ -565,7 +645,7 @@ void RealWorldApplication::createGraphicsPipeline(const glm::uvec2& display_size
     {
         auto shader_modules = getSkyboxShaderModules(device_);
         skybox_pipeline_ = device_->createPipeline(
-            render_pass_,
+            hdr_render_pass_,
             skybox_pipeline_layout_,
             SkyBoxVertex::getBindingDescription(),
             SkyBoxVertex::getAttributeDescriptions(),
@@ -653,9 +733,9 @@ void RealWorldApplication::createComputePipeline()
 
 er::AttachmentDescription FillAttachmentDescription(
     er::Format format,
-    er::SampleCountFlagBits samples = er::SampleCountFlagBits::SC_1_BIT,
-    er::ImageLayout initial_layout = er::ImageLayout::UNDEFINED,
-    er::ImageLayout final_layout = er::ImageLayout::PRESENT_SRC_KHR,
+    er::SampleCountFlagBits samples,
+    er::ImageLayout initial_layout,
+    er::ImageLayout final_layout,
     er::AttachmentLoadOp load_op = er::AttachmentLoadOp::CLEAR,
     er::AttachmentStoreOp store_op = er::AttachmentStoreOp::STORE,
     er::AttachmentLoadOp stencil_load_op = er::AttachmentLoadOp::DONT_CARE,
@@ -715,15 +795,21 @@ er::SubpassDependency FillSubpassDependency(
     return dependency;
 }
 
-void RealWorldApplication::createRenderPass() {
-    er::AttachmentDescription color_attachment = FillAttachmentDescription(
-        swap_chain_info_.format);
+std::shared_ptr<er::RenderPass> RealWorldApplication::createRenderPass(
+    er::Format format,
+    er::SampleCountFlagBits sample_count/* = er::SampleCountFlagBits::SC_1_BIT*/,
+    er::ImageLayout color_image_layout/* = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL*/) {
+    auto color_attachment = FillAttachmentDescription(
+        format,
+        sample_count,
+        er::ImageLayout::UNDEFINED,
+        color_image_layout);
 
     er::AttachmentReference color_attachment_ref(0, er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
     auto depth_attachment = FillAttachmentDescription(
         er::Helper::findDepthFormat(device_),
-        er::SampleCountFlagBits::SC_1_BIT,
+        sample_count,
         er::ImageLayout::UNDEFINED,
         er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
@@ -745,7 +831,7 @@ void RealWorldApplication::createRenderPass() {
     attachments[0] = color_attachment;
     attachments[1] = depth_attachment;
 
-    render_pass_ = device_->createRenderPass(attachments, { subpass }, { depency });
+    return device_->createRenderPass(attachments, { subpass }, { depency });
 }
 
 void RealWorldApplication::createCubemapRenderPass() {
@@ -779,10 +865,10 @@ void RealWorldApplication::createCubemapRenderPass() {
 
 void RealWorldApplication::createFramebuffers(const glm::uvec2& display_size) {
     swap_chain_info_.framebuffers.resize(swap_chain_info_.image_views.size());
+    assert(depth_buffer_.view);
+    assert(render_pass_);
     for (uint64_t i = 0; i < swap_chain_info_.image_views.size(); i++) {
         assert(swap_chain_info_.image_views[i]);
-        assert(depth_buffer_.view);
-        assert(render_pass_);
         std::vector<std::shared_ptr<er::ImageView>> attachments(2);
         attachments[0] = swap_chain_info_.image_views[i];
         attachments[1] = depth_buffer_.view;
@@ -790,6 +876,15 @@ void RealWorldApplication::createFramebuffers(const glm::uvec2& display_size) {
         swap_chain_info_.framebuffers[i] =
             device_->createFrameBuffer(render_pass_, attachments, display_size);
     }
+
+    assert(hdr_render_pass_);
+    assert(hdr_color_buffer_.view);
+    std::vector<std::shared_ptr<er::ImageView>> attachments(2);
+    attachments[0] = hdr_color_buffer_.view;
+    attachments[1] = depth_buffer_.view;
+
+    hdr_frame_buffer_ =
+        device_->createFrameBuffer(hdr_render_pass_, attachments, display_size);
 }
 
 void RealWorldApplication::createCommandPool() {
@@ -1175,7 +1270,15 @@ void RealWorldApplication::createTextureImage(
     if (!pixels) {
         throw std::runtime_error("failed to load texture image!");
     }
-    er::Helper::create2DTextureImage(device_info_, format, tex_width, tex_height, tex_channels, pixels, texture.image, texture.memory);
+    er::Helper::create2DTextureImage(
+        device_info_,
+        format,
+        tex_width,
+        tex_height,
+        tex_channels,
+        pixels,
+        texture.image,
+        texture.memory);
 
     stbi_image_free(pixels);
 
@@ -1277,9 +1380,14 @@ void RealWorldApplication::mainLoop() {
 
 void RealWorldApplication::drawScene(
     std::shared_ptr<er::CommandBuffer> command_buffer,
-    std::shared_ptr<er::Framebuffer> frame_buffer,
-    std::shared_ptr<er::DescriptorSet> frame_desc_set,
-    const glm::uvec2& screen_size) {
+    const er::SwapChainInfo& swap_chain_info,
+    const std::vector<std::shared_ptr<er::DescriptorSet>>& frame_desc_sets,
+    const glm::uvec2& screen_size,
+    uint32_t image_index) {
+
+    auto frame_buffer = swap_chain_info.framebuffers[image_index];
+    auto src_color = swap_chain_info.image_views[image_index];
+    auto frame_desc_set = frame_desc_sets[image_index];
 
     std::vector<er::ClearValue> clear_values(2);
     clear_values[0].color = { 50.0f / 255.0f, 50.0f / 255.0f, 50.0f / 255.0f, 1.0f };
@@ -1518,8 +1626,8 @@ void RealWorldApplication::drawScene(
 
     {
         cmd_buf->beginRenderPass(
-            render_pass_,
-            frame_buffer,
+            hdr_render_pass_,
+            hdr_frame_buffer_,
             screen_size,
             clear_values);
 
@@ -1536,6 +1644,37 @@ void RealWorldApplication::drawScene(
             for (auto& tile_obj : tile_objects_) {
                 tile_obj->draw(cmd_buf, desc_sets, true);
             }
+        }
+
+        cmd_buf->endRenderPass();
+
+        er::ImageResourceInfo src_info = {
+            er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
+            SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
+
+        er::ImageResourceInfo dst_info = {
+            er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            SET_FLAG_BIT(Access, SHADER_READ_BIT),
+            SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
+
+        er::Helper::blitImage(
+            cmd_buf,
+            hdr_color_buffer_.image,
+            hdr_color_buffer_copy_.image,
+            src_info,
+            src_info,
+            dst_info,
+            dst_info,
+            glm::ivec3(screen_size.x, screen_size.y, 1));
+
+        cmd_buf->beginRenderPass(
+            hdr_render_pass_,
+            hdr_frame_buffer_,
+            screen_size,
+            clear_values);
+
+        {
             for (auto& tile_obj : tile_objects_) {
                 tile_obj->draw(cmd_buf, desc_sets, false);
             }
@@ -1565,6 +1704,26 @@ void RealWorldApplication::drawScene(
 
         cmd_buf->endRenderPass();
     }
+
+    er::ImageResourceInfo src_info = {
+        er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
+        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT)};
+
+    er::ImageResourceInfo dst_info = {
+        er::ImageLayout::PRESENT_SRC_KHR,
+        SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
+        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
+
+    er::Helper::blitImage(
+        cmd_buf,
+        hdr_color_buffer_.image,
+        swap_chain_info.images[image_index],
+        src_info,
+        src_info,
+        dst_info,
+        dst_info,
+        glm::ivec3(screen_size.x, screen_size.y, 1));
 }
 
 void RealWorldApplication::drawMenu(
@@ -1620,7 +1779,7 @@ void RealWorldApplication::drawMenu(
                 auto gltf_obj = std::make_shared<ego::GltfObject>(
                     device_info_,
                     descriptor_pool_,
-                    render_pass_,
+                    hdr_render_pass_,
                     graphic_pipeline_info_,
                     texture_sampler_,
                     thin_film_lut_tex_,
@@ -1687,11 +1846,12 @@ void RealWorldApplication::drawFrame() {
     command_buffer->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
 
     drawScene(command_buffer,
-        swap_chain_info_.framebuffers[image_index],
-        desc_sets_[image_index],
-        swap_chain_info_.extent);
+        swap_chain_info_,
+        desc_sets_,
+        swap_chain_info_.extent,
+        image_index);
 
-    drawMenu(command_buffer);
+    //drawMenu(command_buffer);
 
     command_buffer->endCommandBuffer();
 
@@ -1719,6 +1879,9 @@ void RealWorldApplication::drawFrame() {
 void RealWorldApplication::cleanupSwapChain() {
     assert(device_);
     depth_buffer_.destroy(device_);
+    hdr_color_buffer_.destroy(device_);
+    hdr_color_buffer_copy_.destroy(device_);
+    device_->destroyFramebuffer(hdr_frame_buffer_);
 
     for (auto framebuffer : swap_chain_info_.framebuffers) {
         device_->destroyFramebuffer(framebuffer);
@@ -1730,6 +1893,7 @@ void RealWorldApplication::cleanupSwapChain() {
     device_->destroyPipelineLayout(skybox_pipeline_layout_);
     device_->destroyPipelineLayout(ibl_comp_pipeline_layout_);
     device_->destroyRenderPass(render_pass_);
+    device_->destroyRenderPass(hdr_render_pass_);
 
     for (auto image_view : swap_chain_info_.image_views) {
         device_->destroyImageView(image_view);

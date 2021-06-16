@@ -131,7 +131,8 @@ void Helper::createSwapChain(
     const std::shared_ptr<Device>& device,
     const std::shared_ptr<Surface>& surface,
     const QueueFamilyIndices& indices,
-    SwapChainInfo& swap_chain_info) {
+    SwapChainInfo& swap_chain_info,
+    const ImageUsageFlags& usage) {
     const auto& vk_device = RENDER_TYPE_CAST(Device, device);
     const auto& vk_physical_device = vk_device->getPhysicalDevice();
     vk::helper::SwapChainSupportDetails swap_chain_support = vk::helper::querySwapChainSupport(vk_physical_device, surface);
@@ -162,6 +163,7 @@ void Helper::createSwapChain(
         vk::helper::fromVkColorSpace(surface_format.colorSpace),
         vk::helper::fromVkSurfaceTransformFlags(swap_chain_support.capabilities_.currentTransform),
         present_mode,
+        usage,
         queue_index);
 
     swap_chain_info.images = device->getSwapchainImages(swap_chain_info.swap_chain);
@@ -299,34 +301,54 @@ void Helper::create2DTextureImage(
     device->freeMemory(staging_buffer_memory);
 }
 
-void Helper::createDepthResources(
+void Helper::create2DTextureImage(
     const DeviceInfo& device_info,
-    Format depth_format,
+    Format format,
     glm::uvec2 size,
-    TextureInfo& depth_buffer) {
+    TextureInfo& texture_2d,
+    const renderer::ImageUsageFlags& usage,
+    const renderer::ImageLayout& image_layout) {
     const auto& device = device_info.device;
+    auto is_depth = vk::helper::isDepthFormat(format);
     vk::helper::create2DImage(
         device,
         size,
-        depth_format,
+        format,
         ImageTiling::OPTIMAL,
-        SET_FLAG_BIT(ImageUsage, DEPTH_STENCIL_ATTACHMENT_BIT),
+        usage,
         SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
-        depth_buffer.image,
-        depth_buffer.memory);
+        texture_2d.image,
+        texture_2d.memory);
 
-    depth_buffer.view =
+    texture_2d.view =
         device->createImageView(
-            depth_buffer.image,
+            texture_2d.image,
             ImageViewType::VIEW_2D,
-            depth_format,
-            SET_FLAG_BIT(ImageAspect, DEPTH_BIT));
+            format,
+            is_depth ?
+                SET_FLAG_BIT(ImageAspect, DEPTH_BIT) :
+                SET_FLAG_BIT(ImageAspect, COLOR_BIT));
 
     vk::helper::transitionImageLayout(
         device_info,
-        depth_buffer.image,
-        depth_format,
+        texture_2d.image,
+        format,
         ImageLayout::UNDEFINED,
+        image_layout);
+}
+
+void Helper::createDepthResources(
+    const DeviceInfo& device_info,
+    Format format,
+    glm::uvec2 size,
+    TextureInfo& texture_2d) {
+
+    create2DTextureImage(
+        device_info,
+        format,
+        size,
+        texture_2d,
+        SET_FLAG_BIT(ImageUsage, DEPTH_STENCIL_ATTACHMENT_BIT),
         ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 }
 
@@ -443,6 +465,107 @@ void Helper::createCubemapTexture(
         device->destroyBuffer(staging_buffer);
         device->freeMemory(staging_buffer_memory);
     }
+}
+
+void Helper::blitImage(
+    const std::shared_ptr<CommandBuffer>& cmd_buf,
+    const std::shared_ptr<Image>& src_image,
+    const std::shared_ptr<Image>& dst_image,
+    const ImageResourceInfo& src_old_info,
+    const ImageResourceInfo& src_new_info,
+    const ImageResourceInfo& dst_old_info,
+    const ImageResourceInfo& dst_new_info,
+    const glm::ivec3& buffer_size) {
+    BarrierList barrier_list;
+    barrier_list.image_barriers.reserve(2);
+
+    ImageMemoryBarrier barrier;
+    barrier.image = src_image;
+    barrier.old_layout = src_old_info.image_layout;
+    barrier.new_layout = ImageLayout::TRANSFER_SRC_OPTIMAL;
+    barrier.src_access_mask = src_old_info.access_flags;
+    barrier.dst_access_mask = SET_FLAG_BIT(Access, TRANSFER_READ_BIT);
+    barrier_list.image_barriers.push_back(barrier);
+    if (src_old_info.stage_flags != dst_old_info.stage_flags) {
+        cmd_buf->addBarriers(
+            barrier_list,
+            src_old_info.stage_flags,
+            SET_FLAG_BIT(PipelineStage, TRANSFER_BIT));
+        barrier_list.image_barriers.clear();
+    }
+
+    barrier.image = dst_image;
+    barrier.old_layout = dst_old_info.image_layout;
+    barrier.new_layout = ImageLayout::TRANSFER_DST_OPTIMAL;
+    barrier.src_access_mask = dst_old_info.access_flags;
+    barrier.dst_access_mask = SET_FLAG_BIT(Access, TRANSFER_WRITE_BIT);
+    barrier_list.image_barriers.push_back(barrier);
+    cmd_buf->addBarriers(
+        barrier_list,
+        dst_old_info.stage_flags,
+        SET_FLAG_BIT(PipelineStage, TRANSFER_BIT));
+    barrier_list.image_barriers.clear();
+
+    ImageBlitInfo copy_region;
+    copy_region.src_offsets[0] = glm::ivec3(0, 0, 0);
+    copy_region.src_offsets[1] = buffer_size;
+    copy_region.dst_offsets[0] = glm::ivec3(0, 0, 0);
+    copy_region.dst_offsets[1] = buffer_size;
+
+    cmd_buf->blitImage(
+        src_image,
+        ImageLayout::TRANSFER_SRC_OPTIMAL,
+        dst_image,
+        ImageLayout::TRANSFER_DST_OPTIMAL,
+        { copy_region },
+        Filter::LINEAR);
+
+    barrier.image = src_image;
+    barrier.old_layout = ImageLayout::TRANSFER_SRC_OPTIMAL;
+    barrier.new_layout = src_new_info.image_layout;
+    barrier.src_access_mask = SET_FLAG_BIT(Access, TRANSFER_READ_BIT);
+    barrier.dst_access_mask = src_new_info.access_flags;
+    barrier_list.image_barriers.push_back(barrier);
+    if (src_new_info.stage_flags != dst_new_info.stage_flags) {
+        cmd_buf->addBarriers(
+            barrier_list,
+            SET_FLAG_BIT(PipelineStage, TRANSFER_BIT),
+            src_new_info.stage_flags);
+        barrier_list.image_barriers.clear();
+    }
+
+    barrier.image = dst_image;
+    barrier.old_layout = ImageLayout::TRANSFER_DST_OPTIMAL;
+    barrier.new_layout = dst_new_info.image_layout;
+    barrier.src_access_mask = SET_FLAG_BIT(Access, TRANSFER_WRITE_BIT);
+    barrier.dst_access_mask = dst_new_info.access_flags;
+    barrier_list.image_barriers.push_back(barrier);
+    cmd_buf->addBarriers(
+        barrier_list,
+        SET_FLAG_BIT(PipelineStage, TRANSFER_BIT),
+        dst_new_info.stage_flags);
+}
+
+void Helper::transitionImageLayout(
+    const renderer::DeviceInfo& device_info,
+    const std::shared_ptr<renderer::Image>& image,
+    const renderer::Format& format,
+    const renderer::ImageLayout& old_layout,
+    const renderer::ImageLayout& new_layout,
+    uint32_t base_mip_idx/* = 0*/,
+    uint32_t mip_count/* = 1*/,
+    uint32_t base_layer/* = 0*/,
+    uint32_t layer_count/* = 1*/) {
+    vk::helper::transitionImageLayout(
+        device_info,
+        image,
+        format,
+        old_layout,
+        new_layout,
+        base_mip_idx,
+        mip_count,
+        base_layer,
+        layer_count);
 }
 
 bool Helper::acquireNextImage(

@@ -1594,6 +1594,23 @@ std::vector<renderer::BufferDescriptor> addTileCreatorBuffers(
     return descriptor_writes;
 }
 
+std::vector<renderer::TextureDescriptor> addTileResourceTextures(
+    const std::shared_ptr<renderer::DescriptorSet>& description_set,
+    const std::shared_ptr<renderer::Sampler>& texture_sampler,
+    const std::shared_ptr<renderer::ImageView>& src_texture,
+    const std::shared_ptr<renderer::ImageView>& src_depth) {
+    std::vector<renderer::TextureDescriptor> descriptor_writes;
+    descriptor_writes.reserve(2);
+
+    // src color.
+    renderer::Helper::addOneTexture(descriptor_writes, SRC_COLOR_TEX_INDEX, texture_sampler, src_texture, description_set);
+
+    // src depth.
+    //renderer::Helper::addOneTexture(descriptor_writes, SRC_DEPTH_TEX_INDEX, texture_sampler, src_depth, description_set);
+
+    return descriptor_writes;
+}
+
 static renderer::ShaderModuleList getTileCreatorCsModules(
     const std::shared_ptr<renderer::Device>& device) {
     uint64_t compute_code_size;
@@ -1641,6 +1658,14 @@ static std::shared_ptr<renderer::DescriptorSetLayout> createDescriptorSetLayout(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         renderer::DescriptorType::STORAGE_BUFFER);
 
+    return device->createDescriptorSetLayout(bindings);
+}
+
+static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescriptorSetLayout(
+    const std::shared_ptr<renderer::Device>& device) {
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings(1);
+    bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_COLOR_TEX_INDEX);
+//    bindings[1] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_DEPTH_TEX_INDEX);
     return device->createDescriptorSetLayout(bindings);
 }
 
@@ -1726,13 +1751,14 @@ static std::shared_ptr<renderer::Pipeline> createTileWaterPipeline(
     auto color_blending = renderer::helper::fillPipelineColorBlendStateCreateInfo(
         { renderer::helper::fillPipelineColorBlendAttachmentState(
             SET_FLAG_BIT(ColorComponent, ALL_BITS),
-            true,
+            false,
             renderer::BlendFactor::SRC_ALPHA,
             renderer::BlendFactor::ONE_MINUS_SRC_ALPHA,
             renderer::BlendOp::ADD) });
 
     renderer::GraphicPipelineInfo new_graphic_pipeline_info = graphic_pipeline_info;
-    new_graphic_pipeline_info.blend_state_info = std::make_shared<renderer::PipelineColorBlendStateCreateInfo>(color_blending);
+/*    new_graphic_pipeline_info.blend_state_info =
+        std::make_shared<renderer::PipelineColorBlendStateCreateInfo>(color_blending);*/
 
     auto shader_modules = getTileWaterShaderModules(device);
     auto pipeline = device->createPipeline(
@@ -1760,6 +1786,8 @@ std::shared_ptr<renderer::PipelineLayout> TileObject::tile_creator_pipeline_layo
 std::shared_ptr<renderer::Pipeline> TileObject::tile_creator_pipeline_;
 std::shared_ptr<renderer::PipelineLayout> TileObject::tile_pipeline_layout_;
 std::shared_ptr<renderer::Pipeline> TileObject::tile_pipeline_;
+std::shared_ptr<renderer::DescriptorSetLayout> TileObject::tile_res_desc_set_layout_;
+std::shared_ptr<renderer::DescriptorSet> TileObject::tile_res_desc_set_;
 std::shared_ptr<renderer::Pipeline> TileObject::tile_water_pipeline_;
 
 TileObject::TileObject(
@@ -1774,6 +1802,7 @@ TileObject::TileObject(
     max_(max) {
     createMeshBuffers();
     assert(tile_creator_desc_set_layout_);
+    assert(tile_res_desc_set_layout_);
     generateDescriptorSet(descriptor_pool);
 }
 
@@ -1804,11 +1833,14 @@ void TileObject::createStaticMembers(
                 tile_creator_pipeline_layout_);
     }
 
+    auto desc_set_layouts = global_desc_set_layouts;
+    desc_set_layouts.push_back(tile_res_desc_set_layout_);
+
     if (tile_pipeline_layout_ == nullptr) {
         tile_pipeline_layout_ =
             createTilePipelineLayout(
                 device,
-                global_desc_set_layouts);
+                desc_set_layouts);
     }
 
     if (tile_pipeline_ == nullptr) {
@@ -1843,6 +1875,11 @@ void TileObject::initStaticMembers(
     if (tile_creator_desc_set_layout_ == nullptr) {
         tile_creator_desc_set_layout_ =
             createDescriptorSetLayout(device);
+    }
+
+    if (tile_res_desc_set_layout_ == nullptr) {
+        tile_res_desc_set_layout_ =
+            CreateTileResourceDescriptorSetLayout(device);
     }
 
     createStaticMembers(device, render_pass, graphic_pipeline_info, global_desc_set_layouts, display_size);
@@ -1885,6 +1922,7 @@ void TileObject::recreateStaticMembers(
 void TileObject::destoryStaticMembers(
     const std::shared_ptr<renderer::Device>& device) {
     device->destroyDescriptorSetLayout(tile_creator_desc_set_layout_);
+    device->destroyDescriptorSetLayout(tile_res_desc_set_layout_);
     device->destroyPipelineLayout(tile_creator_pipeline_layout_);
     device->destroyPipeline(tile_creator_pipeline_);
     device->destroyPipelineLayout(tile_pipeline_layout_);
@@ -1935,6 +1973,26 @@ void TileObject::generateDescriptorSet(
         vertex_buffer_,
         index_buffer_);
     device_info_.device->updateDescriptorSets({}, buffer_descs);
+
+    // tile params set.
+    tile_res_desc_set_ = device_info_.device->createDescriptorSets(
+        descriptor_pool, tile_res_desc_set_layout_, 1)[0];
+}
+
+void TileObject::updateStaticDescriptorSet(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+    const std::shared_ptr<renderer::Sampler>& texture_sampler,
+    const std::shared_ptr<renderer::ImageView>& src_texture,
+    const std::shared_ptr<renderer::ImageView>& src_depth) {
+
+    // create a global ibl texture descriptor set.
+    auto tile_res_descs = addTileResourceTextures(
+        tile_res_desc_set_,
+        texture_sampler,
+        src_texture,
+        src_depth);
+    device->updateDescriptorSets(tile_res_descs, {});
 }
 
 void TileObject::generateTileBuffers(
@@ -2011,10 +2069,13 @@ void TileObject::draw(
         &tile_params, 
         sizeof(tile_params));
 
+    auto new_desc_sets = desc_set_list;
+    new_desc_sets.push_back(tile_res_desc_set_);
+
     cmd_buf->bindDescriptorSets(
         renderer::PipelineBindPoint::GRAPHICS,
         tile_pipeline_layout_, 
-        desc_set_list);
+        new_desc_sets);
 
     cmd_buf->drawIndexed(segment_count_.x * segment_count_.y * 6);
 }

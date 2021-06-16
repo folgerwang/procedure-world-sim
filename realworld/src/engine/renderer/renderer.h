@@ -312,7 +312,8 @@ public:
         const std::shared_ptr<Device>& device,
         const std::shared_ptr<Surface>& surface,
         const QueueFamilyIndices& indices,
-        SwapChainInfo& swap_chain_info);
+        SwapChainInfo& swap_chain_info,
+        const ImageUsageFlags& usage);
 
     static void addOneTexture(
         std::vector<TextureDescriptor>& descriptor_writes,
@@ -350,11 +351,19 @@ public:
         std::shared_ptr<Image>& texture_image,
         std::shared_ptr<DeviceMemory>& texture_image_memory);
 
-    static void createDepthResources(
+    static void create2DTextureImage(
         const DeviceInfo& device_info,
         Format depth_format,
         glm::uvec2 size,
-        TextureInfo& depth_buffer);
+        TextureInfo& depth_buffer,
+        const renderer::ImageUsageFlags& usage,
+        const renderer::ImageLayout& image_layout);
+
+    static void createDepthResources(
+        const DeviceInfo& device_info,
+        Format format,
+        glm::uvec2 size,
+        TextureInfo& texture_2d);
 
     static void createCubemapTexture(
         const DeviceInfo& device_info,
@@ -375,6 +384,27 @@ public:
         const void* src_data,
         std::shared_ptr<Buffer>& buffer,
         std::shared_ptr<DeviceMemory>& buffer_memory);
+
+    static void transitionImageLayout(
+        const renderer::DeviceInfo& device_info,
+        const std::shared_ptr<renderer::Image>& image,
+        const renderer::Format& format,
+        const renderer::ImageLayout& old_layout,
+        const renderer::ImageLayout& new_layout,
+        uint32_t base_mip_idx = 0,
+        uint32_t mip_count = 1,
+        uint32_t base_layer = 0,
+        uint32_t layer_count = 1);
+
+    static void blitImage(
+        const std::shared_ptr<CommandBuffer>& cmd_buf,
+        const std::shared_ptr<Image>& src_image,
+        const std::shared_ptr<Image>& dst_image,
+        const ImageResourceInfo& src_old_info,
+        const ImageResourceInfo& src_new_info,
+        const ImageResourceInfo& dst_old_info,
+        const ImageResourceInfo& dst_new_info,
+        const glm::ivec3& buffer_size);
 
     static bool acquireNextImage(
         const std::shared_ptr<Device>& device,

@@ -31,13 +31,84 @@ void VulkanCommandBuffer::copyBuffer(
     std::vector<BufferCopyInfo> copy_regions) {
     std::vector<VkBufferCopy> vk_copy_regions(copy_regions.size());
     for (uint32_t i = 0; i < copy_regions.size(); i++) {
-        vk_copy_regions[i].srcOffset = copy_regions[i].src_offset;
-        vk_copy_regions[i].dstOffset = copy_regions[i].dst_offset;
-        vk_copy_regions[i].size = copy_regions[i].size;
+        vk_copy_regions[i] = helper::toVkBufferCopy(copy_regions[i]);
     }
     auto vk_src_buf = RENDER_TYPE_CAST(Buffer, src_buf);
     auto vk_dst_buf = RENDER_TYPE_CAST(Buffer, dst_buf);
-    vkCmdCopyBuffer(cmd_buf_, vk_src_buf->get(), vk_dst_buf->get(), static_cast<uint32_t>(vk_copy_regions.size()), vk_copy_regions.data());
+    vkCmdCopyBuffer(
+        cmd_buf_,
+        vk_src_buf->get(),
+        vk_dst_buf->get(),
+        static_cast<uint32_t>(vk_copy_regions.size()),
+        vk_copy_regions.data());
+}
+
+void VulkanCommandBuffer::copyImage(
+    std::shared_ptr<Image> src_img,
+    ImageLayout src_img_layout,
+    std::shared_ptr<Image> dst_img,
+    ImageLayout dst_img_layout,
+    std::vector<ImageCopyInfo> copy_regions) {
+    std::vector<VkImageCopy> vk_copy_regions(copy_regions.size());
+    for (uint32_t i = 0; i < copy_regions.size(); i++) {
+        vk_copy_regions[i] = helper::toVkImageCopy(copy_regions[i]);
+    }
+    auto vk_src_img = RENDER_TYPE_CAST(Image, src_img);
+    auto vk_dst_img = RENDER_TYPE_CAST(Image, dst_img);
+    vkCmdCopyImage(
+        cmd_buf_,
+        vk_src_img->get(),
+        helper::toVkImageLayout(src_img_layout),
+        vk_dst_img->get(),
+        helper::toVkImageLayout(dst_img_layout),
+        static_cast<uint32_t>(vk_copy_regions.size()),
+        vk_copy_regions.data());
+}
+
+void VulkanCommandBuffer::blitImage(
+    std::shared_ptr<Image> src_img,
+    ImageLayout src_img_layout,
+    std::shared_ptr<Image> dst_img,
+    ImageLayout dst_img_layout,
+    std::vector<ImageBlitInfo> copy_regions,
+    const Filter& filter) {
+    std::vector<VkImageBlit> vk_copy_regions(copy_regions.size());
+    for (uint32_t i = 0; i < copy_regions.size(); i++) {
+        vk_copy_regions[i] = helper::toVkImageBlit(copy_regions[i]);
+    }
+    auto vk_src_img = RENDER_TYPE_CAST(Image, src_img);
+    auto vk_dst_img = RENDER_TYPE_CAST(Image, dst_img);
+    vkCmdBlitImage(
+        cmd_buf_,
+        vk_src_img->get(),
+        helper::toVkImageLayout(src_img_layout),
+        vk_dst_img->get(),
+        helper::toVkImageLayout(dst_img_layout),
+        static_cast<uint32_t>(vk_copy_regions.size()),
+        vk_copy_regions.data(),
+        helper::toVkFilter(filter));
+}
+
+void VulkanCommandBuffer::resolveImage(
+    std::shared_ptr<Image> src_img,
+    ImageLayout src_img_layout,
+    std::shared_ptr<Image> dst_img,
+    ImageLayout dst_img_layout,
+    std::vector<ImageResolveInfo> copy_regions) {
+    std::vector<VkImageResolve> vk_copy_regions(copy_regions.size());
+    for (uint32_t i = 0; i < copy_regions.size(); i++) {
+        vk_copy_regions[i] = helper::toVkImageResolve(copy_regions[i]);
+    }
+    auto vk_src_img = RENDER_TYPE_CAST(Image, src_img);
+    auto vk_dst_img = RENDER_TYPE_CAST(Image, dst_img);
+    vkCmdResolveImage(
+        cmd_buf_,
+        vk_src_img->get(),
+        helper::toVkImageLayout(src_img_layout),
+        vk_dst_img->get(),
+        helper::toVkImageLayout(dst_img_layout),
+        static_cast<uint32_t>(vk_copy_regions.size()),
+        vk_copy_regions.data());
 }
 
 void VulkanCommandBuffer::copyBufferToImage(
@@ -47,15 +118,7 @@ void VulkanCommandBuffer::copyBufferToImage(
     ImageLayout layout) {
     std::vector<VkBufferImageCopy> vk_copy_regions(copy_regions.size());
     for (uint32_t i = 0; i < copy_regions.size(); i++) {
-        vk_copy_regions[i].bufferOffset = copy_regions[i].buffer_offset;
-        vk_copy_regions[i].bufferRowLength = copy_regions[i].buffer_row_length;
-        vk_copy_regions[i].bufferImageHeight = copy_regions[i].buffer_image_height;
-        vk_copy_regions[i].imageSubresource.aspectMask = helper::toVkImageAspectFlags(copy_regions[i].image_subresource.aspect_mask);
-        vk_copy_regions[i].imageSubresource.mipLevel = copy_regions[i].image_subresource.mip_level;
-        vk_copy_regions[i].imageSubresource.baseArrayLayer = copy_regions[i].image_subresource.base_array_layer;
-        vk_copy_regions[i].imageSubresource.layerCount = copy_regions[i].image_subresource.layer_count;
-        vk_copy_regions[i].imageOffset = { copy_regions[i].image_offset.x, copy_regions[i].image_offset.y, copy_regions[i].image_offset.z };
-        vk_copy_regions[i].imageExtent = { copy_regions[i].image_extent.x, copy_regions[i].image_extent.y, copy_regions[i].image_extent.z };
+        vk_copy_regions[i] = helper::toVkBufferImageCopy(copy_regions[i]);
     }
     auto vk_src_buf = RENDER_TYPE_CAST(Buffer, src_buf);
     auto vk_dst_image = RENDER_TYPE_CAST(Image, dst_image);
@@ -201,6 +264,42 @@ void VulkanCommandBuffer::endRenderPass() {
 
 void VulkanCommandBuffer::reset(uint32_t flags) {
     vkResetCommandBuffer(cmd_buf_, flags);
+}
+
+void VulkanCommandBuffer::addBarriers(
+    const BarrierList& barrier_list,
+    PipelineStageFlags src_stage_flags,
+    PipelineStageFlags dst_stage_flags) {
+    auto memory_barrier_count = barrier_list.memory_barriers.size();
+    std::vector<VkMemoryBarrier> memory_barriers(memory_barrier_count);
+    for (auto i = 0; i < memory_barrier_count; i++) {
+        memory_barriers[i] =
+            helper::toVkMemoryBarrier(barrier_list.memory_barriers[i]);
+    }
+
+    auto buffer_barrier_count = barrier_list.buffer_barriers.size();
+    std::vector<VkBufferMemoryBarrier> buffer_barriers(buffer_barrier_count);
+    for (auto i = 0; i < buffer_barrier_count; i++) {
+        buffer_barriers[i] =
+            helper::toVkBufferMemoryBarrier(barrier_list.buffer_barriers[i]);
+    }
+
+    auto image_barrier_count = barrier_list.image_barriers.size();
+    std::vector<VkImageMemoryBarrier> image_barriers(image_barrier_count);
+    for (auto i = 0; i < image_barrier_count; i++) {
+        image_barriers[i] =
+            helper::toVkImageMemoryBarrier(barrier_list.image_barriers[i]);
+    }
+
+    vkCmdPipelineBarrier(
+        cmd_buf_,
+        helper::toVkPipelineStageFlags(src_stage_flags),
+        helper::toVkPipelineStageFlags(dst_stage_flags),
+        0,
+        memory_barrier_count, memory_barriers.data(),
+        buffer_barrier_count, buffer_barriers.data(),
+        image_barrier_count, image_barriers.data()
+    );
 }
 
 void VulkanCommandBuffer::addImageBarrier(

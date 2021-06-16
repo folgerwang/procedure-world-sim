@@ -57,10 +57,10 @@ struct BufferCopyInfo {
 };
 
 struct ImageSubresourceLayers {
-    ImageAspectFlags      aspect_mask;
-    uint32_t              mip_level;
-    uint32_t              base_array_layer;
-    uint32_t              layer_count;
+    ImageAspectFlags      aspect_mask = SET_FLAG_BIT(ImageAspect, COLOR_BIT);
+    uint32_t              mip_level = 0;
+    uint32_t              base_array_layer = 0;
+    uint32_t              layer_count = 1;
 };
 
 struct BufferImageCopyInfo {
@@ -70,6 +70,29 @@ struct BufferImageCopyInfo {
     ImageSubresourceLayers    image_subresource;
     glm::ivec3      image_offset;
     glm::uvec3      image_extent;
+};
+
+struct ImageCopyInfo {
+    ImageSubresourceLayers    src_subresource;
+    glm::ivec3                src_offset;
+    ImageSubresourceLayers    dst_subresource;
+    glm::ivec3                dst_offset;
+    glm::uvec3                extent;
+};
+
+struct ImageBlitInfo {
+    ImageSubresourceLayers    src_subresource;
+    glm::ivec3                src_offsets[2];
+    ImageSubresourceLayers    dst_subresource;
+    glm::ivec3                dst_offsets[2];
+};
+
+struct ImageResolveInfo {
+    ImageSubresourceLayers    src_subresource;
+    glm::ivec3                src_offset;
+    ImageSubresourceLayers    dst_subresource;
+    glm::ivec3                dst_offset;
+    glm::uvec3                extent;
 };
 
 union ClearColorValue {
@@ -113,7 +136,7 @@ struct IndexInputBindingDescription {
 struct ImageResourceInfo {
     ImageLayout             image_layout = ImageLayout::UNDEFINED;
     AccessFlags             access_flags = 0;
-    PipelineStageFlags      stage_flags = 0;;
+    PipelineStageFlags      stage_flags = 0;
 };
 
 struct BufferResourceInfo {
@@ -296,6 +319,46 @@ struct BufferInfo {
     std::shared_ptr<DeviceMemory>       memory;
 
     void destroy(const std::shared_ptr<Device>& device);
+};
+
+struct MemoryBarrier {
+    AccessFlags             src_access_mask;
+    AccessFlags             dst_access_mask;
+};
+
+struct BufferMemoryBarrier {
+    AccessFlags                 src_access_mask;
+    AccessFlags                 dst_access_mask;
+    uint32_t                    src_queue_family_index = (~0U);
+    uint32_t                    dst_queue_family_index = (~0U);
+    std::shared_ptr<Buffer>     buffer;
+    uint64_t                    offset;
+    uint64_t                    size;
+};
+
+struct ImageSubresourceRange {
+    ImageAspectFlags      aspect_mask = SET_FLAG_BIT(ImageAspect, COLOR_BIT);
+    uint32_t              base_mip_level = 0;
+    uint32_t              level_count = 1;
+    uint32_t              base_array_layer = 0;
+    uint32_t              layer_count = 1;
+};
+
+struct ImageMemoryBarrier {
+    AccessFlags                src_access_mask;
+    AccessFlags                dst_access_mask;
+    ImageLayout                old_layout;
+    ImageLayout                new_layout;
+    uint32_t                   src_queue_family_index = (~0U);
+    uint32_t                   dst_queue_family_index = (~0U);
+    std::shared_ptr<Image>     image;
+    ImageSubresourceRange      subresource_range;
+};
+
+struct BarrierList {
+    std::vector<MemoryBarrier>          memory_barriers;
+    std::vector<BufferMemoryBarrier>    buffer_barriers;
+    std::vector<ImageMemoryBarrier>     image_barriers;
 };
 
 //indexed
