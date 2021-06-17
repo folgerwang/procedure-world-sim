@@ -2047,6 +2047,7 @@ void TileObject::generateTileBuffers(
 void TileObject::draw(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const renderer::DescriptorSetList& desc_set_list,
+    const glm::uvec2 display_size,
     bool is_base_pass) {
     std::vector<std::shared_ptr<renderer::Buffer>> buffers(1);
     std::vector<uint64_t> offsets(1);
@@ -2062,6 +2063,7 @@ void TileObject::draw(
     tile_params.min = min_;
     tile_params.max = max_;
     tile_params.segment_count = segment_count_;
+    tile_params.inv_screen_size = glm::vec2(1.0f / display_size.x, 1.0f / display_size.y);
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | 
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),

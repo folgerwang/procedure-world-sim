@@ -1642,7 +1642,7 @@ void RealWorldApplication::drawScene(
         // render terrain.
         {
             for (auto& tile_obj : tile_objects_) {
-                tile_obj->draw(cmd_buf, desc_sets, true);
+                tile_obj->draw(cmd_buf, desc_sets, screen_size, true);
             }
         }
 
@@ -1676,7 +1676,7 @@ void RealWorldApplication::drawScene(
 
         {
             for (auto& tile_obj : tile_objects_) {
-                tile_obj->draw(cmd_buf, desc_sets, false);
+                tile_obj->draw(cmd_buf, desc_sets, screen_size, false);
             }
         }
 

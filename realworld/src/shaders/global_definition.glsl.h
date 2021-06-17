@@ -162,7 +162,7 @@ struct TileParams {
     vec2    min;
     vec2    max;
     ivec2   segment_count;
-    ivec2   pad;
+    vec2    inv_screen_size;
 };
 
 // 1 float base layer, rock.

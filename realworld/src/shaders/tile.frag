@@ -129,7 +129,7 @@ void main() {
     float alpha = 1.0f;
 
     #if defined(WATER_PASS)
-    vec2 screen_uv = vec2(gl_FragCoord.x / 1920.0f, gl_FragCoord.y / 1080.0f);
+    vec2 screen_uv = gl_FragCoord.xy * tile_params.inv_screen_size;
     color = texture(src_tex, screen_uv).xyz;
 
     alpha = 0.5;

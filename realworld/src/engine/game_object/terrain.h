@@ -81,6 +81,7 @@ public:
 
     void draw(const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const renderer::DescriptorSetList& desc_set_list,
+        const glm::uvec2 display_size,
         bool is_base_pass);
 };
 
