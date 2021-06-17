@@ -348,7 +348,8 @@ void Helper::createDepthResources(
         format,
         size,
         texture_2d,
-        SET_FLAG_BIT(ImageUsage, DEPTH_STENCIL_ATTACHMENT_BIT),
+        SET_FLAG_BIT(ImageUsage, DEPTH_STENCIL_ATTACHMENT_BIT) |
+        SET_FLAG_BIT(ImageUsage, TRANSFER_SRC_BIT),
         ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 }
 
@@ -475,9 +476,14 @@ void Helper::blitImage(
     const ImageResourceInfo& src_new_info,
     const ImageResourceInfo& dst_old_info,
     const ImageResourceInfo& dst_new_info,
+    const ImageAspectFlags& src_aspect_flags,
+    const ImageAspectFlags& dst_aspect_flags,
     const glm::ivec3& buffer_size) {
     BarrierList barrier_list;
     barrier_list.image_barriers.reserve(2);
+
+    auto src_aspect_mask = vk::helper::toVkImageAspectFlags(src_aspect_flags);
+    auto dst_aspect_mask = vk::helper::toVkImageAspectFlags(dst_aspect_flags);
 
     ImageMemoryBarrier barrier;
     barrier.image = src_image;
@@ -485,6 +491,7 @@ void Helper::blitImage(
     barrier.new_layout = ImageLayout::TRANSFER_SRC_OPTIMAL;
     barrier.src_access_mask = src_old_info.access_flags;
     barrier.dst_access_mask = SET_FLAG_BIT(Access, TRANSFER_READ_BIT);
+    barrier.subresource_range.aspect_mask = src_aspect_mask;
     barrier_list.image_barriers.push_back(barrier);
     if (src_old_info.stage_flags != dst_old_info.stage_flags) {
         cmd_buf->addBarriers(
@@ -499,6 +506,7 @@ void Helper::blitImage(
     barrier.new_layout = ImageLayout::TRANSFER_DST_OPTIMAL;
     barrier.src_access_mask = dst_old_info.access_flags;
     barrier.dst_access_mask = SET_FLAG_BIT(Access, TRANSFER_WRITE_BIT);
+    barrier.subresource_range.aspect_mask = dst_aspect_mask;
     barrier_list.image_barriers.push_back(barrier);
     cmd_buf->addBarriers(
         barrier_list,
@@ -511,6 +519,8 @@ void Helper::blitImage(
     copy_region.src_offsets[1] = buffer_size;
     copy_region.dst_offsets[0] = glm::ivec3(0, 0, 0);
     copy_region.dst_offsets[1] = buffer_size;
+    copy_region.src_subresource.aspect_mask = src_aspect_mask;
+    copy_region.dst_subresource.aspect_mask = dst_aspect_mask;
 
     cmd_buf->blitImage(
         src_image,
@@ -518,13 +528,14 @@ void Helper::blitImage(
         dst_image,
         ImageLayout::TRANSFER_DST_OPTIMAL,
         { copy_region },
-        Filter::LINEAR);
+        Filter::NEAREST);
 
     barrier.image = src_image;
     barrier.old_layout = ImageLayout::TRANSFER_SRC_OPTIMAL;
     barrier.new_layout = src_new_info.image_layout;
     barrier.src_access_mask = SET_FLAG_BIT(Access, TRANSFER_READ_BIT);
     barrier.dst_access_mask = src_new_info.access_flags;
+    barrier.subresource_range.aspect_mask = src_aspect_mask;
     barrier_list.image_barriers.push_back(barrier);
     if (src_new_info.stage_flags != dst_new_info.stage_flags) {
         cmd_buf->addBarriers(
@@ -539,6 +550,7 @@ void Helper::blitImage(
     barrier.new_layout = dst_new_info.image_layout;
     barrier.src_access_mask = SET_FLAG_BIT(Access, TRANSFER_WRITE_BIT);
     barrier.dst_access_mask = dst_new_info.access_flags;
+    barrier.subresource_range.aspect_mask = dst_aspect_mask;
     barrier_list.image_barriers.push_back(barrier);
     cmd_buf->addBarriers(
         barrier_list,

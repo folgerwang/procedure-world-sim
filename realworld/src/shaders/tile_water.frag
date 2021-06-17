@@ -73,46 +73,40 @@ void main() {
     vec3 pos = in_data.vertex_position;
     vec3 tnor = terrainNormal(vec2(pos.x, pos.z));
 
-    // bump map
-    vec4 tt = fbmd_8(pos * 0.3f * vec3(1.0f, 0.2f, 1.0f));
-    vec3 normal = normalize(tnor + 0.8f*(1.0f - abs(tnor.y))*0.8f*vec3(tt.y, tt.z, tt.w));
+    vec3 water_normal = normalize(cross(dFdy(pos), dFdx(pos)));
+    vec2 screen_uv = gl_FragCoord.xy * tile_params.inv_screen_size;
+    float dist_scale = length(vec3((screen_uv * 2.0f - 1.0f) * view_params.depth_params.zw, 1.0f));
 
-    vec3 albedo = vec3(0.18, 0.11, 0.10)*.75f;
-    albedo = 1.0f* mix(albedo, vec3(0.1, 0.1, 0.0)*0.2f, smoothstep(0.7f, 0.9f, normal.y));
-
-    MaterialInfo material_info;
-    material_info.baseColor = albedo;
+    float depth_z = texture(src_depth, screen_uv).r;
+    float bg_view_dist = view_params.proj[3].z / (depth_z + view_params.proj[2].z) * dist_scale;
 
     vec3 view_vec = view_params.camera_pos.xyz - in_data.vertex_position;
     float view_dist = length(view_vec);
     vec3 view = normalize(view_vec);
 
+    vec3 refract_ray = refract(-view, water_normal, 1.33);
+
+    float fade_rate = exp(-max((bg_view_dist - view_dist) / 10.0f, 0));
+
+    vec3 bg_color = texture(src_tex, screen_uv).xyz;
+
+    // bump map
+    vec3 normal = water_normal;
+
+    vec3 albedo = vec3(0.10, 0.10, 0.3)*.75f;
+    albedo = mix(albedo, bg_color, fade_rate);
+
+    MaterialInfo material_info;
+    material_info.baseColor = albedo;
+
     vec3 f_diffuse = vec3(0);
     vec3 f_specular = vec3(0);
-
-/*    float sha1 = 1.0f;
-    float sha2 = 1.0f;
-
-    float dif = clamp(dot(normal, kSunDir), 0.0f, 1.0f);
-    dif *= sha1;
-#ifndef LOWQUALITY
-    dif *= sha2;
-#endif
-
-    float bac = clamp(dot(normalize(vec3(-kSunDir.x, 0.0, -kSunDir.z)), normal), 0.0f, 1.0f);
-    float foc = clamp((pos.y + 100.0f) / 100.0f, 0.0f, 1.0f);
-    float dom = clamp(0.5f + 0.5f*normal.y, 0.0f, 1.0f);
-    vec3  lin = 1.0f*0.2f* mix(0.1f* vec3(0.1, 0.2, 0.1), vec3(0.7, 0.9, 1.5)*3.0f, dom)*foc;
-    lin += 1.0f*8.5f* vec3(1.0, 0.9, 0.8)*dif;
-    lin += 1.0f*0.27f* vec3(1.0)*bac*foc;
-
-    color *= lin;*/
 
     float ior = 1.5;
     float f0_ior = 0.04;
 
-    material_info.metallic = 0.3f;//material.metallic_factor;
-    material_info.perceptualRoughness = 0.8f;//material.roughness_factor;
+    material_info.metallic = 0.9f;//material.metallic_factor;
+    material_info.perceptualRoughness = 0.2f;//material.roughness_factor;
 
     // Achromatic f0 based on IOR.
     vec3 f0 = vec3(f0_ior);
@@ -128,5 +122,12 @@ void main() {
 
     vec3 color = f_diffuse + f_specular;
     float alpha = 1.0f;
+
+/*    color = texture(src_tex, screen_uv).xyz;
+
+    color = vec3((bg_view_dist - view_dist) / 100.0f);
+
+    alpha = 1.0;*/
+
     outColor = vec4(linearTosRGB(color), alpha);
 }

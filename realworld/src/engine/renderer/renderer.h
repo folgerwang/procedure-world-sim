@@ -404,6 +404,8 @@ public:
         const ImageResourceInfo& src_new_info,
         const ImageResourceInfo& dst_old_info,
         const ImageResourceInfo& dst_new_info,
+        const ImageAspectFlags& src_aspect_flags,
+        const ImageAspectFlags& dst_aspect_flags,
         const glm::ivec3& buffer_size);
 
     static bool acquireNextImage(

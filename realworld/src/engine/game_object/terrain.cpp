@@ -1603,10 +1603,20 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     descriptor_writes.reserve(2);
 
     // src color.
-    renderer::Helper::addOneTexture(descriptor_writes, SRC_COLOR_TEX_INDEX, texture_sampler, src_texture, description_set);
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_COLOR_TEX_INDEX,
+        texture_sampler,
+        src_texture,
+        description_set);
 
     // src depth.
-    //renderer::Helper::addOneTexture(descriptor_writes, SRC_DEPTH_TEX_INDEX, texture_sampler, src_depth, description_set);
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_DEPTH_TEX_INDEX,
+        texture_sampler,
+        src_depth,
+        description_set);
 
     return descriptor_writes;
 }
@@ -1663,9 +1673,9 @@ static std::shared_ptr<renderer::DescriptorSetLayout> createDescriptorSetLayout(
 
 static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescriptorSetLayout(
     const std::shared_ptr<renderer::Device>& device) {
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings(1);
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings(2);
     bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_COLOR_TEX_INDEX);
-//    bindings[1] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_DEPTH_TEX_INDEX);
+    bindings[1] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_DEPTH_TEX_INDEX);
     return device->createDescriptorSetLayout(bindings);
 }
 
@@ -1748,17 +1758,10 @@ static std::shared_ptr<renderer::Pipeline> createTileWaterPipeline(
     input_assembly.topology = renderer::PrimitiveTopology::TRIANGLE_LIST;
     input_assembly.restart_enable = false;
 
-    auto color_blending = renderer::helper::fillPipelineColorBlendStateCreateInfo(
-        { renderer::helper::fillPipelineColorBlendAttachmentState(
-            SET_FLAG_BIT(ColorComponent, ALL_BITS),
-            false,
-            renderer::BlendFactor::SRC_ALPHA,
-            renderer::BlendFactor::ONE_MINUS_SRC_ALPHA,
-            renderer::BlendOp::ADD) });
-
     renderer::GraphicPipelineInfo new_graphic_pipeline_info = graphic_pipeline_info;
-/*    new_graphic_pipeline_info.blend_state_info =
-        std::make_shared<renderer::PipelineColorBlendStateCreateInfo>(color_blending);*/
+/*    new_graphic_pipeline_info.depth_stencil_info = 
+        std::make_shared<renderer::PipelineDepthStencilStateCreateInfo>(
+            renderer::helper::fillPipelineDepthStencilStateCreateInfo(true, false));*/
 
     auto shader_modules = getTileWaterShaderModules(device);
     auto pipeline = device->createPipeline(
@@ -1814,6 +1817,7 @@ void TileObject::destory() {
 void TileObject::createStaticMembers(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::RenderPass>& render_pass,
+    const std::shared_ptr<renderer::RenderPass>& water_render_pass,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
     const glm::uvec2& display_size) {
@@ -1859,7 +1863,7 @@ void TileObject::createStaticMembers(
         tile_water_pipeline_ =
             createTileWaterPipeline(
                 device,
-                render_pass,
+                water_render_pass,
                 tile_pipeline_layout_,
                 graphic_pipeline_info,
                 display_size);
@@ -1869,6 +1873,7 @@ void TileObject::createStaticMembers(
 void TileObject::initStaticMembers(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::RenderPass>& render_pass,
+    const std::shared_ptr<renderer::RenderPass>& water_render_pass,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
     const glm::uvec2& display_size) {
@@ -1882,12 +1887,19 @@ void TileObject::initStaticMembers(
             CreateTileResourceDescriptorSetLayout(device);
     }
 
-    createStaticMembers(device, render_pass, graphic_pipeline_info, global_desc_set_layouts, display_size);
+    createStaticMembers(
+        device,
+        render_pass,
+        water_render_pass,
+        graphic_pipeline_info,
+        global_desc_set_layouts,
+        display_size);
 }
 
 void TileObject::recreateStaticMembers(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::RenderPass>& render_pass,
+    const std::shared_ptr<renderer::RenderPass>& wateer_render_pass,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
     const glm::uvec2& display_size) {
@@ -1916,7 +1928,13 @@ void TileObject::recreateStaticMembers(
         tile_water_pipeline_ = nullptr;
     }
 
-    createStaticMembers(device, render_pass, graphic_pipeline_info, global_desc_set_layouts, display_size);
+    createStaticMembers(
+        device,
+        render_pass,
+        wateer_render_pass,
+        graphic_pipeline_info,
+        global_desc_set_layouts,
+        display_size);
 }
 
 void TileObject::destoryStaticMembers(

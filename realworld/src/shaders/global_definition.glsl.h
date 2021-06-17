@@ -140,6 +140,7 @@ struct ViewParams {
     mat4 view;
     mat4 proj;
     uvec4 input_features;
+    vec4 depth_params;
 };
 
 struct ModelParams {

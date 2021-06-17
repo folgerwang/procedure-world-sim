@@ -33,10 +33,7 @@ private:
     void createCubemapPipelineLayout();
     void createCubeSkyboxPipelineLayout();
     void createCubemapComputePipelineLayout();
-    std::shared_ptr<er::RenderPass> createRenderPass(
-        er::Format format,
-        er::SampleCountFlagBits sample_count = er::SampleCountFlagBits::SC_1_BIT,
-        er::ImageLayout color_image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+    void createRenderPasses();
     void createCubemapRenderPass();
     void createFramebuffers(const glm::uvec2& display_size);
     void createCommandPool();
@@ -56,8 +53,7 @@ private:
     void createDescriptorSets();
     void createCommandBuffers();
     void createSyncObjects();
-    void updateViewConstBuffer(uint32_t current_image, float radius = 2.0f);
-    // todo remove vk interface here.
+    void updateViewConstBuffer(uint32_t current_image, float near_z = 0.5f);
     std::vector<er::TextureDescriptor> addGlobalTextures(
         const std::shared_ptr<er::DescriptorSet>& description_set);
     std::vector<er::TextureDescriptor> addSkyboxTextures(
@@ -70,10 +66,6 @@ private:
         const std::shared_ptr<er::DescriptorSet>& description_set, 
         const er::TextureInfo& src_tex,
         const er::TextureInfo& dst_tex);
-    std::vector<er::BufferDescriptor> addTileCreatorBuffers(
-        const std::shared_ptr<er::DescriptorSet>& description_set,
-        const er::BufferInfo& src_buffer,
-        const er::BufferInfo& dst_buffer);
     void mainLoop();
     void drawScene(
         std::shared_ptr<er::CommandBuffer> command_buffer,
@@ -138,11 +130,15 @@ private:
     std::shared_ptr<er::CommandPool> command_pool_;
 
     er::Format hdr_format_ = er::Format::B10G11R11_UFLOAT_PACK32;// E5B9G9R9_UFLOAT_PACK32; this format not supported here.
+    er::Format depth_format_ = er::Format::D24_UNORM_S8_UINT;
     er::TextureInfo hdr_color_buffer_;
     er::TextureInfo hdr_color_buffer_copy_;
     er::TextureInfo depth_buffer_;
+    er::TextureInfo depth_buffer_copy_;
     std::shared_ptr<er::Framebuffer> hdr_frame_buffer_;
+    std::shared_ptr<er::Framebuffer> hdr_water_frame_buffer_;
     std::shared_ptr<er::RenderPass> hdr_render_pass_;
+    std::shared_ptr<er::RenderPass> hdr_water_render_pass_;
 
     er::BufferInfo vertex_buffer_;
     er::BufferInfo index_buffer_;

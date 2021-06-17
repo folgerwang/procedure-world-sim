@@ -1788,8 +1788,8 @@ renderer::Format findDepthFormat(
     const std::shared_ptr<renderer::Device>& device) {
     auto vk_device = RENDER_TYPE_CAST(Device, device);
     return findSupportedFormat(vk_device->getPhysicalDevice(),
-        { renderer::Format::D32_SFLOAT_S8_UINT,
-          renderer::Format::D32_SFLOAT,
+        { renderer::Format::D32_SFLOAT,
+          renderer::Format::D32_SFLOAT_S8_UINT,
           renderer::Format::D24_UNORM_S8_UINT,
           renderer::Format::D16_UNORM_S8_UINT,
           renderer::Format::D16_UNORM },
@@ -1953,7 +1953,7 @@ void transitionImageLayout(
             // todo.
             auto vk_image = RENDER_TYPE_CAST(Image, image);
             barrier.image = vk_image->get();
-            if (new_layout == renderer::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+            if (isDepthFormat(format)) {
                 barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
 
                 if (hasStencilComponent(format)) {

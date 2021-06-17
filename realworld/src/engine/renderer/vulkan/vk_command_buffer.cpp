@@ -296,9 +296,9 @@ void VulkanCommandBuffer::addBarriers(
         helper::toVkPipelineStageFlags(src_stage_flags),
         helper::toVkPipelineStageFlags(dst_stage_flags),
         0,
-        memory_barrier_count, memory_barriers.data(),
-        buffer_barrier_count, buffer_barriers.data(),
-        image_barrier_count, image_barriers.data()
+        static_cast<uint32_t>(memory_barrier_count), memory_barriers.data(),
+        static_cast<uint32_t>(buffer_barrier_count), buffer_barriers.data(),
+        static_cast<uint32_t>(image_barrier_count), image_barriers.data()
     );
 }
 

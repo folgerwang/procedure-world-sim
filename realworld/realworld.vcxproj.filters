@@ -241,5 +241,8 @@
     <None Include="src\shaders\update_instance_buffer.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
+    <None Include="src\shaders\tile_water.frag">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

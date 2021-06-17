@@ -46,6 +46,154 @@ struct SkyBoxVertex {
     }
 };
 
+er::AttachmentDescription FillAttachmentDescription(
+    er::Format format,
+    er::SampleCountFlagBits samples,
+    er::ImageLayout initial_layout,
+    er::ImageLayout final_layout,
+    er::AttachmentLoadOp load_op = er::AttachmentLoadOp::CLEAR,
+    er::AttachmentStoreOp store_op = er::AttachmentStoreOp::STORE,
+    er::AttachmentLoadOp stencil_load_op = er::AttachmentLoadOp::DONT_CARE,
+    er::AttachmentStoreOp stencil_store_op = er::AttachmentStoreOp::DONT_CARE) {
+
+    er::AttachmentDescription attachment{};
+    attachment.format = format;
+    attachment.samples = samples;
+    attachment.initial_layout = initial_layout;
+    attachment.final_layout = final_layout;
+    attachment.load_op = load_op;
+    attachment.store_op = store_op;
+    attachment.stencil_load_op = stencil_load_op;
+    attachment.stencil_store_op = stencil_store_op;
+
+    return attachment;
+}
+
+er::SubpassDescription FillSubpassDescription(
+    er::PipelineBindPoint pipeline_bind_point,
+    const std::vector<er::AttachmentReference>& color_attachments,
+    const er::AttachmentReference* depth_stencil_attachment,
+    er::SubpassDescriptionFlags flags = static_cast<er::SubpassDescriptionFlags>(0),
+    const std::vector<er::AttachmentReference>& input_attachments = {},
+    const std::vector<er::AttachmentReference>& resolve_attachments = {}) {
+    er::SubpassDescription desc{};
+    desc.flags = flags;
+    desc.input_attachments = input_attachments;
+    desc.color_attachments = color_attachments;
+    desc.resolve_attachments = resolve_attachments;
+    if (depth_stencil_attachment) {
+        desc.depth_stencil_attachment.resize(1);
+        desc.depth_stencil_attachment[0] = *depth_stencil_attachment;
+    }
+    desc.preserve_attachment_count = 0;
+    desc.preserve_attachments = nullptr;
+
+    return desc;
+}
+
+er::SubpassDependency FillSubpassDependency(
+    uint32_t src_subpass,
+    uint32_t dst_subpass,
+    er::PipelineStageFlags src_stage_mask,
+    er::PipelineStageFlags dst_stage_mask,
+    er::AccessFlags src_access_mask,
+    er::AccessFlags dst_access_mask,
+    er::DependencyFlags dependency_flags = 0) {
+    er::SubpassDependency dependency{};
+    dependency.src_subpass = src_subpass;
+    dependency.dst_subpass = dst_subpass;
+    dependency.src_stage_mask = src_stage_mask;
+    dependency.dst_stage_mask = dst_stage_mask;
+    dependency.src_access_mask = src_access_mask;
+    dependency.dst_access_mask = dst_access_mask;
+    dependency.dependency_flags = dependency_flags;
+    return dependency;
+}
+
+std::shared_ptr<er::RenderPass> createRenderPass(
+    std::shared_ptr<er::Device> device,
+    er::Format format,
+    er::Format depth_format,
+    er::SampleCountFlagBits sample_count = er::SampleCountFlagBits::SC_1_BIT,
+    er::ImageLayout color_image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL) {
+    auto color_attachment = FillAttachmentDescription(
+        format,
+        sample_count,
+        er::ImageLayout::UNDEFINED,
+        color_image_layout);
+
+    er::AttachmentReference color_attachment_ref(0, er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
+    auto depth_attachment = FillAttachmentDescription(
+        depth_format,
+        sample_count,
+        er::ImageLayout::UNDEFINED,
+        er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+    er::AttachmentReference depth_attachment_ref(1, er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+    auto subpass = FillSubpassDescription(
+        er::PipelineBindPoint::GRAPHICS,
+        { color_attachment_ref },
+        &depth_attachment_ref);
+
+    auto depency = FillSubpassDependency(~0U, 0,
+        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT),
+        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT),
+        0,
+        SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT) |
+        SET_FLAG_BIT(Access, COLOR_ATTACHMENT_READ_BIT));
+
+    std::vector<er::AttachmentDescription> attachments(2);
+    attachments[0] = color_attachment;
+    attachments[1] = depth_attachment;
+
+    return device->createRenderPass(attachments, { subpass }, { depency });
+}
+
+std::shared_ptr<er::RenderPass> createWaterRenderPass(
+    std::shared_ptr<er::Device> device,
+    er::Format format,
+    er::Format depth_format,
+    er::SampleCountFlagBits sample_count = er::SampleCountFlagBits::SC_1_BIT,
+    er::ImageLayout color_image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL) {
+    auto color_attachment = FillAttachmentDescription(
+        format,
+        sample_count,
+        color_image_layout,
+        color_image_layout,
+        er::AttachmentLoadOp::LOAD);
+
+    er::AttachmentReference color_attachment_ref(0, er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
+    auto depth_attachment = FillAttachmentDescription(
+        depth_format,
+        sample_count,
+        er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        er::AttachmentLoadOp::LOAD);
+
+    er::AttachmentReference depth_attachment_ref(1, er::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+
+    auto subpass = FillSubpassDescription(
+        er::PipelineBindPoint::GRAPHICS,
+        { color_attachment_ref },
+        &depth_attachment_ref,
+        static_cast<er::SubpassDescriptionFlags>(0));
+
+    auto depency = FillSubpassDependency(~0U, 0,
+        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT),
+        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT),
+        0,
+        SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT) |
+        SET_FLAG_BIT(Access, COLOR_ATTACHMENT_READ_BIT));
+
+    std::vector<er::AttachmentDescription> attachments(2);
+    attachments[0] = color_attachment;
+    attachments[1] = depth_attachment;
+
+    return device->createRenderPass(attachments, { subpass }, { depency });
+}
 }
 
 namespace work {
@@ -163,6 +311,16 @@ void RealWorldApplication::createDepthResources(const glm::uvec2& display_size) 
         depth_format,
         display_size,
         depth_buffer_);
+
+    er::Helper::create2DTextureImage(
+        device_info_,
+        er::Format::D32_SFLOAT,
+        display_size,
+        depth_buffer_copy_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, DEPTH_STENCIL_ATTACHMENT_BIT) |
+        SET_FLAG_BIT(ImageUsage, TRANSFER_DST_BIT),
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 }
 
 void RealWorldApplication::createHdrColorBuffer(const glm::uvec2& display_size) {
@@ -192,6 +350,18 @@ void RealWorldApplication::recreateRenderBuffer(const glm::uvec2& display_size) 
     createHdrColorBuffer(display_size);
     createColorBufferCopy(display_size);
     createFramebuffers(display_size);
+}
+
+void RealWorldApplication::createRenderPasses() {
+    assert(device_);
+    render_pass_ = createRenderPass(
+        device_,
+        swap_chain_info_.format,
+        depth_format_,
+        er::SampleCountFlagBits::SC_1_BIT,
+        er::ImageLayout::PRESENT_SRC_KHR);
+    hdr_render_pass_ = createRenderPass(device_, hdr_format_, depth_format_);
+    hdr_water_render_pass_ = createWaterRenderPass(device_, hdr_format_, depth_format_);
 }
 
 void RealWorldApplication::initVulkan() {
@@ -236,6 +406,7 @@ void RealWorldApplication::initVulkan() {
     queue_indices_ = er::Helper::findQueueFamilies(physical_device_, surface_);
     device_ = er::Helper::createLogicalDevice(physical_device_, surface_, queue_indices_);
     assert(device_);
+    depth_format_ = er::Helper::findDepthFormat(device_);
     device_info_.device = device_;
     graphics_queue_ = device_->getDeviceQueue(queue_indices_.graphics_family_.value());
     assert(graphics_queue_);
@@ -249,11 +420,7 @@ void RealWorldApplication::initVulkan() {
         swap_chain_info_,
         SET_FLAG_BIT(ImageUsage, COLOR_ATTACHMENT_BIT)|
         SET_FLAG_BIT(ImageUsage, TRANSFER_DST_BIT));
-    render_pass_ = createRenderPass(
-        swap_chain_info_.format,
-        er::SampleCountFlagBits::SC_1_BIT,
-        er::ImageLayout::PRESENT_SRC_KHR);
-    hdr_render_pass_ = createRenderPass(hdr_format_);
+    createRenderPasses();
     createImageViews();
     createCubemapRenderPass();
     createCubemapFramebuffers();
@@ -300,8 +467,17 @@ void RealWorldApplication::initVulkan() {
     }
 
     auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
-    ego::TileObject::initStaticMembers(device_, hdr_render_pass_, graphic_pipeline_info_, desc_set_layouts, swap_chain_info_.extent);
-    ego::GltfObject::initStaticMembers(device_, descriptor_pool_, desc_set_layouts);
+    ego::TileObject::initStaticMembers(
+        device_,
+        hdr_render_pass_,
+        hdr_water_render_pass_,
+        graphic_pipeline_info_,
+        desc_set_layouts,
+        swap_chain_info_.extent);
+    ego::GltfObject::initStaticMembers(
+        device_,
+        descriptor_pool_,
+        desc_set_layouts);
     
     for (int y = -1; y <= 1; y++) {
         for (int x = -1; x <= 1; x++) {
@@ -321,7 +497,7 @@ void RealWorldApplication::initVulkan() {
         descriptor_pool_,
         texture_sampler_,
         hdr_color_buffer_copy_.view,
-        depth_buffer_.view);
+        depth_buffer_copy_.view);
 
     std::string path = "assets";
     for (const auto& entry : std::filesystem::directory_iterator(path)) {
@@ -368,11 +544,8 @@ void RealWorldApplication::recreateSwapChain() {
         swap_chain_info_,
         SET_FLAG_BIT(ImageUsage, COLOR_ATTACHMENT_BIT) |
         SET_FLAG_BIT(ImageUsage, TRANSFER_DST_BIT));
-    render_pass_ = createRenderPass(
-        swap_chain_info_.format,
-        er::SampleCountFlagBits::SC_1_BIT,
-        er::ImageLayout::PRESENT_SRC_KHR);
-    hdr_render_pass_ = createRenderPass(hdr_format_);
+
+    createRenderPasses();
     createImageViews();
     createGraphicPipelineLayout();
     createCubemapPipelineLayout();
@@ -381,6 +554,7 @@ void RealWorldApplication::recreateSwapChain() {
     ego::TileObject::recreateStaticMembers(
         device_,
         hdr_render_pass_,
+        hdr_water_render_pass_,
         graphic_pipeline_info_,
         desc_set_layouts,
         swap_chain_info_.extent);
@@ -423,7 +597,7 @@ void RealWorldApplication::recreateSwapChain() {
         descriptor_pool_,
         texture_sampler_,
         hdr_color_buffer_copy_.view,
-        depth_buffer_.view);
+        depth_buffer_copy_.view);
 
     er::Helper::initImgui(
         device_info_,
@@ -731,109 +905,6 @@ void RealWorldApplication::createComputePipeline()
     }
 }
 
-er::AttachmentDescription FillAttachmentDescription(
-    er::Format format,
-    er::SampleCountFlagBits samples,
-    er::ImageLayout initial_layout,
-    er::ImageLayout final_layout,
-    er::AttachmentLoadOp load_op = er::AttachmentLoadOp::CLEAR,
-    er::AttachmentStoreOp store_op = er::AttachmentStoreOp::STORE,
-    er::AttachmentLoadOp stencil_load_op = er::AttachmentLoadOp::DONT_CARE,
-    er::AttachmentStoreOp stencil_store_op = er::AttachmentStoreOp::DONT_CARE) {
-
-    er::AttachmentDescription attachment{};
-    attachment.format = format;
-    attachment.samples = samples;
-    attachment.initial_layout = initial_layout;
-    attachment.final_layout = final_layout;
-    attachment.load_op = load_op;
-    attachment.store_op = store_op;
-    attachment.stencil_load_op = stencil_load_op;
-    attachment.stencil_store_op = stencil_store_op;
-
-    return attachment;
-}
-
-er::SubpassDescription FillSubpassDescription(
-    er::PipelineBindPoint pipeline_bind_point,
-    const std::vector<er::AttachmentReference>& color_attachments,
-    const er::AttachmentReference* depth_stencil_attachment,
-    er::SubpassDescriptionFlags flags = static_cast<er::SubpassDescriptionFlags>(0),
-    const std::vector<er::AttachmentReference>& input_attachments = {},
-    const std::vector<er::AttachmentReference>& resolve_attachments = {}) {
-    er::SubpassDescription desc{};
-    desc.flags = flags;
-    desc.input_attachments = input_attachments;
-    desc.color_attachments = color_attachments;
-    desc.resolve_attachments = resolve_attachments;
-    if (depth_stencil_attachment) {
-        desc.depth_stencil_attachment.resize(1);
-        desc.depth_stencil_attachment[0] = *depth_stencil_attachment;
-    }
-    desc.preserve_attachment_count = 0;
-    desc.preserve_attachments = nullptr;
-
-    return desc;
-}
-
-er::SubpassDependency FillSubpassDependency(
-    uint32_t src_subpass,
-    uint32_t dst_subpass,
-    er::PipelineStageFlags src_stage_mask,
-    er::PipelineStageFlags dst_stage_mask,
-    er::AccessFlags src_access_mask,
-    er::AccessFlags dst_access_mask,
-    er::DependencyFlags dependency_flags = 0){
-    er::SubpassDependency dependency{};
-    dependency.src_subpass = src_subpass;
-    dependency.dst_subpass = dst_subpass;
-    dependency.src_stage_mask = src_stage_mask;
-    dependency.dst_stage_mask = dst_stage_mask;
-    dependency.src_access_mask = src_access_mask;
-    dependency.dst_access_mask = dst_access_mask;
-    dependency.dependency_flags = dependency_flags;
-    return dependency;
-}
-
-std::shared_ptr<er::RenderPass> RealWorldApplication::createRenderPass(
-    er::Format format,
-    er::SampleCountFlagBits sample_count/* = er::SampleCountFlagBits::SC_1_BIT*/,
-    er::ImageLayout color_image_layout/* = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL*/) {
-    auto color_attachment = FillAttachmentDescription(
-        format,
-        sample_count,
-        er::ImageLayout::UNDEFINED,
-        color_image_layout);
-
-    er::AttachmentReference color_attachment_ref(0, er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-
-    auto depth_attachment = FillAttachmentDescription(
-        er::Helper::findDepthFormat(device_),
-        sample_count,
-        er::ImageLayout::UNDEFINED,
-        er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-
-    er::AttachmentReference depth_attachment_ref(1, er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-
-    auto subpass = FillSubpassDescription(
-        er::PipelineBindPoint::GRAPHICS,
-        { color_attachment_ref },
-        &depth_attachment_ref);
-
-    auto depency = FillSubpassDependency(~0U, 0,
-        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT),
-        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT),
-        0,
-        SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT) |
-        SET_FLAG_BIT(Access, COLOR_ATTACHMENT_READ_BIT));
-
-    std::vector<er::AttachmentDescription> attachments(2);
-    attachments[0] = color_attachment;
-    attachments[1] = depth_attachment;
-
-    return device_->createRenderPass(attachments, { subpass }, { depency });
-}
-
 void RealWorldApplication::createCubemapRenderPass() {
     auto color_attachment = FillAttachmentDescription(
         er::Format::R16G16B16A16_SFLOAT,
@@ -885,6 +956,10 @@ void RealWorldApplication::createFramebuffers(const glm::uvec2& display_size) {
 
     hdr_frame_buffer_ =
         device_->createFrameBuffer(hdr_render_pass_, attachments, display_size);
+
+    assert(hdr_water_render_pass_);
+    hdr_water_frame_buffer_ =
+        device_->createFrameBuffer(hdr_water_render_pass_, attachments, display_size);
 }
 
 void RealWorldApplication::createCommandPool() {
@@ -1081,14 +1156,19 @@ void RealWorldApplication::createUniformBuffers() {
     }
 }
 
-void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, float radius) {
+void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, float near_z) {
     auto aspect = swap_chain_info_.extent.x / (float)swap_chain_info_.extent.y;
 
     view_params_.camera_pos = glm::vec4(s_camera_pos, 0);
     view_params_.view = glm::lookAt(s_camera_pos, s_camera_pos + s_camera_dir, s_camera_up);
-    view_params_.proj = glm::perspective(glm::radians(45.0f), aspect, 1.0f * radius, 10000.0f);
+    view_params_.proj = glm::perspective(glm::radians(45.0f), aspect, near_z, 2000.0f);
     view_params_.proj[1][1] *= -1;
-    view_params_.input_features = glm::vec4(0, 0, 0, 0);
+    view_params_.input_features = glm::uvec4(0, 0, 0, 0);
+    view_params_.depth_params = glm::vec4(
+        view_params_.proj[2][2],
+        view_params_.proj[3][2],
+        1.0f / view_params_.proj[0][0],
+        1.0f / view_params_.proj[1][1]);
 
     device_->updateBufferMemory(
         view_const_buffers_[current_image].memory,
@@ -1639,44 +1719,10 @@ void RealWorldApplication::drawScene(
             }
         }
 
-        // render terrain.
+        // render terrain opaque pass.
         {
             for (auto& tile_obj : tile_objects_) {
                 tile_obj->draw(cmd_buf, desc_sets, screen_size, true);
-            }
-        }
-
-        cmd_buf->endRenderPass();
-
-        er::ImageResourceInfo src_info = {
-            er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
-            SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
-
-        er::ImageResourceInfo dst_info = {
-            er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            SET_FLAG_BIT(Access, SHADER_READ_BIT),
-            SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
-
-        er::Helper::blitImage(
-            cmd_buf,
-            hdr_color_buffer_.image,
-            hdr_color_buffer_copy_.image,
-            src_info,
-            src_info,
-            dst_info,
-            dst_info,
-            glm::ivec3(screen_size.x, screen_size.y, 1));
-
-        cmd_buf->beginRenderPass(
-            hdr_render_pass_,
-            hdr_frame_buffer_,
-            screen_size,
-            clear_values);
-
-        {
-            for (auto& tile_obj : tile_objects_) {
-                tile_obj->draw(cmd_buf, desc_sets, screen_size, false);
             }
         }
 
@@ -1703,6 +1749,65 @@ void RealWorldApplication::drawScene(
         }
 
         cmd_buf->endRenderPass();
+
+        er::ImageResourceInfo src_info = {
+            er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
+            SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
+
+        er::ImageResourceInfo dst_info = {
+            er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            SET_FLAG_BIT(Access, SHADER_READ_BIT),
+            SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
+
+        er::Helper::blitImage(
+            cmd_buf,
+            hdr_color_buffer_.image,
+            hdr_color_buffer_copy_.image,
+            src_info,
+            src_info,
+            dst_info,
+            dst_info,
+            SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+            SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+            glm::ivec3(screen_size.x, screen_size.y, 1));
+
+        src_info = {
+            er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            SET_FLAG_BIT(Access, DEPTH_STENCIL_ATTACHMENT_WRITE_BIT),
+            SET_FLAG_BIT(PipelineStage, EARLY_FRAGMENT_TESTS_BIT) };
+
+        dst_info = {
+            er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            SET_FLAG_BIT(Access, SHADER_READ_BIT),
+            SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
+
+        er::Helper::blitImage(
+            cmd_buf,
+            depth_buffer_.image,
+            depth_buffer_copy_.image,
+            src_info,
+            src_info,
+            dst_info,
+            dst_info,
+            SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
+            SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
+            glm::ivec3(screen_size.x, screen_size.y, 1));
+
+        cmd_buf->beginRenderPass(
+            hdr_water_render_pass_,
+            hdr_water_frame_buffer_,
+            screen_size,
+            clear_values);
+
+        // render terrain water pass.
+        {
+            for (auto& tile_obj : tile_objects_) {
+                tile_obj->draw(cmd_buf, desc_sets, screen_size, false);
+            }
+        }
+
+        cmd_buf->endRenderPass();
     }
 
     er::ImageResourceInfo src_info = {
@@ -1723,6 +1828,8 @@ void RealWorldApplication::drawScene(
         src_info,
         dst_info,
         dst_info,
+        SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+        SET_FLAG_BIT(ImageAspect, COLOR_BIT),
         glm::ivec3(screen_size.x, screen_size.y, 1));
 }
 
@@ -1882,6 +1989,7 @@ void RealWorldApplication::cleanupSwapChain() {
     hdr_color_buffer_.destroy(device_);
     hdr_color_buffer_copy_.destroy(device_);
     device_->destroyFramebuffer(hdr_frame_buffer_);
+    device_->destroyFramebuffer(hdr_water_frame_buffer_);
 
     for (auto framebuffer : swap_chain_info_.framebuffers) {
         device_->destroyFramebuffer(framebuffer);
@@ -1894,6 +2002,7 @@ void RealWorldApplication::cleanupSwapChain() {
     device_->destroyPipelineLayout(ibl_comp_pipeline_layout_);
     device_->destroyRenderPass(render_pass_);
     device_->destroyRenderPass(hdr_render_pass_);
+    device_->destroyRenderPass(hdr_water_render_pass_);
 
     for (auto image_view : swap_chain_info_.image_views) {
         device_->destroyImageView(image_view);

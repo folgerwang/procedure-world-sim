@@ -137,7 +137,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -DSOIL_PASS=1 -o $(ProjectDir)lib\shaders\tile_soil_frag.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -DGRASS_PASS=1 -o $(ProjectDir)lib\shaders\tile_grass_frag.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -DSNOW_PASS=1 -o $(ProjectDir)lib\shaders\tile_snow_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -DWATER_PASS=1 -o $(ProjectDir)lib\shaders\tile_water_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_water.frag -o $(ProjectDir)lib\shaders\tile_water_frag.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\skybox.vert -o $(ProjectDir)lib\shaders\skybox_vert.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\skybox.frag -o $(ProjectDir)lib\shaders\skybox_frag.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube.vert -o $(ProjectDir)lib\shaders\ibl_vert.spv
@@ -220,7 +220,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -DSOIL_PASS=1 -o $(ProjectDir)lib\shaders\tile_soil_frag.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -DGRASS_PASS=1 -o $(ProjectDir)lib\shaders\tile_grass_frag.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -DSNOW_PASS=1 -o $(ProjectDir)lib\shaders\tile_snow_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -DWATER_PASS=1 -o $(ProjectDir)lib\shaders\tile_water_frag.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_water.frag -o $(ProjectDir)lib\shaders\tile_water_frag.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\skybox.vert -o $(ProjectDir)lib\shaders\skybox_vert.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\skybox.frag -o $(ProjectDir)lib\shaders\skybox_frag.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube.vert -o $(ProjectDir)lib\shaders\ibl_vert.spv
@@ -306,6 +306,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\updat
     <None Include="src\shaders\tile.frag" />
     <None Include="src\shaders\tile.vert" />
     <None Include="src\shaders\tile_creator.comp" />
+    <None Include="src\shaders\tile_water.frag" />
     <None Include="src\shaders\update_game_objects.comp" />
     <None Include="src\shaders\update_gltf_indirect_draw.comp" />
     <None Include="src\shaders\update_instance_buffer.comp" />

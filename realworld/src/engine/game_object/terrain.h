@@ -43,6 +43,7 @@ public:
     static void initStaticMembers(
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::RenderPass>& render_pass,
+        const std::shared_ptr<renderer::RenderPass>& water_render_pass,
         const renderer::GraphicPipelineInfo& graphic_pipeline_info,
         const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
         const glm::uvec2& display_size);
@@ -50,6 +51,7 @@ public:
     static void createStaticMembers(
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::RenderPass>& render_pass,
+        const std::shared_ptr<renderer::RenderPass>& water_render_pass,
         const renderer::GraphicPipelineInfo& graphic_pipeline_info,
         const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
         const glm::uvec2& display_size);
@@ -57,6 +59,7 @@ public:
     static void recreateStaticMembers(
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::RenderPass>& render_pass,
+        const std::shared_ptr<renderer::RenderPass>& water_render_pass,
         const renderer::GraphicPipelineInfo& graphic_pipeline_info,
         const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
         const glm::uvec2& display_size);
