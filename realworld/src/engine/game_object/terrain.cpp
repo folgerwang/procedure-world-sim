@@ -1594,6 +1594,23 @@ std::vector<renderer::BufferDescriptor> addTileCreatorBuffers(
     return descriptor_writes;
 }
 
+std::vector<renderer::BufferDescriptor> addTileUpdateBuffers(
+    const std::shared_ptr<renderer::DescriptorSet>& description_set,
+    const renderer::BufferInfo& buffer) {
+    std::vector<renderer::BufferDescriptor> descriptor_writes;
+    descriptor_writes.reserve(1);
+
+    renderer::Helper::addOneBuffer(
+        descriptor_writes,
+        VERTEX_BUFFER_INDEX,
+        buffer.buffer,
+        description_set,
+        engine::renderer::DescriptorType::STORAGE_BUFFER,
+        buffer.buffer->getSize());
+
+    return descriptor_writes;
+}
+
 std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
@@ -1627,6 +1644,17 @@ static renderer::ShaderModuleList getTileCreatorCsModules(
     renderer::ShaderModuleList shader_modules;
     shader_modules.reserve(1);
     auto compute_shader_code = engine::helper::readFile("lib/shaders/tile_creator_comp.spv", compute_code_size);
+    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
+
+    return shader_modules;
+}
+
+static renderer::ShaderModuleList getTileUpdateCsModules(
+    const std::shared_ptr<renderer::Device>& device) {
+    uint64_t compute_code_size;
+    renderer::ShaderModuleList shader_modules;
+    shader_modules.reserve(1);
+    auto compute_shader_code = engine::helper::readFile("lib/shaders/tile_update_comp.spv", compute_code_size);
     shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
 
     return shader_modules;
@@ -1671,6 +1699,16 @@ static std::shared_ptr<renderer::DescriptorSetLayout> createDescriptorSetLayout(
     return device->createDescriptorSetLayout(bindings);
 }
 
+static std::shared_ptr<renderer::DescriptorSetLayout> createTileUpdateDescriptorSetLayout(
+    const std::shared_ptr<renderer::Device>& device) {
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings(1);
+    bindings[0] = renderer::helper::getBufferDescriptionSetLayoutBinding(VERTEX_BUFFER_INDEX,
+        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+        renderer::DescriptorType::STORAGE_BUFFER);
+
+    return device->createDescriptorSetLayout(bindings);
+}
+
 static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescriptorSetLayout(
     const std::shared_ptr<renderer::Device>& device) {
     std::vector<renderer::DescriptorSetLayoutBinding> bindings(2);
@@ -1680,6 +1718,17 @@ static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescript
 }
 
 static std::shared_ptr<renderer::PipelineLayout> createTileCreatorPipelineLayout(
+    const std::shared_ptr<renderer::Device>& device,
+    const renderer::DescriptorSetLayoutList& desc_set_layouts) {
+    renderer::PushConstantRange push_const_range{};
+    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
+    push_const_range.offset = 0;
+    push_const_range.size = sizeof(glsl::TileParams);
+
+    return device->createPipelineLayout(desc_set_layouts, { push_const_range });
+}
+
+static std::shared_ptr<renderer::PipelineLayout> createTileUpdatePipelineLayout(
     const std::shared_ptr<renderer::Device>& device,
     const renderer::DescriptorSetLayoutList& desc_set_layouts) {
     renderer::PushConstantRange push_const_range{};
@@ -1701,6 +1750,23 @@ static std::shared_ptr<renderer::Pipeline> createTileCreatorPipeline(
         tile_creator_compute_shader_modules[0]);
 
     for (auto& shader_module : tile_creator_compute_shader_modules) {
+        device->destroyShaderModule(shader_module);
+    }
+
+    return pipeline;
+}
+
+static std::shared_ptr<renderer::Pipeline> createTileUpdatePipeline(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout) {
+    auto tile_update_compute_shader_modules = getTileUpdateCsModules(device);
+    assert(tile_update_compute_shader_modules.size() == 1);
+
+    auto pipeline = device->createPipeline(
+        pipeline_layout,
+        tile_update_compute_shader_modules[0]);
+
+    for (auto& shader_module : tile_update_compute_shader_modules) {
         device->destroyShaderModule(shader_module);
     }
 
@@ -1804,6 +1870,9 @@ std::vector<uint32_t> TileObject::available_block_indexes_;
 std::shared_ptr<renderer::DescriptorSetLayout> TileObject::tile_creator_desc_set_layout_;
 std::shared_ptr<renderer::PipelineLayout> TileObject::tile_creator_pipeline_layout_;
 std::shared_ptr<renderer::Pipeline> TileObject::tile_creator_pipeline_;
+std::shared_ptr<renderer::DescriptorSetLayout> TileObject::tile_update_desc_set_layout_;
+std::shared_ptr<renderer::PipelineLayout> TileObject::tile_update_pipeline_layout_;
+std::shared_ptr<renderer::Pipeline> TileObject::tile_update_pipeline_;
 std::shared_ptr<renderer::PipelineLayout> TileObject::tile_pipeline_layout_;
 std::shared_ptr<renderer::Pipeline> TileObject::tile_pipeline_;
 std::shared_ptr<renderer::DescriptorSetLayout> TileObject::tile_res_desc_set_layout_;
@@ -1824,6 +1893,7 @@ TileObject::TileObject(
     block_idx_(block_idx){
     createMeshBuffers();
     assert(tile_creator_desc_set_layout_);
+    assert(tile_update_desc_set_layout_);
     assert(tile_res_desc_set_layout_);
     generateDescriptorSet(device_info.device, descriptor_pool);
 }
@@ -1878,6 +1948,22 @@ void TileObject::createStaticMembers(
             createTileCreatorPipeline(
                 device,
                 tile_creator_pipeline_layout_);
+    }
+
+    if (tile_update_pipeline_layout_ == nullptr) {
+        assert(tile_update_desc_set_layout_);
+        tile_update_pipeline_layout_ =
+            createTileUpdatePipelineLayout(
+                device,
+                { tile_update_desc_set_layout_ });
+    }
+
+    if (tile_update_pipeline_ == nullptr) {
+        assert(tile_update_pipeline_layout_);
+        tile_update_pipeline_ =
+            createTileUpdatePipeline(
+                device,
+                tile_update_pipeline_layout_);
     }
 
     auto desc_set_layouts = global_desc_set_layouts;
@@ -1937,13 +2023,18 @@ void TileObject::initStaticMembers(
         vertex_buffer_.memory);
 
     available_block_indexes_.resize(num_cache_blocks);
-    for (int i = 0; i < num_cache_blocks; i++) {
+    for (uint32_t i = 0; i < num_cache_blocks; i++) {
         available_block_indexes_[i] = i;
     }
 
     if (tile_creator_desc_set_layout_ == nullptr) {
         tile_creator_desc_set_layout_ =
             createDescriptorSetLayout(device);
+    }
+
+    if (tile_update_desc_set_layout_ == nullptr) {
+        tile_update_desc_set_layout_ =
+            createTileUpdateDescriptorSetLayout(device);
     }
 
     if (tile_res_desc_set_layout_ == nullptr) {
@@ -1977,6 +2068,16 @@ void TileObject::recreateStaticMembers(
         tile_creator_pipeline_ = nullptr;
     }
 
+    if (tile_update_pipeline_layout_) {
+        device->destroyPipelineLayout(tile_update_pipeline_layout_);
+        tile_update_pipeline_layout_ = nullptr;
+    }
+
+    if (tile_update_pipeline_) {
+        device->destroyPipeline(tile_update_pipeline_);
+        tile_update_pipeline_ = nullptr;
+    }
+
     if (tile_pipeline_layout_) {
         device->destroyPipelineLayout(tile_pipeline_layout_);
         tile_pipeline_layout_ = nullptr;
@@ -2004,9 +2105,12 @@ void TileObject::recreateStaticMembers(
 void TileObject::destoryStaticMembers(
     const std::shared_ptr<renderer::Device>& device) {
     device->destroyDescriptorSetLayout(tile_creator_desc_set_layout_);
+    device->destroyDescriptorSetLayout(tile_update_desc_set_layout_);
     device->destroyDescriptorSetLayout(tile_res_desc_set_layout_);
     device->destroyPipelineLayout(tile_creator_pipeline_layout_);
+    device->destroyPipelineLayout(tile_update_pipeline_layout_);
     device->destroyPipeline(tile_creator_pipeline_);
+    device->destroyPipeline(tile_update_pipeline_);
     device->destroyPipelineLayout(tile_pipeline_layout_);
     device->destroyPipeline(tile_pipeline_);
     device->destroyPipeline(tile_water_pipeline_);
@@ -2040,6 +2144,16 @@ void TileObject::generateDescriptorSet(
         buffer_desc_set_,
         vertex_buffer_,
         index_buffer_);
+    device->updateDescriptorSets({}, buffer_descs);
+
+    // tile creator buffer set.
+    update_buffer_desc_set_ = device->createDescriptorSets(
+        descriptor_pool, tile_update_desc_set_layout_, 1)[0];
+
+    // create a global ibl texture descriptor set.
+    buffer_descs = addTileUpdateBuffers(
+        update_buffer_desc_set_,
+        vertex_buffer_);
     device->updateDescriptorSets({}, buffer_descs);
 }
 
@@ -2158,12 +2272,14 @@ void TileObject::updateTileBuffers(
 
     cmd_buf->addBufferBarrier(
         vertex_buffer_.buffer,
-        { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
-        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
+        { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT),
+          SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
+        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT) | SET_FLAG_BIT(Access, SHADER_READ_BIT),
+          SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
         buffer_size,
         buffer_offset);
 
-    cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, tile_creator_pipeline_);
+    cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, tile_update_pipeline_);
     glsl::TileParams tile_params = {};
     tile_params.neighbors = neighbors_ * glm::ivec4(num_vertexes);
     tile_params.min = min_;
@@ -2172,20 +2288,21 @@ void TileObject::updateTileBuffers(
     tile_params.offset = num_vertexes * block_idx_;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-        tile_creator_pipeline_layout_,
+        tile_update_pipeline_layout_,
         &tile_params,
         sizeof(tile_params));
 
     cmd_buf->bindDescriptorSets(
         renderer::PipelineBindPoint::COMPUTE,
-        tile_creator_pipeline_layout_,
-        { buffer_desc_set_ });
+        tile_update_pipeline_layout_,
+        { update_buffer_desc_set_ });
 
     cmd_buf->dispatch((v_count + 7) / 8, (v_count + 7) / 8, 1);
 
     cmd_buf->addBufferBarrier(
         vertex_buffer_.buffer,
-        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
+        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT) | SET_FLAG_BIT(Access, SHADER_READ_BIT),
+          SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
         { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
         buffer_size,
         buffer_offset);

@@ -25,7 +25,8 @@ class TileObject {
     renderer::BufferInfo index_buffer_;
 
     std::shared_ptr<renderer::DescriptorSet> buffer_desc_set_;
-
+    std::shared_ptr<renderer::DescriptorSet> update_buffer_desc_set_;
+    
     static std::unordered_map<size_t, std::shared_ptr<TileObject>> tile_meshes_;
     static std::vector<std::shared_ptr<TileObject>> visible_tiles_;
     static std::vector<uint32_t> available_block_indexes_;
@@ -33,6 +34,9 @@ class TileObject {
     static std::shared_ptr<renderer::DescriptorSetLayout> tile_creator_desc_set_layout_;
     static std::shared_ptr<renderer::PipelineLayout> tile_creator_pipeline_layout_;
     static std::shared_ptr<renderer::Pipeline> tile_creator_pipeline_;
+    static std::shared_ptr<renderer::DescriptorSetLayout> tile_update_desc_set_layout_;
+    static std::shared_ptr<renderer::PipelineLayout> tile_update_pipeline_layout_;
+    static std::shared_ptr<renderer::Pipeline> tile_update_pipeline_;
     static std::shared_ptr<renderer::PipelineLayout> tile_pipeline_layout_;
     static std::shared_ptr<renderer::Pipeline> tile_pipeline_;
     static std::shared_ptr<renderer::DescriptorSetLayout> tile_res_desc_set_layout_;
