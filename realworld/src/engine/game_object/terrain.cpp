@@ -1781,9 +1781,25 @@ static std::shared_ptr<renderer::Pipeline> createTileWaterPipeline(
     return pipeline;
 }
 
+size_t generateHash(
+    const glm::vec2& min,
+    const glm::vec2& max,
+    const glm::uvec2& segment_count) {
+    size_t hash;
+    hash = std::hash<float>{}(min.x);
+    hash_combine(hash, min.y);
+    hash_combine(hash, max.x);
+    hash_combine(hash, max.y);
+    hash_combine(hash, segment_count.x);
+    hash_combine(hash, segment_count.y);
+    return hash;
+}
+
 } // namespace
 
 // static member definition.
+std::unordered_map<size_t, std::shared_ptr<TileObject>> TileObject::tile_meshes_;
+std::vector<std::shared_ptr<TileObject>> TileObject::visible_tiles_;
 std::shared_ptr<renderer::DescriptorSetLayout> TileObject::tile_creator_desc_set_layout_;
 std::shared_ptr<renderer::PipelineLayout> TileObject::tile_creator_pipeline_layout_;
 std::shared_ptr<renderer::Pipeline> TileObject::tile_creator_pipeline_;
@@ -1798,20 +1814,45 @@ TileObject::TileObject(
     const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,
     const glm::uvec2& segment_count,
     const glm::vec2& min,
-    const glm::vec2& max) :
+    const glm::vec2& max,
+    const size_t& hash_value) :
     device_info_(device_info),
     segment_count_(segment_count),
     min_(min),
-    max_(max) {
+    max_(max),
+    hash_(hash_value) {
     createMeshBuffers();
     assert(tile_creator_desc_set_layout_);
     assert(tile_res_desc_set_layout_);
-    generateDescriptorSet(descriptor_pool);
+    generateDescriptorSet(device_info.device, descriptor_pool);
 }
 
 void TileObject::destory() {
     vertex_buffer_.destroy(device_info_.device);
     index_buffer_.destroy(device_info_.device);
+}
+
+std::shared_ptr<TileObject> TileObject::addOneTile(
+    const renderer::DeviceInfo& device_info,
+    const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,
+    const glm::uvec2& segment_count,
+    const glm::vec2& min,
+    const glm::vec2& max) {
+
+    auto hash_value = generateHash(min, max, segment_count);
+    auto result = tile_meshes_.find(hash_value);
+    if (result == tile_meshes_.end()) {
+        tile_meshes_[hash_value] =
+            std::make_shared<TileObject>(
+                device_info,
+                descriptor_pool,
+                segment_count,
+                min,
+                max,
+                hash_value);
+    }
+
+    return tile_meshes_[hash_value];
 }
 
 void TileObject::createStaticMembers(
@@ -1979,10 +2020,11 @@ void TileObject::createMeshBuffers() {
 }
 
 void TileObject::generateDescriptorSet(
+    const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool) {
 
     // tile creator buffer set.
-    buffer_desc_set_ = device_info_.device->createDescriptorSets(
+    buffer_desc_set_ = device->createDescriptorSets(
         descriptor_pool, tile_creator_desc_set_layout_, 1)[0];
 
     // create a global ibl texture descriptor set.
@@ -1990,10 +2032,14 @@ void TileObject::generateDescriptorSet(
         buffer_desc_set_,
         vertex_buffer_,
         index_buffer_);
-    device_info_.device->updateDescriptorSets({}, buffer_descs);
+    device->updateDescriptorSets({}, buffer_descs);
+}
 
+void TileObject::generateStaticDescriptorSet(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool) {
     // tile params set.
-    tile_res_desc_set_ = device_info_.device->createDescriptorSets(
+    tile_res_desc_set_ = device->createDescriptorSets(
         descriptor_pool, tile_res_desc_set_layout_, 1)[0];
 }
 
@@ -2004,6 +2050,12 @@ void TileObject::updateStaticDescriptorSet(
     const std::shared_ptr<renderer::ImageView>& src_texture,
     const std::shared_ptr<renderer::ImageView>& src_depth) {
 
+    if (tile_res_desc_set_ == nullptr) {
+        generateStaticDescriptorSet(
+            device,
+            descriptor_pool);
+    }
+
     // create a global ibl texture descriptor set.
     auto tile_res_descs = addTileResourceTextures(
         tile_res_desc_set_,
@@ -2013,8 +2065,24 @@ void TileObject::updateStaticDescriptorSet(
     device->updateDescriptorSets(tile_res_descs, {});
 }
 
+bool TileObject::validTileBySize(
+    const glm::ivec2& min_tile_idx,
+    const glm::ivec2& max_tile_idx,
+    const float& tile_size) {
+
+    glm::ivec2 tile_index =
+        glm::ivec2((min_ + glm::vec2(tile_size / 2 + 1)) * glm::vec2(1.0f / tile_size));
+
+    return
+        (tile_index.x >= min_tile_idx.x && tile_index.x <= max_tile_idx.x) &&
+        (tile_index.y >= min_tile_idx.y && tile_index.y <= max_tile_idx.y);
+}
+
 void TileObject::generateTileBuffers(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
+
+    if (created)
+        return;
 
     uint32_t vx_count = segment_count_.x + 1;
     uint32_t vy_count = segment_count_.y + 1;
@@ -2060,6 +2128,8 @@ void TileObject::generateTileBuffers(
         { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
         { SET_FLAG_BIT(Access, INDEX_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
         index_buffer_.buffer->getSize());
+
+    created = true;
 }
 
 void TileObject::draw(
@@ -2098,6 +2168,97 @@ void TileObject::draw(
         new_desc_sets);
 
     cmd_buf->drawIndexed(segment_count_.x * segment_count_.y * 6);
+}
+
+void TileObject::generateAllDescriptorSets(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool) {
+    for (auto& tile : tile_meshes_) {
+        tile.second->generateDescriptorSet(device, descriptor_pool);
+    }
+
+    generateStaticDescriptorSet(device, descriptor_pool);
+}
+
+void TileObject::generateAllTileBuffers(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
+    for (auto& tile : tile_meshes_) {
+        tile.second->generateTileBuffers(cmd_buf);
+    }
+}
+
+void TileObject::drawAllVisibleTiles(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    const renderer::DescriptorSetList& desc_set_list,
+    const glm::uvec2 display_size,
+    bool is_base_pass) {
+
+    for (auto& tile : visible_tiles_) {
+        tile->draw(cmd_buf, desc_set_list, display_size, is_base_pass);
+    }
+}
+
+void TileObject::updateAllTiles(
+    const renderer::DeviceInfo& device_info,
+    const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,
+    const glm::uvec2& segment_count,
+    const float& tile_size,
+    const glm::vec2& camera_pos) {
+
+    constexpr uint32_t kCacheTileSize = 3;
+    constexpr uint32_t kVisibleTileSize = 2;
+    glm::ivec2 center_tile_index = camera_pos * (1.0f / tile_size);
+    glm::ivec2 min_cache_tile_idx = center_tile_index - glm::ivec2(kCacheTileSize);
+    glm::ivec2 max_cache_tile_idx = center_tile_index + glm::ivec2(kCacheTileSize);
+    glm::ivec2 min_visi_tile_idx = center_tile_index - glm::ivec2(kVisibleTileSize);
+    glm::ivec2 max_visi_tile_idx = center_tile_index + glm::ivec2(kVisibleTileSize);
+
+    visible_tiles_.clear();
+
+    std::vector<size_t> to_delete_tiles;
+    // remove all the tiles outside of cache zone.
+    for (auto& tile : tile_meshes_) {
+        bool inside = tile.second->validTileBySize(
+            min_cache_tile_idx,
+            max_cache_tile_idx,
+            tile_size);
+
+        if (!inside) {
+            to_delete_tiles.push_back(tile.second->getHash());
+        }
+    }
+
+    for (auto& hash_value : to_delete_tiles) {
+        tile_meshes_.erase(hash_value);
+    }
+
+    // add (kCacheTileSize * 2 + 1) x (kCacheTileSize * 2 + 1) tiles for caching.
+    for (int y = min_cache_tile_idx.y; y <= max_cache_tile_idx.y; y++) {
+        for (int x = min_cache_tile_idx.x; x <= max_cache_tile_idx.x; x++) {
+            addOneTile(
+                device_info,
+                descriptor_pool,
+                segment_count,
+                glm::vec2(-tile_size / 2 + x * tile_size, -tile_size / 2 + y * tile_size),
+                glm::vec2(tile_size / 2 + x * tile_size, tile_size / 2 + y * tile_size));
+        }
+    }
+
+    for (auto& tile : tile_meshes_) {
+        bool inside = tile.second->validTileBySize(
+            min_visi_tile_idx,
+            max_visi_tile_idx,
+            tile_size);
+
+        if (inside) {
+            visible_tiles_.push_back(tile.second);
+        }
+    }
+}
+
+void TileObject::destoryAllTiles() {
+    tile_meshes_.clear();
+    visible_tiles_.clear();
 }
 
 } // namespace game_object

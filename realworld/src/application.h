@@ -168,7 +168,6 @@ private:
     std::vector<std::shared_ptr<er::Fence>> images_in_flight_;
 
     std::vector<std::shared_ptr<ego::GltfObject>> gltf_objects_;
-    std::vector<std::shared_ptr<ego::TileObject>> tile_objects_;
     std::vector<std::string> gltf_file_names_;
 
     glsl::ViewParams view_params_{};

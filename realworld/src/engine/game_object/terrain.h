@@ -7,6 +7,8 @@ namespace game_object {
 class TileObject {
     const renderer::DeviceInfo& device_info_;
 
+    bool created = false;
+    size_t hash_ = ~0x00;
     glm::uvec2 segment_count_;
     glm::vec2 min_;
     glm::vec2 max_;
@@ -16,6 +18,8 @@ class TileObject {
 
     std::shared_ptr<renderer::DescriptorSet> buffer_desc_set_;
 
+    static std::unordered_map<size_t, std::shared_ptr<TileObject>> tile_meshes_;
+    static std::vector<std::shared_ptr<TileObject>> visible_tiles_;
     static std::shared_ptr<renderer::DescriptorSetLayout> tile_creator_desc_set_layout_;
     static std::shared_ptr<renderer::PipelineLayout> tile_creator_pipeline_layout_;
     static std::shared_ptr<renderer::Pipeline> tile_creator_pipeline_;
@@ -32,13 +36,28 @@ public:
         const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,
         const glm::uvec2& segment_count,
         const glm::vec2& min,
-        const glm::vec2& max);
+        const glm::vec2& max,
+        const size_t& hash_value);
 
     ~TileObject() {
         destory();
     }
 
+    inline size_t getHash() { return hash_; }
+
     void destory();
+
+    static size_t getHash(
+        const glm::vec2& min,
+        const glm::vec2& max,
+        const glm::uvec2& segment_count);
+
+    static std::shared_ptr<TileObject> addOneTile(
+        const renderer::DeviceInfo& device_info,
+        const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,
+        const glm::uvec2& segment_count,
+        const glm::vec2& min,
+        const glm::vec2& max);
 
     static void initStaticMembers(
         const std::shared_ptr<renderer::Device>& device,
@@ -74,12 +93,44 @@ public:
         const std::shared_ptr<renderer::ImageView>& src_texture,
         const std::shared_ptr<renderer::ImageView>& src_depth);
 
+    static void generateStaticDescriptorSet(
+        const std::shared_ptr<renderer::Device>& device,
+        const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool);
+
+    static void generateAllDescriptorSets(
+        const std::shared_ptr<renderer::Device>& device,
+        const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool);
+
+    static void generateAllTileBuffers(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
+
+    static void drawAllVisibleTiles(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+        const renderer::DescriptorSetList& desc_set_list,
+        const glm::uvec2 display_size,
+        bool is_base_pass);
+
+    static void updateAllTiles(
+        const renderer::DeviceInfo& device_info,
+        const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,
+        const glm::uvec2& segment_count,
+        const float& tile_size,
+        const glm::vec2& camera_pos);
+
+    static void destoryAllTiles();
+
+    bool validTileBySize(
+        const glm::ivec2& min_tile_idx,
+        const glm::ivec2& max_tile_idx,
+        const float& tile_size);
+
     void generateTileBuffers(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
 
     void createMeshBuffers();
         
     void generateDescriptorSet(
+        const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool);
 
     void draw(const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,

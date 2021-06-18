@@ -219,7 +219,7 @@ static bool s_mouse_right_button_pressed = false;
 static glm::vec2 s_last_mouse_pos;
 static float s_yaw = 0.0f;
 static float s_pitch = 0.0f;
-const float s_camera_speed = 0.2f;
+const float s_camera_speed = 1.0f;
 static glm::vec3 s_camera_pos = glm::vec3(0, -100.0f, 0);
 static glm::vec3 s_camera_dir = glm::normalize(glm::vec3(1.0f, 0.0f, 0));
 static glm::vec3 s_camera_up = glm::vec3(0, 1, 0);
@@ -478,19 +478,6 @@ void RealWorldApplication::initVulkan() {
         device_,
         descriptor_pool_,
         desc_set_layouts);
-    
-    for (int y = -1; y <= 1; y++) {
-        for (int x = -1; x <= 1; x++) {
-            auto tile_obj = std::make_shared<ego::TileObject>(
-                device_info_,
-                descriptor_pool_,
-                glm::uvec2(256, 256),
-                glm::vec2(-256.0f + x * 512, -256.0f + y * 512),
-                glm::vec2(256.0f + x * 512, 256.0f + y * 512));
-
-            tile_objects_.push_back(tile_obj);
-        }
-    }
 
     ego::TileObject::updateStaticDescriptorSet(
         device_,
@@ -582,9 +569,9 @@ void RealWorldApplication::recreateSwapChain() {
             er::ImageLayout::PRESENT_SRC_KHR);
     }
 
-    for (auto& tile_obj : tile_objects_) {
-        tile_obj->generateDescriptorSet(descriptor_pool_);
-    }
+    ego::TileObject::generateAllDescriptorSets(
+        device_,
+        descriptor_pool_);
 
     ego::GltfObject::generateDescriptorSet(
         device_,
@@ -1692,9 +1679,7 @@ void RealWorldApplication::drawScene(
     }
 
     {
-        for (auto& tile_obj : tile_objects_) {
-            tile_obj->generateTileBuffers(cmd_buf);
-        }
+        ego::TileObject::generateAllTileBuffers(cmd_buf);
     }
 
     {
@@ -1721,9 +1706,7 @@ void RealWorldApplication::drawScene(
 
         // render terrain opaque pass.
         {
-            for (auto& tile_obj : tile_objects_) {
-                tile_obj->draw(cmd_buf, desc_sets, screen_size, true);
-            }
+            ego::TileObject::drawAllVisibleTiles(cmd_buf, desc_sets, screen_size, true);
         }
 
         // render skybox.
@@ -1802,9 +1785,7 @@ void RealWorldApplication::drawScene(
 
         // render terrain water pass.
         {
-            for (auto& tile_obj : tile_objects_) {
-                tile_obj->draw(cmd_buf, desc_sets, screen_size, false);
-            }
+            ego::TileObject::drawAllVisibleTiles(cmd_buf, desc_sets, screen_size, false);
         }
 
         cmd_buf->endRenderPass();
@@ -1942,6 +1923,13 @@ void RealWorldApplication::drawFrame() {
 
     device_->resetFences(in_flight_fences);
 
+    ego::TileObject::updateAllTiles(
+        device_info_,
+        descriptor_pool_,
+        glm::uvec2(256, 256),
+        512,
+        glm::vec2(s_camera_pos.x, s_camera_pos.z));
+
     auto command_buffer = command_buffers_[image_index];
     std::vector<std::shared_ptr<er::CommandBuffer>>command_buffers(1, command_buffer);
 
@@ -2059,7 +2047,7 @@ void RealWorldApplication::cleanup() {
     device_->destroyDescriptorSetLayout(ibl_desc_set_layout_);
     device_->destroyDescriptorSetLayout(ibl_comp_desc_set_layout_);
     
-    tile_objects_.clear();
+    ego::TileObject::destoryAllTiles();
     ego::TileObject::destoryStaticMembers(device_);
     gltf_objects_.clear();
     ego::GltfObject::destoryStaticMembers(device_);
