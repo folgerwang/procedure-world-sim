@@ -1514,13 +1514,13 @@ static void generateTileMesh(const glm::vec3 corners[4], const glm::uvec2& segme
 }
 #endif
 
-std::vector<uint32_t> generateTileMeshIndex(const glm::uvec2& segment_count) {
+std::vector<uint32_t> generateTileMeshIndex(const uint32_t& segment_count) {
     std::vector<uint32_t> index_buffer;
-    index_buffer.resize(segment_count.x * segment_count.y * 6);
+    index_buffer.resize(segment_count * segment_count * 6);
     uint32_t* p_index_buffer = index_buffer.data();
-    const uint32_t line_index_count = segment_count.x + 1;
-    for (uint32_t y = 0; y < segment_count.y; y++) {
-        for (uint32_t x = 0; x < segment_count.x; x++) {
+    const uint32_t line_index_count = segment_count + 1;
+    for (uint32_t y = 0; y < segment_count; y++) {
+        for (uint32_t x = 0; x < segment_count; x++) {
             uint32_t i00 = y * line_index_count + x;
             uint32_t i01 = i00 + 1;
             uint32_t i10 = i00 + line_index_count;
@@ -1535,7 +1535,7 @@ std::vector<uint32_t> generateTileMeshIndex(const glm::uvec2& segment_count) {
     }
 
     uint32_t index_buffer_size = static_cast<uint32_t>(p_index_buffer - index_buffer.data());
-    assert(index_buffer_size == segment_count.x * segment_count.y * 6);
+    assert(index_buffer_size == segment_count * segment_count * 6);
 
     return index_buffer;
 }
@@ -1784,14 +1784,13 @@ static std::shared_ptr<renderer::Pipeline> createTileWaterPipeline(
 size_t generateHash(
     const glm::vec2& min,
     const glm::vec2& max,
-    const glm::uvec2& segment_count) {
+    const uint32_t& segment_count) {
     size_t hash;
     hash = std::hash<float>{}(min.x);
     hash_combine(hash, min.y);
     hash_combine(hash, max.x);
     hash_combine(hash, max.y);
-    hash_combine(hash, segment_count.x);
-    hash_combine(hash, segment_count.y);
+    hash_combine(hash, segment_count);
     return hash;
 }
 
@@ -1800,6 +1799,8 @@ size_t generateHash(
 // static member definition.
 std::unordered_map<size_t, std::shared_ptr<TileObject>> TileObject::tile_meshes_;
 std::vector<std::shared_ptr<TileObject>> TileObject::visible_tiles_;
+renderer::BufferInfo TileObject::vertex_buffer_;
+std::vector<uint32_t> TileObject::available_block_indexes_;
 std::shared_ptr<renderer::DescriptorSetLayout> TileObject::tile_creator_desc_set_layout_;
 std::shared_ptr<renderer::PipelineLayout> TileObject::tile_creator_pipeline_layout_;
 std::shared_ptr<renderer::Pipeline> TileObject::tile_creator_pipeline_;
@@ -1812,15 +1813,15 @@ std::shared_ptr<renderer::Pipeline> TileObject::tile_water_pipeline_;
 TileObject::TileObject(
     const renderer::DeviceInfo& device_info,
     const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,
-    const glm::uvec2& segment_count,
     const glm::vec2& min,
     const glm::vec2& max,
-    const size_t& hash_value) :
+    const size_t& hash_value,
+    const uint32_t& block_idx) :
     device_info_(device_info),
-    segment_count_(segment_count),
     min_(min),
     max_(max),
-    hash_(hash_value) {
+    hash_(hash_value),
+    block_idx_(block_idx){
     createMeshBuffers();
     assert(tile_creator_desc_set_layout_);
     assert(tile_res_desc_set_layout_);
@@ -1828,28 +1829,29 @@ TileObject::TileObject(
 }
 
 void TileObject::destory() {
-    vertex_buffer_.destroy(device_info_.device);
     index_buffer_.destroy(device_info_.device);
 }
 
 std::shared_ptr<TileObject> TileObject::addOneTile(
     const renderer::DeviceInfo& device_info,
     const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,
-    const glm::uvec2& segment_count,
     const glm::vec2& min,
     const glm::vec2& max) {
-
+    auto segment_count = static_cast<uint32_t>(TileInfo::kSegmentCount);
     auto hash_value = generateHash(min, max, segment_count);
     auto result = tile_meshes_.find(hash_value);
     if (result == tile_meshes_.end()) {
+        assert(available_block_indexes_.size() > 0);
+        auto block_index = available_block_indexes_.back();
+        available_block_indexes_.pop_back();
         tile_meshes_[hash_value] =
             std::make_shared<TileObject>(
                 device_info,
                 descriptor_pool,
-                segment_count,
                 min,
                 max,
-                hash_value);
+                hash_value,
+                block_index);
     }
 
     return tile_meshes_[hash_value];
@@ -1918,6 +1920,27 @@ void TileObject::initStaticMembers(
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
     const glm::uvec2& display_size) {
+
+    auto num_vertexes = static_cast<uint32_t>(TileInfo::kNumVertexes);
+    auto num_cache_blocks = static_cast<uint32_t>(TileInfo::kNumCachedBlocks);
+    auto vertex_buffer_size =
+        sizeof(glsl::TileVertexInfo) *
+        num_vertexes *
+        num_cache_blocks;
+    device->createBuffer(
+        vertex_buffer_size,
+        SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
+        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
+        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        vertex_buffer_.buffer,
+        vertex_buffer_.memory);
+
+    available_block_indexes_.resize(num_cache_blocks);
+    for (int i = 0; i < num_cache_blocks; i++) {
+        available_block_indexes_[i] = i;
+    }
+
     if (tile_creator_desc_set_layout_ == nullptr) {
         tile_creator_desc_set_layout_ =
             createDescriptorSetLayout(device);
@@ -1987,27 +2010,12 @@ void TileObject::destoryStaticMembers(
     device->destroyPipelineLayout(tile_pipeline_layout_);
     device->destroyPipeline(tile_pipeline_);
     device->destroyPipeline(tile_water_pipeline_);
+    vertex_buffer_.destroy(device);
 }
 
 void TileObject::createMeshBuffers() {
-    glm::vec3 corners[4];
-    corners[0] = glm::vec3(min_.x, 0.0f, min_.y);
-    corners[1] = glm::vec3(min_.x, 0.0f, max_.y);
-    corners[2] = glm::vec3(max_.x, 0.0f, max_.y);
-    corners[3] = glm::vec3(max_.x, 0.0f, min_.y);
-
-    auto height_map_size = (segment_count_.x + 1) * (segment_count_.y + 1);
-    auto vertex_buffer_size = sizeof(glsl::TileVertexInfo) * height_map_size;
-    device_info_.device->createBuffer(
-        vertex_buffer_size,
-        SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
-        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
-        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
-        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
-        vertex_buffer_.buffer,
-        vertex_buffer_.memory);
-
-    auto index_buffer = generateTileMeshIndex(segment_count_);
+    auto segment_count = static_cast<uint32_t>(TileInfo::kSegmentCount);
+    auto index_buffer = generateTileMeshIndex(segment_count);
     auto index_buffer_size = static_cast<uint32_t>(sizeof(index_buffer[0]) * index_buffer.size());
     renderer::Helper::createBufferWithSrcData(
         device_info_,
@@ -2084,14 +2092,18 @@ void TileObject::generateTileBuffers(
     if (created)
         return;
 
-    uint32_t vx_count = segment_count_.x + 1;
-    uint32_t vy_count = segment_count_.y + 1;
+    auto segment_count = static_cast<uint32_t>(TileInfo::kSegmentCount);
+    auto num_vertexes = static_cast<uint32_t>(TileInfo::kNumVertexes);
+    uint32_t v_count = segment_count + 1;
+    uint32_t buffer_size = num_vertexes * sizeof(glsl::TileVertexInfo);
+    uint32_t buffer_offset = buffer_size * block_idx_;
 
     cmd_buf->addBufferBarrier(
         vertex_buffer_.buffer,
         { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
         { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
-        vertex_buffer_.buffer->getSize());
+        buffer_size,
+        buffer_offset);
 
     cmd_buf->addBufferBarrier(
         index_buffer_.buffer,
@@ -2103,7 +2115,8 @@ void TileObject::generateTileBuffers(
     glsl::TileParams tile_params = {};
     tile_params.min = min_;
     tile_params.max = max_;
-    tile_params.segment_count = segment_count_;
+    tile_params.segment_count = segment_count;
+    tile_params.offset = num_vertexes * block_idx_;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         tile_creator_pipeline_layout_,
@@ -2115,13 +2128,14 @@ void TileObject::generateTileBuffers(
         tile_creator_pipeline_layout_,
         { buffer_desc_set_ });
 
-    cmd_buf->dispatch((vx_count + 7) / 8, (vy_count + 7) / 8, 1);
+    cmd_buf->dispatch((v_count + 7) / 8, (v_count + 7) / 8, 1);
 
     cmd_buf->addBufferBarrier(
         vertex_buffer_.buffer,
         { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
         { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
-        vertex_buffer_.buffer->getSize());
+        buffer_size,
+        buffer_offset);
 
     cmd_buf->addBufferBarrier(
         index_buffer_.buffer,
@@ -2137,10 +2151,12 @@ void TileObject::draw(
     const renderer::DescriptorSetList& desc_set_list,
     const glm::uvec2 display_size,
     bool is_base_pass) {
+    auto segment_count = static_cast<uint32_t>(TileInfo::kSegmentCount);
+    auto num_vertexes = static_cast<uint32_t>(TileInfo::kNumVertexes);
     std::vector<std::shared_ptr<renderer::Buffer>> buffers(1);
     std::vector<uint64_t> offsets(1);
     buffers[0] = vertex_buffer_.buffer;
-    offsets[0] = 0;
+    offsets[0] = num_vertexes * sizeof(glsl::TileVertexInfo) * block_idx_;
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, is_base_pass ? tile_pipeline_ : tile_water_pipeline_);
 
@@ -2150,7 +2166,7 @@ void TileObject::draw(
     glsl::TileParams tile_params = {};
     tile_params.min = min_;
     tile_params.max = max_;
-    tile_params.segment_count = segment_count_;
+    tile_params.segment_count = segment_count;
     tile_params.inv_screen_size = glm::vec2(1.0f / display_size.x, 1.0f / display_size.y);
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | 
@@ -2167,7 +2183,7 @@ void TileObject::draw(
         tile_pipeline_layout_, 
         new_desc_sets);
 
-    cmd_buf->drawIndexed(segment_count_.x * segment_count_.y * 6);
+    cmd_buf->drawIndexed(segment_count * segment_count * 6);
 }
 
 void TileObject::generateAllDescriptorSets(
@@ -2201,17 +2217,18 @@ void TileObject::drawAllVisibleTiles(
 void TileObject::updateAllTiles(
     const renderer::DeviceInfo& device_info,
     const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,
-    const glm::uvec2& segment_count,
     const float& tile_size,
     const glm::vec2& camera_pos) {
 
-    constexpr uint32_t kCacheTileSize = 3;
-    constexpr uint32_t kVisibleTileSize = 2;
+    uint32_t segment_count = static_cast<uint32_t>(TileInfo::kSegmentCount);
+    int32_t cache_tile_size = static_cast<int32_t>(TileInfo::kCacheTileSize);
+    int32_t visible_tile_size = static_cast<int32_t>(TileInfo::kVisibleTileSize);
+
     glm::ivec2 center_tile_index = camera_pos * (1.0f / tile_size);
-    glm::ivec2 min_cache_tile_idx = center_tile_index - glm::ivec2(kCacheTileSize);
-    glm::ivec2 max_cache_tile_idx = center_tile_index + glm::ivec2(kCacheTileSize);
-    glm::ivec2 min_visi_tile_idx = center_tile_index - glm::ivec2(kVisibleTileSize);
-    glm::ivec2 max_visi_tile_idx = center_tile_index + glm::ivec2(kVisibleTileSize);
+    glm::ivec2 min_cache_tile_idx = center_tile_index - glm::ivec2(cache_tile_size);
+    glm::ivec2 max_cache_tile_idx = center_tile_index + glm::ivec2(cache_tile_size);
+    glm::ivec2 min_visi_tile_idx = center_tile_index - glm::ivec2(visible_tile_size);
+    glm::ivec2 max_visi_tile_idx = center_tile_index + glm::ivec2(visible_tile_size);
 
     visible_tiles_.clear();
 
@@ -2229,6 +2246,7 @@ void TileObject::updateAllTiles(
     }
 
     for (auto& hash_value : to_delete_tiles) {
+        available_block_indexes_.push_back(tile_meshes_[hash_value]->block_idx_);
         tile_meshes_.erase(hash_value);
     }
 
@@ -2238,7 +2256,6 @@ void TileObject::updateAllTiles(
             addOneTile(
                 device_info,
                 descriptor_pool,
-                segment_count,
                 glm::vec2(-tile_size / 2 + x * tile_size, -tile_size / 2 + y * tile_size),
                 glm::vec2(tile_size / 2 + x * tile_size, tile_size / 2 + y * tile_size));
         }

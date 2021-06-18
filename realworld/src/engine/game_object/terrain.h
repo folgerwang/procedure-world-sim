@@ -7,19 +7,28 @@ namespace game_object {
 class TileObject {
     const renderer::DeviceInfo& device_info_;
 
+    enum class TileInfo{
+        kCacheTileSize = 3,
+        kVisibleTileSize = 2,
+        kSegmentCount = 256 - 1,
+        kNumVertexes = (kSegmentCount + 1) * (kSegmentCount + 1),
+        kNumCachedBlocks = (kCacheTileSize * 2 + 1) * (kCacheTileSize * 2 + 1)
+    };
+
     bool created = false;
     size_t hash_ = ~0x00;
-    glm::uvec2 segment_count_;
+    uint32_t block_idx_ = ~0x00;
     glm::vec2 min_;
     glm::vec2 max_;
 
-    renderer::BufferInfo vertex_buffer_;
     renderer::BufferInfo index_buffer_;
 
     std::shared_ptr<renderer::DescriptorSet> buffer_desc_set_;
 
     static std::unordered_map<size_t, std::shared_ptr<TileObject>> tile_meshes_;
     static std::vector<std::shared_ptr<TileObject>> visible_tiles_;
+    static std::vector<uint32_t> available_block_indexes_;
+    static renderer::BufferInfo vertex_buffer_;
     static std::shared_ptr<renderer::DescriptorSetLayout> tile_creator_desc_set_layout_;
     static std::shared_ptr<renderer::PipelineLayout> tile_creator_pipeline_layout_;
     static std::shared_ptr<renderer::Pipeline> tile_creator_pipeline_;
@@ -34,10 +43,10 @@ public:
     TileObject(
         const renderer::DeviceInfo& device_info,
         const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,
-        const glm::uvec2& segment_count,
         const glm::vec2& min,
         const glm::vec2& max,
-        const size_t& hash_value);
+        const size_t& hash_value,
+        const uint32_t& block_idx);
 
     ~TileObject() {
         destory();
@@ -47,15 +56,9 @@ public:
 
     void destory();
 
-    static size_t getHash(
-        const glm::vec2& min,
-        const glm::vec2& max,
-        const glm::uvec2& segment_count);
-
     static std::shared_ptr<TileObject> addOneTile(
         const renderer::DeviceInfo& device_info,
         const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,
-        const glm::uvec2& segment_count,
         const glm::vec2& min,
         const glm::vec2& max);
 
@@ -113,7 +116,6 @@ public:
     static void updateAllTiles(
         const renderer::DeviceInfo& device_info,
         const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,
-        const glm::uvec2& segment_count,
         const float& tile_size,
         const glm::vec2& camera_pos);
 

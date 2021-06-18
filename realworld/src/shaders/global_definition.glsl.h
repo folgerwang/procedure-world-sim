@@ -156,14 +156,15 @@ struct IblParams {
 };
 
 struct IblComputeParams {
-    ivec4   size;
+    ivec4           size;
 };
 
 struct TileParams {
-    vec2    min;
-    vec2    max;
-    ivec2   segment_count;
-    vec2    inv_screen_size;
+    vec2            min;
+    vec2            max;
+    vec2            inv_screen_size;
+    uint            segment_count;
+    uint            offset;
 };
 
 // 1 float base layer, rock.

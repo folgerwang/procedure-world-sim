@@ -18,14 +18,14 @@ layout(location = 0) out VsPsData {
 } out_data;
 
 void main() {
-    uint size_x = tile_params.segment_count.x + 1;
-    uint size_y = tile_params.segment_count.y + 1;
+    uint tile_size = tile_params.segment_count + 1;
 
-    uint col = gl_VertexIndex % size_x;
-    uint row = gl_VertexIndex / size_x;
+    uint col = gl_VertexIndex % tile_size;
+    uint row = gl_VertexIndex / tile_size;
 
-    float factor_x = col / float(tile_params.segment_count.x);
-    float factor_y = row / float(tile_params.segment_count.y);
+    float inv_segment_count = 1.0f / tile_params.segment_count;
+    float factor_x = col * inv_segment_count;
+    float factor_y = row * inv_segment_count;
 
     float x = tile_params.min.x + factor_x * (tile_params.max.x - tile_params.min.x);
     float y = tile_params.min.y + factor_y * (tile_params.max.y - tile_params.min.y);

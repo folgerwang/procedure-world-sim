@@ -1926,7 +1926,6 @@ void RealWorldApplication::drawFrame() {
     ego::TileObject::updateAllTiles(
         device_info_,
         descriptor_pool_,
-        glm::uvec2(256, 256),
         512,
         glm::vec2(s_camera_pos.x, s_camera_pos.z));
 
@@ -1946,7 +1945,7 @@ void RealWorldApplication::drawFrame() {
         swap_chain_info_.extent,
         image_index);
 
-    //drawMenu(command_buffer);
+    drawMenu(command_buffer);
 
     command_buffer->endCommandBuffer();
 

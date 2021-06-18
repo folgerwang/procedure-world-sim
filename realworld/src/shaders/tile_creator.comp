@@ -16,10 +16,12 @@ void main()
 {
   // get index in global work group i.e x,y position
   ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
-  if (all(lessThanEqual(pixel_coords, tile_params.segment_count))) {
-    int index = pixel_coords.y * (tile_params.segment_count.x + 1) + pixel_coords.x;
-    float factor_x = pixel_coords.x / float(tile_params.segment_count.x);
-    float factor_y = pixel_coords.y / float(tile_params.segment_count.y);
+  if (all(lessThanEqual(pixel_coords, uvec2(tile_params.segment_count)))) {
+    int tile_size = int(tile_params.segment_count) + 1;
+    int index = pixel_coords.y * tile_size + pixel_coords.x;
+    float inv_segment_count = 1.0f / tile_params.segment_count;
+    float factor_x = pixel_coords.x * inv_segment_count;
+    float factor_y = pixel_coords.y * inv_segment_count;
 
     float x = tile_params.min.x + factor_x * (tile_params.max.x - tile_params.min.x);
     float y = tile_params.min.y + factor_y * (tile_params.max.y - tile_params.min.y);
@@ -37,7 +39,8 @@ void main()
                                        1.0f / WATER_LAYER_MAX_THICKNESS);
 
     vec2 height_info = terrainMap(vec2(x, y));
-    vertex_info[index].packed_land_layers = uvec2(floatBitsToUint(height_info.x),
-                                                 packUnorm4x8(normalized_layers));
+    vertex_info[tile_params.offset + index].packed_land_layers =
+        uvec2(floatBitsToUint(height_info.x),
+        packUnorm4x8(normalized_layers));
   }
 }
