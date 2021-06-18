@@ -1148,7 +1148,7 @@ void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, float n
 
     view_params_.camera_pos = glm::vec4(s_camera_pos, 0);
     view_params_.view = glm::lookAt(s_camera_pos, s_camera_pos + s_camera_dir, s_camera_up);
-    view_params_.proj = glm::perspective(glm::radians(45.0f), aspect, near_z, 2000.0f);
+    view_params_.proj = glm::perspective(glm::radians(45.0f), aspect, near_z, 4000.0f);
     view_params_.proj[1][1] *= -1;
     view_params_.input_features = glm::uvec4(0, 0, 0, 0);
     view_params_.depth_params = glm::vec4(
@@ -1926,7 +1926,7 @@ void RealWorldApplication::drawFrame() {
     ego::TileObject::updateAllTiles(
         device_info_,
         descriptor_pool_,
-        512,
+        1024,
         glm::vec2(s_camera_pos.x, s_camera_pos.z));
 
     auto command_buffer = command_buffers_[image_index];

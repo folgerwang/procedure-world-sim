@@ -160,6 +160,7 @@ struct IblComputeParams {
 };
 
 struct TileParams {
+    ivec4           neighbors;
     vec2            min;
     vec2            max;
     vec2            inv_screen_size;

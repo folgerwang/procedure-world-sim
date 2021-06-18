@@ -2113,6 +2113,7 @@ void TileObject::generateTileBuffers(
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, tile_creator_pipeline_);
     glsl::TileParams tile_params = {};
+    tile_params.neighbors = neighbors_ * glm::ivec4(num_vertexes);
     tile_params.min = min_;
     tile_params.max = max_;
     tile_params.segment_count = segment_count;
@@ -2146,6 +2147,50 @@ void TileObject::generateTileBuffers(
     created = true;
 }
 
+void TileObject::updateTileBuffers(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
+
+    auto segment_count = static_cast<uint32_t>(TileInfo::kSegmentCount);
+    auto num_vertexes = static_cast<uint32_t>(TileInfo::kNumVertexes);
+    uint32_t v_count = segment_count + 1;
+    uint32_t buffer_size = num_vertexes * sizeof(glsl::TileVertexInfo);
+    uint32_t buffer_offset = buffer_size * block_idx_;
+
+    cmd_buf->addBufferBarrier(
+        vertex_buffer_.buffer,
+        { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
+        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
+        buffer_size,
+        buffer_offset);
+
+    cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, tile_creator_pipeline_);
+    glsl::TileParams tile_params = {};
+    tile_params.neighbors = neighbors_ * glm::ivec4(num_vertexes);
+    tile_params.min = min_;
+    tile_params.max = max_;
+    tile_params.segment_count = segment_count;
+    tile_params.offset = num_vertexes * block_idx_;
+    cmd_buf->pushConstants(
+        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+        tile_creator_pipeline_layout_,
+        &tile_params,
+        sizeof(tile_params));
+
+    cmd_buf->bindDescriptorSets(
+        renderer::PipelineBindPoint::COMPUTE,
+        tile_creator_pipeline_layout_,
+        { buffer_desc_set_ });
+
+    cmd_buf->dispatch((v_count + 7) / 8, (v_count + 7) / 8, 1);
+
+    cmd_buf->addBufferBarrier(
+        vertex_buffer_.buffer,
+        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
+        { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
+        buffer_size,
+        buffer_offset);
+}
+
 void TileObject::draw(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const renderer::DescriptorSetList& desc_set_list,
@@ -2164,9 +2209,11 @@ void TileObject::draw(
     cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, renderer::IndexType::UINT32);
 
     glsl::TileParams tile_params = {};
+    tile_params.neighbors = neighbors_;
     tile_params.min = min_;
     tile_params.max = max_;
     tile_params.segment_count = segment_count;
+    tile_params.offset = 0;
     tile_params.inv_screen_size = glm::vec2(1.0f / display_size.x, 1.0f / display_size.y);
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | 
@@ -2223,6 +2270,7 @@ void TileObject::updateAllTiles(
     uint32_t segment_count = static_cast<uint32_t>(TileInfo::kSegmentCount);
     int32_t cache_tile_size = static_cast<int32_t>(TileInfo::kCacheTileSize);
     int32_t visible_tile_size = static_cast<int32_t>(TileInfo::kVisibleTileSize);
+    int32_t num_cached_blocks = static_cast<int32_t>(TileInfo::kNumCachedBlocks);
 
     glm::ivec2 center_tile_index = camera_pos * (1.0f / tile_size);
     glm::ivec2 min_cache_tile_idx = center_tile_index - glm::ivec2(cache_tile_size);
@@ -2251,13 +2299,29 @@ void TileObject::updateAllTiles(
     }
 
     // add (kCacheTileSize * 2 + 1) x (kCacheTileSize * 2 + 1) tiles for caching.
+    std::vector<std::shared_ptr<TileObject>> blocks(num_cached_blocks);
+    int32_t i = 0;
     for (int y = min_cache_tile_idx.y; y <= max_cache_tile_idx.y; y++) {
         for (int x = min_cache_tile_idx.x; x <= max_cache_tile_idx.x; x++) {
-            addOneTile(
+            auto tile = addOneTile(
                 device_info,
                 descriptor_pool,
                 glm::vec2(-tile_size / 2 + x * tile_size, -tile_size / 2 + y * tile_size),
                 glm::vec2(tile_size / 2 + x * tile_size, tile_size / 2 + y * tile_size));
+            blocks[i++] = tile;
+        }
+    }
+
+    i = 0;
+    auto row_size = cache_tile_size * 2 + 1;
+    for (int y = min_cache_tile_idx.y; y <= max_cache_tile_idx.y; y++) {
+        for (int x = min_cache_tile_idx.x; x <= max_cache_tile_idx.x; x++) {
+            glm::ivec4 neighbors = glm::ivec4(
+                x == min_cache_tile_idx.x ? -1 : blocks[i - 1]->block_idx_,
+                x == max_cache_tile_idx.x ? -1 : blocks[i + 1]->block_idx_,
+                y == min_cache_tile_idx.y ? -1 : blocks[i - row_size]->block_idx_,
+                y == max_cache_tile_idx.y ? -1 : blocks[i + row_size]->block_idx_);
+            blocks[i++]->setNeighbors(neighbors);
         }
     }
 

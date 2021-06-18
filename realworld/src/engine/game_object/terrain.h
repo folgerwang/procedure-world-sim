@@ -18,6 +18,7 @@ class TileObject {
     bool created = false;
     size_t hash_ = ~0x00;
     uint32_t block_idx_ = ~0x00;
+    glm::ivec4  neighbors_;
     glm::vec2 min_;
     glm::vec2 max_;
 
@@ -53,6 +54,10 @@ public:
     }
 
     inline size_t getHash() { return hash_; }
+
+    inline void setNeighbors(const glm::ivec4& neighbors) {
+        neighbors_ = neighbors;
+    }
 
     void destory();
 
@@ -127,6 +132,9 @@ public:
         const float& tile_size);
 
     void generateTileBuffers(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
+
+    void updateTileBuffers(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
 
     void createMeshBuffers();

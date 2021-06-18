@@ -152,6 +152,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.frag -o $(ProjectDir)lib\shaders\grass_frag.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.comp -o $(ProjectDir)lib\shaders\grass_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_creator.comp -o $(ProjectDir)lib\shaders\tile_creator_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_update.comp -o $(ProjectDir)lib\shaders\tile_update_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_gltf_indirect_draw.comp -o $(ProjectDir)lib\shaders\update_gltf_indirect_draw_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_instance_buffer.comp -o $(ProjectDir)lib\shaders\update_instance_buffer_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_game_objects.comp -o $(ProjectDir)lib\shaders\update_game_objects_comp.spv
@@ -235,6 +236,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.frag -o $(ProjectDir)lib\shaders\grass_frag.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.comp -o $(ProjectDir)lib\shaders\grass_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_creator.comp -o $(ProjectDir)lib\shaders\tile_creator_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_update.comp -o $(ProjectDir)lib\shaders\tile_update_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_gltf_indirect_draw.comp -o $(ProjectDir)lib\shaders\update_gltf_indirect_draw_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_instance_buffer.comp -o $(ProjectDir)lib\shaders\update_instance_buffer_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_game_objects.comp -o $(ProjectDir)lib\shaders\update_game_objects_comp.spv
@@ -306,6 +308,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\updat
     <None Include="src\shaders\tile.frag" />
     <None Include="src\shaders\tile.vert" />
     <None Include="src\shaders\tile_creator.comp" />
+    <None Include="src\shaders\tile_update.comp" />
     <None Include="src\shaders\tile_water.frag" />
     <None Include="src\shaders\update_game_objects.comp" />
     <None Include="src\shaders\update_gltf_indirect_draw.comp" />

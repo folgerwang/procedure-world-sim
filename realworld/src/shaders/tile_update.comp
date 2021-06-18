@@ -1,0 +1,46 @@
+#version 450
+#extension GL_ARB_separate_shader_objects : enable
+#include "global_definition.glsl.h"
+#include "tile_common.glsl.h"
+
+layout(push_constant) uniform TileUniformBufferObject {
+  TileParams tile_params;
+};
+
+layout(std430, set = 0, binding = VERTEX_BUFFER_INDEX) buffer TileVertexInfoBuffer {
+  TileVertexInfo vertex_info[];
+};
+
+layout(local_size_x = 8, local_size_y = 8) in;
+void main()
+{
+  // get index in global work group i.e x,y position
+  ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
+  if (all(lessThanEqual(pixel_coords, uvec2(tile_params.segment_count)))) {
+    int tile_size = int(tile_params.segment_count) + 1;
+    int index = pixel_coords.y * tile_size + pixel_coords.x;
+    float inv_segment_count = 1.0f / tile_params.segment_count;
+    float factor_x = pixel_coords.x * inv_segment_count;
+    float factor_y = pixel_coords.y * inv_segment_count;
+
+    float x = tile_params.min.x + factor_x * (tile_params.max.x - tile_params.min.x);
+    float y = tile_params.min.y + factor_y * (tile_params.max.y - tile_params.min.y);
+
+    vec4 terrain_layers = vec4(0, 0, 0, 10.5f);
+    vec4 clampped_layers = min(terrain_layers,
+                                 vec4(SOIL_LAYER_MAX_THICKNESS,
+                                      GRASS_LAYER_MAX_THICKNESS,
+                                      SNOW_LAYER_MAX_THICKNESS,
+                                      WATER_LAYER_MAX_THICKNESS) - 1);
+    vec4 normalized_layers = clampped_layers * 
+                                  vec4(1.0f / SOIL_LAYER_MAX_THICKNESS,
+                                       1.0f / GRASS_LAYER_MAX_THICKNESS,
+                                       1.0f / SNOW_LAYER_MAX_THICKNESS,
+                                       1.0f / WATER_LAYER_MAX_THICKNESS);
+
+    vec2 height_info = terrainMap(vec2(x, y));
+    vertex_info[tile_params.offset + index].packed_land_layers =
+        uvec2(floatBitsToUint(height_info.x),
+        packUnorm4x8(normalized_layers));
+  }
+}
