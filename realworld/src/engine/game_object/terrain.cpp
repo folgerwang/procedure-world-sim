@@ -1564,28 +1564,46 @@ struct TileVertex {
     }
 };
 
-std::vector<renderer::BufferDescriptor> addTileCreatorBuffers(
+std::vector<renderer::TextureDescriptor> addTileCreatorBuffers(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
-    const renderer::BufferInfo& buffer1,
-    const renderer::BufferInfo& buffer2) {
-    std::vector<renderer::BufferDescriptor> descriptor_writes;
-    descriptor_writes.reserve(2);
+    const renderer::TextureInfo& rock_layer,
+    const renderer::TextureInfo& soil_layer,
+    const renderer::TextureInfo& water_layer,
+    const renderer::TextureInfo& grass_snow_layer) {
+    std::vector<renderer::TextureDescriptor> descriptor_writes;
+    descriptor_writes.reserve(4);
 
-    renderer::Helper::addOneBuffer(
+    renderer::Helper::addOneTexture(
         descriptor_writes,
-        VERTEX_BUFFER_INDEX,
-        buffer1.buffer,
+        ROCK_LAYER_BUFFER_INDEX,
+        nullptr,
+        rock_layer.view,
         description_set,
-        engine::renderer::DescriptorType::STORAGE_BUFFER,
-        buffer1.buffer->getSize());
+        renderer::DescriptorType::STORAGE_IMAGE);
 
-    renderer::Helper::addOneBuffer(
+    renderer::Helper::addOneTexture(
         descriptor_writes,
-        INDEX_BUFFER_INDEX,
-        buffer2.buffer,
+        SOIL_LAYER_BUFFER_INDEX,
+        nullptr,
+        soil_layer.view,
         description_set,
-        engine::renderer::DescriptorType::STORAGE_BUFFER,
-        buffer2.buffer->getSize());
+        renderer::DescriptorType::STORAGE_IMAGE);
+
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        WATER_LAYER_BUFFER_INDEX,
+        nullptr,
+        water_layer.view,
+        description_set,
+        renderer::DescriptorType::STORAGE_IMAGE);
+
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        GRASS_SNOW_LAYER_BUFFER_INDEX,
+        nullptr,
+        grass_snow_layer.view,
+        description_set,
+        renderer::DescriptorType::STORAGE_IMAGE);
 
     return descriptor_writes;
 }
@@ -1684,13 +1702,19 @@ static renderer::ShaderModuleList getTileWaterShaderModules(
 
 static std::shared_ptr<renderer::DescriptorSetLayout> createDescriptorSetLayout(
     const std::shared_ptr<renderer::Device>& device) {
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings(2);
-    bindings[0] = renderer::helper::getBufferDescriptionSetLayoutBinding(VERTEX_BUFFER_INDEX,
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings(4);
+    bindings[0] = renderer::helper::getBufferDescriptionSetLayoutBinding(ROCK_LAYER_BUFFER_INDEX,
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-        renderer::DescriptorType::STORAGE_BUFFER);
-    bindings[1] = renderer::helper::getBufferDescriptionSetLayoutBinding(INDEX_BUFFER_INDEX,
+        renderer::DescriptorType::STORAGE_IMAGE);
+    bindings[1] = renderer::helper::getBufferDescriptionSetLayoutBinding(SOIL_LAYER_BUFFER_INDEX,
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-        renderer::DescriptorType::STORAGE_BUFFER);
+        renderer::DescriptorType::STORAGE_IMAGE);
+    bindings[2] = renderer::helper::getBufferDescriptionSetLayoutBinding(WATER_LAYER_BUFFER_INDEX,
+        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+        renderer::DescriptorType::STORAGE_IMAGE);
+    bindings[3] = renderer::helper::getBufferDescriptionSetLayoutBinding(GRASS_SNOW_LAYER_BUFFER_INDEX,
+        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+        renderer::DescriptorType::STORAGE_IMAGE);
 
     return device->createDescriptorSetLayout(bindings);
 }
@@ -1863,6 +1887,10 @@ std::unordered_map<size_t, std::shared_ptr<TileObject>> TileObject::tile_meshes_
 std::vector<std::shared_ptr<TileObject>> TileObject::visible_tiles_;
 renderer::BufferInfo TileObject::vertex_buffer_;
 std::vector<uint32_t> TileObject::available_block_indexes_;
+renderer::TextureInfo TileObject::rock_layer_;
+renderer::TextureInfo TileObject::soil_layer_;
+renderer::TextureInfo TileObject::water_layer_;
+renderer::TextureInfo TileObject::grass_snow_layer_;
 std::shared_ptr<renderer::DescriptorSetLayout> TileObject::tile_creator_desc_set_layout_;
 std::shared_ptr<renderer::PipelineLayout> TileObject::tile_creator_pipeline_layout_;
 std::shared_ptr<renderer::Pipeline> TileObject::tile_creator_pipeline_;
@@ -1903,7 +1931,7 @@ std::shared_ptr<TileObject> TileObject::addOneTile(
     const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,
     const glm::vec2& min,
     const glm::vec2& max) {
-    auto segment_count = static_cast<uint32_t>(TileInfo::kSegmentCount);
+    auto segment_count = static_cast<uint32_t>(TileConst::kSegmentCount);
     auto hash_value = generateHash(min, max, segment_count);
     auto result = tile_meshes_.find(hash_value);
     if (result == tile_meshes_.end()) {
@@ -1996,15 +2024,52 @@ void TileObject::createStaticMembers(
 }
 
 void TileObject::initStaticMembers(
-    const std::shared_ptr<renderer::Device>& device,
+    const renderer::DeviceInfo& device_info,
     const std::shared_ptr<renderer::RenderPass>& render_pass,
     const std::shared_ptr<renderer::RenderPass>& water_render_pass,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
     const glm::uvec2& display_size) {
+    auto& device = device_info.device;
 
-    auto num_vertexes = static_cast<uint32_t>(TileInfo::kNumVertexes);
-    auto num_cache_blocks = static_cast<uint32_t>(TileInfo::kNumCachedBlocks);
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        renderer::Format::R16_SNORM,
+        glm::uvec2(static_cast<uint32_t>(TileConst::kRockLayerSize)),
+        rock_layer_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        renderer::Format::R16_SNORM,
+        glm::uvec2(static_cast<uint32_t>(TileConst::kSoilLayerSize)),
+        soil_layer_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        renderer::Format::R16_SNORM,
+        glm::uvec2(static_cast<uint32_t>(TileConst::kWaterlayerSize)),
+        water_layer_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        renderer::Format::R8G8_UNORM,
+        glm::uvec2(static_cast<uint32_t>(TileConst::kGrassSnowLayerSize)),
+        grass_snow_layer_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    auto num_vertexes = static_cast<uint32_t>(TileConst::kNumVertexes);
+    auto num_cache_blocks = static_cast<uint32_t>(TileConst::kNumCachedBlocks);
     auto vertex_buffer_size =
         sizeof(glsl::TileVertexInfo) *
         num_vertexes *
@@ -2111,10 +2176,14 @@ void TileObject::destoryStaticMembers(
     device->destroyPipeline(tile_pipeline_);
     device->destroyPipeline(tile_water_pipeline_);
     vertex_buffer_.destroy(device);
+    rock_layer_.destroy(device);
+    soil_layer_.destroy(device);
+    water_layer_.destroy(device);
+    grass_snow_layer_.destroy(device);
 }
 
 void TileObject::createMeshBuffers() {
-    auto segment_count = static_cast<uint32_t>(TileInfo::kSegmentCount);
+    auto segment_count = static_cast<uint32_t>(TileConst::kSegmentCount);
     auto index_buffer = generateTileMeshIndex(segment_count);
     auto index_buffer_size = static_cast<uint32_t>(sizeof(index_buffer[0]) * index_buffer.size());
     renderer::Helper::createBufferWithSrcData(
@@ -2136,18 +2205,20 @@ void TileObject::generateDescriptorSet(
         descriptor_pool, tile_creator_desc_set_layout_, 1)[0];
 
     // create a global ibl texture descriptor set.
-    auto buffer_descs = addTileCreatorBuffers(
+    auto texture_descs = addTileCreatorBuffers(
         buffer_desc_set_,
-        vertex_buffer_,
-        index_buffer_);
-    device->updateDescriptorSets({}, buffer_descs);
+        rock_layer_,
+        soil_layer_,
+        water_layer_,
+        grass_snow_layer_);
+    device->updateDescriptorSets(texture_descs, {});
 
     // tile creator buffer set.
     update_buffer_desc_set_ = device->createDescriptorSets(
         descriptor_pool, tile_update_desc_set_layout_, 1)[0];
 
     // create a global ibl texture descriptor set.
-    buffer_descs = addTileUpdateBuffers(
+    auto buffer_descs = addTileUpdateBuffers(
         update_buffer_desc_set_,
         vertex_buffer_);
     device->updateDescriptorSets({}, buffer_descs);
@@ -2199,11 +2270,8 @@ bool TileObject::validTileBySize(
 void TileObject::generateTileBuffers(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
 
-    if (created)
-        return;
-
-    auto segment_count = static_cast<uint32_t>(TileInfo::kSegmentCount);
-    auto num_vertexes = static_cast<uint32_t>(TileInfo::kNumVertexes);
+    auto segment_count = static_cast<uint32_t>(TileConst::kSegmentCount);
+    auto num_vertexes = static_cast<uint32_t>(TileConst::kNumVertexes);
     uint32_t v_count = segment_count + 1;
     uint32_t buffer_size = num_vertexes * sizeof(glsl::TileVertexInfo);
     uint32_t buffer_offset = buffer_size * block_idx_;
@@ -2260,8 +2328,8 @@ void TileObject::generateTileBuffers(
 void TileObject::updateTileBuffers(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
 
-    auto segment_count = static_cast<uint32_t>(TileInfo::kSegmentCount);
-    auto num_vertexes = static_cast<uint32_t>(TileInfo::kNumVertexes);
+    auto segment_count = static_cast<uint32_t>(TileConst::kSegmentCount);
+    auto num_vertexes = static_cast<uint32_t>(TileConst::kNumVertexes);
     uint32_t v_count = segment_count + 1;
     uint32_t buffer_size = num_vertexes * sizeof(glsl::TileVertexInfo);
     uint32_t buffer_offset = buffer_size * block_idx_;
@@ -2310,8 +2378,8 @@ void TileObject::draw(
     const renderer::DescriptorSetList& desc_set_list,
     const glm::uvec2 display_size,
     bool is_base_pass) {
-    auto segment_count = static_cast<uint32_t>(TileInfo::kSegmentCount);
-    auto num_vertexes = static_cast<uint32_t>(TileInfo::kNumVertexes);
+    auto segment_count = static_cast<uint32_t>(TileConst::kSegmentCount);
+    auto num_vertexes = static_cast<uint32_t>(TileConst::kNumVertexes);
     std::vector<std::shared_ptr<renderer::Buffer>> buffers(1);
     std::vector<uint64_t> offsets(1);
     buffers[0] = vertex_buffer_.buffer;
@@ -2388,10 +2456,10 @@ void TileObject::updateAllTiles(
     const float& tile_size,
     const glm::vec2& camera_pos) {
 
-    uint32_t segment_count = static_cast<uint32_t>(TileInfo::kSegmentCount);
-    int32_t cache_tile_size = static_cast<int32_t>(TileInfo::kCacheTileSize);
-    int32_t visible_tile_size = static_cast<int32_t>(TileInfo::kVisibleTileSize);
-    int32_t num_cached_blocks = static_cast<int32_t>(TileInfo::kNumCachedBlocks);
+    uint32_t segment_count = static_cast<uint32_t>(TileConst::kSegmentCount);
+    int32_t cache_tile_size = static_cast<int32_t>(TileConst::kCacheTileSize);
+    int32_t visible_tile_size = static_cast<int32_t>(TileConst::kVisibleTileSize);
+    int32_t num_cached_blocks = static_cast<int32_t>(TileConst::kNumCachedBlocks);
 
     glm::ivec2 center_tile_index = camera_pos * (1.0f / tile_size);
     glm::ivec2 min_cache_tile_idx = center_tile_index - glm::ivec2(cache_tile_size);

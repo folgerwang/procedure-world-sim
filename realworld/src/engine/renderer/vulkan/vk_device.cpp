@@ -562,11 +562,16 @@ void VulkanDevice::updateDescriptorSets(
     for (auto i = 0; i < texture_list.size(); i++) {
         const auto& tex = texture_list[i];
         auto vk_texture = RENDER_TYPE_CAST(ImageView, tex.texture);
-        auto vk_sampler = RENDER_TYPE_CAST(Sampler, tex.sampler);
         auto vk_desc_set = RENDER_TYPE_CAST(DescriptorSet, tex.desc_set);
         desc_image_infos[i].imageLayout = helper::toVkImageLayout(tex.image_layout);
         desc_image_infos[i].imageView = vk_texture->get();
-        desc_image_infos[i].sampler = vk_sampler->get();
+        if (tex.sampler) {
+            desc_image_infos[i].sampler = RENDER_TYPE_CAST(Sampler, tex.sampler)->get();
+        }
+        else {
+            desc_image_infos[i].sampler = nullptr;
+        }
+        
         descriptor_writes.push_back(
             helper::addDescriptWrite(
                 vk_desc_set->get(),

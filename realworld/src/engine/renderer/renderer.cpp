@@ -188,7 +188,7 @@ void Helper::addOneTexture(
         texture,
         desc_set,
         desc_type,
-        image_layout };
+        sampler == nullptr ? image_layout : ImageLayout::SHADER_READ_ONLY_OPTIMAL };
 
     descriptor_writes.push_back(tex_desc);
 }

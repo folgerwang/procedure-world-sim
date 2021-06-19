@@ -468,7 +468,7 @@ void RealWorldApplication::initVulkan() {
 
     auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
     ego::TileObject::initStaticMembers(
-        device_,
+        device_info_,
         hdr_render_pass_,
         hdr_water_render_pass_,
         graphic_pipeline_info_,

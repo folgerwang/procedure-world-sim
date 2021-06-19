@@ -70,7 +70,7 @@ void main()
       src_index = src_coords.y * tile_size + src_coords.x;
       s_terrain_layers[src_local_coords.y][src_local_coords.x] =
         vertex_info[tile_params.offset + src_index].packed_land_layers;
-  }*/
+  }
 
   memoryBarrierShared();
   groupMemoryBarrier();

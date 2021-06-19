@@ -272,7 +272,7 @@ struct PushConstantRange {
 
 struct TextureDescriptor {
     uint32_t binding;
-    const std::shared_ptr<Sampler>& sampler = nullptr;
+    std::shared_ptr<Sampler> sampler = nullptr;
     const std::shared_ptr<ImageView>& texture = nullptr;
     const std::shared_ptr<DescriptorSet>& desc_set = nullptr;
     DescriptorType desc_type = DescriptorType::COMBINED_IMAGE_SAMPLER;

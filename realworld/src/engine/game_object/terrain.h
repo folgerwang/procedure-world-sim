@@ -7,7 +7,12 @@ namespace game_object {
 class TileObject {
     const renderer::DeviceInfo& device_info_;
 
-    enum class TileInfo{
+    const float kWorldSize = 16384.0f;     // meters
+    enum class TileConst{
+        kRockLayerSize = 8192,
+        kSoilLayerSize = 4096,
+        kWaterlayerSize = 4096,
+        kGrassSnowLayerSize = 2048,
         kCacheTileSize = 3,
         kVisibleTileSize = 2,
         kSegmentCount = 256 - 1,
@@ -31,6 +36,10 @@ class TileObject {
     static std::vector<std::shared_ptr<TileObject>> visible_tiles_;
     static std::vector<uint32_t> available_block_indexes_;
     static renderer::BufferInfo vertex_buffer_;
+    static renderer::TextureInfo rock_layer_;
+    static renderer::TextureInfo soil_layer_;
+    static renderer::TextureInfo water_layer_;
+    static renderer::TextureInfo grass_snow_layer_;
     static std::shared_ptr<renderer::DescriptorSetLayout> tile_creator_desc_set_layout_;
     static std::shared_ptr<renderer::PipelineLayout> tile_creator_pipeline_layout_;
     static std::shared_ptr<renderer::Pipeline> tile_creator_pipeline_;
@@ -72,7 +81,7 @@ public:
         const glm::vec2& max);
 
     static void initStaticMembers(
-        const std::shared_ptr<renderer::Device>& device,
+        const renderer::DeviceInfo& device_info,
         const std::shared_ptr<renderer::RenderPass>& render_pass,
         const std::shared_ptr<renderer::RenderPass>& water_render_pass,
         const renderer::GraphicPipelineInfo& graphic_pipeline_info,

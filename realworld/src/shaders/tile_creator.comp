@@ -1,4 +1,4 @@
-#version 450
+#version 460
 #extension GL_ARB_separate_shader_objects : enable
 #include "global_definition.glsl.h"
 #include "tile_common.glsl.h"
@@ -10,6 +10,11 @@ layout(push_constant) uniform TileUniformBufferObject {
 layout(std430, set = 0, binding = VERTEX_BUFFER_INDEX) buffer TileVertexInfoBuffer {
   TileVertexInfo vertex_info[];
 };
+
+layout(set = 0, binding = ROCK_LAYER_BUFFER_INDEX, r16_snorm) uniform writeonly image2D rock_layer;
+layout(set = 0, binding = SOIL_LAYER_BUFFER_INDEX, r16) uniform writeonly image2D soil_layer;
+layout(set = 0, binding = WATER_LAYER_BUFFER_INDEX, r16) uniform writeonly image2D water_layer;
+layout(set = 0, binding = GRASS_SNOW_LAYER_BUFFER_INDEX, rg8) uniform writeonly image2D grass_snow_layer;
 
 layout(local_size_x = 8, local_size_y = 8) in;
 void main()

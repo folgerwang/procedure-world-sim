@@ -106,6 +106,11 @@
 #define WATER_LAYER_MAX_THICKNESS   511.0f
 #define SNOW_LAYER_MAX_THICKNESS    31.0f
 
+#define ROCK_LAYER_BUFFER_INDEX         0
+#define SOIL_LAYER_BUFFER_INDEX         1
+#define WATER_LAYER_BUFFER_INDEX        2
+#define GRASS_SNOW_LAYER_BUFFER_INDEX   3
+
 #ifdef __cplusplus
 #include "glm/glm.hpp"
 using namespace glm;
