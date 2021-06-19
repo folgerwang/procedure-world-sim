@@ -221,3 +221,22 @@ vec3 terrainNormal(vec2 pos)
         terrainMap(pos - e_yx).x - terrainMap(pos + e_yx).x));
 #endif    
 }
+
+uvec2 packTerrainLayers(vec4 terrain_layers, uint flag) {
+    uvec4 fixed_layers = uvec4(terrain_layers * 32.0f);
+    return uvec2(fixed_layers.x | (fixed_layers.y << 18),
+        fixed_layers.z | (fixed_layers.w << 14) | (flag << 24));
+}
+
+uvec3 unpackTerrainLayersU3(uvec2 packed_layers) {
+    return uvec3((packed_layers.x & 0x0003ffff),
+            (packed_layers.x >> 18),
+            (packed_layers.y & 0x00003fff));
+}
+
+uvec2 unpackTerrainLayersHeightU2(uvec2 packed_layers) {
+    uvec3 layer_thickness = unpackTerrainLayersU3(packed_layers);
+    uint soil_height = layer_thickness.x + layer_thickness.y;
+    uint water_height = layer_thickness.z + soil_height;
+    return uvec2(soil_height, water_height);
+}

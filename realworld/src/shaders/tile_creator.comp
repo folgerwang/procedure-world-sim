@@ -26,21 +26,8 @@ void main()
     float x = tile_params.min.x + factor_x * (tile_params.max.x - tile_params.min.x);
     float y = tile_params.min.y + factor_y * (tile_params.max.y - tile_params.min.y);
 
-    vec4 terrain_layers = vec4(0, 0, 0, 10.5f);
-    vec4 clampped_layers = min(terrain_layers,
-                                 vec4(SOIL_LAYER_MAX_THICKNESS,
-                                      GRASS_LAYER_MAX_THICKNESS,
-                                      SNOW_LAYER_MAX_THICKNESS,
-                                      WATER_LAYER_MAX_THICKNESS) - 1);
-    vec4 normalized_layers = clampped_layers * 
-                                  vec4(1.0f / SOIL_LAYER_MAX_THICKNESS,
-                                       1.0f / GRASS_LAYER_MAX_THICKNESS,
-                                       1.0f / SNOW_LAYER_MAX_THICKNESS,
-                                       1.0f / WATER_LAYER_MAX_THICKNESS);
-
     vec2 height_info = terrainMap(vec2(x, y));
     vertex_info[tile_params.offset + index].packed_land_layers =
-        uvec2(floatBitsToUint(height_info.x),
-        packUnorm4x8(normalized_layers));
+        packTerrainLayers(vec4(height_info.x + ROCK_LAYER_BASE, 0, 5.0f, 0), 0);
   }
 }

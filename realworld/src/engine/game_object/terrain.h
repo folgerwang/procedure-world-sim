@@ -116,6 +116,9 @@ public:
     static void generateAllTileBuffers(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
 
+    static void updateAllTileBuffers(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
+
     static void drawAllVisibleTiles(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const renderer::DescriptorSetList& desc_set_list,

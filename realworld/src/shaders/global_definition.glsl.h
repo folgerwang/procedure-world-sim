@@ -101,10 +101,10 @@
 
 #define INDIRECT_DRAW_BUF_OFS   4
 
-#define SOIL_LAYER_MAX_THICKNESS    5.0f
-#define GRASS_LAYER_MAX_THICKNESS   1.5f
-#define SNOW_LAYER_MAX_THICKNESS    2.0f
-#define WATER_LAYER_MAX_THICKNESS   10.0f
+#define ROCK_LAYER_BASE             4096.0f
+#define SOIL_LAYER_MAX_THICKNESS    511.0f
+#define WATER_LAYER_MAX_THICKNESS   511.0f
+#define SNOW_LAYER_MAX_THICKNESS    31.0f
 
 #ifdef __cplusplus
 #include "glm/glm.hpp"

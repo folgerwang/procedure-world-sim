@@ -1555,15 +1555,11 @@ struct TileVertex {
     }
 
     static std::vector<renderer::VertexInputAttributeDescription> getAttributeDescriptions() {
-        std::vector<renderer::VertexInputAttributeDescription> attribute_descriptions(2);
+        std::vector<renderer::VertexInputAttributeDescription> attribute_descriptions(1);
         attribute_descriptions[0].binding = 0;
         attribute_descriptions[0].location = 0;
-        attribute_descriptions[0].format = renderer::Format::R32_SFLOAT;
+        attribute_descriptions[0].format = renderer::Format::R32G32_UINT;
         attribute_descriptions[0].offset = 0;
-        attribute_descriptions[1].binding = 0;
-        attribute_descriptions[1].location = 1;
-        attribute_descriptions[1].format = renderer::Format::R8G8B8A8_UNORM;
-        attribute_descriptions[1].offset = 4;
         return attribute_descriptions;
     }
 };
@@ -2297,7 +2293,8 @@ void TileObject::updateTileBuffers(
         tile_update_pipeline_layout_,
         { update_buffer_desc_set_ });
 
-    cmd_buf->dispatch((v_count + 7) / 8, (v_count + 7) / 8, 1);
+    // this pass only take care of center part of one tile, leave edge 2 lines un-touched.
+    cmd_buf->dispatch((v_count - 4  + 15) / 16, (v_count - 4 + 15) / 16, 1);
 
     cmd_buf->addBufferBarrier(
         vertex_buffer_.buffer,
@@ -2364,6 +2361,13 @@ void TileObject::generateAllTileBuffers(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
     for (auto& tile : tile_meshes_) {
         tile.second->generateTileBuffers(cmd_buf);
+    }
+}
+
+void TileObject::updateAllTileBuffers(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
+    for (auto& tile : tile_meshes_) {
+        tile.second->updateTileBuffers(cmd_buf);
     }
 }
 

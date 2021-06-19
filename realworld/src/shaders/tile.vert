@@ -2,8 +2,10 @@
 #extension GL_ARB_separate_shader_objects : enable
 #include "global_definition.glsl.h"
 
-layout(location = 0) in float base_height;
-layout(location = 1) in vec4 terrain_layers;     // soil, grass, snow, water layer thickness.
+layout(location = 0) in uvec2 layer_heights;     // 18bits fixed for rock level, 14 bits fixed for soil layer.
+                                                 // 14bits fixed for water layer, 10 bits fixed for snow layer.
+                                                 // 4bits for rock/soil transition, 4bits for humidity.
+                                                 // all reserved have 5bits for fraction.
 
 layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniformBufferObject {
     ViewParams view_params;
@@ -30,18 +32,15 @@ void main() {
     float x = tile_params.min.x + factor_x * (tile_params.max.x - tile_params.min.x);
     float y = tile_params.min.y + factor_y * (tile_params.max.y - tile_params.min.y);
 
-    float layer_height = base_height.x;
-#if defined(SOIL_PASS) || defined(GRASS_LAYER) || defined(SNOW_PASS) || defined(WATER_PASS)
-    layer_height += terrain_layers.x * SOIL_LAYER_MAX_THICKNESS;
+    float layer_height = (layer_heights.x & 0x0003ffff) / 32.0f - ROCK_LAYER_BASE;
+#if defined(SOIL_PASS) || defined(WATER_PASS) || defined(SNOW_PASS)
+    layer_height += (layer_heights.x >> 18) / 32.0f;
 #endif
-#if defined(GRASS_LAYER) || defined(SNOW_PASS) || defined(WATER_PASS)
-    layer_height += terrain_layers.y * GRASS_LAYER_MAX_THICKNESS;
+#if defined(WATER_PASS) || defined(SNOW_PASS)
+    layer_height += (layer_heights.y & 0x00003fff) / 32.0f;
 #endif
-#if defined(SNOW_PASS) || defined(WATER_PASS)
-    layer_height += terrain_layers.z * SNOW_LAYER_MAX_THICKNESS;
-#endif
-#if defined(WATER_PASS)
-    layer_height += terrain_layers.w * WATER_LAYER_MAX_THICKNESS;
+#if defined(SNOW_PASS)
+    layer_height += ((layer_heights.y >> 14) & 0x000003ff) / 32.0f;
 #endif
 
     vec4 position_ws = vec4(x, layer_height, y, 1.0);

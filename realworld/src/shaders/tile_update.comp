@@ -11,36 +11,146 @@ layout(std430, set = 0, binding = VERTEX_BUFFER_INDEX) buffer TileVertexInfoBuff
   TileVertexInfo vertex_info[];
 };
 
-layout(local_size_x = 8, local_size_y = 8) in;
+uint adjustLayersHeight(uvec2 center, uvec2 left, uvec2 right, uvec2 up, uvec2 down) {
+    uvec3 layer_thickness = unpackTerrainLayersU3(center);
+    uint soil_height = layer_thickness.x + layer_thickness.y;
+    uint water_height = layer_thickness.z + soil_height;
+    uvec2 center_h = uvec2(soil_height, water_height);
+    uvec2 left_h = unpackTerrainLayersHeightU2(left);
+    uvec2 right_h = unpackTerrainLayersHeightU2(right);
+    uvec2 up_h = unpackTerrainLayersHeightU2(up);
+    uvec2 down_h = unpackTerrainLayersHeightU2(down);
+    uvec2 min_height = min(min(left_h, right_h), min(up_h, down_h));
+
+    uvec2 height_diff;
+    height_diff.x = min(center_h.x > min_height.x ? (center_h.x - min_height.x) : 0, layer_thickness.y) >> 4; // soil, only down 1/16.
+    height_diff.y = min(center_h.y > min_height.y ? (center_h.y - min_height.y) : 0, layer_thickness.z) >> 1; // water, down 1/2.
+
+    if (height_diff.x > 0) { // adjust soil height.
+        uint idx = min_height.x == left_h.x ? 0 :
+                   (min_height.x == right_h.x ? 1 : 
+                   (min_height.x == up.x ? 2 : 3));
+        height_diff.x |= (idx << 14);
+    }
+
+    if (height_diff.y > 0) { // adjust water height.
+        uint idx = min_height.y == left_h.y ? 0 :
+                   (min_height.y == right_h.y ? 1 : 
+                   (min_height.y == up.y ? 2 : 3));
+        height_diff.y |= (idx << 14);
+    }
+
+    return height_diff.x | (height_diff.y << 16);
+}
+
+shared uvec2 s_terrain_layers[20][20];
+shared uint s_adjust_layers[18][18];
+
+layout(local_size_x = 16, local_size_y = 16) in;
 void main()
 {
   // get index in global work group i.e x,y position
-  ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
-  if (all(lessThanEqual(pixel_coords, uvec2(tile_params.segment_count)))) {
-    int tile_size = int(tile_params.segment_count) + 1;
+  int tile_size = int(tile_params.segment_count) + 1;
+  // skip 2 lines on border.
+  ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy) + 2;
+  ivec2 local_coords = ivec2(gl_LocalInvocationID.xy);
+  ivec2 block_coords = ivec2(gl_WorkGroupID.xy) * 16;
+  uint pixel_index = gl_LocalInvocationIndex;
+
+  ivec2 src_local_coords = ivec2(pixel_index % 20, pixel_index / 20);
+  ivec2 src_coords = src_local_coords + block_coords;
+  int src_index = src_coords.y * tile_size + src_coords.x;
+  s_terrain_layers[src_local_coords.y][src_local_coords.x] =
+    vertex_info[tile_params.offset + src_index].packed_land_layers;
+
+  pixel_index += 16 * 16;
+  if (pixel_index < 20 * 20) {
+      src_local_coords = ivec2(pixel_index % 20, pixel_index / 20);
+      src_coords = src_local_coords + block_coords;
+      src_index = src_coords.y * tile_size + src_coords.x;
+      s_terrain_layers[src_local_coords.y][src_local_coords.x] =
+        vertex_info[tile_params.offset + src_index].packed_land_layers;
+  }*/
+
+  memoryBarrierShared();
+  groupMemoryBarrier();
+
+  pixel_index = gl_LocalInvocationIndex;
+  src_local_coords = ivec2(pixel_index % 18, pixel_index / 18);
+  src_coords = src_local_coords + 1;
+  s_adjust_layers[src_local_coords.y][src_local_coords.x] = 
+    adjustLayersHeight(
+      s_terrain_layers[src_coords.y][src_coords.x],
+      s_terrain_layers[src_coords.y][src_coords.x - 1],
+      s_terrain_layers[src_coords.y][src_coords.x + 1],
+      s_terrain_layers[src_coords.y - 1][src_coords.x],
+      s_terrain_layers[src_coords.y + 1][src_coords.x]);
+
+  pixel_index += 16 * 16;
+  if (pixel_index < 18 * 18) {
+     src_local_coords = ivec2(pixel_index % 18, pixel_index / 18);
+     src_coords = src_local_coords + 1;
+     s_adjust_layers[src_local_coords.y][src_local_coords.x] = 
+       adjustLayersHeight(
+         s_terrain_layers[src_coords.y][src_coords.x],
+         s_terrain_layers[src_coords.y][src_coords.x - 1],
+         s_terrain_layers[src_coords.y][src_coords.x + 1],
+         s_terrain_layers[src_coords.y - 1][src_coords.x],
+         s_terrain_layers[src_coords.y + 1][src_coords.x]);
+  }
+
+  memoryBarrierShared();
+  groupMemoryBarrier();
+
+  if (all(lessThanEqual(pixel_coords, uvec2(tile_params.segment_count - 2)))) {
     int index = pixel_coords.y * tile_size + pixel_coords.x;
-    float inv_segment_count = 1.0f / tile_params.segment_count;
-    float factor_x = pixel_coords.x * inv_segment_count;
-    float factor_y = pixel_coords.y * inv_segment_count;
 
-    float x = tile_params.min.x + factor_x * (tile_params.max.x - tile_params.min.x);
-    float y = tile_params.min.y + factor_y * (tile_params.max.y - tile_params.min.y);
+    src_local_coords = local_coords + 1;
 
-    vec4 terrain_layers = vec4(0, 0, 0, 10.5f);
-    vec4 clampped_layers = min(terrain_layers,
-                                 vec4(SOIL_LAYER_MAX_THICKNESS,
-                                      GRASS_LAYER_MAX_THICKNESS,
-                                      SNOW_LAYER_MAX_THICKNESS,
-                                      WATER_LAYER_MAX_THICKNESS) - 1);
-    vec4 normalized_layers = clampped_layers * 
-                                  vec4(1.0f / SOIL_LAYER_MAX_THICKNESS,
-                                       1.0f / GRASS_LAYER_MAX_THICKNESS,
-                                       1.0f / SNOW_LAYER_MAX_THICKNESS,
-                                       1.0f / WATER_LAYER_MAX_THICKNESS);
+    uint center = s_adjust_layers[src_local_coords.y][src_local_coords.x];
+    uint left = s_adjust_layers[src_local_coords.y][src_local_coords.x - 1];
+    uint right = s_adjust_layers[src_local_coords.y][src_local_coords.x + 1];
+    uint up = s_adjust_layers[src_local_coords.y - 1][src_local_coords.x];
+    uint down = s_adjust_layers[src_local_coords.y + 1][src_local_coords.x];
+    uint layer_adjust = 0;
 
-    vec2 height_info = terrainMap(vec2(x, y));
-    vertex_info[tile_params.offset + index].packed_land_layers =
-        uvec2(floatBitsToUint(height_info.x),
-        packUnorm4x8(normalized_layers));
+    // adjust soil layer.
+    if ((left & 0x0000c000) == 0x00004000) {
+        layer_adjust += (left & 0x00003fff);
+    }
+    if ((right & 0x0000c000) == 0x00000000) {
+        layer_adjust += (right & 0x00003fff);
+    }
+    if ((up & 0x0000c000) == 0x0000c000) {
+        layer_adjust += (up & 0x00003fff);
+    }
+    if ((down & 0x0000c000) == 0x00008000) {
+        layer_adjust += (down & 0x00003fff);
+    }
+
+    // adjust water layer.
+    if ((left & 0xc0000000) == 0x40000000) {
+        layer_adjust += (left & 0x3fff0000);
+    }
+    if ((right & 0xc0000000) == 0x00000000) {
+        layer_adjust += (right & 0x3fff0000);
+    }
+    if ((up & 0xc0000000) == 0xc0000000) {
+        layer_adjust += (up & 0x3fff0000);
+    }
+    if ((down & 0xc0000000) == 0x80000000) {
+        layer_adjust += (down & 0x3fff0000);
+    }
+
+    ivec2 src_local_coords = local_coords + 2;
+
+    uvec2 packed_layers = s_terrain_layers[src_local_coords.y][src_local_coords.x];
+    uint new_soil_layer = (packed_layers.x >> 18) + (layer_adjust & 0xffff) - (center & 0x3fff);
+    uint new_water_layer = (packed_layers.y & 0x3fff) + (layer_adjust >> 16) - ((center >> 16) & 0x3fff);
+
+    //packed_layers.x = (new_soil_layer << 18) | (packed_layers.x & 0x3ffff);
+    //packed_layers.y = new_water_layer | (packed_layers.y & 0xffffc000);
+
+    vertex_info[tile_params.offset + index].packed_land_layers = packed_layers;
   }
 }

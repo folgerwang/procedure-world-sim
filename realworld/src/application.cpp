@@ -1680,6 +1680,7 @@ void RealWorldApplication::drawScene(
 
     {
         ego::TileObject::generateAllTileBuffers(cmd_buf);
+        ego::TileObject::updateAllTileBuffers(cmd_buf);
     }
 
     {
@@ -1830,14 +1831,11 @@ void RealWorldApplication::drawMenu(
 
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Edit"))
+        if (ImGui::BeginMenu("Tools"))
         {
-            if (ImGui::MenuItem("Undo", "CTRL+Z")) {}
-            if (ImGui::MenuItem("Redo", "CTRL+Y", false, false)) {}  // Disabled item
+            if (ImGui::MenuItem("Turn off water pass", NULL)) {}
             ImGui::Separator();
             if (ImGui::MenuItem("Cut", "CTRL+X")) {}
-            if (ImGui::MenuItem("Copy", "CTRL+C")) {}
-            if (ImGui::MenuItem("Paste", "CTRL+V")) {}
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
@@ -1945,7 +1943,7 @@ void RealWorldApplication::drawFrame() {
         swap_chain_info_.extent,
         image_index);
 
-    drawMenu(command_buffer);
+    //drawMenu(command_buffer);
 
     command_buffer->endCommandBuffer();
 
