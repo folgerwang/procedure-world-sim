@@ -32,6 +32,7 @@
 #define PBR_GLOBAL_PARAMS_SET       0
 #define VIEW_PARAMS_SET             1
 #define PBR_MATERIAL_PARAMS_SET     2
+#define TILE_PARAMS_SET             2
 #define MODEL_PARAMS_SET            3
 
 // MODEL_PARAMS_SET.
@@ -56,8 +57,14 @@
 #define OCCLUSION_TEX_INDEX         (BASE_COLOR_TEX_INDEX + 4)
 
 // TILE_TEXTURE_PARAMS_SET
-#define SRC_COLOR_TEX_INDEX         0
-#define SRC_DEPTH_TEX_INDEX         1
+#define SRC_COLOR_TEX_INDEX             0
+#define SRC_DEPTH_TEX_INDEX             1
+#define ROCK_LAYER_BUFFER_INDEX         2
+#define SOIL_LAYER_BUFFER_INDEX         3
+#define WATER_LAYER_BUFFER_INDEX        4
+#define GRASS_SNOW_LAYER_BUFFER_INDEX   5
+#define DST_SOIL_LAYER_BUFFER_INDEX     6
+#define DST_WATER_LAYER_BUFFER_INDEX    7
 
 // IBL texure index
 #define PANORAMA_TEX_INDEX          0
@@ -101,15 +108,9 @@
 
 #define INDIRECT_DRAW_BUF_OFS   4
 
-#define ROCK_LAYER_BASE             4096.0f
-#define SOIL_LAYER_MAX_THICKNESS    511.0f
-#define WATER_LAYER_MAX_THICKNESS   511.0f
-#define SNOW_LAYER_MAX_THICKNESS    31.0f
-
-#define ROCK_LAYER_BUFFER_INDEX         0
-#define SOIL_LAYER_BUFFER_INDEX         1
-#define WATER_LAYER_BUFFER_INDEX        2
-#define GRASS_SNOW_LAYER_BUFFER_INDEX   3
+#define SOIL_LAYER_MAX_THICKNESS    (512.0f - 1.0f / 32.0f)
+#define WATER_LAYER_MAX_THICKNESS   (512.0f - 1.0f / 32.0f)
+#define SNOW_LAYER_MAX_THICKNESS    (8.0f - 1.0f / 32.0f)
 
 #ifdef __cplusplus
 #include "glm/glm.hpp"
@@ -164,10 +165,27 @@ struct IblComputeParams {
     ivec4           size;
 };
 
+struct TileCreateParams {
+    vec2            world_min;
+    vec2            world_range;
+    vec2            pad;
+    uint            width_pixel_count;
+    uint            pad1;
+};
+
+struct TileUpdateParams {
+    vec2            world_min;
+    vec2            world_range;
+    vec2            pad;
+    uint            width_pixel_count;
+    float           inv_width_pixel_count;
+};
+
 struct TileParams {
-    ivec4           neighbors;
+    vec2            world_min;
+    vec2            inv_world_range;
     vec2            min;
-    vec2            max;
+    vec2            range;
     vec2            inv_screen_size;
     uint            segment_count;
     uint            offset;

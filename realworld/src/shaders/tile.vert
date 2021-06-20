@@ -2,11 +2,6 @@
 #extension GL_ARB_separate_shader_objects : enable
 #include "global_definition.glsl.h"
 
-layout(location = 0) in uvec2 layer_heights;     // 18bits fixed for rock level, 14 bits fixed for soil layer.
-                                                 // 14bits fixed for water layer, 10 bits fixed for snow layer.
-                                                 // 4bits for rock/soil transition, 4bits for humidity.
-                                                 // all reserved have 5bits for fraction.
-
 layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniformBufferObject {
     ViewParams view_params;
 };
@@ -19,6 +14,11 @@ layout(location = 0) out VsPsData {
     vec3 vertex_position;
 } out_data;
 
+layout(set = TILE_PARAMS_SET, binding = ROCK_LAYER_BUFFER_INDEX) uniform sampler2D rock_layer;
+layout(set = TILE_PARAMS_SET, binding = SOIL_LAYER_BUFFER_INDEX) uniform sampler2D soil_layer;
+layout(set = TILE_PARAMS_SET, binding = WATER_LAYER_BUFFER_INDEX) uniform sampler2D water_layer;
+layout(set = TILE_PARAMS_SET, binding = GRASS_SNOW_LAYER_BUFFER_INDEX) uniform sampler2D grass_snow_layer;
+
 void main() {
     uint tile_size = tile_params.segment_count + 1;
 
@@ -29,18 +29,20 @@ void main() {
     float factor_x = col * inv_segment_count;
     float factor_y = row * inv_segment_count;
 
-    float x = tile_params.min.x + factor_x * (tile_params.max.x - tile_params.min.x);
-    float y = tile_params.min.y + factor_y * (tile_params.max.y - tile_params.min.y);
+    float x = tile_params.min.x + factor_x * tile_params.range.x;
+    float y = tile_params.min.y + factor_y * tile_params.range.y;
 
-    float layer_height = (layer_heights.x & 0x0003ffff) / 32.0f - ROCK_LAYER_BASE;
+    vec2 world_map_uv = (vec2(x, y) - tile_params.world_min) * tile_params.inv_world_range;
+
+    float layer_height = texture(rock_layer, world_map_uv).x;
 #if defined(SOIL_PASS) || defined(WATER_PASS) || defined(SNOW_PASS)
-    layer_height += (layer_heights.x >> 18) / 32.0f;
+    layer_height += texture(soil_layer, world_map_uv).x * SOIL_LAYER_MAX_THICKNESS;
 #endif
 #if defined(WATER_PASS) || defined(SNOW_PASS)
-    layer_height += (layer_heights.y & 0x00003fff) / 32.0f;
+    layer_height += texture(water_layer, world_map_uv).x * WATER_LAYER_MAX_THICKNESS;
 #endif
 #if defined(SNOW_PASS)
-    layer_height += ((layer_heights.y >> 14) & 0x000003ff) / 32.0f;
+    layer_height += texture(grass_snow_layer, world_map_uv).y * SNOW_LAYER_MAX_THICKNESS;
 #endif
 
     vec4 position_ws = vec4(x, layer_height, y, 1.0);

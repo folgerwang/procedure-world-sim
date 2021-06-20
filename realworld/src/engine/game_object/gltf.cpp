@@ -566,26 +566,68 @@ static std::vector<renderer::TextureDescriptor> addGltfTextures(
 
     // base color.
     auto& base_color_tex_view = material.base_color_idx_ < 0 ? black_tex : textures[material.base_color_idx_];
-    renderer::Helper::addOneTexture(descriptor_writes, BASE_COLOR_TEX_INDEX, texture_sampler, base_color_tex_view.view, description_set);
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        BASE_COLOR_TEX_INDEX,
+        texture_sampler,
+        base_color_tex_view.view,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     // normal.
     auto& normal_tex_view = material.normal_idx_ < 0 ? black_tex : textures[material.normal_idx_];
-    renderer::Helper::addOneTexture(descriptor_writes, NORMAL_TEX_INDEX, texture_sampler, normal_tex_view.view, description_set);
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        NORMAL_TEX_INDEX,
+        texture_sampler,
+        normal_tex_view.view,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     // metallic roughness.
     auto& metallic_roughness_tex = material.metallic_roughness_idx_ < 0 ? black_tex : textures[material.metallic_roughness_idx_];
-    renderer::Helper::addOneTexture(descriptor_writes, METAL_ROUGHNESS_TEX_INDEX, texture_sampler, metallic_roughness_tex.view, description_set);
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        METAL_ROUGHNESS_TEX_INDEX,
+        texture_sampler,
+        metallic_roughness_tex.view,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     // emisive.
     auto& emissive_tex = material.emissive_idx_ < 0 ? black_tex : textures[material.emissive_idx_];
-    renderer::Helper::addOneTexture(descriptor_writes, EMISSIVE_TEX_INDEX, texture_sampler, emissive_tex.view, description_set);
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        EMISSIVE_TEX_INDEX,
+        texture_sampler,
+        emissive_tex.view,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     // occlusion.
     auto& occlusion_tex = material.occlusion_idx_ < 0 ? white_tex : textures[material.occlusion_idx_];
-    renderer::Helper::addOneTexture(descriptor_writes, OCCLUSION_TEX_INDEX, texture_sampler, occlusion_tex.view, description_set);
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        OCCLUSION_TEX_INDEX,
+        texture_sampler,
+        occlusion_tex.view,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     // thin_film_lut.
-    renderer::Helper::addOneTexture(descriptor_writes, THIN_FILM_LUT_INDEX, texture_sampler, thin_film_lut_tex.view, description_set);
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        THIN_FILM_LUT_INDEX,
+        texture_sampler,
+        thin_film_lut_tex.view,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
 }

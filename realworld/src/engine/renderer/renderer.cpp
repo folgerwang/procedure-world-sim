@@ -179,8 +179,8 @@ void Helper::addOneTexture(
     const std::shared_ptr<Sampler>& sampler,
     const std::shared_ptr<ImageView>& texture,
     const std::shared_ptr<DescriptorSet>& desc_set,
-    DescriptorType desc_type/* = DescriptorType::COMBINED_IMAGE_SAMPLER*/,
-    ImageLayout image_layout/* = ImageLayout::SHADER_READ_ONLY_OPTIMAL*/) {
+    DescriptorType desc_type,
+    ImageLayout image_layout) {
 
     TextureDescriptor tex_desc = {
         binding,
@@ -188,7 +188,7 @@ void Helper::addOneTexture(
         texture,
         desc_set,
         desc_type,
-        sampler == nullptr ? image_layout : ImageLayout::SHADER_READ_ONLY_OPTIMAL };
+        image_layout };
 
     descriptor_writes.push_back(tex_desc);
 }

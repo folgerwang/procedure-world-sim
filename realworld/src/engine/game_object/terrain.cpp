@@ -1579,7 +1579,8 @@ std::vector<renderer::TextureDescriptor> addTileCreatorBuffers(
         nullptr,
         rock_layer.view,
         description_set,
-        renderer::DescriptorType::STORAGE_IMAGE);
+        renderer::DescriptorType::STORAGE_IMAGE,
+        renderer::ImageLayout::GENERAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
@@ -1587,7 +1588,8 @@ std::vector<renderer::TextureDescriptor> addTileCreatorBuffers(
         nullptr,
         soil_layer.view,
         description_set,
-        renderer::DescriptorType::STORAGE_IMAGE);
+        renderer::DescriptorType::STORAGE_IMAGE,
+        renderer::ImageLayout::GENERAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
@@ -1595,7 +1597,8 @@ std::vector<renderer::TextureDescriptor> addTileCreatorBuffers(
         nullptr,
         water_layer.view,
         description_set,
-        renderer::DescriptorType::STORAGE_IMAGE);
+        renderer::DescriptorType::STORAGE_IMAGE,
+        renderer::ImageLayout::GENERAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
@@ -1603,24 +1606,66 @@ std::vector<renderer::TextureDescriptor> addTileCreatorBuffers(
         nullptr,
         grass_snow_layer.view,
         description_set,
-        renderer::DescriptorType::STORAGE_IMAGE);
+        renderer::DescriptorType::STORAGE_IMAGE,
+        renderer::ImageLayout::GENERAL);
 
     return descriptor_writes;
 }
 
-std::vector<renderer::BufferDescriptor> addTileUpdateBuffers(
+std::vector<renderer::TextureDescriptor> addTileUpdateBuffers(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
-    const renderer::BufferInfo& buffer) {
-    std::vector<renderer::BufferDescriptor> descriptor_writes;
-    descriptor_writes.reserve(1);
+    const renderer::TextureInfo& rock_layer,
+    const renderer::TextureInfo& soil_layer,
+    const renderer::TextureInfo& water_layer,
+    const renderer::TextureInfo& dst_soil_layer,
+    const renderer::TextureInfo& dst_water_layer) {
+    std::vector<renderer::TextureDescriptor> descriptor_writes;
+    descriptor_writes.reserve(6);
 
-    renderer::Helper::addOneBuffer(
+    renderer::Helper::addOneTexture(
         descriptor_writes,
-        VERTEX_BUFFER_INDEX,
-        buffer.buffer,
+        ROCK_LAYER_BUFFER_INDEX,
+        nullptr,
+        rock_layer.view,
         description_set,
-        engine::renderer::DescriptorType::STORAGE_BUFFER,
-        buffer.buffer->getSize());
+        renderer::DescriptorType::STORAGE_IMAGE,
+        renderer::ImageLayout::GENERAL);
+
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        SOIL_LAYER_BUFFER_INDEX,
+        nullptr,
+        soil_layer.view,
+        description_set,
+        renderer::DescriptorType::STORAGE_IMAGE,
+        renderer::ImageLayout::GENERAL);
+
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        WATER_LAYER_BUFFER_INDEX,
+        nullptr,
+        water_layer.view,
+        description_set,
+        renderer::DescriptorType::STORAGE_IMAGE,
+        renderer::ImageLayout::GENERAL);
+
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        DST_SOIL_LAYER_BUFFER_INDEX,
+        nullptr,
+        dst_soil_layer.view,
+        description_set,
+        renderer::DescriptorType::STORAGE_IMAGE,
+        renderer::ImageLayout::GENERAL);
+
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        DST_WATER_LAYER_BUFFER_INDEX,
+        nullptr,
+        dst_water_layer.view,
+        description_set,
+        renderer::DescriptorType::STORAGE_IMAGE,
+        renderer::ImageLayout::GENERAL);
 
     return descriptor_writes;
 }
@@ -1629,9 +1674,13 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& src_texture,
-    const std::shared_ptr<renderer::ImageView>& src_depth) {
+    const std::shared_ptr<renderer::ImageView>& src_depth,
+    const std::shared_ptr<renderer::ImageView>& rock_layer,
+    const std::shared_ptr<renderer::ImageView>& soil_layer,
+    const std::shared_ptr<renderer::ImageView>& water_layer,
+    const std::shared_ptr<renderer::ImageView>& grass_snow_layer) {
     std::vector<renderer::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(2);
+    descriptor_writes.reserve(6);
 
     // src color.
     renderer::Helper::addOneTexture(
@@ -1639,7 +1688,9 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
         SRC_COLOR_TEX_INDEX,
         texture_sampler,
         src_texture,
-        description_set);
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     // src depth.
     renderer::Helper::addOneTexture(
@@ -1647,7 +1698,45 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
         SRC_DEPTH_TEX_INDEX,
         texture_sampler,
         src_depth,
-        description_set);
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        ROCK_LAYER_BUFFER_INDEX,
+        texture_sampler,
+        rock_layer,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        SOIL_LAYER_BUFFER_INDEX,
+        texture_sampler,
+        soil_layer,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        WATER_LAYER_BUFFER_INDEX,
+        texture_sampler,
+        water_layer,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        GRASS_SNOW_LAYER_BUFFER_INDEX,
+        texture_sampler,
+        grass_snow_layer,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
 }
@@ -1703,16 +1792,20 @@ static renderer::ShaderModuleList getTileWaterShaderModules(
 static std::shared_ptr<renderer::DescriptorSetLayout> createDescriptorSetLayout(
     const std::shared_ptr<renderer::Device>& device) {
     std::vector<renderer::DescriptorSetLayoutBinding> bindings(4);
-    bindings[0] = renderer::helper::getBufferDescriptionSetLayoutBinding(ROCK_LAYER_BUFFER_INDEX,
+    bindings[0] = renderer::helper::getBufferDescriptionSetLayoutBinding(
+        ROCK_LAYER_BUFFER_INDEX,
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         renderer::DescriptorType::STORAGE_IMAGE);
-    bindings[1] = renderer::helper::getBufferDescriptionSetLayoutBinding(SOIL_LAYER_BUFFER_INDEX,
+    bindings[1] = renderer::helper::getBufferDescriptionSetLayoutBinding(
+        SOIL_LAYER_BUFFER_INDEX,
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         renderer::DescriptorType::STORAGE_IMAGE);
-    bindings[2] = renderer::helper::getBufferDescriptionSetLayoutBinding(WATER_LAYER_BUFFER_INDEX,
+    bindings[2] = renderer::helper::getBufferDescriptionSetLayoutBinding(
+        WATER_LAYER_BUFFER_INDEX,
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         renderer::DescriptorType::STORAGE_IMAGE);
-    bindings[3] = renderer::helper::getBufferDescriptionSetLayoutBinding(GRASS_SNOW_LAYER_BUFFER_INDEX,
+    bindings[3] = renderer::helper::getBufferDescriptionSetLayoutBinding(
+        GRASS_SNOW_LAYER_BUFFER_INDEX,
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         renderer::DescriptorType::STORAGE_IMAGE);
 
@@ -1721,19 +1814,39 @@ static std::shared_ptr<renderer::DescriptorSetLayout> createDescriptorSetLayout(
 
 static std::shared_ptr<renderer::DescriptorSetLayout> createTileUpdateDescriptorSetLayout(
     const std::shared_ptr<renderer::Device>& device) {
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings(1);
-    bindings[0] = renderer::helper::getBufferDescriptionSetLayoutBinding(VERTEX_BUFFER_INDEX,
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings(6);
+    bindings[0] = renderer::helper::getBufferDescriptionSetLayoutBinding(
+        ROCK_LAYER_BUFFER_INDEX,
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-        renderer::DescriptorType::STORAGE_BUFFER);
-
+        renderer::DescriptorType::STORAGE_IMAGE);
+    bindings[1] = renderer::helper::getBufferDescriptionSetLayoutBinding(
+        SOIL_LAYER_BUFFER_INDEX,
+        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+        renderer::DescriptorType::STORAGE_IMAGE);
+    bindings[2] = renderer::helper::getBufferDescriptionSetLayoutBinding(
+        WATER_LAYER_BUFFER_INDEX,
+        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+        renderer::DescriptorType::STORAGE_IMAGE);
+    bindings[3] = renderer::helper::getBufferDescriptionSetLayoutBinding(
+        DST_SOIL_LAYER_BUFFER_INDEX,
+        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+        renderer::DescriptorType::STORAGE_IMAGE);
+    bindings[4] = renderer::helper::getBufferDescriptionSetLayoutBinding(
+        DST_WATER_LAYER_BUFFER_INDEX,
+        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+        renderer::DescriptorType::STORAGE_IMAGE);
     return device->createDescriptorSetLayout(bindings);
 }
 
 static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescriptorSetLayout(
     const std::shared_ptr<renderer::Device>& device) {
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings(2);
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings(6);
     bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_COLOR_TEX_INDEX);
     bindings[1] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_DEPTH_TEX_INDEX);
+    bindings[2] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(ROCK_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT));
+    bindings[3] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SOIL_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT));
+    bindings[4] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(WATER_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT));
+    bindings[5] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(GRASS_SNOW_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT));
     return device->createDescriptorSetLayout(bindings);
 }
 
@@ -1743,7 +1856,7 @@ static std::shared_ptr<renderer::PipelineLayout> createTileCreatorPipelineLayout
     renderer::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
     push_const_range.offset = 0;
-    push_const_range.size = sizeof(glsl::TileParams);
+    push_const_range.size = sizeof(glsl::TileCreateParams);
 
     return device->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
@@ -1754,7 +1867,7 @@ static std::shared_ptr<renderer::PipelineLayout> createTileUpdatePipelineLayout(
     renderer::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
     push_const_range.offset = 0;
-    push_const_range.size = sizeof(glsl::TileParams);
+    push_const_range.size = sizeof(glsl::TileUpdateParams);
 
     return device->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
@@ -1820,8 +1933,8 @@ static std::shared_ptr<renderer::Pipeline> createTilePipeline(
     auto pipeline = device->createPipeline(
         render_pass,
         pipeline_layout,
-        TileVertex::getBindingDescription(),
-        TileVertex::getAttributeDescriptions(),
+        {},
+        {},
         input_assembly,
         graphic_pipeline_info,
         shader_modules,
@@ -1845,16 +1958,13 @@ static std::shared_ptr<renderer::Pipeline> createTileWaterPipeline(
     input_assembly.restart_enable = false;
 
     renderer::GraphicPipelineInfo new_graphic_pipeline_info = graphic_pipeline_info;
-/*    new_graphic_pipeline_info.depth_stencil_info = 
-        std::make_shared<renderer::PipelineDepthStencilStateCreateInfo>(
-            renderer::helper::fillPipelineDepthStencilStateCreateInfo(true, false));*/
 
     auto shader_modules = getTileWaterShaderModules(device);
     auto pipeline = device->createPipeline(
         render_pass,
         pipeline_layout,
-        TileVertex::getBindingDescription(),
-        TileVertex::getAttributeDescriptions(),
+        {},
+        {},
         input_assembly,
         new_graphic_pipeline_info,
         shader_modules,
@@ -1880,6 +1990,59 @@ size_t generateHash(
     return hash;
 }
 
+static void transitMapTextureToStoreImage(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    const std::vector<std::shared_ptr<renderer::Image>>& images) {
+    renderer::BarrierList barrier_list;
+    barrier_list.image_barriers.reserve(images.size());
+
+    for (auto& image : images) {
+        renderer::ImageMemoryBarrier barrier;
+        barrier.image = image;
+        barrier.old_layout = renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+        barrier.new_layout = renderer::ImageLayout::GENERAL;
+        barrier.src_access_mask = SET_FLAG_BIT(Access, SHADER_READ_BIT);
+        barrier.dst_access_mask = 
+            SET_FLAG_BIT(Access, SHADER_READ_BIT) |
+            SET_FLAG_BIT(Access, SHADER_WRITE_BIT);
+        barrier.subresource_range.aspect_mask = SET_FLAG_BIT(ImageAspect, COLOR_BIT);
+        barrier_list.image_barriers.push_back(barrier);
+    }
+
+    cmd_buf->addBarriers(
+        barrier_list,
+        SET_FLAG_BIT(PipelineStage, VERTEX_SHADER_BIT) |
+        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT),
+        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT));
+}
+
+static void transitMapTextureFromStoreImage(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    const std::vector<std::shared_ptr<renderer::Image>>& images) {
+    renderer::BarrierList barrier_list;
+    barrier_list.image_barriers.reserve(images.size());
+
+    for (auto& image : images) {
+        renderer::ImageMemoryBarrier barrier;
+        barrier.image = image;
+        barrier.old_layout = renderer::ImageLayout::GENERAL;
+        barrier.new_layout = renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+        barrier.src_access_mask = 
+            SET_FLAG_BIT(Access, SHADER_READ_BIT) |
+            SET_FLAG_BIT(Access, SHADER_WRITE_BIT);
+        barrier.dst_access_mask = SET_FLAG_BIT(Access, SHADER_READ_BIT);
+            
+        barrier.subresource_range.aspect_mask = SET_FLAG_BIT(ImageAspect, COLOR_BIT);
+        barrier_list.image_barriers.push_back(barrier);
+    }
+
+    cmd_buf->addBarriers(
+        barrier_list,
+        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT),
+        SET_FLAG_BIT(PipelineStage, VERTEX_SHADER_BIT) |
+        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT));
+}
+
 } // namespace
 
 // static member definition.
@@ -1888,9 +2051,11 @@ std::vector<std::shared_ptr<TileObject>> TileObject::visible_tiles_;
 renderer::BufferInfo TileObject::vertex_buffer_;
 std::vector<uint32_t> TileObject::available_block_indexes_;
 renderer::TextureInfo TileObject::rock_layer_;
-renderer::TextureInfo TileObject::soil_layer_;
-renderer::TextureInfo TileObject::water_layer_;
+renderer::TextureInfo TileObject::soil_layer_[2];
+renderer::TextureInfo TileObject::water_layer_[2];
 renderer::TextureInfo TileObject::grass_snow_layer_;
+std::shared_ptr<renderer::DescriptorSet> TileObject::creator_buffer_desc_set_;
+std::shared_ptr<renderer::DescriptorSet> TileObject::update_buffer_desc_set_[2][2];
 std::shared_ptr<renderer::DescriptorSetLayout> TileObject::tile_creator_desc_set_layout_;
 std::shared_ptr<renderer::PipelineLayout> TileObject::tile_creator_pipeline_layout_;
 std::shared_ptr<renderer::Pipeline> TileObject::tile_creator_pipeline_;
@@ -1900,7 +2065,7 @@ std::shared_ptr<renderer::Pipeline> TileObject::tile_update_pipeline_;
 std::shared_ptr<renderer::PipelineLayout> TileObject::tile_pipeline_layout_;
 std::shared_ptr<renderer::Pipeline> TileObject::tile_pipeline_;
 std::shared_ptr<renderer::DescriptorSetLayout> TileObject::tile_res_desc_set_layout_;
-std::shared_ptr<renderer::DescriptorSet> TileObject::tile_res_desc_set_;
+std::shared_ptr<renderer::DescriptorSet> TileObject::tile_res_desc_set_[2][2];
 std::shared_ptr<renderer::Pipeline> TileObject::tile_water_pipeline_;
 
 TileObject::TileObject(
@@ -1919,7 +2084,6 @@ TileObject::TileObject(
     assert(tile_creator_desc_set_layout_);
     assert(tile_update_desc_set_layout_);
     assert(tile_res_desc_set_layout_);
-    generateDescriptorSet(device_info.device, descriptor_pool);
 }
 
 void TileObject::destory() {
@@ -2034,7 +2198,7 @@ void TileObject::initStaticMembers(
 
     renderer::Helper::create2DTextureImage(
         device_info,
-        renderer::Format::R16_SNORM,
+        renderer::Format::R16_SFLOAT,
         glm::uvec2(static_cast<uint32_t>(TileConst::kRockLayerSize)),
         rock_layer_,
         SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
@@ -2043,18 +2207,36 @@ void TileObject::initStaticMembers(
 
     renderer::Helper::create2DTextureImage(
         device_info,
-        renderer::Format::R16_SNORM,
+        renderer::Format::R16_UNORM,
         glm::uvec2(static_cast<uint32_t>(TileConst::kSoilLayerSize)),
-        soil_layer_,
+        soil_layer_[0],
         SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
         SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::create2DTextureImage(
         device_info,
-        renderer::Format::R16_SNORM,
+        renderer::Format::R16_UNORM,
+        glm::uvec2(static_cast<uint32_t>(TileConst::kSoilLayerSize)),
+        soil_layer_[1],
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        renderer::Format::R16_UNORM,
         glm::uvec2(static_cast<uint32_t>(TileConst::kWaterlayerSize)),
-        water_layer_,
+        water_layer_[0],
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        renderer::Format::R16_UNORM,
+        glm::uvec2(static_cast<uint32_t>(TileConst::kWaterlayerSize)),
+        water_layer_[1],
         SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
         SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -2177,8 +2359,10 @@ void TileObject::destoryStaticMembers(
     device->destroyPipeline(tile_water_pipeline_);
     vertex_buffer_.destroy(device);
     rock_layer_.destroy(device);
-    soil_layer_.destroy(device);
-    water_layer_.destroy(device);
+    soil_layer_[0].destroy(device);
+    soil_layer_[1].destroy(device);
+    water_layer_[0].destroy(device);
+    water_layer_[1].destroy(device);
     grass_snow_layer_.destroy(device);
 }
 
@@ -2196,40 +2380,44 @@ void TileObject::createMeshBuffers() {
         index_buffer_.memory);
 }
 
-void TileObject::generateDescriptorSet(
+void TileObject::generateStaticDescriptorSet(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool) {
-
     // tile creator buffer set.
-    buffer_desc_set_ = device->createDescriptorSets(
+    creator_buffer_desc_set_ = device->createDescriptorSets(
         descriptor_pool, tile_creator_desc_set_layout_, 1)[0];
 
     // create a global ibl texture descriptor set.
+    // all world map buffer only create once, so always pick the first one.
     auto texture_descs = addTileCreatorBuffers(
-        buffer_desc_set_,
+        creator_buffer_desc_set_,
         rock_layer_,
-        soil_layer_,
-        water_layer_,
+        soil_layer_[0], 
+        water_layer_[0],
         grass_snow_layer_);
     device->updateDescriptorSets(texture_descs, {});
 
     // tile creator buffer set.
-    update_buffer_desc_set_ = device->createDescriptorSets(
-        descriptor_pool, tile_update_desc_set_layout_, 1)[0];
+    for (int soil = 0; soil < 2; soil++) {
+        for (int water = 0; water < 2; water++) {
+            update_buffer_desc_set_[soil][water] = device->createDescriptorSets(
+                descriptor_pool, tile_update_desc_set_layout_, 1)[0];
 
-    // create a global ibl texture descriptor set.
-    auto buffer_descs = addTileUpdateBuffers(
-        update_buffer_desc_set_,
-        vertex_buffer_);
-    device->updateDescriptorSets({}, buffer_descs);
-}
+            // create a global ibl texture descriptor set.
+            texture_descs = addTileUpdateBuffers(
+                update_buffer_desc_set_[soil][water],
+                rock_layer_,
+                soil_layer_[1-soil],
+                water_layer_[1-water],
+                soil_layer_[soil],
+                water_layer_[water]);
+            device->updateDescriptorSets(texture_descs, {});
 
-void TileObject::generateStaticDescriptorSet(
-    const std::shared_ptr<renderer::Device>& device,
-    const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool) {
-    // tile params set.
-    tile_res_desc_set_ = device->createDescriptorSets(
-        descriptor_pool, tile_res_desc_set_layout_, 1)[0];
+            // tile params set.
+            tile_res_desc_set_[soil][water] = device->createDescriptorSets(
+                descriptor_pool, tile_res_desc_set_layout_, 1)[0];
+        }
+    }
 }
 
 void TileObject::updateStaticDescriptorSet(
@@ -2239,19 +2427,27 @@ void TileObject::updateStaticDescriptorSet(
     const std::shared_ptr<renderer::ImageView>& src_texture,
     const std::shared_ptr<renderer::ImageView>& src_depth) {
 
-    if (tile_res_desc_set_ == nullptr) {
+    if (tile_res_desc_set_[0][0] == nullptr) {
         generateStaticDescriptorSet(
             device,
             descriptor_pool);
     }
 
-    // create a global ibl texture descriptor set.
-    auto tile_res_descs = addTileResourceTextures(
-        tile_res_desc_set_,
-        texture_sampler,
-        src_texture,
-        src_depth);
-    device->updateDescriptorSets(tile_res_descs, {});
+    for (int soil = 0; soil < 2; soil++) {
+        for (int water = 0; water < 2; water++) {
+            // create a global ibl texture descriptor set.
+            auto tile_res_descs = addTileResourceTextures(
+                tile_res_desc_set_[soil][water],
+                texture_sampler,
+                src_texture,
+                src_depth,
+                rock_layer_.view,
+                soil_layer_[soil].view,
+                water_layer_[water].view,
+                grass_snow_layer_.view);
+            device->updateDescriptorSets(tile_res_descs, {});
+        }
+    }
 }
 
 bool TileObject::validTileBySize(
@@ -2270,32 +2466,19 @@ bool TileObject::validTileBySize(
 void TileObject::generateTileBuffers(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
 
-    auto segment_count = static_cast<uint32_t>(TileConst::kSegmentCount);
-    auto num_vertexes = static_cast<uint32_t>(TileConst::kNumVertexes);
-    uint32_t v_count = segment_count + 1;
-    uint32_t buffer_size = num_vertexes * sizeof(glsl::TileVertexInfo);
-    uint32_t buffer_offset = buffer_size * block_idx_;
+    transitMapTextureToStoreImage(
+        cmd_buf,
+        {rock_layer_.image,
+         soil_layer_[0].image,
+         water_layer_[0].image,
+         grass_snow_layer_.image});
 
-    cmd_buf->addBufferBarrier(
-        vertex_buffer_.buffer,
-        { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
-        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
-        buffer_size,
-        buffer_offset);
-
-    cmd_buf->addBufferBarrier(
-        index_buffer_.buffer,
-        { SET_FLAG_BIT(Access, INDEX_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
-        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
-        index_buffer_.buffer->getSize());
-
+    auto dispatch_count = static_cast<uint32_t>(TileConst::kWaterlayerSize);
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, tile_creator_pipeline_);
-    glsl::TileParams tile_params = {};
-    tile_params.neighbors = neighbors_ * glm::ivec4(num_vertexes);
-    tile_params.min = min_;
-    tile_params.max = max_;
-    tile_params.segment_count = segment_count;
-    tile_params.offset = num_vertexes * block_idx_;
+    glsl::TileCreateParams tile_params = {};
+    tile_params.world_min = glm::vec2(-kWorldMapSize / 2.0f);
+    tile_params.world_range = glm::vec2(kWorldMapSize / 2.0f) - tile_params.world_min;
+    tile_params.width_pixel_count = dispatch_count;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         tile_creator_pipeline_layout_,
@@ -2305,51 +2488,38 @@ void TileObject::generateTileBuffers(
     cmd_buf->bindDescriptorSets(
         renderer::PipelineBindPoint::COMPUTE,
         tile_creator_pipeline_layout_,
-        { buffer_desc_set_ });
+        { creator_buffer_desc_set_ });
 
-    cmd_buf->dispatch((v_count + 7) / 8, (v_count + 7) / 8, 1);
+    cmd_buf->dispatch(
+        (dispatch_count + 7) / 8,
+        (dispatch_count + 7) / 8, 1);
 
-    cmd_buf->addBufferBarrier(
-        vertex_buffer_.buffer,
-        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
-        { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
-        buffer_size,
-        buffer_offset);
-
-    cmd_buf->addBufferBarrier(
-        index_buffer_.buffer,
-        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
-        { SET_FLAG_BIT(Access, INDEX_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
-        index_buffer_.buffer->getSize());
-
-    created = true;
+    transitMapTextureFromStoreImage(
+        cmd_buf,
+        { rock_layer_.image,
+         soil_layer_[0].image,
+         water_layer_[0].image,
+         grass_snow_layer_.image });
 }
 
 void TileObject::updateTileBuffers(
-    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    int soil,
+    int water) {
 
-    auto segment_count = static_cast<uint32_t>(TileConst::kSegmentCount);
-    auto num_vertexes = static_cast<uint32_t>(TileConst::kNumVertexes);
-    uint32_t v_count = segment_count + 1;
-    uint32_t buffer_size = num_vertexes * sizeof(glsl::TileVertexInfo);
-    uint32_t buffer_offset = buffer_size * block_idx_;
+    transitMapTextureToStoreImage(
+        cmd_buf,
+        {soil_layer_[soil].image,
+         water_layer_[water].image});
 
-    cmd_buf->addBufferBarrier(
-        vertex_buffer_.buffer,
-        { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT),
-          SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
-        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT) | SET_FLAG_BIT(Access, SHADER_READ_BIT),
-          SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
-        buffer_size,
-        buffer_offset);
+    auto dispatch_count = static_cast<uint32_t>(TileConst::kWaterlayerSize);
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, tile_update_pipeline_);
-    glsl::TileParams tile_params = {};
-    tile_params.neighbors = neighbors_ * glm::ivec4(num_vertexes);
-    tile_params.min = min_;
-    tile_params.max = max_;
-    tile_params.segment_count = segment_count;
-    tile_params.offset = num_vertexes * block_idx_;
+    glsl::TileUpdateParams tile_params = {};
+    tile_params.world_min = glm::vec2(-kWorldMapSize / 2.0f);
+    tile_params.world_range = glm::vec2(kWorldMapSize / 2.0f) - tile_params.world_min;
+    tile_params.width_pixel_count = dispatch_count;
+    tile_params.inv_width_pixel_count = 1.0f / dispatch_count;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         tile_update_pipeline_layout_,
@@ -2359,41 +2529,36 @@ void TileObject::updateTileBuffers(
     cmd_buf->bindDescriptorSets(
         renderer::PipelineBindPoint::COMPUTE,
         tile_update_pipeline_layout_,
-        { update_buffer_desc_set_ });
+        { update_buffer_desc_set_[soil][water] });
 
-    // this pass only take care of center part of one tile, leave edge 2 lines un-touched.
-    cmd_buf->dispatch((v_count - 4  + 15) / 16, (v_count - 4 + 15) / 16, 1);
+    cmd_buf->dispatch(
+        (dispatch_count + 15) / 16,
+        (dispatch_count + 15) / 16, 1);
 
-    cmd_buf->addBufferBarrier(
-        vertex_buffer_.buffer,
-        { SET_FLAG_BIT(Access, SHADER_WRITE_BIT) | SET_FLAG_BIT(Access, SHADER_READ_BIT),
-          SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
-        { SET_FLAG_BIT(Access, VERTEX_ATTRIBUTE_READ_BIT), SET_FLAG_BIT(PipelineStage, VERTEX_INPUT_BIT) },
-        buffer_size,
-        buffer_offset);
+    transitMapTextureToStoreImage(
+        cmd_buf,
+        {soil_layer_[soil].image,
+         water_layer_[water].image});
 }
 
 void TileObject::draw(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const renderer::DescriptorSetList& desc_set_list,
     const glm::uvec2 display_size,
+    int soil,
+    int water,
     bool is_base_pass) {
     auto segment_count = static_cast<uint32_t>(TileConst::kSegmentCount);
     auto num_vertexes = static_cast<uint32_t>(TileConst::kNumVertexes);
-    std::vector<std::shared_ptr<renderer::Buffer>> buffers(1);
-    std::vector<uint64_t> offsets(1);
-    buffers[0] = vertex_buffer_.buffer;
-    offsets[0] = num_vertexes * sizeof(glsl::TileVertexInfo) * block_idx_;
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, is_base_pass ? tile_pipeline_ : tile_water_pipeline_);
-
-    cmd_buf->bindVertexBuffers(0, buffers, offsets);
     cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, renderer::IndexType::UINT32);
 
     glsl::TileParams tile_params = {};
-    tile_params.neighbors = neighbors_;
+    tile_params.world_min = glm::vec2(-kWorldMapSize / 2.0f);
+    tile_params.inv_world_range = 1.0f / (glm::vec2(kWorldMapSize / 2.0f) - tile_params.world_min);
     tile_params.min = min_;
-    tile_params.max = max_;
+    tile_params.range = max_ - min_;
     tile_params.segment_count = segment_count;
     tile_params.offset = 0;
     tile_params.inv_screen_size = glm::vec2(1.0f / display_size.x, 1.0f / display_size.y);
@@ -2405,7 +2570,7 @@ void TileObject::draw(
         sizeof(tile_params));
 
     auto new_desc_sets = desc_set_list;
-    new_desc_sets.push_back(tile_res_desc_set_);
+    new_desc_sets.push_back(tile_res_desc_set_[soil][water]);
 
     cmd_buf->bindDescriptorSets(
         renderer::PipelineBindPoint::GRAPHICS,
@@ -2418,35 +2583,19 @@ void TileObject::draw(
 void TileObject::generateAllDescriptorSets(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool) {
-    for (auto& tile : tile_meshes_) {
-        tile.second->generateDescriptorSet(device, descriptor_pool);
-    }
-
     generateStaticDescriptorSet(device, descriptor_pool);
-}
-
-void TileObject::generateAllTileBuffers(
-    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
-    for (auto& tile : tile_meshes_) {
-        tile.second->generateTileBuffers(cmd_buf);
-    }
-}
-
-void TileObject::updateAllTileBuffers(
-    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
-    for (auto& tile : tile_meshes_) {
-        tile.second->updateTileBuffers(cmd_buf);
-    }
 }
 
 void TileObject::drawAllVisibleTiles(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const renderer::DescriptorSetList& desc_set_list,
     const glm::uvec2 display_size,
+    int soil,
+    int water,
     bool is_base_pass) {
 
     for (auto& tile : visible_tiles_) {
-        tile->draw(cmd_buf, desc_set_list, display_size, is_base_pass);
+        tile->draw(cmd_buf, desc_set_list, display_size, soil, water, is_base_pass);
     }
 }
 

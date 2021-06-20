@@ -1168,11 +1168,46 @@ std::vector<er::TextureDescriptor> RealWorldApplication::addGlobalTextures(
 {
     std::vector<er::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(5);
-    er::Helper::addOneTexture(descriptor_writes, GGX_LUT_INDEX, texture_sampler_, ggx_lut_tex_.view, description_set);
-    er::Helper::addOneTexture(descriptor_writes, CHARLIE_LUT_INDEX, texture_sampler_, charlie_lut_tex_.view, description_set);
-    er::Helper::addOneTexture(descriptor_writes, LAMBERTIAN_ENV_TEX_INDEX, texture_sampler_, rt_ibl_diffuse_tex_.view, description_set);
-    er::Helper::addOneTexture(descriptor_writes, GGX_ENV_TEX_INDEX, texture_sampler_, rt_ibl_specular_tex_.view, description_set);
-    er::Helper::addOneTexture(descriptor_writes, CHARLIE_ENV_TEX_INDEX, texture_sampler_, rt_ibl_sheen_tex_.view, description_set);
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        GGX_LUT_INDEX,
+        texture_sampler_,
+        ggx_lut_tex_.view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        CHARLIE_LUT_INDEX,
+        texture_sampler_,
+        charlie_lut_tex_.view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        LAMBERTIAN_ENV_TEX_INDEX,
+        texture_sampler_,
+        rt_ibl_diffuse_tex_.view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        GGX_ENV_TEX_INDEX,
+        texture_sampler_,
+        rt_ibl_specular_tex_.view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        CHARLIE_ENV_TEX_INDEX,
+        texture_sampler_,
+        rt_ibl_sheen_tex_.view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
 }
@@ -1184,7 +1219,14 @@ std::vector<er::TextureDescriptor> RealWorldApplication::addSkyboxTextures(
     descriptor_writes.reserve(1);
 
     // envmap texture.
-    er::Helper::addOneTexture(descriptor_writes, BASE_COLOR_TEX_INDEX, texture_sampler_, rt_envmap_tex_.view, description_set);
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        BASE_COLOR_TEX_INDEX,
+        texture_sampler_,
+        rt_envmap_tex_.view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
 }
@@ -1196,7 +1238,14 @@ std::vector<er::TextureDescriptor> RealWorldApplication::addPanoramaTextures(
     descriptor_writes.reserve(1);
 
     // envmap texture.
-    er::Helper::addOneTexture(descriptor_writes, PANORAMA_TEX_INDEX, texture_sampler_, panorama_tex_.view, description_set);
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        PANORAMA_TEX_INDEX,
+        texture_sampler_,
+        panorama_tex_.view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
 }
@@ -1207,7 +1256,14 @@ std::vector<er::TextureDescriptor> RealWorldApplication::addIblTextures(
     std::vector<er::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(1);
 
-    er::Helper::addOneTexture(descriptor_writes, ENVMAP_TEX_INDEX, texture_sampler_, rt_envmap_tex_.view, description_set);
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        ENVMAP_TEX_INDEX,
+        texture_sampler_,
+        rt_envmap_tex_.view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
 }
@@ -1228,6 +1284,7 @@ std::vector<er::TextureDescriptor> RealWorldApplication::addIblComputeTextures(
         description_set,
         er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
+
     er::Helper::addOneTexture(
         descriptor_writes,
         DST_TEX_INDEX,
@@ -1462,6 +1519,8 @@ void RealWorldApplication::drawScene(
 
     auto& cmd_buf = command_buffer;
 
+    static int s_soil = 0, s_water = 0;
+
     if (0)
     {
         // generate envmap cubemap from panorama hdr image.
@@ -1679,8 +1738,15 @@ void RealWorldApplication::drawScene(
     }
 
     {
-        ego::TileObject::generateAllTileBuffers(cmd_buf);
-        ego::TileObject::updateAllTileBuffers(cmd_buf);
+        // only init one time.
+        static bool s_tile_buffer_inited = false;
+        if (!s_tile_buffer_inited) {
+            ego::TileObject::generateTileBuffers(cmd_buf);
+            s_tile_buffer_inited = true;
+        }
+        else {
+            ego::TileObject::updateTileBuffers(cmd_buf, s_soil, s_water);
+        }
     }
 
     {
@@ -1707,7 +1773,7 @@ void RealWorldApplication::drawScene(
 
         // render terrain opaque pass.
         {
-            ego::TileObject::drawAllVisibleTiles(cmd_buf, desc_sets, screen_size, true);
+            ego::TileObject::drawAllVisibleTiles(cmd_buf, desc_sets, screen_size, s_soil, s_water, true);
         }
 
         // render skybox.
@@ -1786,7 +1852,7 @@ void RealWorldApplication::drawScene(
 
         // render terrain water pass.
         {
-            ego::TileObject::drawAllVisibleTiles(cmd_buf, desc_sets, screen_size, false);
+            ego::TileObject::drawAllVisibleTiles(cmd_buf, desc_sets, screen_size, s_soil, s_water, false);
         }
 
         cmd_buf->endRenderPass();
@@ -1813,6 +1879,9 @@ void RealWorldApplication::drawScene(
         SET_FLAG_BIT(ImageAspect, COLOR_BIT),
         SET_FLAG_BIT(ImageAspect, COLOR_BIT),
         glm::ivec3(screen_size.x, screen_size.y, 1));
+
+    s_soil = 1 - s_soil;
+    s_water = 1 - s_water;
 }
 
 void RealWorldApplication::drawMenu(

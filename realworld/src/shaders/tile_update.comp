@@ -4,12 +4,43 @@
 #include "tile_common.glsl.h"
 
 layout(push_constant) uniform TileUniformBufferObject {
-  TileParams tile_params;
+  TileUpdateParams tile_params;
 };
 
 layout(std430, set = 0, binding = VERTEX_BUFFER_INDEX) buffer TileVertexInfoBuffer {
   TileVertexInfo vertex_info[];
 };
+
+layout(set = 0, binding = ROCK_LAYER_BUFFER_INDEX) uniform sampler2D rock_layer;
+layout(set = 0, binding = SOIL_LAYER_BUFFER_INDEX, r16) uniform readonly image2D soil_layer;
+layout(set = 0, binding = WATER_LAYER_BUFFER_INDEX, r16) uniform readonly image2D water_layer;
+layout(set = 0, binding = DST_SOIL_LAYER_BUFFER_INDEX, r16) uniform writeonly image2D dst_soil_layer;
+layout(set = 0, binding = DST_WATER_LAYER_BUFFER_INDEX, r16) uniform writeonly image2D dst_water_layer;
+
+uvec2 getPackedLayers(ivec2 src_coords) {
+    vec2 uv = src_coords * tile_params.inv_width_pixel_count;
+    float rock_height = texture(rock_layer, uv).x;
+    float soil_height = imageLoad(soil_layer, src_coords).x;
+    float water_height = imageLoad(water_layer, src_coords).x;
+    uint rock_layer = uint((rock_height + 10240.0f) * 128);
+    uint soil_layer = min(uint(soil_height * SOIL_LAYER_MAX_THICKNESS * 128), 0x00000ffff);
+    uint water_layer = min(uint(water_height * WATER_LAYER_MAX_THICKNESS * 128), 0x0000ffff);
+
+    return uvec2(rock_layer, soil_layer | (water_layer << 16));
+}
+
+uvec3 unpackTerrainLayersU3(uvec2 packed_layers) {
+    return uvec3(packed_layers.x,
+                 packed_layers.y & 0x0000ffff,
+                 packed_layers.y >> 16);
+}
+
+uvec2 unpackTerrainLayersHeightU2(uvec2 packed_layers) {
+    uvec3 layer_thickness = unpackTerrainLayersU3(packed_layers);
+    uint soil_height = layer_thickness.x + layer_thickness.y;
+    uint water_height = layer_thickness.z + soil_height;
+    return uvec2(soil_height, water_height);
+}
 
 uint adjustLayersHeight(uvec2 center, uvec2 left, uvec2 right, uvec2 up, uvec2 down) {
     uvec3 layer_thickness = unpackTerrainLayersU3(center);
@@ -23,8 +54,15 @@ uint adjustLayersHeight(uvec2 center, uvec2 left, uvec2 right, uvec2 up, uvec2 d
     uvec2 min_height = min(min(left_h, right_h), min(up_h, down_h));
 
     uvec2 height_diff;
-    height_diff.x = min(center_h.x > min_height.x ? (center_h.x - min_height.x) : 0, layer_thickness.y) >> 4; // soil, only down 1/16.
-    height_diff.y = min(center_h.y > min_height.y ? (center_h.y - min_height.y) : 0, layer_thickness.z) >> 1; // water, down 1/2.
+    height_diff.x = center_h.x > min_height.x ? (center_h.x - min_height.x) : 0;
+    height_diff.y = center_h.y > min_height.y ? (center_h.y - min_height.y) : 0;
+
+    height_diff = min(height_diff, layer_thickness.yz);
+
+    height_diff.x >>= 2; // soil, only down 1/16.
+    height_diff.y >>= 1; // water, down 1/4.
+
+    height_diff = min(height_diff, 0x3fff);
 
     if (height_diff.x > 0) { // adjust soil height.
         uint idx = min_height.x == left_h.x ? 0 :
@@ -50,30 +88,27 @@ layout(local_size_x = 16, local_size_y = 16) in;
 void main()
 {
   // get index in global work group i.e x,y position
-  int tile_size = int(tile_params.segment_count) + 1;
+  int tile_size = int(tile_params.width_pixel_count);
   // skip 2 lines on border.
-  ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy) + 2;
+  ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
   ivec2 local_coords = ivec2(gl_LocalInvocationID.xy);
   ivec2 block_coords = ivec2(gl_WorkGroupID.xy) * 16;
   uint pixel_index = gl_LocalInvocationIndex;
 
   ivec2 src_local_coords = ivec2(pixel_index % 20, pixel_index / 20);
-  ivec2 src_coords = src_local_coords + block_coords;
-  int src_index = src_coords.y * tile_size + src_coords.x;
-  s_terrain_layers[src_local_coords.y][src_local_coords.x] =
-    vertex_info[tile_params.offset + src_index].packed_land_layers;
+  ivec2 src_coords = src_local_coords + block_coords - 2;
+  s_terrain_layers[src_local_coords.y][src_local_coords.x] = getPackedLayers(src_coords);
 
   pixel_index += 16 * 16;
   if (pixel_index < 20 * 20) {
       src_local_coords = ivec2(pixel_index % 20, pixel_index / 20);
-      src_coords = src_local_coords + block_coords;
-      src_index = src_coords.y * tile_size + src_coords.x;
-      s_terrain_layers[src_local_coords.y][src_local_coords.x] =
-        vertex_info[tile_params.offset + src_index].packed_land_layers;
+      src_coords = src_local_coords + block_coords - 2;
+      s_terrain_layers[src_local_coords.y][src_local_coords.x] = getPackedLayers(src_coords);
   }
 
   memoryBarrierShared();
   groupMemoryBarrier();
+  memoryBarrier();
 
   pixel_index = gl_LocalInvocationIndex;
   src_local_coords = ivec2(pixel_index % 18, pixel_index / 18);
@@ -101,10 +136,9 @@ void main()
 
   memoryBarrierShared();
   groupMemoryBarrier();
+  memoryBarrier();
 
-  if (all(lessThanEqual(pixel_coords, uvec2(tile_params.segment_count - 2)))) {
-    int index = pixel_coords.y * tile_size + pixel_coords.x;
-
+  if (all(lessThan(pixel_coords, uvec2(tile_params.width_pixel_count)))) {
     src_local_coords = local_coords + 1;
 
     uint center = s_adjust_layers[src_local_coords.y][src_local_coords.x];
@@ -142,15 +176,19 @@ void main()
         layer_adjust += (down & 0x3fff0000);
     }
 
+    layer_adjust = 0;
+    center = 0;
+
     ivec2 src_local_coords = local_coords + 2;
 
     uvec2 packed_layers = s_terrain_layers[src_local_coords.y][src_local_coords.x];
-    uint new_soil_layer = (packed_layers.x >> 18) + (layer_adjust & 0xffff) - (center & 0x3fff);
-    uint new_water_layer = (packed_layers.y & 0x3fff) + (layer_adjust >> 16) - ((center >> 16) & 0x3fff);
+    uint new_soil_layer = (packed_layers.y & 0x0000ffff) + min((layer_adjust & 0xffff), 32);// - (center & 0x3fff);
+    uint new_water_layer = (packed_layers.y >> 16) + min((layer_adjust >> 16), 32);// - ((center >> 16) & 0x3fff);
 
-    //packed_layers.x = (new_soil_layer << 18) | (packed_layers.x & 0x3ffff);
-    //packed_layers.y = new_water_layer | (packed_layers.y & 0xffffc000);
+    float normalzied_soil_layer = new_soil_layer / (SOIL_LAYER_MAX_THICKNESS * 128);
+    float normalzied_water_layer = new_water_layer / (WATER_LAYER_MAX_THICKNESS * 128);
 
-    vertex_info[tile_params.offset + index].packed_land_layers = packed_layers;
+    imageStore(dst_soil_layer, pixel_coords, vec4(normalzied_soil_layer));
+    imageStore(dst_water_layer, pixel_coords, vec4(normalzied_water_layer));
   }
 }

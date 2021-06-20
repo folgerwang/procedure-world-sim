@@ -26,8 +26,8 @@ void main() {
     float factor_x = col * inv_segment_count;
     float factor_y = row * inv_segment_count;
 
-    float x = tile_params.min.x + factor_x * (tile_params.max.x - tile_params.min.x);
-    float y = tile_params.min.y + factor_y * (tile_params.max.y - tile_params.min.y);
+    float x = tile_params.min.x + factor_x * tile_params.range.x;
+    float y = tile_params.min.y + factor_y * tile_params.range.y;
 
     vec4 position_ws = vec4(x, height.x, y, 1.0);
     gl_Position = view_params.proj * view_params.view * position_ws;

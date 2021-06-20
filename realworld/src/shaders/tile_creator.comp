@@ -4,14 +4,14 @@
 #include "tile_common.glsl.h"
 
 layout(push_constant) uniform TileUniformBufferObject {
-  TileParams tile_params;
+  TileCreateParams tile_params;
 };
 
 layout(std430, set = 0, binding = VERTEX_BUFFER_INDEX) buffer TileVertexInfoBuffer {
   TileVertexInfo vertex_info[];
 };
 
-layout(set = 0, binding = ROCK_LAYER_BUFFER_INDEX, r16_snorm) uniform writeonly image2D rock_layer;
+layout(set = 0, binding = ROCK_LAYER_BUFFER_INDEX, r16f) uniform writeonly image2D rock_layer;
 layout(set = 0, binding = SOIL_LAYER_BUFFER_INDEX, r16) uniform writeonly image2D soil_layer;
 layout(set = 0, binding = WATER_LAYER_BUFFER_INDEX, r16) uniform writeonly image2D water_layer;
 layout(set = 0, binding = GRASS_SNOW_LAYER_BUFFER_INDEX, rg8) uniform writeonly image2D grass_snow_layer;
@@ -21,18 +21,27 @@ void main()
 {
   // get index in global work group i.e x,y position
   ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
-  if (all(lessThanEqual(pixel_coords, uvec2(tile_params.segment_count)))) {
-    int tile_size = int(tile_params.segment_count) + 1;
-    int index = pixel_coords.y * tile_size + pixel_coords.x;
-    float inv_segment_count = 1.0f / tile_params.segment_count;
-    float factor_x = pixel_coords.x * inv_segment_count;
-    float factor_y = pixel_coords.y * inv_segment_count;
+  if (all(lessThan(pixel_coords, uvec2(tile_params.width_pixel_count)))) {
+    float inv_segment_count = 1.0f / tile_params.width_pixel_count;
+    vec2 tile_step = tile_params.world_range * inv_segment_count;
 
-    float x = tile_params.min.x + factor_x * (tile_params.max.x - tile_params.min.x);
-    float y = tile_params.min.y + factor_y * (tile_params.max.y - tile_params.min.y);
+    vec2 map_coords = tile_params.world_min + (pixel_coords + 0.25f) * tile_step;
+    vec2 map_coords1 = map_coords + 0.5f * tile_step;
 
-    vec2 height_info = terrainMap(vec2(x, y));
-    vertex_info[tile_params.offset + index].packed_land_layers =
-        packTerrainLayers(vec4(height_info.x + ROCK_LAYER_BASE, 0, 5.0f, 0), 0);
+    vec2 height_info = terrainMap(map_coords);
+    imageStore(rock_layer, pixel_coords * 2, vec4(height_info.x));
+    height_info = terrainMap(vec2(map_coords1.x, map_coords.y));
+    imageStore(rock_layer, pixel_coords * 2 + ivec2(1, 0), vec4(height_info.x));
+    height_info = terrainMap(vec2(map_coords.x, map_coords1.y));
+    imageStore(rock_layer, pixel_coords * 2 + ivec2(0, 1), vec4(height_info.x));
+    height_info = terrainMap(map_coords1);
+    imageStore(rock_layer, pixel_coords * 2 + ivec2(1, 1), vec4(height_info.x));
+
+    imageStore(soil_layer, pixel_coords, vec4(0));
+    imageStore(water_layer, pixel_coords, vec4(5.0f / WATER_LAYER_MAX_THICKNESS));
+
+    if (((pixel_coords.x | pixel_coords.y) & 0x01) == 0) {
+        imageStore(grass_snow_layer, pixel_coords / 2, vec4(0.5f / SNOW_LAYER_MAX_THICKNESS));    
+    }
   }
 }

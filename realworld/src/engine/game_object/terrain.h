@@ -7,7 +7,7 @@ namespace game_object {
 class TileObject {
     const renderer::DeviceInfo& device_info_;
 
-    const float kWorldSize = 16384.0f;     // meters
+    #define kWorldMapSize 16384.0f     // meters
     enum class TileConst{
         kRockLayerSize = 8192,
         kSoilLayerSize = 4096,
@@ -29,17 +29,16 @@ class TileObject {
 
     renderer::BufferInfo index_buffer_;
 
-    std::shared_ptr<renderer::DescriptorSet> buffer_desc_set_;
-    std::shared_ptr<renderer::DescriptorSet> update_buffer_desc_set_;
-    
     static std::unordered_map<size_t, std::shared_ptr<TileObject>> tile_meshes_;
     static std::vector<std::shared_ptr<TileObject>> visible_tiles_;
     static std::vector<uint32_t> available_block_indexes_;
     static renderer::BufferInfo vertex_buffer_;
     static renderer::TextureInfo rock_layer_;
-    static renderer::TextureInfo soil_layer_;
-    static renderer::TextureInfo water_layer_;
+    static renderer::TextureInfo soil_layer_[2];
+    static renderer::TextureInfo water_layer_[2];
     static renderer::TextureInfo grass_snow_layer_;
+    static std::shared_ptr<renderer::DescriptorSet> creator_buffer_desc_set_;
+    static std::shared_ptr<renderer::DescriptorSet> update_buffer_desc_set_[2][2]; // soil and water double buffer.
     static std::shared_ptr<renderer::DescriptorSetLayout> tile_creator_desc_set_layout_;
     static std::shared_ptr<renderer::PipelineLayout> tile_creator_pipeline_layout_;
     static std::shared_ptr<renderer::Pipeline> tile_creator_pipeline_;
@@ -49,7 +48,7 @@ class TileObject {
     static std::shared_ptr<renderer::PipelineLayout> tile_pipeline_layout_;
     static std::shared_ptr<renderer::Pipeline> tile_pipeline_;
     static std::shared_ptr<renderer::DescriptorSetLayout> tile_res_desc_set_layout_;
-    static std::shared_ptr<renderer::DescriptorSet> tile_res_desc_set_;
+    static std::shared_ptr<renderer::DescriptorSet> tile_res_desc_set_[2][2];
     static std::shared_ptr<renderer::Pipeline> tile_water_pipeline_;
 
 public:
@@ -122,16 +121,20 @@ public:
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool);
 
-    static void generateAllTileBuffers(
+    static void generateTileBuffers(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
 
-    static void updateAllTileBuffers(
-        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
+    static void updateTileBuffers(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+        int soil,
+        int water);
 
     static void drawAllVisibleTiles(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const renderer::DescriptorSetList& desc_set_list,
         const glm::uvec2 display_size,
+        int soil,
+        int water,
         bool is_base_pass);
 
     static void updateAllTiles(
@@ -147,21 +150,13 @@ public:
         const glm::ivec2& max_tile_idx,
         const float& tile_size);
 
-    void generateTileBuffers(
-        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
-
-    void updateTileBuffers(
-        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
-
     void createMeshBuffers();
         
-    void generateDescriptorSet(
-        const std::shared_ptr<renderer::Device>& device,
-        const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool);
-
     void draw(const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const renderer::DescriptorSetList& desc_set_list,
         const glm::uvec2 display_size,
+        int soil,
+        int water,
         bool is_base_pass);
 };
 

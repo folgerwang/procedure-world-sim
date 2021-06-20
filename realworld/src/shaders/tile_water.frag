@@ -24,8 +24,8 @@ layout(location = 0) out vec4 outColor;
 
 vec3  kSunDir = vec3(-0.624695f, 0.468521f, -0.624695f);
 
-layout(set = PBR_MATERIAL_PARAMS_SET, binding = SRC_COLOR_TEX_INDEX) uniform sampler2D src_tex;
-layout(set = PBR_MATERIAL_PARAMS_SET, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
+layout(set = TILE_PARAMS_SET, binding = SRC_COLOR_TEX_INDEX) uniform sampler2D src_tex;
+layout(set = TILE_PARAMS_SET, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
 
 struct MaterialInfo
 {

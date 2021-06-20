@@ -321,8 +321,8 @@ public:
         const std::shared_ptr<Sampler>& sampler,
         const std::shared_ptr<ImageView>& texture,
         const std::shared_ptr<DescriptorSet>& desc_set,
-        DescriptorType desc_type = DescriptorType::COMBINED_IMAGE_SAMPLER,
-        ImageLayout image_layout = ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        DescriptorType desc_type/* = DescriptorType::COMBINED_IMAGE_SAMPLER*/,
+        ImageLayout image_layout/* = ImageLayout::SHADER_READ_ONLY_OPTIMAL*/);
 
     static void addOneBuffer(
         std::vector<BufferDescriptor>& descriptor_writes,

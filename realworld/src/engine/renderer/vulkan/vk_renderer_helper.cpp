@@ -2019,6 +2019,14 @@ void transitionImageLayout(
                 source_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
                 destination_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
             }
+            else if (old_layout == renderer::ImageLayout::UNDEFINED &&
+                new_layout == renderer::ImageLayout::GENERAL) {
+                barrier.srcAccessMask = 0;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT| VK_ACCESS_SHADER_WRITE_BIT;
+
+                source_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+                destination_stage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+            }
             else {
                 throw std::invalid_argument("unsupported layout transition!");
             }
