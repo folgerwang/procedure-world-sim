@@ -571,7 +571,8 @@ void RealWorldApplication::recreateSwapChain() {
 
     ego::TileObject::generateAllDescriptorSets(
         device_,
-        descriptor_pool_);
+        descriptor_pool_,
+        texture_sampler_);
 
     ego::GltfObject::generateDescriptorSet(
         device_,

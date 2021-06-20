@@ -1614,22 +1614,23 @@ std::vector<renderer::TextureDescriptor> addTileCreatorBuffers(
 
 std::vector<renderer::TextureDescriptor> addTileUpdateBuffers(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
+    const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const renderer::TextureInfo& rock_layer,
     const renderer::TextureInfo& soil_layer,
     const renderer::TextureInfo& water_layer,
     const renderer::TextureInfo& dst_soil_layer,
     const renderer::TextureInfo& dst_water_layer) {
     std::vector<renderer::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(6);
+    descriptor_writes.reserve(5);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
         ROCK_LAYER_BUFFER_INDEX,
-        nullptr,
+        texture_sampler,
         rock_layer.view,
         description_set,
-        renderer::DescriptorType::STORAGE_IMAGE,
-        renderer::ImageLayout::GENERAL);
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
@@ -1814,11 +1815,11 @@ static std::shared_ptr<renderer::DescriptorSetLayout> createDescriptorSetLayout(
 
 static std::shared_ptr<renderer::DescriptorSetLayout> createTileUpdateDescriptorSetLayout(
     const std::shared_ptr<renderer::Device>& device) {
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings(6);
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings(5);
     bindings[0] = renderer::helper::getBufferDescriptionSetLayoutBinding(
         ROCK_LAYER_BUFFER_INDEX,
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-        renderer::DescriptorType::STORAGE_IMAGE);
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER);
     bindings[1] = renderer::helper::getBufferDescriptionSetLayoutBinding(
         SOIL_LAYER_BUFFER_INDEX,
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
@@ -1843,10 +1844,10 @@ static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescript
     std::vector<renderer::DescriptorSetLayoutBinding> bindings(6);
     bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_COLOR_TEX_INDEX);
     bindings[1] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_DEPTH_TEX_INDEX);
-    bindings[2] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(ROCK_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT));
-    bindings[3] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SOIL_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT));
-    bindings[4] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(WATER_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT));
-    bindings[5] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(GRASS_SNOW_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT));
+    bindings[2] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(ROCK_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
+    bindings[3] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SOIL_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
+    bindings[4] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(WATER_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
+    bindings[5] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(GRASS_SNOW_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     return device->createDescriptorSetLayout(bindings);
 }
 
@@ -2382,7 +2383,8 @@ void TileObject::createMeshBuffers() {
 
 void TileObject::generateStaticDescriptorSet(
     const std::shared_ptr<renderer::Device>& device,
-    const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool) {
+    const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+    const std::shared_ptr<renderer::Sampler>& texture_sampler) {
     // tile creator buffer set.
     creator_buffer_desc_set_ = device->createDescriptorSets(
         descriptor_pool, tile_creator_desc_set_layout_, 1)[0];
@@ -2406,6 +2408,7 @@ void TileObject::generateStaticDescriptorSet(
             // create a global ibl texture descriptor set.
             texture_descs = addTileUpdateBuffers(
                 update_buffer_desc_set_[soil][water],
+                texture_sampler,
                 rock_layer_,
                 soil_layer_[1-soil],
                 water_layer_[1-water],
@@ -2430,7 +2433,8 @@ void TileObject::updateStaticDescriptorSet(
     if (tile_res_desc_set_[0][0] == nullptr) {
         generateStaticDescriptorSet(
             device,
-            descriptor_pool);
+            descriptor_pool,
+            texture_sampler);
     }
 
     for (int soil = 0; soil < 2; soil++) {
@@ -2510,7 +2514,9 @@ void TileObject::updateTileBuffers(
     transitMapTextureToStoreImage(
         cmd_buf,
         {soil_layer_[soil].image,
-         water_layer_[water].image});
+         water_layer_[water].image,
+         soil_layer_[1-soil].image,
+         water_layer_[1-water].image});
 
     auto dispatch_count = static_cast<uint32_t>(TileConst::kWaterlayerSize);
 
@@ -2535,10 +2541,12 @@ void TileObject::updateTileBuffers(
         (dispatch_count + 15) / 16,
         (dispatch_count + 15) / 16, 1);
 
-    transitMapTextureToStoreImage(
+    transitMapTextureFromStoreImage(
         cmd_buf,
         {soil_layer_[soil].image,
-         water_layer_[water].image});
+         water_layer_[water].image,
+         soil_layer_[1-soil].image,
+         water_layer_[1-water].image });
 }
 
 void TileObject::draw(
@@ -2582,8 +2590,9 @@ void TileObject::draw(
 
 void TileObject::generateAllDescriptorSets(
     const std::shared_ptr<renderer::Device>& device,
-    const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool) {
-    generateStaticDescriptorSet(device, descriptor_pool);
+    const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+    const std::shared_ptr<renderer::Sampler>& texture_sampler) {
+    generateStaticDescriptorSet(device, descriptor_pool, texture_sampler);
 }
 
 void TileObject::drawAllVisibleTiles(
