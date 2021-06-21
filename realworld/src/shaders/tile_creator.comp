@@ -7,10 +7,6 @@ layout(push_constant) uniform TileUniformBufferObject {
   TileCreateParams tile_params;
 };
 
-layout(std430, set = 0, binding = VERTEX_BUFFER_INDEX) buffer TileVertexInfoBuffer {
-  TileVertexInfo vertex_info[];
-};
-
 layout(set = 0, binding = ROCK_LAYER_BUFFER_INDEX, r16f) uniform writeonly image2D rock_layer;
 layout(set = 0, binding = SOIL_LAYER_BUFFER_INDEX, r16) uniform writeonly image2D soil_layer;
 layout(set = 0, binding = WATER_LAYER_BUFFER_INDEX, r16) uniform writeonly image2D water_layer;

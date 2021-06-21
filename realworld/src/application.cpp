@@ -2013,7 +2013,7 @@ void RealWorldApplication::drawFrame() {
         swap_chain_info_.extent,
         image_index);
 
-    //drawMenu(command_buffer);
+    drawMenu(command_buffer);
 
     command_buffer->endCommandBuffer();
 
