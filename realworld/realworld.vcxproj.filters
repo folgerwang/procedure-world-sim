@@ -247,5 +247,8 @@
     <None Include="src\shaders\tile_update.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
+    <None Include="src\shaders\tile_flow_update.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

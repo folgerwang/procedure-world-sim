@@ -18,6 +18,7 @@ layout(push_constant) uniform TileUniformBufferObject {
 
 layout(location = 0) in VsPsData {
     vec3 vertex_position;
+    vec2 world_map_uv;
 } in_data;
 
 layout(location = 0) out vec4 outColor;
@@ -26,6 +27,7 @@ vec3  kSunDir = vec3(-0.624695f, 0.468521f, -0.624695f);
 
 layout(set = TILE_PARAMS_SET, binding = SRC_COLOR_TEX_INDEX) uniform sampler2D src_tex;
 layout(set = TILE_PARAMS_SET, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
+layout(set = TILE_PARAMS_SET, binding = WATER_NORMAL_BUFFER_INDEX) uniform sampler2D water_normal_tex;
 
 struct MaterialInfo
 {
@@ -73,7 +75,9 @@ void main() {
     vec3 pos = in_data.vertex_position;
     vec3 tnor = terrainNormal(vec2(pos.x, pos.z));
 
-    vec3 water_normal = normalize(cross(dFdy(pos), dFdx(pos)));
+    vec3 water_normal;
+    water_normal.xz = texture(water_normal_tex, in_data.world_map_uv).xy;
+    water_normal.y = sqrt(1.0f - dot(water_normal.xz, water_normal.xz));
     vec2 screen_uv = gl_FragCoord.xy * tile_params.inv_screen_size;
     float dist_scale = length(vec3((screen_uv * 2.0f - 1.0f) * view_params.depth_params.zw, 1.0f));
 
@@ -121,13 +125,6 @@ void main() {
     #endif
 
     vec3 color = f_diffuse + f_specular;
-    float alpha = 1.0f;
-
-/*    color = texture(src_tex, screen_uv).xyz;
-
-    color = vec3((bg_view_dist - view_dist) / 100.0f);
-
-    alpha = 1.0;*/
-
-    outColor = vec4(linearTosRGB(color), alpha);
+    color = mix(linearTosRGB(color), bg_color, fade_rate);
+    outColor = vec4(color, 1.0f);
 }

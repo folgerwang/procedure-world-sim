@@ -12,11 +12,11 @@ layout(push_constant) uniform TileUniformBufferObject {
 
 layout(location = 0) out VsPsData {
     vec3 vertex_position;
+    vec2 world_map_uv;
 } out_data;
 
 layout(set = TILE_PARAMS_SET, binding = ROCK_LAYER_BUFFER_INDEX) uniform sampler2D rock_layer;
-layout(set = TILE_PARAMS_SET, binding = SOIL_LAYER_BUFFER_INDEX) uniform sampler2D soil_layer;
-layout(set = TILE_PARAMS_SET, binding = WATER_LAYER_BUFFER_INDEX) uniform sampler2D water_layer;
+layout(set = TILE_PARAMS_SET, binding = SOIL_WATER_LAYER_BUFFER_INDEX) uniform sampler2D soil_water_layer;
 layout(set = TILE_PARAMS_SET, binding = GRASS_SNOW_LAYER_BUFFER_INDEX) uniform sampler2D grass_snow_layer;
 
 void main() {
@@ -36,10 +36,11 @@ void main() {
 
     float layer_height = texture(rock_layer, world_map_uv).x;
 #if defined(SOIL_PASS) || defined(WATER_PASS) || defined(SNOW_PASS)
-    layer_height += texture(soil_layer, world_map_uv).x * SOIL_LAYER_MAX_THICKNESS;
+    vec2 soil_water_thickness = texture(soil_water_layer, world_map_uv).xy * SOIL_WATER_LAYER_MAX_THICKNESS;
+    layer_height += soil_water_thickness.x;
 #endif
 #if defined(WATER_PASS) || defined(SNOW_PASS)
-    layer_height += texture(water_layer, world_map_uv).x * WATER_LAYER_MAX_THICKNESS;
+    layer_height += soil_water_thickness.y;
 #endif
 #if defined(SNOW_PASS)
     layer_height += texture(grass_snow_layer, world_map_uv).y * SNOW_LAYER_MAX_THICKNESS;
@@ -49,4 +50,5 @@ void main() {
     gl_Position = view_params.proj * view_params.view * position_ws;
 
     out_data.vertex_position = position_ws.xyz;
+    out_data.world_map_uv = world_map_uv;
 }

@@ -34,21 +34,26 @@ class TileObject {
     static std::vector<uint32_t> available_block_indexes_;
     static renderer::BufferInfo vertex_buffer_;
     static renderer::TextureInfo rock_layer_;
-    static renderer::TextureInfo soil_layer_[2];
-    static renderer::TextureInfo water_layer_[2];
+    static renderer::TextureInfo soil_water_layer_[2];
     static renderer::TextureInfo grass_snow_layer_;
+    static renderer::TextureInfo water_normal_;
+    static renderer::TextureInfo water_flow_;
     static std::shared_ptr<renderer::DescriptorSet> creator_buffer_desc_set_;
-    static std::shared_ptr<renderer::DescriptorSet> update_buffer_desc_set_[2][2]; // soil and water double buffer.
+    static std::shared_ptr<renderer::DescriptorSet> tile_update_buffer_desc_set_[2]; // soil and water double buffer.
+    static std::shared_ptr<renderer::DescriptorSet> tile_flow_update_buffer_desc_set_[2]; // soil and water double buffer.
     static std::shared_ptr<renderer::DescriptorSetLayout> tile_creator_desc_set_layout_;
     static std::shared_ptr<renderer::PipelineLayout> tile_creator_pipeline_layout_;
     static std::shared_ptr<renderer::Pipeline> tile_creator_pipeline_;
     static std::shared_ptr<renderer::DescriptorSetLayout> tile_update_desc_set_layout_;
     static std::shared_ptr<renderer::PipelineLayout> tile_update_pipeline_layout_;
     static std::shared_ptr<renderer::Pipeline> tile_update_pipeline_;
+    static std::shared_ptr<renderer::DescriptorSetLayout> tile_flow_update_desc_set_layout_;
+    static std::shared_ptr<renderer::PipelineLayout> tile_flow_update_pipeline_layout_;
+    static std::shared_ptr<renderer::Pipeline> tile_flow_update_pipeline_;
     static std::shared_ptr<renderer::PipelineLayout> tile_pipeline_layout_;
     static std::shared_ptr<renderer::Pipeline> tile_pipeline_;
     static std::shared_ptr<renderer::DescriptorSetLayout> tile_res_desc_set_layout_;
-    static std::shared_ptr<renderer::DescriptorSet> tile_res_desc_set_[2][2];
+    static std::shared_ptr<renderer::DescriptorSet> tile_res_desc_set_[2];
     static std::shared_ptr<renderer::Pipeline> tile_water_pipeline_;
 
 public:
@@ -128,15 +133,17 @@ public:
 
     static void updateTileBuffers(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
-        int soil,
-        int water);
+        int soil_water);
+
+    static void updateTileFlowBuffers(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+        int soil_water);
 
     static void drawAllVisibleTiles(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const renderer::DescriptorSetList& desc_set_list,
         const glm::uvec2 display_size,
-        int soil,
-        int water,
+        int soil_water,
         bool is_base_pass);
 
     static void updateAllTiles(
@@ -157,8 +164,7 @@ public:
     void draw(const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const renderer::DescriptorSetList& desc_set_list,
         const glm::uvec2 display_size,
-        int soil,
-        int water,
+        int soil_water,
         bool is_base_pass);
 };
 

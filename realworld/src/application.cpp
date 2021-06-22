@@ -1520,7 +1520,7 @@ void RealWorldApplication::drawScene(
 
     auto& cmd_buf = command_buffer;
 
-    static int s_soil = 0, s_water = 0;
+    static int s_soil_water = 0;
 
     if (0)
     {
@@ -1746,7 +1746,8 @@ void RealWorldApplication::drawScene(
             s_tile_buffer_inited = true;
         }
         else {
-            ego::TileObject::updateTileBuffers(cmd_buf, s_soil, s_water);
+            ego::TileObject::updateTileFlowBuffers(cmd_buf, s_soil_water);
+            ego::TileObject::updateTileBuffers(cmd_buf, s_soil_water);
         }
     }
 
@@ -1774,7 +1775,7 @@ void RealWorldApplication::drawScene(
 
         // render terrain opaque pass.
         {
-            ego::TileObject::drawAllVisibleTiles(cmd_buf, desc_sets, screen_size, s_soil, s_water, true);
+            ego::TileObject::drawAllVisibleTiles(cmd_buf, desc_sets, screen_size, s_soil_water, true);
         }
 
         // render skybox.
@@ -1853,7 +1854,7 @@ void RealWorldApplication::drawScene(
 
         // render terrain water pass.
         {
-            ego::TileObject::drawAllVisibleTiles(cmd_buf, desc_sets, screen_size, s_soil, s_water, false);
+            ego::TileObject::drawAllVisibleTiles(cmd_buf, desc_sets, screen_size, s_soil_water, false);
         }
 
         cmd_buf->endRenderPass();
@@ -1881,8 +1882,7 @@ void RealWorldApplication::drawScene(
         SET_FLAG_BIT(ImageAspect, COLOR_BIT),
         glm::ivec3(screen_size.x, screen_size.y, 1));
 
-    s_soil = 1 - s_soil;
-    s_water = 1 - s_water;
+    s_soil_water = 1 - s_soil_water;
 }
 
 void RealWorldApplication::drawMenu(
@@ -2013,7 +2013,7 @@ void RealWorldApplication::drawFrame() {
         swap_chain_info_.extent,
         image_index);
 
-    drawMenu(command_buffer);
+    //drawMenu(command_buffer);
 
     command_buffer->endCommandBuffer();
 

@@ -57,14 +57,14 @@
 #define OCCLUSION_TEX_INDEX         (BASE_COLOR_TEX_INDEX + 4)
 
 // TILE_TEXTURE_PARAMS_SET
-#define SRC_COLOR_TEX_INDEX             0
-#define SRC_DEPTH_TEX_INDEX             1
-#define ROCK_LAYER_BUFFER_INDEX         2
-#define SOIL_LAYER_BUFFER_INDEX         3
-#define WATER_LAYER_BUFFER_INDEX        4
-#define GRASS_SNOW_LAYER_BUFFER_INDEX   5
-#define DST_SOIL_LAYER_BUFFER_INDEX     6
-#define DST_WATER_LAYER_BUFFER_INDEX    7
+#define SRC_COLOR_TEX_INDEX                 0
+#define SRC_DEPTH_TEX_INDEX                 1
+#define ROCK_LAYER_BUFFER_INDEX             2
+#define SOIL_WATER_LAYER_BUFFER_INDEX       3
+#define GRASS_SNOW_LAYER_BUFFER_INDEX       4
+#define WATER_NORMAL_BUFFER_INDEX           5
+#define DST_SOIL_WATER_LAYER_BUFFER_INDEX   6
+#define DST_WATER_NORMAL_BUFFER_INDEX       7
 
 // IBL texure index
 #define PANORAMA_TEX_INDEX          0
@@ -108,9 +108,8 @@
 
 #define INDIRECT_DRAW_BUF_OFS   4
 
-#define SOIL_LAYER_MAX_THICKNESS    (512.0f - 1.0f / 32.0f)
-#define WATER_LAYER_MAX_THICKNESS   (512.0f - 1.0f / 32.0f)
-#define SNOW_LAYER_MAX_THICKNESS    (8.0f - 1.0f / 32.0f)
+#define SOIL_WATER_LAYER_MAX_THICKNESS    (512.0f - 1.0f / 32.0f)
+#define SNOW_LAYER_MAX_THICKNESS          (8.0f - 1.0f / 32.0f)
 
 #ifdef __cplusplus
 #include "glm/glm.hpp"
@@ -176,7 +175,7 @@ struct TileCreateParams {
 struct TileUpdateParams {
     vec2            world_min;
     vec2            world_range;
-    vec2            pad;
+    vec2            range_per_pixel;
     uint            width_pixel_count;
     float           inv_width_pixel_count;
 };
