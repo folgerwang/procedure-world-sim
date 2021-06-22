@@ -13,7 +13,7 @@ layout(location = 0) out VsPsData {
 } out_data;
 
 void main() {
-    vec4 position_ws = vec4(in_position * 1000.0f + view_params.camera_pos.xyz, 1.0);
+    vec4 position_ws = vec4(in_position * 4000.0f + view_params.camera_pos.xyz, 1.0);
     gl_Position = view_params.proj * view_params.view * position_ws;
 
     out_data.vertex_position = position_ws.xyz;
