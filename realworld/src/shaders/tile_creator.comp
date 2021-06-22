@@ -9,7 +9,7 @@ layout(push_constant) uniform TileUniformBufferObject {
 
 layout(set = 0, binding = ROCK_LAYER_BUFFER_INDEX, r16f) uniform writeonly image2D rock_layer;
 layout(set = 0, binding = SOIL_WATER_LAYER_BUFFER_INDEX, rg16) uniform writeonly image2D soil_water_layer;
-layout(set = 0, binding = GRASS_SNOW_LAYER_BUFFER_INDEX, rg8) uniform writeonly image2D grass_snow_layer;
+layout(set = 0, binding = ORTHER_INFO_LAYER_BUFFER_INDEX, rgba8) uniform writeonly image2D orther_info_layer;
 
 layout(local_size_x = 8, local_size_y = 8) in;
 void main()
@@ -35,7 +35,7 @@ void main()
     imageStore(soil_water_layer, pixel_coords, vec4(0, 10.0f / SOIL_WATER_LAYER_MAX_THICKNESS, 0, 0));
 
     if (((pixel_coords.x | pixel_coords.y) & 0x01) == 0) {
-        imageStore(grass_snow_layer, pixel_coords / 2, vec4(0.5f / SNOW_LAYER_MAX_THICKNESS));    
+        imageStore(orther_info_layer, pixel_coords / 2, vec4(0.5f / SNOW_LAYER_MAX_THICKNESS));
     }
   }
 }

@@ -1870,7 +1870,7 @@ void RealWorldApplication::drawScene(
 
         // render terrain water pass.
         {
-            ego::TileObject::drawAllVisibleTiles(cmd_buf, desc_sets, screen_size, s_soil_water, false);
+            //ego::TileObject::drawAllVisibleTiles(cmd_buf, desc_sets, screen_size, s_soil_water, false);
         }
 
         cmd_buf->endRenderPass();

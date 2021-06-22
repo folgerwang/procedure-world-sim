@@ -61,7 +61,7 @@
 #define SRC_DEPTH_TEX_INDEX                 1
 #define ROCK_LAYER_BUFFER_INDEX             2
 #define SOIL_WATER_LAYER_BUFFER_INDEX       3
-#define GRASS_SNOW_LAYER_BUFFER_INDEX       4
+#define ORTHER_INFO_LAYER_BUFFER_INDEX      4
 #define WATER_NORMAL_BUFFER_INDEX           5
 #define WATER_FLOW_BUFFER_INDEX             6
 #define DST_SOIL_WATER_LAYER_BUFFER_INDEX   7

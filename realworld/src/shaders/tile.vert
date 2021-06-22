@@ -17,7 +17,7 @@ layout(location = 0) out VsPsData {
 
 layout(set = TILE_PARAMS_SET, binding = ROCK_LAYER_BUFFER_INDEX) uniform sampler2D rock_layer;
 layout(set = TILE_PARAMS_SET, binding = SOIL_WATER_LAYER_BUFFER_INDEX) uniform sampler2D soil_water_layer;
-layout(set = TILE_PARAMS_SET, binding = GRASS_SNOW_LAYER_BUFFER_INDEX) uniform sampler2D grass_snow_layer;
+layout(set = TILE_PARAMS_SET, binding = ORTHER_INFO_LAYER_BUFFER_INDEX) uniform sampler2D orther_info_layer;
 
 void main() {
     uint tile_size = tile_params.segment_count + 1;
@@ -43,7 +43,7 @@ void main() {
     layer_height += soil_water_thickness.y;
 #endif
 #if defined(SNOW_PASS)
-    layer_height += texture(grass_snow_layer, world_map_uv).y * SNOW_LAYER_MAX_THICKNESS;
+    layer_height += texture(orther_info_layer, world_map_uv).y * SNOW_LAYER_MAX_THICKNESS;
 #endif
 
     vec4 position_ws = vec4(x, layer_height, y, 1.0);

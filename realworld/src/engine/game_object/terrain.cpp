@@ -1592,7 +1592,7 @@ std::vector<renderer::TextureDescriptor> addTileCreatorBuffers(
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
-        GRASS_SNOW_LAYER_BUFFER_INDEX,
+        ORTHER_INFO_LAYER_BUFFER_INDEX,
         nullptr,
         grass_snow_layer.view,
         description_set,
@@ -1742,7 +1742,7 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
-        GRASS_SNOW_LAYER_BUFFER_INDEX,
+        ORTHER_INFO_LAYER_BUFFER_INDEX,
         texture_sampler,
         grass_snow_layer,
         description_set,
@@ -1832,7 +1832,7 @@ static std::shared_ptr<renderer::DescriptorSetLayout> createTileCreateDescriptor
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         renderer::DescriptorType::STORAGE_IMAGE);
     bindings[2] = renderer::helper::getBufferDescriptionSetLayoutBinding(
-        GRASS_SNOW_LAYER_BUFFER_INDEX,
+        ORTHER_INFO_LAYER_BUFFER_INDEX,
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         renderer::DescriptorType::STORAGE_IMAGE);
 
@@ -1886,7 +1886,7 @@ static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescript
     bindings[1] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_DEPTH_TEX_INDEX);
     bindings[2] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(ROCK_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     bindings[3] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SOIL_WATER_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
-    bindings[4] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(GRASS_SNOW_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
+    bindings[4] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(ORTHER_INFO_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     bindings[5] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(WATER_NORMAL_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     return device->createDescriptorSetLayout(bindings);
 }
