@@ -477,7 +477,12 @@ void RealWorldApplication::initVulkan() {
     ego::GltfObject::initStaticMembers(
         device_,
         descriptor_pool_,
-        desc_set_layouts);
+        desc_set_layouts,
+        texture_sampler_,
+        ego::TileObject::getRockLayer(),
+        ego::TileObject::getSoilWaterLayer(0),
+        ego::TileObject::getSoilWaterLayer(1),
+        ego::TileObject::getWaterFlow());
 
     ego::TileObject::updateStaticDescriptorSet(
         device_,
@@ -578,7 +583,11 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         texture_sampler_,
-        thin_film_lut_tex_);
+        thin_film_lut_tex_,
+        ego::TileObject::getRockLayer(),
+        ego::TileObject::getSoilWaterLayer(0),
+        ego::TileObject::getSoilWaterLayer(1),
+        ego::TileObject::getWaterFlow());
 
     ego::TileObject::updateStaticDescriptorSet(
         device_,
@@ -1751,8 +1760,15 @@ void RealWorldApplication::drawScene(
         }
     }
 
+    // this has to be happened after tile update, or you wont get the right height info.
     {
-        ego::GltfObject::updateGameObjectsBuffer(cmd_buf, s_update_frame_count);
+        ego::GltfObject::updateGameObjectsBuffer(
+            cmd_buf,
+            ego::TileObject::getWorldMin(),
+            ego::TileObject::getWorldRange(),
+            s_update_frame_count,
+            s_soil_water);
+
         if (s_update_frame_count >= 0) {
             s_update_frame_count++;
         }
@@ -2013,7 +2029,7 @@ void RealWorldApplication::drawFrame() {
         swap_chain_info_.extent,
         image_index);
 
-    //drawMenu(command_buffer);
+    drawMenu(command_buffer);
 
     command_buffer->endCommandBuffer();
 

@@ -122,7 +122,7 @@ class GltfObject {
     static std::shared_ptr<renderer::DescriptorSetLayout> gltf_indirect_draw_desc_set_layout_;
     static std::shared_ptr<renderer::PipelineLayout> gltf_indirect_draw_pipeline_layout_;
     static std::shared_ptr<renderer::Pipeline> gltf_indirect_draw_pipeline_;
-    static std::shared_ptr<renderer::DescriptorSet> update_game_objects_buffer_desc_set_;
+    static std::shared_ptr<renderer::DescriptorSet> update_game_objects_buffer_desc_set_[2];
     static std::shared_ptr<renderer::DescriptorSetLayout> update_game_objects_desc_set_layout_;
     static std::shared_ptr<renderer::PipelineLayout> update_game_objects_pipeline_layout_;
     static std::shared_ptr<renderer::Pipeline> update_game_objects_pipeline_;
@@ -154,10 +154,24 @@ public:
     void draw(const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const renderer::DescriptorSetList& desc_set_list);
 
+    static void createGameObjectUpdateDescSet(
+        const std::shared_ptr<renderer::Device>& device,
+        const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+        const std::shared_ptr<renderer::Sampler>& texture_sampler,
+        const renderer::TextureInfo& rock_layer,
+        const renderer::TextureInfo& soil_water_layer_0,
+        const renderer::TextureInfo& soil_water_layer_1,
+        const renderer::TextureInfo& water_flow);
+
     static void initStaticMembers(
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
-        const renderer::DescriptorSetLayoutList& global_desc_set_layouts);
+        const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
+        const std::shared_ptr<renderer::Sampler>& texture_sampler,
+        const renderer::TextureInfo& rock_layer,
+        const renderer::TextureInfo& soil_water_layer_0,
+        const renderer::TextureInfo& soil_water_layer_1,
+        const renderer::TextureInfo& water_flow);
 
     static void createStaticMembers(
         const std::shared_ptr<renderer::Device>& device,
@@ -174,14 +188,21 @@ public:
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
-        const renderer::TextureInfo& thin_film_lut_tex);
+        const renderer::TextureInfo& thin_film_lut_tex,
+        const renderer::TextureInfo& rock_layer,
+        const renderer::TextureInfo& soil_water_layer_0,
+        const renderer::TextureInfo& soil_water_layer_1,
+        const renderer::TextureInfo& water_flow);
 
     static void destoryStaticMembers(
         const std::shared_ptr<renderer::Device>& device);
 
     static void updateGameObjectsBuffer(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
-        int update_frame_count);
+        const glm::vec2& world_min,
+        const glm::vec2& world_range,
+        int update_frame_count,
+        int soil_water);
 };
 
 } // namespace game_object

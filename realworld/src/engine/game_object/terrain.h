@@ -78,6 +78,12 @@ public:
 
     void destory();
 
+    static const renderer::TextureInfo& getRockLayer();
+    static const renderer::TextureInfo& getSoilWaterLayer(int idx);
+    static const renderer::TextureInfo& getWaterFlow();
+    static glm::vec2 getWorldMin();
+    static glm::vec2 getWorldRange();
+
     static std::shared_ptr<TileObject> addOneTile(
         const renderer::DeviceInfo& device_info,
         const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,

@@ -63,8 +63,10 @@
 #define SOIL_WATER_LAYER_BUFFER_INDEX       3
 #define GRASS_SNOW_LAYER_BUFFER_INDEX       4
 #define WATER_NORMAL_BUFFER_INDEX           5
-#define DST_SOIL_WATER_LAYER_BUFFER_INDEX   6
-#define DST_WATER_NORMAL_BUFFER_INDEX       7
+#define WATER_FLOW_BUFFER_INDEX             6
+#define DST_SOIL_WATER_LAYER_BUFFER_INDEX   7
+#define DST_WATER_NORMAL_BUFFER_INDEX       8
+#define DST_WATER_FLOW_BUFFER_INDEX         9
 
 // IBL texure index
 #define PANORAMA_TEX_INDEX          0
@@ -176,8 +178,10 @@ struct TileUpdateParams {
     vec2            world_min;
     vec2            world_range;
     vec2            range_per_pixel;
+    vec2            flow_speed_factor;
     uint            width_pixel_count;
     float           inv_width_pixel_count;
+    vec2            pad;
 };
 
 struct TileParams {
@@ -200,14 +204,17 @@ struct TileVertexInfo {
 };
 
 struct SunSkyParams {
-    vec3    sun_pos;
-    float   pad;
+    vec3            sun_pos;
+    float           pad;
 };
 
 struct GameObjectsUpdateParams {
-    uint num_objects;
-    float delta_t;
-    int frame_count;
+    vec2            world_min;
+    vec2            inv_world_range;
+    uint            num_objects;
+    float           delta_t;
+    int             frame_count;
+    int             pad;
 };
 
 struct InstanceBufferUpdateParams {

@@ -11,6 +11,10 @@ layout(std430, set = 0, binding = GAME_OBJECTS_BUFFER_INDEX) buffer GameObjectsB
   GameObjectInfo items[];
 };
 
+layout(set = 0, binding = ROCK_LAYER_BUFFER_INDEX) uniform sampler2D rock_layer;
+layout(set = 0, binding = SOIL_WATER_LAYER_BUFFER_INDEX) uniform sampler2D soil_water_layer;
+layout(set = 0, binding = WATER_FLOW_BUFFER_INDEX) uniform sampler2D water_flow;
+
 const float kGravityConst = -9.8f;
 
 struct UnpackedGameObjectInfo {
@@ -88,7 +92,11 @@ void main()
     float nz = hash1(obj_idx + 0.6);
 
     UnpackedGameObjectInfo info = unpackGameObjectInfo(items[obj_idx]);
-    vec2 height_info = terrainMap(info.position.xz);
+    vec2 world_map_uv = (info.position.xz - params.world_min) * params.inv_world_range;
+    float rock_layer_height = texture(rock_layer, world_map_uv).x;
+    vec2 soil_water_thickness = texture(soil_water_layer, world_map_uv).xy * SOIL_WATER_LAYER_MAX_THICKNESS;
+    float ground_floor_height = rock_layer_height + soil_water_thickness.x + soil_water_thickness.y;
+
     vec3 contact_normal = terrainNormal(info.position.xz);
 
     if (info.status == 0 || params.frame_count == 0) {
@@ -104,7 +112,7 @@ void main()
     }
     else {
         float moving_on_height = getMovingOnHeight(info.moving_dir.y, params.delta_t);
-        float ground_height = height_info.x + 0.05f;
+        float ground_height = ground_floor_height;
         float height_to_fall = ground_height - info.position.y;
         float delta_t = params.delta_t;
         if (height_to_fall > moving_on_height) {
@@ -113,11 +121,19 @@ void main()
             info.position.xz += info.moving_dir.xz * fall_delta_t;
             info.position.y = ground_height;
 
-            // bouncing.
-            float delta_t = max(params.delta_t - fall_delta_t, 0.0f);
-            float moving_len = length(info.moving_dir);
-            info.moving_dir = reflect(normalize(info.moving_dir), contact_normal) * moving_len * 0.6f;
-            moving_on_height = getMovingOnHeight(info.moving_dir.y, delta_t);
+            vec2 world_map_uv = (info.position.xz - params.world_min) * params.inv_world_range;
+            vec2 soil_water_thickness = texture(soil_water_layer, world_map_uv).xy * SOIL_WATER_LAYER_MAX_THICKNESS;
+            //touch water.
+            if (soil_water_thickness.y > 0.005f) {
+                info.position.xz += texture(water_flow, world_map_uv).xy;               
+            }
+            else {
+                // bouncing.
+                float delta_t = max(params.delta_t - fall_delta_t, 0.0f);
+                float moving_len = length(info.moving_dir);
+                info.moving_dir = reflect(normalize(info.moving_dir), contact_normal) * moving_len * 0.3f;
+                moving_on_height = getMovingOnHeight(info.moving_dir.y, delta_t);
+            }
         }
 
         if (delta_t > 0) {
