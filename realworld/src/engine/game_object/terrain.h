@@ -150,6 +150,8 @@ public:
         const renderer::DescriptorSetList& desc_set_list,
         const glm::uvec2 display_size,
         int soil_water,
+        float delta_t,
+        float cur_time,
         bool is_base_pass);
 
     static void updateAllTiles(
@@ -171,6 +173,8 @@ public:
         const renderer::DescriptorSetList& desc_set_list,
         const glm::uvec2 display_size,
         int soil_water,
+        float delta_t,
+        float cur_time,
         bool is_base_pass);
 };
 

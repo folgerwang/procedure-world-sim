@@ -2749,6 +2749,8 @@ void TileObject::draw(
     const renderer::DescriptorSetList& desc_set_list,
     const glm::uvec2 display_size,
     int soil_water,
+    float delta_t,
+    float cur_time,
     bool is_base_pass) {
     auto segment_count = static_cast<uint32_t>(TileConst::kSegmentCount);
     auto num_vertexes = static_cast<uint32_t>(TileConst::kNumVertexes);
@@ -2764,6 +2766,8 @@ void TileObject::draw(
     tile_params.segment_count = segment_count;
     tile_params.offset = 0;
     tile_params.inv_screen_size = glm::vec2(1.0f / display_size.x, 1.0f / display_size.y);
+    tile_params.delta_t = delta_t;
+    tile_params.time = cur_time;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | 
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
@@ -2794,10 +2798,19 @@ void TileObject::drawAllVisibleTiles(
     const renderer::DescriptorSetList& desc_set_list,
     const glm::uvec2 display_size,
     int soil_water,
+    float delta_t,
+    float cur_time,
     bool is_base_pass) {
 
     for (auto& tile : visible_tiles_) {
-        tile->draw(cmd_buf, desc_set_list, display_size, soil_water, is_base_pass);
+        tile->draw(
+            cmd_buf,
+            desc_set_list,
+            display_size,
+            soil_water,
+            delta_t,
+            cur_time,
+            is_base_pass);
     }
 }
 

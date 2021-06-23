@@ -72,9 +72,14 @@ private:
         const er::SwapChainInfo& swap_chain_info,
         const std::vector<std::shared_ptr<er::DescriptorSet>>& frame_desc_sets,
         const glm::uvec2& screen_size,
-        uint32_t image_index);
+        uint32_t image_index,
+        float delta_t,
+        float current_time);
     void drawMenu(
-        std::shared_ptr<er::CommandBuffer> command_buffer);
+        std::shared_ptr<er::CommandBuffer> command_buffer,
+        const er::SwapChainInfo& swap_chain_info,
+        const glm::uvec2& screen_size,
+        uint32_t image_index);
     void drawFrame();
     void cleanup();
     void cleanupSwapChain();
@@ -114,7 +119,7 @@ private:
     std::shared_ptr<er::DescriptorSet> ibl_diffuse_tex_desc_set_;
     std::shared_ptr<er::DescriptorSet> ibl_specular_tex_desc_set_;
     std::shared_ptr<er::DescriptorSet> ibl_sheen_tex_desc_set_;
-    std::shared_ptr<er::RenderPass> render_pass_;
+    std::shared_ptr<er::RenderPass> final_render_pass_;
     std::shared_ptr<er::RenderPass> cubemap_render_pass_;
     std::shared_ptr<er::PipelineLayout> skybox_pipeline_layout_;
     std::shared_ptr<er::PipelineLayout> ibl_pipeline_layout_;
@@ -169,8 +174,12 @@ private:
 
     std::vector<std::shared_ptr<ego::GltfObject>> gltf_objects_;
     std::vector<std::string> gltf_file_names_;
+    std::vector<std::string> to_load_gltf_names_;
 
     glsl::ViewParams view_params_{};
+    std::chrono::high_resolution_clock::time_point last_frame_time_point_;
+    float current_time_ = 0;
+    float delta_t_ = 0;
 
     // menu
     bool show_gltf_selection_ = false;

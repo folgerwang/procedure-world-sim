@@ -151,6 +151,9 @@ public:
     void updateIndirectDrawBuffer(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
 
+    void updateBuffers(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
+
     void draw(const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const renderer::DescriptorSetList& desc_set_list);
 

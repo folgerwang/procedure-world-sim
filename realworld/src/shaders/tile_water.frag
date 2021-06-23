@@ -72,6 +72,13 @@ struct MaterialInfo
     float transmission;
 };
 
+// Alexander Lemke, 2017
+
+vec2 hash2D(in vec2 p)
+{
+    return fract(sin(p * mat2(12.98, 78.23, 127.99, 311.33)) * 43758.54);
+}
+
 void main() {
     vec3 pos = in_data.vertex_position;
     vec3 tnor = terrainNormal(vec2(pos.x, pos.z));
@@ -131,4 +138,23 @@ void main() {
     vec3 color = f_diffuse + f_specular;
     color = mix(linearTosRGB(color), bg_color, fade_rate);
     outColor = vec4(color, 1.0f);
+/*
+	vec2 uv = gl_FragCoord.xy / vec2(1920, 1080) * 12.0;
+    vec2 i = floor(uv);
+    vec2 n = fract(uv);
+    vec4 min_d = vec4(9.0);
+    
+    for (float y = -1.0; y <= 1.0; ++y) {
+        for(float x = -1.0; x <= 1.0; ++x) {
+            vec2 point = sin(tile_params.time + 32.0 * hash2D(i + vec2(x, y))) * 0.5 + 0.5;
+            float d = length(vec2(x, y) + point - n);
+            
+            min_d = (d < min_d.x) ? vec4(d, min_d.xyz) 
+               	 : (d < min_d.y) ? vec4(min_d.x, d, min_d.yz) 
+               	 : (d < min_d.z) ? vec4(min_d.xy, d, min_d.z) 
+               	 : (d < min_d.w) ? vec4(min_d.xyz, d) 
+                 : min_d;
+        }
+    }
+    outColor = vec4(vec3(1.0 - min_d.x), 1.0);*/
 }

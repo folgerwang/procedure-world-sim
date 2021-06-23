@@ -114,21 +114,24 @@ std::shared_ptr<er::RenderPass> createRenderPass(
     std::shared_ptr<er::Device> device,
     er::Format format,
     er::Format depth_format,
+    bool clear = false,
     er::SampleCountFlagBits sample_count = er::SampleCountFlagBits::SC_1_BIT,
     er::ImageLayout color_image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL) {
     auto color_attachment = FillAttachmentDescription(
         format,
         sample_count,
-        er::ImageLayout::UNDEFINED,
-        color_image_layout);
+        clear ? er::ImageLayout::UNDEFINED : color_image_layout,
+        color_image_layout,
+        clear ? er::AttachmentLoadOp::CLEAR : er::AttachmentLoadOp::LOAD);
 
     er::AttachmentReference color_attachment_ref(0, er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
     auto depth_attachment = FillAttachmentDescription(
         depth_format,
         sample_count,
-        er::ImageLayout::UNDEFINED,
-        er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        clear ? er::ImageLayout::UNDEFINED : er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        clear ? er::AttachmentLoadOp::CLEAR : er::AttachmentLoadOp::LOAD);
 
     er::AttachmentReference depth_attachment_ref(1, er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
@@ -136,50 +139,6 @@ std::shared_ptr<er::RenderPass> createRenderPass(
         er::PipelineBindPoint::GRAPHICS,
         { color_attachment_ref },
         &depth_attachment_ref);
-
-    auto depency = FillSubpassDependency(~0U, 0,
-        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT),
-        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT),
-        0,
-        SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT) |
-        SET_FLAG_BIT(Access, COLOR_ATTACHMENT_READ_BIT));
-
-    std::vector<er::AttachmentDescription> attachments(2);
-    attachments[0] = color_attachment;
-    attachments[1] = depth_attachment;
-
-    return device->createRenderPass(attachments, { subpass }, { depency });
-}
-
-std::shared_ptr<er::RenderPass> createWaterRenderPass(
-    std::shared_ptr<er::Device> device,
-    er::Format format,
-    er::Format depth_format,
-    er::SampleCountFlagBits sample_count = er::SampleCountFlagBits::SC_1_BIT,
-    er::ImageLayout color_image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL) {
-    auto color_attachment = FillAttachmentDescription(
-        format,
-        sample_count,
-        color_image_layout,
-        color_image_layout,
-        er::AttachmentLoadOp::LOAD);
-
-    er::AttachmentReference color_attachment_ref(0, er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-
-    auto depth_attachment = FillAttachmentDescription(
-        depth_format,
-        sample_count,
-        er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        er::AttachmentLoadOp::LOAD);
-
-    er::AttachmentReference depth_attachment_ref(1, er::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL);
-
-    auto subpass = FillSubpassDescription(
-        er::PipelineBindPoint::GRAPHICS,
-        { color_attachment_ref },
-        &depth_attachment_ref,
-        static_cast<er::SubpassDescriptionFlags>(0));
 
     auto depency = FillSubpassDependency(~0U, 0,
         SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT),
@@ -354,14 +313,15 @@ void RealWorldApplication::recreateRenderBuffer(const glm::uvec2& display_size) 
 
 void RealWorldApplication::createRenderPasses() {
     assert(device_);
-    render_pass_ = createRenderPass(
+    final_render_pass_ = createRenderPass(
         device_,
         swap_chain_info_.format,
         depth_format_,
+        false,
         er::SampleCountFlagBits::SC_1_BIT,
         er::ImageLayout::PRESENT_SRC_KHR);
-    hdr_render_pass_ = createRenderPass(device_, hdr_format_, depth_format_);
-    hdr_water_render_pass_ = createWaterRenderPass(device_, hdr_format_, depth_format_);
+    hdr_render_pass_ = createRenderPass(device_, hdr_format_, depth_format_, true);
+    hdr_water_render_pass_ = createRenderPass(device_, hdr_format_, depth_format_, false);
 }
 
 void RealWorldApplication::initVulkan() {
@@ -508,7 +468,7 @@ void RealWorldApplication::initVulkan() {
         swap_chain_info_,
         graphics_queue_,
         descriptor_pool_,
-        render_pass_,
+        final_render_pass_,
         command_buffers_[0]);
 }
 
@@ -604,7 +564,7 @@ void RealWorldApplication::recreateSwapChain() {
         swap_chain_info_,
         graphics_queue_,
         descriptor_pool_,
-        render_pass_,
+        final_render_pass_,
         command_buffers_[0]);
 }
 
@@ -934,7 +894,7 @@ void RealWorldApplication::createCubemapRenderPass() {
 void RealWorldApplication::createFramebuffers(const glm::uvec2& display_size) {
     swap_chain_info_.framebuffers.resize(swap_chain_info_.image_views.size());
     assert(depth_buffer_.view);
-    assert(render_pass_);
+    assert(final_render_pass_);
     for (uint64_t i = 0; i < swap_chain_info_.image_views.size(); i++) {
         assert(swap_chain_info_.image_views[i]);
         std::vector<std::shared_ptr<er::ImageView>> attachments(2);
@@ -942,7 +902,7 @@ void RealWorldApplication::createFramebuffers(const glm::uvec2& display_size) {
         attachments[1] = depth_buffer_.view;
 
         swap_chain_info_.framebuffers[i] =
-            device_->createFrameBuffer(render_pass_, attachments, display_size);
+            device_->createFrameBuffer(final_render_pass_, attachments, display_size);
     }
 
     assert(hdr_render_pass_);
@@ -1517,7 +1477,9 @@ void RealWorldApplication::drawScene(
     const er::SwapChainInfo& swap_chain_info,
     const std::vector<std::shared_ptr<er::DescriptorSet>>& frame_desc_sets,
     const glm::uvec2& screen_size,
-    uint32_t image_index) {
+    uint32_t image_index,
+    float delta_t,
+    float current_time) {
 
     auto frame_buffer = swap_chain_info.framebuffers[image_index];
     auto src_color = swap_chain_info.image_views[image_index];
@@ -1769,6 +1731,10 @@ void RealWorldApplication::drawScene(
             s_update_frame_count,
             s_soil_water);
 
+        for (auto& gltf_obj : gltf_objects_) {
+            gltf_obj->updateBuffers(cmd_buf);
+        }
+
         if (s_update_frame_count >= 0) {
             s_update_frame_count++;
         }
@@ -1791,7 +1757,14 @@ void RealWorldApplication::drawScene(
 
         // render terrain opaque pass.
         {
-            ego::TileObject::drawAllVisibleTiles(cmd_buf, desc_sets, screen_size, s_soil_water, true);
+            ego::TileObject::drawAllVisibleTiles(
+                cmd_buf,
+                desc_sets,
+                screen_size,
+                s_soil_water,
+                delta_t,
+                current_time,
+                true);
         }
 
         // render skybox.
@@ -1870,7 +1843,14 @@ void RealWorldApplication::drawScene(
 
         // render terrain water pass.
         {
-            ego::TileObject::drawAllVisibleTiles(cmd_buf, desc_sets, screen_size, s_soil_water, false);
+            ego::TileObject::drawAllVisibleTiles(
+                cmd_buf,
+                desc_sets,
+                screen_size,
+                s_soil_water,
+                delta_t,
+                current_time,
+                false);
         }
 
         cmd_buf->endRenderPass();
@@ -1902,9 +1882,23 @@ void RealWorldApplication::drawScene(
 }
 
 void RealWorldApplication::drawMenu(
-    std::shared_ptr<er::CommandBuffer> command_buffer) {
+    std::shared_ptr<er::CommandBuffer> command_buffer,
+    const er::SwapChainInfo& swap_chain_info,
+    const glm::uvec2& screen_size,
+    uint32_t image_index) {
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+
+    std::vector<er::ClearValue> clear_values;
+    clear_values.resize(2);
+    clear_values[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
+    clear_values[1].depth_stencil = { 1.0f, 0 };
+
+    command_buffer->beginRenderPass(
+        final_render_pass_,
+        swap_chain_info.framebuffers[image_index],
+        screen_size,
+        clear_values);
 
     static bool s_select_load_gltf = false;
     if (ImGui::BeginMainMenuBar())
@@ -1947,24 +1941,9 @@ void RealWorldApplication::drawMenu(
 
             if (s_listbox_item_current >= 0) {
                 auto file_name = "assets/" + gltf_file_names_[s_listbox_item_current];
-
-                auto gltf_obj = std::make_shared<ego::GltfObject>(
-                    device_info_,
-                    descriptor_pool_,
-                    hdr_render_pass_,
-                    graphic_pipeline_info_,
-                    texture_sampler_,
-                    thin_film_lut_tex_,
-                    file_name,
-                    swap_chain_info_.extent,
-                    glm::inverse(view_params_.view));
-
-                gltf_objects_.push_back(gltf_obj);
+                to_load_gltf_names_.push_back(file_name);
                 s_listbox_item_current = -1;
                 s_select_load_gltf = false;
-                if (s_update_frame_count < 0) {
-                    s_update_frame_count = 0;
-                }
             }
 
             ImGui::EndPopup();
@@ -1976,6 +1955,7 @@ void RealWorldApplication::drawMenu(
     }
 
     er::Helper::addImGuiToCommandBuffer(command_buffer);
+    command_buffer->endRenderPass();
 }
 
 void RealWorldApplication::drawFrame() {
@@ -2016,9 +1996,33 @@ void RealWorldApplication::drawFrame() {
     auto command_buffer = command_buffers_[image_index];
     std::vector<std::shared_ptr<er::CommandBuffer>>command_buffers(1, command_buffer);
 
-    static auto start_time = std::chrono::high_resolution_clock::now();
-    auto current_time = std::chrono::high_resolution_clock::now();
-    float time = std::chrono::duration<float, std::chrono::seconds::period>(current_time - start_time).count();
+    if (current_time_ == 0) {
+        last_frame_time_point_ = std::chrono::high_resolution_clock::now();
+    }
+
+    auto current_time_point = std::chrono::high_resolution_clock::now();
+    delta_t_ = std::chrono::duration<float, std::chrono::seconds::period>(
+                    current_time_point - last_frame_time_point_).count();
+
+    current_time_ += delta_t_;
+    last_frame_time_point_ = current_time_point;
+
+    for (auto& gltf_name : to_load_gltf_names_) {
+        auto gltf_obj = std::make_shared<ego::GltfObject>(
+            device_info_,
+            descriptor_pool_,
+            hdr_render_pass_,
+            graphic_pipeline_info_,
+            texture_sampler_,
+            thin_film_lut_tex_,
+            gltf_name,
+            swap_chain_info_.extent,
+            glm::inverse(view_params_.view));
+
+        gltf_objects_.push_back(gltf_obj);
+    }
+
+    to_load_gltf_names_.clear();
 
     command_buffer->reset(0);
     command_buffer->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
@@ -2027,9 +2031,14 @@ void RealWorldApplication::drawFrame() {
         swap_chain_info_,
         desc_sets_,
         swap_chain_info_.extent,
-        image_index);
+        image_index,
+        delta_t_,
+        current_time_);
 
-    drawMenu(command_buffer);
+    drawMenu(command_buffer,
+        swap_chain_info_,
+        swap_chain_info_.extent,
+        image_index);
 
     command_buffer->endCommandBuffer();
 
@@ -2052,6 +2061,9 @@ void RealWorldApplication::drawFrame() {
     }
 
     current_frame_ = (current_frame_ + 1) % kMaxFramesInFlight;
+    if (s_update_frame_count < 0) {
+        s_update_frame_count = 0;
+    }
 }
 
 void RealWorldApplication::cleanupSwapChain() {
@@ -2071,7 +2083,7 @@ void RealWorldApplication::cleanupSwapChain() {
     device_->destroyPipeline(blur_comp_pipeline_);
     device_->destroyPipelineLayout(skybox_pipeline_layout_);
     device_->destroyPipelineLayout(ibl_comp_pipeline_layout_);
-    device_->destroyRenderPass(render_pass_);
+    device_->destroyRenderPass(final_render_pass_);
     device_->destroyRenderPass(hdr_render_pass_);
     device_->destroyRenderPass(hdr_water_render_pass_);
 

@@ -538,7 +538,8 @@ static std::shared_ptr<ego::ObjectData> loadGltfModel(
 
     renderer::Helper::createBufferWithSrcData(
         device_info,
-        SET_FLAG_BIT(BufferUsage, INDIRECT_BUFFER_BIT),
+        SET_FLAG_BIT(BufferUsage, INDIRECT_BUFFER_BIT) |
+        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
         indirect_draw_cmd_buffer.size() * sizeof(uint32_t),
         indirect_draw_cmd_buffer.data(),
         gltf_object->indirect_draw_cmd_.buffer,
@@ -1217,7 +1218,8 @@ GltfObject::GltfObject(
         constexpr uint32_t kMaxNumInstance = 4096;
         device_info.device->createBuffer(
             kMaxNumInstance * sizeof(glsl::InstanceDataInfo),
-            SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT),
+            SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
+            SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
             SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
             object_->instance_buffer_.buffer,
             object_->instance_buffer_.memory);
@@ -1508,7 +1510,7 @@ void GltfObject::generateDescriptorSet(
             descriptor_pool,
             gltf_indirect_draw_desc_set_layout_,
             update_instance_buffer_desc_set_layout_,
-            game_objects_buffer_);;
+            game_objects_buffer_);
     }
 
     createGameObjectUpdateDescSet(
@@ -1642,12 +1644,15 @@ void GltfObject::updateIndirectDrawBuffer(
         object_->indirect_draw_cmd_.buffer->getSize());
 }
 
+void GltfObject::updateBuffers(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
+    updateInstanceBuffer(cmd_buf);
+    updateIndirectDrawBuffer(cmd_buf);
+}
+
 void GltfObject::draw(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const renderer::DescriptorSetList& desc_set_list) {
-
-    updateInstanceBuffer(cmd_buf);
-    updateIndirectDrawBuffer(cmd_buf);
 
     const auto& primitive = object_->meshes_[0].primitives_[0];
     cmd_buf->bindPipeline(

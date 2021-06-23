@@ -192,6 +192,8 @@ struct TileParams {
     vec2            inv_screen_size;
     uint            segment_count;
     uint            offset;
+    float           delta_t;
+    float           time;
 };
 
 // 1 float base layer, rock.
