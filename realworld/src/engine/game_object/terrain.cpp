@@ -1698,9 +1698,10 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     const std::shared_ptr<renderer::ImageView>& rock_layer,
     const std::shared_ptr<renderer::ImageView>& soil_water_layer,
     const std::shared_ptr<renderer::ImageView>& grass_snow_layer,
-    const std::shared_ptr<renderer::ImageView>& water_normal) {
+    const std::shared_ptr<renderer::ImageView>& water_normal,
+    const std::shared_ptr<renderer::ImageView>& water_flow) {
     std::vector<renderer::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(6);
+    descriptor_writes.reserve(7);
 
     // src color.
     renderer::Helper::addOneTexture(
@@ -1756,7 +1757,16 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
         water_normal,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
-        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);   
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        WATER_FLOW_BUFFER_INDEX,
+        texture_sampler,
+        water_flow,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
 }
@@ -1881,13 +1891,26 @@ static std::shared_ptr<renderer::DescriptorSetLayout> createTileFlowUpdateDescri
 
 static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescriptorSetLayout(
     const std::shared_ptr<renderer::Device>& device) {
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings(6);
-    bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_COLOR_TEX_INDEX);
-    bindings[1] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_DEPTH_TEX_INDEX);
-    bindings[2] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(ROCK_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
-    bindings[3] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SOIL_WATER_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
-    bindings[4] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(ORTHER_INFO_LAYER_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
-    bindings[5] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(WATER_NORMAL_BUFFER_INDEX, SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings(7);
+    bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        SRC_COLOR_TEX_INDEX);
+    bindings[1] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        SRC_DEPTH_TEX_INDEX);
+    bindings[2] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        ROCK_LAYER_BUFFER_INDEX,
+        SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
+    bindings[3] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        SOIL_WATER_LAYER_BUFFER_INDEX,
+        SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
+    bindings[4] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        ORTHER_INFO_LAYER_BUFFER_INDEX,
+        SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
+    bindings[5] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        WATER_NORMAL_BUFFER_INDEX,
+        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
+    bindings[6] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        WATER_FLOW_BUFFER_INDEX,
+        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     return device->createDescriptorSetLayout(bindings);
 }
 
@@ -2584,7 +2607,8 @@ void TileObject::updateStaticDescriptorSet(
             rock_layer_.view,
             soil_water_layer_[soil_water].view,
             grass_snow_layer_.view,
-            water_normal_.view);
+            water_normal_.view,
+            water_flow_.view);
         device->updateDescriptorSets(tile_res_descs, {});
     }
 }

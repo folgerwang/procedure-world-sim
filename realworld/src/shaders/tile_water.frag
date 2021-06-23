@@ -28,6 +28,7 @@ vec3  kSunDir = vec3(-0.624695f, 0.468521f, -0.624695f);
 layout(set = TILE_PARAMS_SET, binding = SRC_COLOR_TEX_INDEX) uniform sampler2D src_tex;
 layout(set = TILE_PARAMS_SET, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
 layout(set = TILE_PARAMS_SET, binding = WATER_NORMAL_BUFFER_INDEX) uniform sampler2D water_normal_tex;
+layout(set = TILE_PARAMS_SET, binding = WATER_FLOW_BUFFER_INDEX) uniform sampler2D water_flow_tex;
 
 struct MaterialInfo
 {
@@ -77,7 +78,10 @@ void main() {
 
     vec3 water_normal;
     water_normal.xz = texture(water_normal_tex, in_data.world_map_uv).xy;
+    vec2 water_flow = texture(water_flow_tex, in_data.world_map_uv).xy;
     water_normal.y = sqrt(1.0f - dot(water_normal.xz, water_normal.xz));
+    water_normal.xz += water_flow * 0.125;
+    water_normal = normalize(water_normal);
     vec2 screen_uv = gl_FragCoord.xy * tile_params.inv_screen_size;
     float dist_scale = length(vec3((screen_uv * 2.0f - 1.0f) * view_params.depth_params.zw, 1.0f));
 
