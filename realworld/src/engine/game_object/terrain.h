@@ -16,7 +16,6 @@ class TileObject {
         kCacheTileSize = 3,
         kVisibleTileSize = 2,
         kSegmentCount = 256 - 1,
-        kNumVertexes = (kSegmentCount + 1) * (kSegmentCount + 1),
         kNumCachedBlocks = (kCacheTileSize * 2 + 1) * (kCacheTileSize * 2 + 1)
     };
 
@@ -32,7 +31,6 @@ class TileObject {
     static std::unordered_map<size_t, std::shared_ptr<TileObject>> tile_meshes_;
     static std::vector<std::shared_ptr<TileObject>> visible_tiles_;
     static std::vector<uint32_t> available_block_indexes_;
-    static renderer::BufferInfo vertex_buffer_;
     static renderer::TextureInfo rock_layer_;
     static renderer::TextureInfo soil_water_layer_[2];
     static renderer::TextureInfo grass_snow_layer_;

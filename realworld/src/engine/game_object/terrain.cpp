@@ -1468,52 +1468,6 @@ glm::vec4 getMainImage(const glm::vec2& frag_coord, const glm::ivec2& screen_siz
 
 #endif
 
-#if 0
-static void generateTileMesh(const glm::vec3 corners[4], const glm::uvec2& segment_count)
-{
-    {
-        VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
-
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-        void* data;
-        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-        memcpy(data, vertices.data(), (size_t)bufferSize);
-        vkUnmapMemory(device, stagingBufferMemory);
-
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
-
-        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
-
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
-    }
-
-    {
-        VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
-
-        VkBuffer stagingBuffer;
-        VkDeviceMemory stagingBufferMemory;
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
-
-        void* data;
-        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-        memcpy(data, indices.data(), (size_t)bufferSize);
-        vkUnmapMemory(device, stagingBufferMemory);
-
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory);
-
-        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
-
-        vkDestroyBuffer(device, stagingBuffer, nullptr);
-        vkFreeMemory(device, stagingBufferMemory, nullptr);
-    }
-
-}
-#endif
-
 std::vector<uint32_t> generateTileMeshIndex(const uint32_t& segment_count) {
     std::vector<uint32_t> index_buffer;
     index_buffer.resize(segment_count * segment_count * 6);
@@ -1543,26 +1497,6 @@ std::vector<uint32_t> generateTileMeshIndex(const uint32_t& segment_count) {
 namespace engine {
 namespace game_object {
 namespace {
-struct TileVertex {
-    glsl::TileVertexInfo vertex_info;
-
-    static std::vector<renderer::VertexInputBindingDescription> getBindingDescription() {
-        std::vector<renderer::VertexInputBindingDescription> binding_description(1);
-        binding_description[0].binding = 0;
-        binding_description[0].stride = sizeof(TileVertex);
-        binding_description[0].input_rate = renderer::VertexInputRate::VERTEX;
-        return binding_description;
-    }
-
-    static std::vector<renderer::VertexInputAttributeDescription> getAttributeDescriptions() {
-        std::vector<renderer::VertexInputAttributeDescription> attribute_descriptions(1);
-        attribute_descriptions[0].binding = 0;
-        attribute_descriptions[0].location = 0;
-        attribute_descriptions[0].format = renderer::Format::R32G32_UINT;
-        attribute_descriptions[0].offset = 0;
-        return attribute_descriptions;
-    }
-};
 
 std::vector<renderer::TextureDescriptor> addTileCreatorBuffers(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
@@ -2140,7 +2074,6 @@ static void transitMapTextureFromStoreImage(
 // static member definition.
 std::unordered_map<size_t, std::shared_ptr<TileObject>> TileObject::tile_meshes_;
 std::vector<std::shared_ptr<TileObject>> TileObject::visible_tiles_;
-renderer::BufferInfo TileObject::vertex_buffer_;
 std::vector<uint32_t> TileObject::available_block_indexes_;
 renderer::TextureInfo TileObject::rock_layer_;
 renderer::TextureInfo TileObject::soil_water_layer_[2];
@@ -2385,21 +2318,7 @@ void TileObject::initStaticMembers(
         SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
-    auto num_vertexes = static_cast<uint32_t>(TileConst::kNumVertexes);
     auto num_cache_blocks = static_cast<uint32_t>(TileConst::kNumCachedBlocks);
-    auto vertex_buffer_size =
-        sizeof(glsl::TileVertexInfo) *
-        num_vertexes *
-        num_cache_blocks;
-    device->createBuffer(
-        vertex_buffer_size,
-        SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
-        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
-        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
-        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
-        vertex_buffer_.buffer,
-        vertex_buffer_.memory);
-
     available_block_indexes_.resize(num_cache_blocks);
     for (uint32_t i = 0; i < num_cache_blocks; i++) {
         available_block_indexes_[i] = i;
@@ -2510,7 +2429,6 @@ void TileObject::destoryStaticMembers(
     device->destroyPipelineLayout(tile_pipeline_layout_);
     device->destroyPipeline(tile_pipeline_);
     device->destroyPipeline(tile_water_pipeline_);
-    vertex_buffer_.destroy(device);
     rock_layer_.destroy(device);
     soil_water_layer_[0].destroy(device);
     soil_water_layer_[1].destroy(device);
@@ -2753,7 +2671,6 @@ void TileObject::draw(
     float cur_time,
     bool is_base_pass) {
     auto segment_count = static_cast<uint32_t>(TileConst::kSegmentCount);
-    auto num_vertexes = static_cast<uint32_t>(TileConst::kNumVertexes);
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, is_base_pass ? tile_pipeline_ : tile_water_pipeline_);
     cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, renderer::IndexType::UINT32);
