@@ -4,6 +4,7 @@
 #include "engine/game_object/gltf.h"
 #include "engine/game_object/terrain.h"
 #include "engine/scene_rendering/skydome.h"
+#include "engine/scene_rendering/ibl_creator.h"
 
 namespace er = engine::renderer;
 namespace ego = engine::game_object;
@@ -28,11 +29,6 @@ private:
     void createImageViews();
     void createCubemapFramebuffers();
     void createDescriptorSetLayout();
-    void createGraphicsPipeline(const glm::uvec2& display_size);
-    void createCubeGraphicsPipeline();
-    void createComputePipeline();
-    void createCubemapPipelineLayout();
-    void createCubemapComputePipelineLayout();
     void createRenderPasses();
     void createCubemapRenderPass();
     void createFramebuffers(const glm::uvec2& display_size);
@@ -53,14 +49,6 @@ private:
     void updateViewConstBuffer(uint32_t current_image, float near_z = 0.5f);
     std::vector<er::TextureDescriptor> addGlobalTextures(
         const std::shared_ptr<er::DescriptorSet>& description_set);
-    std::vector<er::TextureDescriptor> addPanoramaTextures(
-        const std::shared_ptr<er::DescriptorSet>& description_set);
-    std::vector<er::TextureDescriptor> addIblTextures(
-        const std::shared_ptr<er::DescriptorSet>& description_set);
-    std::vector<er::TextureDescriptor> addIblComputeTextures(
-        const std::shared_ptr<er::DescriptorSet>& description_set, 
-        const er::TextureInfo& src_tex,
-        const er::TextureInfo& dst_tex);
     void mainLoop();
     void drawScene(
         std::shared_ptr<er::CommandBuffer> command_buffer,
@@ -79,10 +67,6 @@ private:
     void cleanup();
     void cleanupSwapChain();
     void recreateSwapChain();
-
-    void loadMtx2Texture(
-        const std::string& input_filename,
-        er::TextureInfo& texture);
 
 private:
     GLFWwindow* window_ = nullptr;
@@ -104,23 +88,12 @@ private:
     std::vector<std::shared_ptr<er::DescriptorSet>> desc_sets_;
     std::shared_ptr<er::DescriptorSetLayout> view_desc_set_layout_;
     std::shared_ptr<er::DescriptorSetLayout> global_tex_desc_set_layout_;
-    std::shared_ptr<er::DescriptorSetLayout> ibl_desc_set_layout_;
-    std::shared_ptr<er::DescriptorSetLayout> ibl_comp_desc_set_layout_;
     std::shared_ptr<er::DescriptorSet> global_tex_desc_set_;
-    std::shared_ptr<er::DescriptorSet> envmap_tex_desc_set_;
-    std::shared_ptr<er::DescriptorSet> ibl_tex_desc_set_;
-    std::shared_ptr<er::DescriptorSet> ibl_diffuse_tex_desc_set_;
-    std::shared_ptr<er::DescriptorSet> ibl_specular_tex_desc_set_;
-    std::shared_ptr<er::DescriptorSet> ibl_sheen_tex_desc_set_;
+    er::TextureInfo ibl_diffuse_tex_;
+    er::TextureInfo ibl_specular_tex_;
+    er::TextureInfo ibl_sheen_tex_;
     std::shared_ptr<er::RenderPass> final_render_pass_;
     std::shared_ptr<er::RenderPass> cubemap_render_pass_;
-    std::shared_ptr<er::PipelineLayout> ibl_pipeline_layout_;
-    std::shared_ptr<er::PipelineLayout> ibl_comp_pipeline_layout_;
-    std::shared_ptr<er::Pipeline> envmap_pipeline_;
-    std::shared_ptr<er::Pipeline> lambertian_pipeline_;
-    std::shared_ptr<er::Pipeline> ggx_pipeline_;
-    std::shared_ptr<er::Pipeline> charlie_pipeline_;
-    std::shared_ptr<er::Pipeline> blur_comp_pipeline_;
     std::shared_ptr<er::CommandPool> command_pool_;
 
     er::Format hdr_format_ = er::Format::B10G11R11_UFLOAT_PACK32;// E5B9G9R9_UFLOAT_PACK32; this format not supported here.
@@ -139,16 +112,6 @@ private:
     er::TextureInfo brdf_lut_tex_;
     er::TextureInfo charlie_lut_tex_;
     er::TextureInfo thin_film_lut_tex_;
-    er::TextureInfo panorama_tex_;
-    er::TextureInfo ibl_diffuse_tex_;
-    er::TextureInfo ibl_specular_tex_;
-    er::TextureInfo ibl_sheen_tex_;
-    er::TextureInfo tmp_ibl_diffuse_tex_;
-    er::TextureInfo tmp_ibl_specular_tex_;
-    er::TextureInfo tmp_ibl_sheen_tex_;
-    er::TextureInfo rt_ibl_diffuse_tex_;
-    er::TextureInfo rt_ibl_specular_tex_;
-    er::TextureInfo rt_ibl_sheen_tex_;
     std::vector<uint32_t> binding_list_;
     std::shared_ptr<er::Sampler> texture_sampler_;
     std::vector<er::BufferInfo> view_const_buffers_;
@@ -162,6 +125,9 @@ private:
     std::vector<std::string> gltf_file_names_;
     std::vector<std::string> to_load_gltf_names_;
     std::shared_ptr<es::Skydome> skydome_;
+    std::shared_ptr<es::IblCreator> ibl_creator_;
+
+    std::vector<er::ClearValue> clear_values_;
 
     glsl::ViewParams view_params_{};
     std::chrono::high_resolution_clock::time_point last_frame_time_point_;

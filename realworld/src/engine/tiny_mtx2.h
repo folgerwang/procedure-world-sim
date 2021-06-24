@@ -27,7 +27,7 @@ end*/
 
 #include "renderer/renderer.h"
 
-namespace work {
+namespace engine {
 
 struct Mtx2HeaderBlock {
     uint8_t             identifier[12];
@@ -57,4 +57,4 @@ struct Mtx2LevelIndexBlock {
     uint64_t            uncompressed_byte_length;
 };
 
-} //namespace work
+} //namespace engine

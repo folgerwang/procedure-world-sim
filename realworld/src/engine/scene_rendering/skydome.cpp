@@ -233,6 +233,7 @@ Skydome::Skydome(
     const std::shared_ptr<renderer::DescriptorSetLayout>& ibl_desc_set_layout,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const renderer::GraphicPipelineInfo& cube_graphic_pipeline_info,
+    const renderer::TextureInfo& rt_envmap_tex,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const glm::uvec2& display_size,
     const uint32_t& cube_size) {
@@ -245,19 +246,6 @@ Skydome::Skydome(
     std::vector<renderer::DescriptorSetLayoutBinding> bindings(1);
     bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX);
 
-    uint32_t num_mips = static_cast<uint32_t>(std::log2(cube_size) + 1);
-    std::vector<renderer::BufferImageCopyInfo> dump_copies;
-
-    renderer::Helper::createCubemapTexture(
-        device_info,
-        cube_render_pass,
-        cube_size,
-        cube_size,
-        num_mips,
-        renderer::Format::R16G16B16A16_SFLOAT,
-        dump_copies,
-        rt_envmap_tex_);
-
     skybox_desc_set_layout_ =
         device->createDescriptorSetLayout(bindings);
 
@@ -267,6 +255,7 @@ Skydome::Skydome(
         render_pass,
         view_desc_set_layout,
         graphic_pipeline_info,
+        rt_envmap_tex,
         texture_sampler,
         display_size);
 
@@ -289,6 +278,7 @@ void Skydome::recreate(
     const std::shared_ptr<renderer::RenderPass>& render_pass,
     const std::shared_ptr<renderer::DescriptorSetLayout>& view_desc_set_layout,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
+    const renderer::TextureInfo& rt_envmap_tex,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const glm::uvec2& display_size) {
 
@@ -314,7 +304,7 @@ void Skydome::recreate(
     auto skybox_texture_descs = addSkyboxTextures(
         skybox_tex_desc_set_,
         texture_sampler,
-        rt_envmap_tex_);
+        rt_envmap_tex);
     device->updateDescriptorSets(skybox_texture_descs, {});
 
     assert(view_desc_set_layout);
@@ -370,11 +360,13 @@ void Skydome::drawCubeSkyBox(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const std::shared_ptr<renderer::RenderPass>& render_pass,
     const std::shared_ptr<renderer::DescriptorSet>& envmap_tex_desc_set,
+    const renderer::TextureInfo& rt_envmap_tex,
+    const std::vector<er::ClearValue>& clear_values,
     const uint32_t& cube_size)
 {
     // generate envmap from skybox.
     cmd_buf->addImageBarrier(
-        rt_envmap_tex_.image,
+        rt_envmap_tex.image,
         renderer::Helper::getImageAsSource(),
         renderer::Helper::getImageAsColorAttachment(),
         0, 1, 0, 6);
@@ -383,14 +375,10 @@ void Skydome::drawCubeSkyBox(
         renderer::PipelineBindPoint::GRAPHICS,
         cube_skybox_pipeline_);
 
-    std::vector<renderer::ClearValue> clear_values(2);
-    clear_values[0].color = { 50.0f / 255.0f, 50.0f / 255.0f, 50.0f / 255.0f, 1.0f };
-    clear_values[1].depth_stencil = { 1.0f, 0 };
-
     std::vector<renderer::ClearValue> envmap_clear_values(6, clear_values[0]);
     cmd_buf->beginRenderPass(
         render_pass,
-        rt_envmap_tex_.framebuffers[0],
+        rt_envmap_tex.framebuffers[0],
         glm::uvec2(cube_size),
         envmap_clear_values);
 
@@ -416,7 +404,7 @@ void Skydome::drawCubeSkyBox(
 
     renderer::Helper::generateMipmapLevels(
         cmd_buf,
-        rt_envmap_tex_.image,
+        rt_envmap_tex.image,
         num_mips,
         cube_size,
         cube_size,
@@ -438,7 +426,6 @@ void Skydome::destroy(
     const std::shared_ptr<renderer::Device>& device) {
     vertex_buffer_.destroy(device);
     index_buffer_.destroy(device);
-    rt_envmap_tex_.destroy(device);
     device->destroyDescriptorSetLayout(skybox_desc_set_layout_);
     device->destroyPipelineLayout(skybox_pipeline_layout_);
     device->destroyPipeline(skybox_pipeline_);

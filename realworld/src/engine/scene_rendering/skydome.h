@@ -11,7 +11,6 @@ class Skydome {
 
     renderer::BufferInfo vertex_buffer_;
     renderer::BufferInfo index_buffer_;
-    renderer::TextureInfo rt_envmap_tex_;
 
     std::shared_ptr<renderer::DescriptorSetLayout> skybox_desc_set_layout_;
     std::shared_ptr<renderer::DescriptorSet> skybox_tex_desc_set_;
@@ -21,7 +20,6 @@ class Skydome {
     std::shared_ptr<renderer::Pipeline> cube_skybox_pipeline_;
 
 public:
-
     Skydome(
         const renderer::DeviceInfo& device_info,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
@@ -31,12 +29,10 @@ public:
         const std::shared_ptr<renderer::DescriptorSetLayout>& ibl_desc_set_layout,
         const renderer::GraphicPipelineInfo& graphic_pipeline_info,
         const renderer::GraphicPipelineInfo& cube_graphic_pipeline_info,
+        const renderer::TextureInfo& rt_envmap_tex,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
         const glm::uvec2& display_size,
         const uint32_t& cube_size);
-
-    inline const renderer::TextureInfo& getEnvmapTexture() const 
-        { return rt_envmap_tex_; }
 
     void recreate(
         const std::shared_ptr<renderer::Device>& device,
@@ -44,6 +40,7 @@ public:
         const std::shared_ptr<renderer::RenderPass>& render_pass,
         const std::shared_ptr<renderer::DescriptorSetLayout>& view_desc_set_layout,
         const renderer::GraphicPipelineInfo& graphic_pipeline_info,
+        const renderer::TextureInfo& rt_envmap_tex,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
         const glm::uvec2& display_size);
 
@@ -55,6 +52,8 @@ public:
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const std::shared_ptr<renderer::RenderPass>& render_pass,
         const std::shared_ptr<renderer::DescriptorSet>& envmap_tex_desc_set,
+        const renderer::TextureInfo& rt_envmap_tex,
+        const std::vector<renderer::ClearValue>& clear_values,
         const uint32_t& cube_size);
 
     void update();

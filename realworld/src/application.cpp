@@ -10,12 +10,6 @@
 #include "engine/engine_helper.h"
 #include "application.h"
 
-#define TINYGLTF_IMPLEMENTATION
-#define STB_IMAGE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "tiny_gltf.h"
-#include "engine/tiny_mtx2.h"
-
 namespace er = engine::renderer;
 namespace ego = engine::game_object;
 
@@ -361,33 +355,51 @@ void RealWorldApplication::initVulkan() {
     createRenderPasses();
     createImageViews();
     createCubemapRenderPass();
-    createCubemapFramebuffers();
     createDescriptorSetLayout();
     createCommandPool();
     assert(command_pool_);
     device_info_.cmd_pool = command_pool_;
     er::Helper::init(device_info_);
 
-    loadMtx2Texture("assets/environments/doge2/lambertian/diffuse.ktx2", ibl_diffuse_tex_);
-    loadMtx2Texture("assets/environments/doge2/ggx/specular.ktx2", ibl_specular_tex_);
-    loadMtx2Texture("assets/environments/doge2/charlie/sheen.ktx2", ibl_sheen_tex_);
-    createCubemapPipelineLayout();
-    createCubemapComputePipelineLayout();
-    createCubeGraphicsPipeline();
-    createComputePipeline();
+    engine::helper::loadMtx2Texture(
+        device_info_,
+        cubemap_render_pass_,
+        "assets/environments/doge2/lambertian/diffuse.ktx2",
+        ibl_diffuse_tex_);
+    engine::helper::loadMtx2Texture(
+        device_info_,
+        cubemap_render_pass_,
+        "assets/environments/doge2/ggx/specular.ktx2",
+        ibl_specular_tex_);
+    engine::helper::loadMtx2Texture(
+        device_info_,
+        cubemap_render_pass_,
+        "assets/environments/doge2/charlie/sheen.ktx2",
+        ibl_sheen_tex_);
     recreateRenderBuffer(swap_chain_info_.extent);
     auto format = er::Format::R8G8B8A8_UNORM;
-    createTextureImage("assets/statue.jpg", format, sample_tex_);
-    createTextureImage("assets/brdfLUT.png", format, brdf_lut_tex_);
-    createTextureImage("assets/lut_ggx.png", format, ggx_lut_tex_);
-    createTextureImage("assets/lut_charlie.png", format, charlie_lut_tex_);
-    createTextureImage("assets/lut_thin_film.png", format, thin_film_lut_tex_);
-    createTextureImage("assets/environments/doge2.hdr", format, panorama_tex_);
+    engine::helper::createTextureImage(device_info_, "assets/statue.jpg", format, sample_tex_);
+    engine::helper::createTextureImage(device_info_, "assets/brdfLUT.png", format, brdf_lut_tex_);
+    engine::helper::createTextureImage(device_info_, "assets/lut_ggx.png", format, ggx_lut_tex_);
+    engine::helper::createTextureImage(device_info_, "assets/lut_charlie.png", format, charlie_lut_tex_);
+    engine::helper::createTextureImage(device_info_, "assets/lut_thin_film.png", format, thin_film_lut_tex_);
     createTextureSampler();
     createUniformBuffers();
     descriptor_pool_ = device_->createDescriptorPool();
     createCommandBuffers();
     createSyncObjects();
+
+    clear_values_.resize(2);
+    clear_values_[0].color = { 50.0f / 255.0f, 50.0f / 255.0f, 50.0f / 255.0f, 1.0f };
+    clear_values_[1].depth_stencil = { 1.0f, 0 };
+
+    ibl_creator_ = std::make_shared<es::IblCreator>(
+        device_info_,
+        descriptor_pool_,
+        cubemap_render_pass_,
+        graphic_cubemap_pipeline_info_,
+        texture_sampler_,
+        kCubemapSize);
 
     skydome_ = std::make_shared<es::Skydome>(
         device_info_,
@@ -395,9 +407,10 @@ void RealWorldApplication::initVulkan() {
         hdr_render_pass_,
         cubemap_render_pass_,
         view_desc_set_layout_,
-        ibl_desc_set_layout_,
+        ibl_creator_->getIblDescSetLayout(),
         graphic_pipeline_info_,
         graphic_cubemap_pipeline_info_,
+        ibl_creator_->getEnvmapTexture(),
         texture_sampler_,
         swap_chain_info_.extent,
         kCubemapSize);
@@ -486,8 +499,6 @@ void RealWorldApplication::recreateSwapChain() {
 
     createRenderPasses();
     createImageViews();
-    createCubemapPipelineLayout();
-    createCubemapComputePipelineLayout();
     auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
     ego::TileObject::recreateStaticMembers(
         device_,
@@ -502,7 +513,6 @@ void RealWorldApplication::recreateSwapChain() {
         graphic_pipeline_info_,
         desc_set_layouts,
         swap_chain_info_.extent);
-    createComputePipeline();
     recreateRenderBuffer(swap_chain_info_.extent);
     createUniformBuffers();
     descriptor_pool_ = device_->createDescriptorPool();
@@ -514,8 +524,14 @@ void RealWorldApplication::recreateSwapChain() {
         hdr_render_pass_,
         view_desc_set_layout_,
         graphic_pipeline_info_,
+        ibl_creator_->getEnvmapTexture(),
         texture_sampler_,
         swap_chain_info_.extent);
+
+    ibl_creator_->recreate(
+        device_,
+        descriptor_pool_,
+        texture_sampler_);
 
     createDescriptorSets();
 
@@ -573,91 +589,6 @@ void RealWorldApplication::createImageViews() {
     }
 }
 
-void RealWorldApplication::createCubemapFramebuffers() {
-    uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
-    std::vector<er::BufferImageCopyInfo> dump_copies;
-
-    er::Helper::createCubemapTexture(
-        device_info_,
-        cubemap_render_pass_,
-        kCubemapSize,
-        kCubemapSize,
-        1,
-        er::Format::R16G16B16A16_SFLOAT,
-        dump_copies,
-        tmp_ibl_diffuse_tex_);
-
-    er::Helper::createCubemapTexture(
-        device_info_,
-        cubemap_render_pass_,
-        kCubemapSize,
-        kCubemapSize,
-        num_mips,
-        er::Format::R16G16B16A16_SFLOAT,
-        dump_copies,
-        tmp_ibl_specular_tex_);
-
-    er::Helper::createCubemapTexture(
-        device_info_,
-        cubemap_render_pass_,
-        kCubemapSize,
-        kCubemapSize,
-        num_mips,
-        er::Format::R16G16B16A16_SFLOAT,
-        dump_copies,
-        tmp_ibl_sheen_tex_);
-
-    er::Helper::createCubemapTexture(
-        device_info_,
-        cubemap_render_pass_,
-        kCubemapSize,
-        kCubemapSize,
-        1,
-        er::Format::R16G16B16A16_SFLOAT,
-        dump_copies,
-        rt_ibl_diffuse_tex_);
-
-    er::Helper::createCubemapTexture(
-        device_info_,
-        cubemap_render_pass_,
-        kCubemapSize,
-        kCubemapSize,
-        num_mips,
-        er::Format::R16G16B16A16_SFLOAT,
-        dump_copies,
-        rt_ibl_specular_tex_);
-
-    er::Helper::createCubemapTexture(
-        device_info_,
-        cubemap_render_pass_,
-        kCubemapSize,
-        kCubemapSize,
-        num_mips,
-        er::Format::R16G16B16A16_SFLOAT,
-        dump_copies,
-        rt_ibl_sheen_tex_);
-}
-
-er::ShaderModuleList getIblShaderModules(
-    std::shared_ptr<er::Device> device)
-{
-    uint64_t vert_code_size, frag_code_size;
-    er::ShaderModuleList shader_modules;
-    shader_modules.reserve(6);
-    auto vert_shader_code = engine::helper::readFile("lib/shaders/ibl_vert.spv", vert_code_size);
-    shader_modules.push_back(device->createShaderModule(vert_code_size, vert_shader_code.data()));
-    auto frag_shader_code = engine::helper::readFile("lib/shaders/panorama_to_cubemap_frag.spv", frag_code_size);
-    shader_modules.push_back(device->createShaderModule(frag_code_size, frag_shader_code.data()));
-    auto labertian_frag_shader_code = engine::helper::readFile("lib/shaders/ibl_labertian_frag.spv", frag_code_size);
-    shader_modules.push_back(device->createShaderModule(frag_code_size, labertian_frag_shader_code.data()));
-    auto ggx_frag_shader_code = engine::helper::readFile("lib/shaders/ibl_ggx_frag.spv", frag_code_size);
-    shader_modules.push_back(device->createShaderModule(frag_code_size, ggx_frag_shader_code.data()));
-    auto charlie_frag_shader_code = engine::helper::readFile("lib/shaders/ibl_charlie_frag.spv", frag_code_size);
-    shader_modules.push_back(device->createShaderModule(frag_code_size, charlie_frag_shader_code.data()));
-
-    return shader_modules;
-}
-
 er::ShaderModuleList getIblComputeShaderModules(
     std::shared_ptr<er::Device> device)
 {
@@ -668,95 +599,6 @@ er::ShaderModuleList getIblComputeShaderModules(
     shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
 
     return shader_modules;
-}
-
-void RealWorldApplication::createCubemapPipelineLayout()
-{
-    er::PushConstantRange push_const_range{};
-    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
-    push_const_range.offset = 0;
-    push_const_range.size = sizeof(glsl::IblParams);
-
-    er::DescriptorSetLayoutList desc_set_layouts(1);
-    desc_set_layouts[0] = ibl_desc_set_layout_;
-
-    ibl_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
-}
-
-void RealWorldApplication::createCubemapComputePipelineLayout()
-{
-    er::PushConstantRange push_const_range{};
-    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
-    push_const_range.offset = 0;
-    push_const_range.size = sizeof(glsl::IblComputeParams);
-
-    er::DescriptorSetLayoutList desc_set_layouts(1);
-    desc_set_layouts[0] = ibl_comp_desc_set_layout_;
-
-    ibl_comp_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
-}
-
-void RealWorldApplication::createCubeGraphicsPipeline() {
-    er::PipelineInputAssemblyStateCreateInfo input_assembly;
-    input_assembly.topology = er::PrimitiveTopology::TRIANGLE_LIST;
-    input_assembly.restart_enable = false;
-    {
-        auto ibl_shader_modules = getIblShaderModules(device_);
-
-        envmap_pipeline_ = device_->createPipeline(
-            cubemap_render_pass_,
-            ibl_pipeline_layout_,
-            {}, {},
-            input_assembly,
-            graphic_cubemap_pipeline_info_,
-            { ibl_shader_modules[0], ibl_shader_modules[1] },
-            glm::uvec2(kCubemapSize, kCubemapSize));
-
-        lambertian_pipeline_ = device_->createPipeline(
-            cubemap_render_pass_,
-            ibl_pipeline_layout_,
-            {}, {},
-            input_assembly,
-            graphic_cubemap_pipeline_info_,
-            { ibl_shader_modules[0], ibl_shader_modules[2] },
-            glm::uvec2(kCubemapSize, kCubemapSize));
-
-        ggx_pipeline_ = device_->createPipeline(
-            cubemap_render_pass_,
-            ibl_pipeline_layout_,
-            {}, {},
-            input_assembly,
-            graphic_cubemap_pipeline_info_,
-            { ibl_shader_modules[0], ibl_shader_modules[3] },
-            glm::uvec2(kCubemapSize, kCubemapSize));
-
-        charlie_pipeline_ = device_->createPipeline(
-            cubemap_render_pass_,
-            ibl_pipeline_layout_,
-            {}, {},
-            input_assembly,
-            graphic_cubemap_pipeline_info_,
-            { ibl_shader_modules[0], ibl_shader_modules[4] },
-            glm::uvec2(kCubemapSize, kCubemapSize));
-
-        for (auto& shader_module : ibl_shader_modules) {
-            device_->destroyShaderModule(shader_module);
-        }
-    }
-}
-
-void RealWorldApplication::createComputePipeline()
-{
-    auto ibl_compute_shader_modules = getIblComputeShaderModules(device_);
-    assert(ibl_compute_shader_modules.size() == 1);
-
-    blur_comp_pipeline_ = device_->createPipeline(
-        ibl_comp_pipeline_layout_,
-        ibl_compute_shader_modules[0]);
-
-    for (auto& shader_module : ibl_compute_shader_modules) {
-        device_->destroyShaderModule(shader_module);
-    }
 }
 
 void RealWorldApplication::createCubemapRenderPass() {
@@ -919,28 +761,6 @@ void RealWorldApplication::createDescriptorSetLayout() {
 
         view_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
     }
-
-    // ibl texture descriptor set layout.
-    {
-        std::vector<er::DescriptorSetLayoutBinding> bindings(1);
-        bindings[0] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(PANORAMA_TEX_INDEX);
-        //bindings[1] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(ENVMAP_TEX_INDEX);
-
-        ibl_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
-    }
-
-    // ibl compute texture descriptor set layout.
-    {
-        std::vector<er::DescriptorSetLayoutBinding> bindings(2);
-        bindings[0] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_TEX_INDEX,
-            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-            er::DescriptorType::STORAGE_IMAGE);
-        bindings[1] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(DST_TEX_INDEX,
-            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-            er::DescriptorType::STORAGE_IMAGE);
-
-        ibl_comp_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
-    }
 }
 
 void RealWorldApplication::createUniformBuffers() {
@@ -1000,97 +820,11 @@ std::vector<er::TextureDescriptor> RealWorldApplication::addGlobalTextures(
         description_set,
         er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-    er::Helper::addOneTexture(
+
+    ibl_creator_->addToGlobalTextures(
         descriptor_writes,
-        LAMBERTIAN_ENV_TEX_INDEX,
-        texture_sampler_,
-        rt_ibl_diffuse_tex_.view,
         description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
-        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-    er::Helper::addOneTexture(
-        descriptor_writes,
-        GGX_ENV_TEX_INDEX,
-        texture_sampler_,
-        rt_ibl_specular_tex_.view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
-        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-    er::Helper::addOneTexture(
-        descriptor_writes,
-        CHARLIE_ENV_TEX_INDEX,
-        texture_sampler_,
-        rt_ibl_sheen_tex_.view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
-        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-
-    return descriptor_writes;
-}
-
-std::vector<er::TextureDescriptor> RealWorldApplication::addPanoramaTextures(
-    const std::shared_ptr<er::DescriptorSet>& description_set)
-{
-    std::vector<er::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(1);
-
-    // envmap texture.
-    er::Helper::addOneTexture(
-        descriptor_writes,
-        PANORAMA_TEX_INDEX,
-        texture_sampler_,
-        panorama_tex_.view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
-        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-
-    return descriptor_writes;
-}
-
-std::vector<er::TextureDescriptor> RealWorldApplication::addIblTextures(
-    const std::shared_ptr<er::DescriptorSet>& description_set)
-{
-    std::vector<er::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(1);
-
-    const auto& rt_envmap_tex = skydome_->getEnvmapTexture();
-    er::Helper::addOneTexture(
-        descriptor_writes,
-        ENVMAP_TEX_INDEX,
-        texture_sampler_,
-        rt_envmap_tex.view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
-        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-
-    return descriptor_writes;
-}
-
-std::vector<er::TextureDescriptor> RealWorldApplication::addIblComputeTextures(
-    const std::shared_ptr<er::DescriptorSet>& description_set,
-    const er::TextureInfo& src_tex,
-    const er::TextureInfo& dst_tex)
-{
-    std::vector<er::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(2);
-
-    er::Helper::addOneTexture(
-        descriptor_writes,
-        SRC_TEX_INDEX,
-        texture_sampler_,
-        src_tex.view,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
-        er::ImageLayout::GENERAL);
-
-    er::Helper::addOneTexture(
-        descriptor_writes,
-        DST_TEX_INDEX,
-        texture_sampler_,
-        dst_tex.view,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
-        er::ImageLayout::GENERAL);
+        texture_sampler_);
 
     return descriptor_writes;
 }
@@ -1121,85 +855,6 @@ void RealWorldApplication::createDescriptorSets() {
             device_->updateDescriptorSets({}, buffer_descs);
         }
     }
-
-    // envmap
-    {
-        // only one descriptor layout.
-        envmap_tex_desc_set_ = device_->createDescriptorSets(descriptor_pool_, ibl_desc_set_layout_, 1)[0];
-
-        // create a global ibl texture descriptor set.
-        auto ibl_texture_descs = addPanoramaTextures(envmap_tex_desc_set_);
-        device_->updateDescriptorSets(ibl_texture_descs, {});
-    }
-
-    // ibl
-    {
-        // only one descriptor layout.
-        ibl_tex_desc_set_ = device_->createDescriptorSets(descriptor_pool_, ibl_desc_set_layout_, 1)[0];
-
-        // create a global ibl texture descriptor set.
-        auto ibl_texture_descs = addIblTextures(ibl_tex_desc_set_);
-        device_->updateDescriptorSets(ibl_texture_descs, {});
-    }
-
-    // ibl diffuse compute
-    {
-        // only one descriptor layout.
-        ibl_diffuse_tex_desc_set_ = device_->createDescriptorSets(descriptor_pool_, ibl_comp_desc_set_layout_, 1)[0];
-
-        // create a global ibl texture descriptor set.
-        auto ibl_texture_descs = addIblComputeTextures(ibl_diffuse_tex_desc_set_, tmp_ibl_diffuse_tex_, rt_ibl_diffuse_tex_);
-        device_->updateDescriptorSets(ibl_texture_descs, {});
-    }
-
-    // ibl specular compute
-    {
-        // only one descriptor layout.
-        ibl_specular_tex_desc_set_ = device_->createDescriptorSets(descriptor_pool_, ibl_comp_desc_set_layout_, 1)[0];
-
-        // create a global ibl texture descriptor set.
-        auto ibl_texture_descs = addIblComputeTextures(ibl_specular_tex_desc_set_, tmp_ibl_specular_tex_, rt_ibl_specular_tex_);
-        device_->updateDescriptorSets(ibl_texture_descs, {});
-    }
-
-    // ibl sheen compute
-    {
-        // only one descriptor layout.
-        ibl_sheen_tex_desc_set_ = device_->createDescriptorSets(descriptor_pool_, ibl_comp_desc_set_layout_, 1)[0];
-
-        // create a global ibl texture descriptor set.
-        auto ibl_texture_descs = addIblComputeTextures(ibl_sheen_tex_desc_set_, tmp_ibl_sheen_tex_, rt_ibl_sheen_tex_);
-        device_->updateDescriptorSets(ibl_texture_descs, {});
-    }
-}
-
-void RealWorldApplication::createTextureImage(
-    const std::string& file_name,
-    er::Format format,
-    er::TextureInfo& texture) {
-    int tex_width, tex_height, tex_channels;
-    stbi_uc* pixels = stbi_load(file_name.c_str(), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
-
-    if (!pixels) {
-        throw std::runtime_error("failed to load texture image!");
-    }
-    er::Helper::create2DTextureImage(
-        device_info_,
-        format,
-        tex_width,
-        tex_height,
-        tex_channels,
-        pixels,
-        texture.image,
-        texture.memory);
-
-    stbi_image_free(pixels);
-
-    texture.view = device_->createImageView(
-        texture.image,
-        er::ImageViewType::VIEW_2D,
-        format,
-        SET_FLAG_BIT(ImageAspect, COLOR_BIT));
 }
 
 void RealWorldApplication::createTextureSampler() {
@@ -1207,79 +862,6 @@ void RealWorldApplication::createTextureSampler() {
         er::Filter::LINEAR,
         er::SamplerAddressMode::REPEAT,
         er::SamplerMipmapMode::LINEAR, 16.0f);
-}
-
-void RealWorldApplication::loadMtx2Texture(
-    const std::string& input_filename,
-    er::TextureInfo& texture) {
-    uint64_t buffer_size;
-    auto mtx2_data = engine::helper::readFile(input_filename, buffer_size);
-    auto src_data = (char*)mtx2_data.data();
-
-    // header block
-    Mtx2HeaderBlock* header_block = reinterpret_cast<Mtx2HeaderBlock*>(src_data);
-    src_data += sizeof(Mtx2HeaderBlock);
-
-    assert(header_block->format == er::Format::R16G16B16A16_SFLOAT);
-
-    // index block
-    Mtx2IndexBlock* index_block = reinterpret_cast<Mtx2IndexBlock*>(src_data);
-    src_data += sizeof(Mtx2IndexBlock);
-
-    uint32_t width = header_block->pixel_width;
-    uint32_t height = header_block->pixel_height;
-    // level index block.
-    uint32_t num_level_blocks = std::max(1u, header_block->level_count);
-    std::vector<er::BufferImageCopyInfo> copy_regions(num_level_blocks);
-    for (uint32_t i_level = 0; i_level < num_level_blocks; i_level++) {
-        Mtx2LevelIndexBlock* level_block = reinterpret_cast<Mtx2LevelIndexBlock*>(src_data);
-
-        auto& region = copy_regions[i_level];
-        region.buffer_offset = level_block->byte_offset;
-        region.buffer_row_length = 0;
-        region.buffer_image_height = 0;
-
-        region.image_subresource.aspect_mask = SET_FLAG_BIT(ImageAspect, COLOR_BIT);
-        region.image_subresource.mip_level = i_level;
-        region.image_subresource.base_array_layer = 0;
-        region.image_subresource.layer_count = 6;
-
-        region.image_offset = glm::ivec3(0, 0, 0);
-        region.image_extent = glm::uvec3(width, height, 1);
-        width = std::max(1u, width / 2);
-        height = std::max(1u, height / 2);
-
-        src_data += sizeof(Mtx2LevelIndexBlock);
-    }
-
-    char* dfd_data_start = (char*)mtx2_data.data() + index_block->dfd_byte_offset;
-    uint32_t dfd_total_size = *reinterpret_cast<uint32_t*>(dfd_data_start);
-    src_data += sizeof(uint32_t);
-
-    char* kvd_data_start = (char*)mtx2_data.data() + index_block->kvd_byte_offset;
-    uint32_t key_value_byte_length = *reinterpret_cast<uint32_t*>(kvd_data_start);
-    uint8_t* key_value = reinterpret_cast<uint8_t*>(kvd_data_start + 4);
-    for (uint32_t i = 0; i < key_value_byte_length; i++) {
-        auto result = key_value[i];
-        int hit = 1;
-    }
-
-    char* sgd_data_start = nullptr;
-    if (index_block->sgd_byte_length > 0) {
-        sgd_data_start = (char*)mtx2_data.data() + index_block->sgd_byte_offset;
-    }
-
-    er::Helper::createCubemapTexture(
-        device_info_,
-        cubemap_render_pass_,
-        header_block->pixel_width,
-        header_block->pixel_height,
-        num_level_blocks,
-        header_block->format,
-        copy_regions,
-        texture,
-        buffer_size,
-        mtx2_data.data());
 }
 
 void RealWorldApplication::mainLoop() {
@@ -1304,208 +886,46 @@ void RealWorldApplication::drawScene(
     auto src_color = swap_chain_info.image_views[image_index];
     auto frame_desc_set = frame_desc_sets[image_index];
 
-    std::vector<er::ClearValue> clear_values(2);
-    clear_values[0].color = { 50.0f / 255.0f, 50.0f / 255.0f, 50.0f / 255.0f, 1.0f };
-    clear_values[1].depth_stencil = { 1.0f, 0 };
-
     auto& cmd_buf = command_buffer;
 
     static int s_soil_water = 0;
 
     if (0)
     {
-        // generate envmap cubemap from panorama hdr image.
-        auto rt_envmap_tex = skydome_->getEnvmapTexture();
-        cmd_buf->addImageBarrier(
-            rt_envmap_tex.image,
-            er::Helper::getImageAsSource(),
-            er::Helper::getImageAsColorAttachment(),
-            0, 1, 0, 6);
-
-        cmd_buf->bindPipeline(er::PipelineBindPoint::GRAPHICS, envmap_pipeline_);
-
-        std::vector<er::ClearValue> envmap_clear_values(6, clear_values[0]);
-        cmd_buf->beginRenderPass(
-            cubemap_render_pass_,
-            rt_envmap_tex.framebuffers[0],
-            glm::uvec2(kCubemapSize, kCubemapSize),
-            envmap_clear_values);
-
-        glsl::IblParams ibl_params = {};
-        cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
-
-        cmd_buf->bindDescriptorSets(er::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { envmap_tex_desc_set_ });
-
-        cmd_buf->draw(3);
-
-        cmd_buf->endRenderPass();
-
-        uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
-
-        er::Helper::generateMipmapLevels(
+        ibl_creator_->drawEnvmapFromPanoramaImage(
             cmd_buf,
-            rt_envmap_tex.image,
-            num_mips,
-            kCubemapSize,
-            kCubemapSize,
-            er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+            cubemap_render_pass_,
+            clear_values_,
+            kCubemapSize);
     }
     else {
         skydome_->drawCubeSkyBox(
             cmd_buf,
             cubemap_render_pass_,
-            envmap_tex_desc_set_,
+            ibl_creator_->getEnvmapTexDescSet(),
+            ibl_creator_->getEnvmapTexture(),
+            clear_values_,
             kCubemapSize);
     }
 
-    // generate ibl diffuse texture.
-    {
-        cmd_buf->bindPipeline(er::PipelineBindPoint::GRAPHICS, lambertian_pipeline_);
+    ibl_creator_->createIblDiffuseMap(
+        cmd_buf,
+        cubemap_render_pass_,
+        clear_values_,
+        kCubemapSize);
 
-        cmd_buf->addImageBarrier(
-            rt_ibl_diffuse_tex_.image,
-            er::Helper::getImageAsSource(),
-            er::Helper::getImageAsColorAttachment(),
-            0, 1, 0, 6);
+    ibl_creator_->createIblSpecularMap(
+        cmd_buf,
+        cubemap_render_pass_,
+        clear_values_,
+        kCubemapSize);
 
-        std::vector<er::ClearValue> envmap_clear_values(6, clear_values[0]);
-        cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_diffuse_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
-
-        glsl::IblParams ibl_params = {};
-        ibl_params.roughness = 1.0f;
-        ibl_params.currentMipLevel = 0;
-        ibl_params.width = kCubemapSize;
-        ibl_params.lodBias = 0;
-        cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
-
-        cmd_buf->bindDescriptorSets(er::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { ibl_tex_desc_set_ });
-
-        cmd_buf->draw(3);
-
-        cmd_buf->endRenderPass();
-
-        cmd_buf->addImageBarrier(
-            rt_ibl_diffuse_tex_.image,
-            er::Helper::getImageAsColorAttachment(),
-            er::Helper::getImageAsShaderSampler(),
-            0, 1, 0, 6);
-    }
-
-    // generate ibl specular texture.
-    {
-        uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
-        cmd_buf->bindPipeline(er::PipelineBindPoint::GRAPHICS, ggx_pipeline_);
-
-        for (int i_mip = num_mips - 1; i_mip >= 0; i_mip--) {
-            cmd_buf->addImageBarrier(
-                rt_ibl_specular_tex_.image,
-                er::Helper::getImageAsSource(),
-                er::Helper::getImageAsColorAttachment(),
-                i_mip, 1, 0, 6);
-
-            uint32_t width = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
-            uint32_t height = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
-
-            std::vector<er::ClearValue> envmap_clear_values(6, clear_values[0]);
-            cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_specular_tex_.framebuffers[i_mip], glm::uvec2(width, height), envmap_clear_values);
-
-            glsl::IblParams ibl_params = {};
-            ibl_params.roughness = static_cast<float>(i_mip) / static_cast<float>(num_mips - 1);
-            ibl_params.currentMipLevel = i_mip;
-            ibl_params.width = kCubemapSize;
-            ibl_params.lodBias = 0;
-            cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
-
-            cmd_buf->bindDescriptorSets(er::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { ibl_tex_desc_set_ });
-
-            cmd_buf->draw(3);
-
-            cmd_buf->endRenderPass();
-        }
-
-        cmd_buf->addImageBarrier(
-            rt_ibl_specular_tex_.image,
-            er::Helper::getImageAsColorAttachment(),
-            er::Helper::getImageAsShaderSampler(),
-            0, num_mips, 0, 6);
-    }
-
-    // generate ibl sheen texture.
-    {
-        uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
-        cmd_buf->bindPipeline(er::PipelineBindPoint::GRAPHICS, charlie_pipeline_);
-
-        for (int i_mip = num_mips - 1; i_mip >= 0; i_mip--) {
-            uint32_t width = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
-            uint32_t height = std::max(static_cast<uint32_t>(kCubemapSize) >> i_mip, 1u);
-
-            cmd_buf->addImageBarrier(
-                rt_ibl_sheen_tex_.image,
-                er::Helper::getImageAsSource(),
-                er::Helper::getImageAsColorAttachment(),
-                i_mip, 1, 0, 6);
-
-            std::vector<er::ClearValue> envmap_clear_values(6, clear_values[0]);
-            cmd_buf->beginRenderPass(cubemap_render_pass_, rt_ibl_sheen_tex_.framebuffers[i_mip], glm::uvec2(width, height), envmap_clear_values);
-
-            glsl::IblParams ibl_params = {};
-            ibl_params.roughness = static_cast<float>(i_mip) / static_cast<float>(num_mips - 1);
-            ibl_params.currentMipLevel = i_mip;
-            ibl_params.width = kCubemapSize;
-            ibl_params.lodBias = 0;
-            cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
-
-            cmd_buf->bindDescriptorSets(er::PipelineBindPoint::GRAPHICS, ibl_pipeline_layout_, { ibl_tex_desc_set_ });
-
-            cmd_buf->draw(3);
-
-            cmd_buf->endRenderPass();
-        }
-
-        cmd_buf->addImageBarrier(
-            rt_ibl_sheen_tex_.image,
-            er::Helper::getImageAsColorAttachment(),
-            er::Helper::getImageAsShaderSampler(),
-            0, num_mips, 0, 6);
-    }
-
-    {
-        if (0)
-        {
-            cmd_buf->addImageBarrier(
-                rt_ibl_diffuse_tex_.image,
-                er::Helper::getImageAsSource(),
-                er::Helper::getImageAsStore(),
-                0, 1, 0, 6);
-
-            cmd_buf->bindPipeline(er::PipelineBindPoint::COMPUTE, blur_comp_pipeline_);
-            glsl::IblComputeParams ibl_comp_params = {};
-            ibl_comp_params.size = glm::ivec4(kCubemapSize, kCubemapSize, 0, 0);
-            cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, COMPUTE_BIT), ibl_comp_pipeline_layout_, &ibl_comp_params, sizeof(ibl_comp_params));
-
-            cmd_buf->bindDescriptorSets(er::PipelineBindPoint::COMPUTE, ibl_comp_pipeline_layout_, { ibl_diffuse_tex_desc_set_ });
-
-            cmd_buf->dispatch((kCubemapSize + 7) / 8, (kCubemapSize + 7) / 8, 6);
-
-            uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
-            cmd_buf->addImageBarrier(
-                rt_ibl_diffuse_tex_.image,
-                er::Helper::getImageAsStore(),
-                er::Helper::getImageAsShaderSampler(),
-                0, 1, 0, 6);
-            cmd_buf->addImageBarrier(
-                rt_ibl_specular_tex_.image,
-                er::Helper::getImageAsSource(),
-                er::Helper::getImageAsShaderSampler(),
-                0, num_mips, 0, 6);
-            cmd_buf->addImageBarrier(
-                rt_ibl_sheen_tex_.image,
-                er::Helper::getImageAsSource(),
-                er::Helper::getImageAsShaderSampler(),
-                0, num_mips, 0, 6);
-        }
-    }
-
+    ibl_creator_->createIblSheenMap(
+        cmd_buf,
+        cubemap_render_pass_,
+        clear_values_,
+        kCubemapSize);
+ 
     {
         // only init one time.
         static bool s_tile_buffer_inited = false;
@@ -1542,7 +962,7 @@ void RealWorldApplication::drawScene(
             hdr_render_pass_,
             hdr_frame_buffer_,
             screen_size,
-            clear_values);
+            clear_values_);
 
         er::DescriptorSetList desc_sets{ global_tex_desc_set_, frame_desc_set };
         // render gltf.
@@ -1619,7 +1039,7 @@ void RealWorldApplication::drawScene(
             hdr_water_render_pass_,
             hdr_water_frame_buffer_,
             screen_size,
-            clear_values);
+            clear_values_);
 
         // render terrain water pass.
         {
@@ -1861,8 +1281,6 @@ void RealWorldApplication::cleanupSwapChain() {
     }
 
     device_->freeCommandBuffers(command_pool_, command_buffers_);
-    device_->destroyPipeline(blur_comp_pipeline_);
-    device_->destroyPipelineLayout(ibl_comp_pipeline_layout_);
     device_->destroyRenderPass(final_render_pass_);
     device_->destroyRenderPass(hdr_render_pass_);
     device_->destroyRenderPass(hdr_water_render_pass_);
@@ -1883,12 +1301,6 @@ void RealWorldApplication::cleanupSwapChain() {
 void RealWorldApplication::cleanup() {
     cleanupSwapChain();
 
-    device_->destroyPipeline(envmap_pipeline_);
-    device_->destroyPipeline(lambertian_pipeline_);
-    device_->destroyPipeline(ggx_pipeline_);
-    device_->destroyPipeline(charlie_pipeline_);
-    device_->destroyPipelineLayout(ibl_pipeline_layout_);
-
     skydome_->destroy(device_);
 
     ImGui_ImplVulkan_Shutdown();
@@ -1905,20 +1317,11 @@ void RealWorldApplication::cleanup() {
     brdf_lut_tex_.destroy(device_);
     charlie_lut_tex_.destroy(device_);
     thin_film_lut_tex_.destroy(device_);
-    panorama_tex_.destroy(device_);
     ibl_diffuse_tex_.destroy(device_);
     ibl_specular_tex_.destroy(device_);
     ibl_sheen_tex_.destroy(device_);
-    tmp_ibl_diffuse_tex_.destroy(device_);
-    tmp_ibl_specular_tex_.destroy(device_);
-    tmp_ibl_sheen_tex_.destroy(device_);
-    rt_ibl_diffuse_tex_.destroy(device_);
-    rt_ibl_specular_tex_.destroy(device_);
-    rt_ibl_sheen_tex_.destroy(device_);
     device_->destroyDescriptorSetLayout(view_desc_set_layout_);
     device_->destroyDescriptorSetLayout(global_tex_desc_set_layout_);
-    device_->destroyDescriptorSetLayout(ibl_desc_set_layout_);
-    device_->destroyDescriptorSetLayout(ibl_comp_desc_set_layout_);
     
     ego::TileObject::destoryAllTiles();
     ego::TileObject::destoryStaticMembers(device_);
