@@ -1561,7 +1561,7 @@ void GltfObject::updateGameObjectsBuffer(
     params.frame_count = update_frame_count;
     params.world_min = world_min;
     params.inv_world_range = 1.0f / world_range;
-    params.camera_pos_xz = glm::vec2(camera_pos.x, camera_pos.z);
+    params.camera_pos = camera_pos;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         update_game_objects_pipeline_layout_,

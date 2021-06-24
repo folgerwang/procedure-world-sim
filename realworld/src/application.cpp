@@ -923,8 +923,8 @@ void RealWorldApplication::drawScene(
             s_tile_buffer_inited = true;
         }
         else {
-            ego::TileObject::updateTileFlowBuffers(cmd_buf, s_soil_water);
-            ego::TileObject::updateTileBuffers(cmd_buf, s_soil_water);
+            ego::TileObject::updateTileFlowBuffers(cmd_buf, current_time_, s_soil_water);
+            ego::TileObject::updateTileBuffers(cmd_buf, current_time_, s_soil_water);
         }
     }
 

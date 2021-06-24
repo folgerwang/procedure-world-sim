@@ -181,7 +181,8 @@ struct TileUpdateParams {
     vec2            flow_speed_factor;
     uint            width_pixel_count;
     float           inv_width_pixel_count;
-    vec2            pad;
+    float           current_time;
+    float           pad;
 };
 
 struct TileParams {
@@ -211,13 +212,12 @@ struct SunSkyParams {
 };
 
 struct GameObjectsUpdateParams {
+    vec3            camera_pos;
+    uint            num_objects;
     vec2            world_min;
     vec2            inv_world_range;
-    uint            num_objects;
     float           delta_t;
     int             frame_count;
-    int             pad;
-    vec2            camera_pos_xz;
 };
 
 struct InstanceBufferUpdateParams {

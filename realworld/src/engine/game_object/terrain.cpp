@@ -2130,17 +2130,18 @@ std::shared_ptr<TileObject> TileObject::addOneTile(
     auto hash_value = generateHash(min, max, segment_count);
     auto result = tile_meshes_.find(hash_value);
     if (result == tile_meshes_.end()) {
-        assert(available_block_indexes_.size() > 0);
-        auto block_index = available_block_indexes_.back();
-        available_block_indexes_.pop_back();
-        tile_meshes_[hash_value] =
-            std::make_shared<TileObject>(
-                device_info,
-                descriptor_pool,
-                min,
-                max,
-                hash_value,
-                block_index);
+        if (available_block_indexes_.size() > 0) {
+            auto block_index = available_block_indexes_.back();
+            available_block_indexes_.pop_back();
+            tile_meshes_[hash_value] =
+                std::make_shared<TileObject>(
+                    device_info,
+                    descriptor_pool,
+                    min,
+                    max,
+                    hash_value,
+                    block_index);
+        }
     }
 
     return tile_meshes_[hash_value];
@@ -2583,6 +2584,7 @@ void TileObject::generateTileBuffers(
 
 void TileObject::updateTileBuffers(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    float current_time,
     int soil_water) {
 
     transitMapTextureToStoreImage(
@@ -2599,6 +2601,7 @@ void TileObject::updateTileBuffers(
     tile_params.width_pixel_count = dispatch_count;
     tile_params.inv_width_pixel_count = 1.0f / dispatch_count;
     tile_params.range_per_pixel = tile_params.world_range * tile_params.inv_width_pixel_count;
+    tile_params.current_time = current_time;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         tile_update_pipeline_layout_,
@@ -2622,6 +2625,7 @@ void TileObject::updateTileBuffers(
 
 void TileObject::updateTileFlowBuffers(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    float current_time,
     int soil_water) {
 
     transitMapTextureToStoreImage(
@@ -2640,6 +2644,7 @@ void TileObject::updateTileFlowBuffers(
     tile_params.inv_width_pixel_count = 1.0f / dispatch_count;
     tile_params.range_per_pixel = tile_params.world_range * tile_params.inv_width_pixel_count;
     tile_params.flow_speed_factor = 1.0f / (1024.0f * tile_params.range_per_pixel);
+    tile_params.current_time = current_time;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         tile_flow_update_pipeline_layout_,

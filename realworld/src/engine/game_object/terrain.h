@@ -137,10 +137,12 @@ public:
 
     static void updateTileBuffers(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+        float current_time,
         int soil_water);
 
     static void updateTileFlowBuffers(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+        float current_time,
         int soil_water);
 
     static void drawAllVisibleTiles(

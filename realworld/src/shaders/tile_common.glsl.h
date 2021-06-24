@@ -221,3 +221,33 @@ vec3 terrainNormal(vec2 pos)
         terrainMap(pos - e_yx).x - terrainMap(pos + e_yx).x));
 #endif    
 }
+
+// Alexander Lemke, 2017
+
+vec2 hash2D(in vec2 p)
+{
+    return fract(sin(p * mat2(12.98, 78.23, 127.99, 311.33)) * 43758.54);
+}
+
+
+// Virtually the same as your original function, just in more compact (and possibly less reliable) form.
+float smoothNoise(vec2 p) {
+
+    vec2 f = fract(p); p -= f; f *= f * (3. - f - f);
+
+    return dot(mat2(fract(sin(vec4(0, 1, 27, 28) + p.x + p.y * 27.) * 1e5)) * vec2(1. - f.y, f.y), vec2(1. - f.x, f.x));
+
+}
+
+// Also the same as the original, but with one less layer.
+float fractalNoise(vec2 p) {
+
+    return smoothNoise(p) * 0.5333 + smoothNoise(p * 2.) * 0.2667 + smoothNoise(p * 4.) * 0.1333 + smoothNoise(p * 8.) * 0.0667;
+
+    // Similar version with fewer layers. The highlighting sample distance would need to be tweaked.
+    //return smoothNoise(p)*0.57 + smoothNoise(p*2.45)*0.28 + smoothNoise(p*6.)*0.15;
+
+    // Even fewer layers, but the sample distance would need to be tweaked.
+    //return smoothNoise(p)*0.65 + smoothNoise(p*4.)*0.35;
+
+}

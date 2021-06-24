@@ -72,22 +72,33 @@ struct MaterialInfo
     float transmission;
 };
 
-// Alexander Lemke, 2017
-
-vec2 hash2D(in vec2 p)
-{
-    return fract(sin(p * mat2(12.98, 78.23, 127.99, 311.33)) * 43758.54);
+// Standard noise warping. Call the noise function, then feed a variation of the result
+// into itself. Rinse and repeat, etc. Completely made up on the spot, but keeping your 
+// original concept in mind, which involved combining noise layers travelling in opposing
+// directions.
+float warpedNoise(vec2 p) {
+    
+    vec2 m = vec2(tile_params.time, -tile_params.time)*.25;
+    float x = fractalNoise(p + m);
+    float y = fractalNoise(p + m.yx + x);
+    float z = fractalNoise(p - m - x + y);
+    return fractalNoise(p + vec2(x, y) + vec2(y, z) + vec2(z, x) + length(vec3(x, y, z))*0.25);
+    
 }
 
 void main() {
     vec3 pos = in_data.vertex_position;
     vec3 tnor = terrainNormal(vec2(pos.x, pos.z));
 
+    float noise = warpedNoise(pos.xz * 0.05f);
+    float water_noise = noise * 2.0f - 1.0f;
+
     vec3 water_normal;
     water_normal.xz = texture(water_normal_tex, in_data.world_map_uv).xy;
     vec2 water_flow = texture(water_flow_tex, in_data.world_map_uv).xy;
     water_normal.y = sqrt(1.0f - dot(water_normal.xz, water_normal.xz));
     water_normal.xz += water_flow * 0.125;
+    water_normal.y += water_noise * 0.35;
     water_normal = normalize(water_normal);
     vec2 screen_uv = gl_FragCoord.xy * tile_params.inv_screen_size;
     float dist_scale = length(vec3((screen_uv * 2.0f - 1.0f) * view_params.depth_params.zw, 1.0f));
@@ -102,6 +113,7 @@ void main() {
     vec3 refract_ray = refract(-view, water_normal, 1.33);
 
     float fade_rate = exp(-max((bg_view_dist - view_dist) / 10.0f, 0));
+    float thickness_fade_rate = exp(-max((bg_view_dist + noise - view_dist) / 10.0f, 0));
 
     vec3 bg_color = texture(src_tex, screen_uv).xyz;
 
@@ -109,7 +121,7 @@ void main() {
     vec3 normal = water_normal;
 
     vec3 albedo = vec3(0.10, 0.10, 0.3)*.75f;
-    albedo = mix(albedo, bg_color, fade_rate);
+    albedo = mix(albedo, bg_color, thickness_fade_rate);
 
     MaterialInfo material_info;
     material_info.baseColor = albedo;

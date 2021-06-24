@@ -100,7 +100,10 @@ void main()
     vec3 contact_normal = terrainNormal(info.position.xz);
 
     if (info.status == 0 || params.frame_count == 0) {
-        info.position = vec3((nx * 2.0f - 1.0f) * 400.0f + params.camera_pos_xz.x, 200.0f, (nz * 2.0f - 1.0f) * 400.0f + params.camera_pos_xz.y);
+        info.position = params.camera_pos + 
+                        vec3((nx * 2.0f - 1.0f) * 400.0f,
+                             200.0f,
+                             (nz * 2.0f - 1.0f) * 400.0f);
         info.moving_dir = vec3(0, 0, 0);
         info.mass = 0.1f;
         info.awareness_radius = 20.0f;

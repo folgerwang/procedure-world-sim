@@ -10,7 +10,7 @@ layout(push_constant) uniform TileUniformBufferObject {
 layout(set = 0, binding = ROCK_LAYER_BUFFER_INDEX) uniform sampler2D rock_layer;
 layout(set = 0, binding = SOIL_WATER_LAYER_BUFFER_INDEX, rg16) uniform readonly image2D soil_water_layer;
 layout(set = 0, binding = DST_SOIL_WATER_LAYER_BUFFER_INDEX, rg16) uniform writeonly image2D dst_soil_water_layer;
-layout(set = 0, binding = DST_WATER_FLOW_BUFFER_INDEX, rg16f) uniform writeonly image2D dst_water_flow;
+layout(set = 0, binding = DST_WATER_FLOW_BUFFER_INDEX, rg16f) uniform image2D dst_water_flow;
 
 shared uvec2 s_terrain_layers[20][20];
 shared uint s_adjust_layers[18][18];
@@ -36,7 +36,7 @@ vec2 unpackTerrainLayersHeightU2(uvec2 packed_layers) {
     return vec2(soil_height, water_height);
 }
 
-uint adjustLayersHeight(ivec2 src_coords) {
+uint adjustLayersHeight(ivec2 src_coords, ivec2 global_src_coords) {
     vec2 left_h = unpackTerrainLayersHeightU2(s_terrain_layers[src_coords.y][src_coords.x - 1]);
     vec2 right_h = unpackTerrainLayersHeightU2(s_terrain_layers[src_coords.y][src_coords.x + 1]);
     vec2 up_h = unpackTerrainLayersHeightU2(s_terrain_layers[src_coords.y - 1][src_coords.x]);
@@ -51,6 +51,10 @@ uint adjustLayersHeight(ivec2 src_coords) {
     h_diff.x = center_h.x > min_h.x ? (center_h.x - min_h.x) : 0;
     h_diff.y = center_h.y > min_h.y ? (center_h.y - min_h.y) : 0;
     h_diff = min(h_diff * 0.5f, layer_thickness.yz * 1.2f);
+
+    float noise = smoothNoise(vec2(global_src_coords) * vec2(0.343, 0.434) + tile_params.current_time);
+
+    h_diff *= (noise + 0.5f);
 
     uint packed_adj_height = 0;
     if (h_diff.x > 0) { // adjust soil height.
@@ -181,10 +185,12 @@ void main()
   if (pixel_index < 9 * 18) {
     ivec2 src_local_coords = ivec2((pixel_index % 9) * 2, pixel_index / 9);
     s_adjust_layers[src_local_coords.y][src_local_coords.x] = 
-      adjustLayersHeight(src_local_coords + 1);
+      adjustLayersHeight(src_local_coords + 1,
+                         src_local_coords + 1 + block_coords - 1);
 
     s_adjust_layers[src_local_coords.y][src_local_coords.x + 1] = 
-      adjustLayersHeight(src_local_coords + ivec2(1, 0) + 1);
+      adjustLayersHeight(src_local_coords + ivec2(1, 0) + 1,
+                         src_local_coords + ivec2(1, 0) + 1 + block_coords - 1);
   }
 
   barrier();
@@ -198,6 +204,7 @@ void main()
     vec2 soil_water_layers = unpackUnorm2x16(packed_layers.y) +
         layer_adjust.xy * vec2(1.0f / SOIL_WATER_LAYER_MAX_THICKNESS) * 0.8f;
     imageStore(dst_soil_water_layer, pixel_coords, vec4(soil_water_layers, 0, 0));
-    imageStore(dst_water_flow, pixel_coords, vec4(layer_adjust.zw, 0, 0));
+    vec4 current_flow = imageLoad(dst_water_flow, pixel_coords);
+    imageStore(dst_water_flow, pixel_coords, vec4(mix(layer_adjust.zw, current_flow.xy, 0.5), 0, 0));
   }
 }
