@@ -90,8 +90,8 @@ void main() {
     vec3 pos = in_data.vertex_position;
     vec3 tnor = terrainNormal(vec2(pos.x, pos.z));
 
-    float noise = warpedNoise(pos.xz * 0.05f);
-    float water_noise = noise * 2.0f - 1.0f;
+    float noise = warpedNoise(pos.xz * 0.04334f);
+    float water_noise = (noise * 2.0f - 1.0f);
 
     vec3 water_normal;
     water_normal.xz = texture(water_normal_tex, in_data.world_map_uv).xy;
@@ -110,12 +110,24 @@ void main() {
     float view_dist = length(view_vec);
     vec3 view = normalize(view_vec);
 
-    vec3 refract_ray = refract(-view, water_normal, 1.33);
+    float water_ray_dist = bg_view_dist - view_dist;
+    float distorted_water_ray_dist = water_ray_dist + noise * 0.5f;
+    vec3 refract_ray = refract(-view, water_normal, 1.0 / 1.33);
+    vec3 refract_pos = in_data.vertex_position + refract_ray * water_ray_dist;
 
-    float fade_rate = exp(-max((bg_view_dist - view_dist) / 10.0f, 0));
-    float thickness_fade_rate = exp(-max((bg_view_dist + noise - view_dist) / 10.0f, 0));
+    vec4 refracted_screen_pos = view_params.proj * view_params.view * vec4(refract_pos, 1.0f);
+    refracted_screen_pos.xy /= refracted_screen_pos.w;
 
-    vec3 bg_color = texture(src_tex, screen_uv).xyz;
+    float fade_rate = exp(-max(water_ray_dist / 10.0f, 0));
+    float thickness_fade_rate = exp(-max(distorted_water_ray_dist / 10.0f, 0));
+
+    vec2 refract_uv = refracted_screen_pos.xy * 0.5 + 0.5;
+    refract_uv.x = refract_uv.x < 0 ? -refract_uv.x : refract_uv.x;
+    refract_uv.y = refract_uv.y < 0 ? -refract_uv.y : refract_uv.y;
+    refract_uv.x = refract_uv.x > 1.0 ? 2.0f - refract_uv.x : refract_uv.x;
+    refract_uv.y = refract_uv.y > 1.0 ? 2.0f - refract_uv.y : refract_uv.y;
+
+    vec3 bg_color = texture(src_tex, refract_uv).xyz;
 
     // bump map
     vec3 normal = water_normal;
