@@ -451,16 +451,7 @@ void RealWorldApplication::initVulkan() {
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view);
 
-    std::string path = "assets";
-    for (const auto& entry : std::filesystem::directory_iterator(path)) {
-        auto path_string = entry.path();
-        auto ext_string = std::filesystem::path(path_string).extension();
-        if (ext_string == ".glb" || ext_string == ".gltf") {
-            gltf_file_names_.push_back(path_string.filename().string());
-        }
-    }
-
-    er::Helper::initImgui(
+    menu_ = std::make_shared<es::Menu>(
         device_info_,
         instance_,
         window_, 
@@ -482,9 +473,7 @@ void RealWorldApplication::recreateSwapChain() {
 
     device_->waitIdle();
 
-    ImGui_ImplVulkan_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
+    menu_->destroy();
 
     cleanupSwapChain();
 
@@ -566,7 +555,7 @@ void RealWorldApplication::recreateSwapChain() {
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view);
 
-    er::Helper::initImgui(
+    menu_->init(
         device_info_,
         instance_,
         window_,
@@ -1081,83 +1070,6 @@ void RealWorldApplication::drawScene(
     s_soil_water = 1 - s_soil_water;
 }
 
-void RealWorldApplication::drawMenu(
-    std::shared_ptr<er::CommandBuffer> command_buffer,
-    const er::SwapChainInfo& swap_chain_info,
-    const glm::uvec2& screen_size,
-    uint32_t image_index) {
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    std::vector<er::ClearValue> clear_values;
-    clear_values.resize(2);
-    clear_values[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
-    clear_values[1].depth_stencil = { 1.0f, 0 };
-
-    command_buffer->beginRenderPass(
-        final_render_pass_,
-        swap_chain_info.framebuffers[image_index],
-        screen_size,
-        clear_values);
-
-    static bool s_select_load_gltf = false;
-    if (ImGui::BeginMainMenuBar())
-    {
-        if (ImGui::BeginMenu("Game Objects"))
-        {
-            if (ImGui::MenuItem("Load gltf", NULL)) {
-                s_select_load_gltf = true;
-            }
-
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Tools"))
-        {
-            if (ImGui::MenuItem("Turn off water pass", NULL)) {}
-            ImGui::Separator();
-            if (ImGui::MenuItem("Cut", "CTRL+X")) {}
-            ImGui::EndMenu();
-        }
-        ImGui::EndMainMenuBar();
-    }
-
-    s_camera_paused =
-        ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow) ||
-        ImGui::IsWindowFocused(ImGuiHoveredFlags_AnyWindow);
-
-    if (s_select_load_gltf) {
-        ImGui::OpenPopup("select gltf object");
-        if (ImGui::BeginPopup("select gltf object"))
-        {
-            std::vector<const char*> listbox_items;
-            for (const auto& name : gltf_file_names_) {
-                listbox_items.push_back(name.c_str());
-            }
-            static int s_listbox_item_current = -1;
-            ImGui::ListBox("",
-                &s_listbox_item_current, listbox_items.data(),
-                static_cast<int>(listbox_items.size()),
-                static_cast<int>(listbox_items.size()));
-
-            if (s_listbox_item_current >= 0) {
-                auto file_name = "assets/" + gltf_file_names_[s_listbox_item_current];
-                to_load_gltf_names_.push_back(file_name);
-                s_listbox_item_current = -1;
-                s_select_load_gltf = false;
-            }
-
-            ImGui::EndPopup();
-        }
-
-        if (!s_select_load_gltf) {
-            ImGui::CloseCurrentPopup();
-        }
-    }
-
-    er::Helper::addImGuiToCommandBuffer(command_buffer);
-    command_buffer->endRenderPass();
-}
-
 void RealWorldApplication::drawFrame() {
     std::vector<std::shared_ptr<er::Fence>> in_flight_fences(1);
     in_flight_fences[0] = in_flight_fences_[current_frame_];
@@ -1209,7 +1121,8 @@ void RealWorldApplication::drawFrame() {
     current_time_ += delta_t_;
     last_frame_time_point_ = current_time_point;
 
-    for (auto& gltf_name : to_load_gltf_names_) {
+    auto to_load_gltf_names = menu_->getToLoadGltfNamesAndClear();
+    for (auto& gltf_name : to_load_gltf_names) {
         auto gltf_obj = std::make_shared<ego::GltfObject>(
             device_info_,
             descriptor_pool_,
@@ -1221,10 +1134,9 @@ void RealWorldApplication::drawFrame() {
             swap_chain_info_.extent,
             glm::inverse(view_params_.view));
 
+        s_update_frame_count = -1;
         gltf_objects_.push_back(gltf_obj);
     }
-
-    to_load_gltf_names_.clear();
 
     command_buffer->reset(0);
     command_buffer->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
@@ -1237,7 +1149,9 @@ void RealWorldApplication::drawFrame() {
         delta_t_,
         current_time_);
 
-    drawMenu(command_buffer,
+    s_camera_paused = menu_->draw(
+        command_buffer,
+        final_render_pass_,
         swap_chain_info_,
         swap_chain_info_.extent,
         image_index);
@@ -1302,11 +1216,7 @@ void RealWorldApplication::cleanup() {
     cleanupSwapChain();
 
     skydome_->destroy(device_);
-
-    ImGui_ImplVulkan_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
-
+    menu_->destroy();
     device_->destroyRenderPass(cubemap_render_pass_);
 
     assert(device_);

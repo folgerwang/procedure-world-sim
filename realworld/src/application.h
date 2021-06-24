@@ -5,6 +5,7 @@
 #include "engine/game_object/terrain.h"
 #include "engine/scene_rendering/skydome.h"
 #include "engine/scene_rendering/ibl_creator.h"
+#include "engine/scene_rendering/menu.h"
 
 namespace er = engine::renderer;
 namespace ego = engine::game_object;
@@ -58,11 +59,6 @@ private:
         uint32_t image_index,
         float delta_t,
         float current_time);
-    void drawMenu(
-        std::shared_ptr<er::CommandBuffer> command_buffer,
-        const er::SwapChainInfo& swap_chain_info,
-        const glm::uvec2& screen_size,
-        uint32_t image_index);
     void drawFrame();
     void cleanup();
     void cleanupSwapChain();
@@ -122,10 +118,9 @@ private:
     std::vector<std::shared_ptr<er::Fence>> images_in_flight_;
 
     std::vector<std::shared_ptr<ego::GltfObject>> gltf_objects_;
-    std::vector<std::string> gltf_file_names_;
-    std::vector<std::string> to_load_gltf_names_;
     std::shared_ptr<es::Skydome> skydome_;
     std::shared_ptr<es::IblCreator> ibl_creator_;
+    std::shared_ptr<es::Menu> menu_;
 
     std::vector<er::ClearValue> clear_values_;
 
