@@ -934,6 +934,7 @@ void RealWorldApplication::drawScene(
             cmd_buf,
             ego::TileObject::getWorldMin(),
             ego::TileObject::getWorldRange(),
+            s_camera_pos,
             s_update_frame_count,
             s_soil_water);
 

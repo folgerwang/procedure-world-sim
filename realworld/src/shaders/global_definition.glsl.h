@@ -217,6 +217,7 @@ struct GameObjectsUpdateParams {
     float           delta_t;
     int             frame_count;
     int             pad;
+    vec2            camera_pos_xz;
 };
 
 struct InstanceBufferUpdateParams {

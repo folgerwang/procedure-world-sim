@@ -204,6 +204,7 @@ public:
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const glm::vec2& world_min,
         const glm::vec2& world_range,
+        const glm::vec3& camera_pos,
         int update_frame_count,
         int soil_water);
 };

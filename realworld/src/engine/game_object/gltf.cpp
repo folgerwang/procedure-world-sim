@@ -1544,6 +1544,7 @@ void GltfObject::updateGameObjectsBuffer(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const glm::vec2& world_min,
     const glm::vec2& world_range,
+    const glm::vec3& camera_pos,
     int update_frame_count,
     int soil_water) {
 
@@ -1560,6 +1561,7 @@ void GltfObject::updateGameObjectsBuffer(
     params.frame_count = update_frame_count;
     params.world_min = world_min;
     params.inv_world_range = 1.0f / world_range;
+    params.camera_pos_xz = glm::vec2(camera_pos.x, camera_pos.z);
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         update_game_objects_pipeline_layout_,
