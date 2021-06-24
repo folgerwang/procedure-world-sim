@@ -46,6 +46,12 @@
     <Filter Include="Header Files\engine\game_object">
       <UniqueIdentifier>{4d651780-1210-41fe-bba1-9c624d70df0b}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\scene_rendering">
+      <UniqueIdentifier>{d3b5439e-9c99-4f9a-9d3d-5f54e8a1a637}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\engine\scene_rendering">
+      <UniqueIdentifier>{bad26b62-4b3b-46ad-910a-fd37400c9dce}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\engine\renderer\vulkan\vk_command_buffer.cpp">
@@ -95,6 +101,9 @@
     </ClCompile>
     <ClCompile Include="src\engine\renderer\renderer_helper.cpp">
       <Filter>Source Files\engine\renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="src\engine\scene_rendering\skydome.cpp">
+      <Filter>Source Files\scene_rendering</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -181,6 +190,9 @@
     </ClInclude>
     <ClInclude Include="src\engine\game_object\terrain.h">
       <Filter>Header Files\engine\game_object</Filter>
+    </ClInclude>
+    <ClInclude Include="src\engine\scene_rendering\skydome.h">
+      <Filter>Header Files\engine\scene_rendering</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

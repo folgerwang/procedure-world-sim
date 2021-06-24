@@ -22,29 +22,7 @@ namespace ego = engine::game_object;
 namespace {
 constexpr int kWindowSizeX = 1920;
 constexpr int kWindowSizeY = 1080;
-static float s_sun_angle = 0.0f;
 static int s_update_frame_count = -1;
-
-struct SkyBoxVertex {
-    glm::vec3 pos;
-
-    static std::vector<er::VertexInputBindingDescription> getBindingDescription() {
-        std::vector<er::VertexInputBindingDescription> binding_description(1);
-        binding_description[0].binding = 0;
-        binding_description[0].stride = sizeof(SkyBoxVertex);
-        binding_description[0].input_rate = er::VertexInputRate::VERTEX;
-        return binding_description;
-    }
-
-    static std::vector<er::VertexInputAttributeDescription> getAttributeDescriptions() {
-        std::vector<er::VertexInputAttributeDescription> attribute_descriptions(1);
-        attribute_descriptions[0].binding = 0;
-        attribute_descriptions[0].location = 0;
-        attribute_descriptions[0].format = er::Format::R32G32B32_SFLOAT;
-        attribute_descriptions[0].offset = offsetof(SkyBoxVertex, pos);
-        return attribute_descriptions;
-    }
-};
 
 er::AttachmentDescription FillAttachmentDescription(
     er::Format format,
@@ -393,11 +371,8 @@ void RealWorldApplication::initVulkan() {
     loadMtx2Texture("assets/environments/doge2/lambertian/diffuse.ktx2", ibl_diffuse_tex_);
     loadMtx2Texture("assets/environments/doge2/ggx/specular.ktx2", ibl_specular_tex_);
     loadMtx2Texture("assets/environments/doge2/charlie/sheen.ktx2", ibl_sheen_tex_);
-    createGraphicPipelineLayout();
     createCubemapPipelineLayout();
-    createCubeSkyboxPipelineLayout();
     createCubemapComputePipelineLayout();
-    createGraphicsPipeline(swap_chain_info_.extent);
     createCubeGraphicsPipeline();
     createComputePipeline();
     recreateRenderBuffer(swap_chain_info_.extent);
@@ -409,13 +384,25 @@ void RealWorldApplication::initVulkan() {
     createTextureImage("assets/lut_thin_film.png", format, thin_film_lut_tex_);
     createTextureImage("assets/environments/doge2.hdr", format, panorama_tex_);
     createTextureSampler();
-    createVertexBuffer();
-    createIndexBuffer();
     createUniformBuffers();
     descriptor_pool_ = device_->createDescriptorPool();
-    createDescriptorSets();
     createCommandBuffers();
     createSyncObjects();
+
+    skydome_ = std::make_shared<es::Skydome>(
+        device_info_,
+        descriptor_pool_,
+        hdr_render_pass_,
+        cubemap_render_pass_,
+        view_desc_set_layout_,
+        ibl_desc_set_layout_,
+        graphic_pipeline_info_,
+        graphic_cubemap_pipeline_info_,
+        texture_sampler_,
+        swap_chain_info_.extent,
+        kCubemapSize);
+
+    createDescriptorSets();
 
     for (auto& image : swap_chain_info_.images) {
         er::Helper::transitionImageLayout(
@@ -499,7 +486,6 @@ void RealWorldApplication::recreateSwapChain() {
 
     createRenderPasses();
     createImageViews();
-    createGraphicPipelineLayout();
     createCubemapPipelineLayout();
     createCubemapComputePipelineLayout();
     auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
@@ -516,14 +502,22 @@ void RealWorldApplication::recreateSwapChain() {
         graphic_pipeline_info_,
         desc_set_layouts,
         swap_chain_info_.extent);
-    createCubeSkyboxPipelineLayout();
-    createGraphicsPipeline(swap_chain_info_.extent);
     createComputePipeline();
     recreateRenderBuffer(swap_chain_info_.extent);
     createUniformBuffers();
     descriptor_pool_ = device_->createDescriptorPool();
-    createDescriptorSets();
     createCommandBuffers();
+
+    skydome_->recreate(
+        device_,
+        descriptor_pool_,
+        hdr_render_pass_,
+        view_desc_set_layout_,
+        graphic_pipeline_info_,
+        texture_sampler_,
+        swap_chain_info_.extent);
+
+    createDescriptorSets();
 
     for (auto& image : swap_chain_info_.images) {
         er::Helper::transitionImageLayout(
@@ -588,16 +582,6 @@ void RealWorldApplication::createCubemapFramebuffers() {
         cubemap_render_pass_,
         kCubemapSize,
         kCubemapSize,
-        num_mips,
-        er::Format::R16G16B16A16_SFLOAT,
-        dump_copies,
-        rt_envmap_tex_);
-
-    er::Helper::createCubemapTexture(
-        device_info_,
-        cubemap_render_pass_,
-        kCubemapSize,
-        kCubemapSize,
         1,
         er::Format::R16G16B16A16_SFLOAT,
         dump_copies,
@@ -654,26 +638,12 @@ void RealWorldApplication::createCubemapFramebuffers() {
         rt_ibl_sheen_tex_);
 }
 
-er::ShaderModuleList getSkyboxShaderModules(
-    std::shared_ptr<er::Device> device)
-{
-    uint64_t vert_code_size, frag_code_size;
-    er::ShaderModuleList shader_modules(2);
-    auto vert_shader_code = engine::helper::readFile("lib/shaders/skybox_vert.spv", vert_code_size);
-    auto frag_shader_code = engine::helper::readFile("lib/shaders/skybox_frag.spv", frag_code_size);
-
-    shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
-    shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
-
-    return shader_modules;
-}
-
 er::ShaderModuleList getIblShaderModules(
     std::shared_ptr<er::Device> device)
 {
     uint64_t vert_code_size, frag_code_size;
     er::ShaderModuleList shader_modules;
-    shader_modules.reserve(7);
+    shader_modules.reserve(6);
     auto vert_shader_code = engine::helper::readFile("lib/shaders/ibl_vert.spv", vert_code_size);
     shader_modules.push_back(device->createShaderModule(vert_code_size, vert_shader_code.data()));
     auto frag_shader_code = engine::helper::readFile("lib/shaders/panorama_to_cubemap_frag.spv", frag_code_size);
@@ -684,8 +654,6 @@ er::ShaderModuleList getIblShaderModules(
     shader_modules.push_back(device->createShaderModule(frag_code_size, ggx_frag_shader_code.data()));
     auto charlie_frag_shader_code = engine::helper::readFile("lib/shaders/ibl_charlie_frag.spv", frag_code_size);
     shader_modules.push_back(device->createShaderModule(frag_code_size, charlie_frag_shader_code.data()));
-    auto cube_skybox_shader_code = engine::helper::readFile("lib/shaders/cube_skybox.spv", frag_code_size);
-    shader_modules.push_back(device->createShaderModule(frag_code_size, cube_skybox_shader_code.data()));
 
     return shader_modules;
 }
@@ -702,23 +670,6 @@ er::ShaderModuleList getIblComputeShaderModules(
     return shader_modules;
 }
 
-void RealWorldApplication::createGraphicPipelineLayout()
-{
-    {
-        er::PushConstantRange push_const_range{};
-        push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
-        push_const_range.offset = 0;
-        push_const_range.size = sizeof(glsl::SunSkyParams);
-
-        er::DescriptorSetLayoutList desc_set_layouts;
-        desc_set_layouts.reserve(2);
-        desc_set_layouts.push_back(skybox_desc_set_layout_);
-        desc_set_layouts.push_back(view_desc_set_layout_);
-
-        skybox_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
-    }
-}
-
 void RealWorldApplication::createCubemapPipelineLayout()
 {
     er::PushConstantRange push_const_range{};
@@ -730,19 +681,6 @@ void RealWorldApplication::createCubemapPipelineLayout()
     desc_set_layouts[0] = ibl_desc_set_layout_;
 
     ibl_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
-}
-
-void RealWorldApplication::createCubeSkyboxPipelineLayout()
-{
-    er::PushConstantRange push_const_range{};
-    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
-    push_const_range.offset = 0;
-    push_const_range.size = sizeof(glsl::SunSkyParams);
-
-    er::DescriptorSetLayoutList desc_set_layouts(1);
-    desc_set_layouts[0] = ibl_desc_set_layout_;
-
-    cube_skybox_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
 
 void RealWorldApplication::createCubemapComputePipelineLayout()
@@ -758,53 +696,12 @@ void RealWorldApplication::createCubemapComputePipelineLayout()
     ibl_comp_pipeline_layout_ = device_->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
 
-void RealWorldApplication::createGraphicsPipeline(const glm::uvec2& display_size) {
-#if 0
-    VkDynamicState dynamic_states[] = {
-        VK_DYNAMIC_STATE_VIEWPORT,
-        VK_DYNAMIC_STATE_LINE_WIDTH
-    };
-
-    VkPipelineDynamicStateCreateInfo dynamic_state{};
-    dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamic_state.dynamicStateCount = 2;
-    dynamic_state.pDynamicStates = dynamic_states;
-#endif
-    er::PipelineInputAssemblyStateCreateInfo input_assembly;
-    input_assembly.topology = er::PrimitiveTopology::TRIANGLE_LIST;
-    input_assembly.restart_enable = false;
-    {
-        auto shader_modules = getSkyboxShaderModules(device_);
-        skybox_pipeline_ = device_->createPipeline(
-            hdr_render_pass_,
-            skybox_pipeline_layout_,
-            SkyBoxVertex::getBindingDescription(),
-            SkyBoxVertex::getAttributeDescriptions(),
-            input_assembly,
-            graphic_pipeline_info_,
-            shader_modules,
-            display_size);
-
-        for (auto& shader_module : shader_modules) {
-            device_->destroyShaderModule(shader_module);
-        }
-    }
-}
-
 void RealWorldApplication::createCubeGraphicsPipeline() {
     er::PipelineInputAssemblyStateCreateInfo input_assembly;
     input_assembly.topology = er::PrimitiveTopology::TRIANGLE_LIST;
     input_assembly.restart_enable = false;
     {
         auto ibl_shader_modules = getIblShaderModules(device_);
-        cube_skybox_pipeline_ = device_->createPipeline(
-            cubemap_render_pass_,
-            cube_skybox_pipeline_layout_,
-            {}, {},
-            input_assembly,
-            graphic_cubemap_pipeline_info_,
-            { ibl_shader_modules[0], ibl_shader_modules[5] },
-            glm::uvec2(kCubemapSize, kCubemapSize));
 
         envmap_pipeline_ = device_->createPipeline(
             cubemap_render_pass_,
@@ -992,50 +889,6 @@ void RealWorldApplication::createSyncObjects() {
     }
 }
 
-void RealWorldApplication::createVertexBuffer() {
-    const std::vector<SkyBoxVertex> vertices = {
-        {{-1.0f, -1.0f, -1.0f}},
-        {{1.0f, -1.0f, -1.0f}},
-        {{-1.0f, 1.0f, -1.0f}},
-        {{1.0f, 1.0f, -1.0f}},
-        {{-1.0f, -1.0f, 1.0f}},
-        {{1.0f, -1.0f, 1.0f}},
-        {{-1.0f, 1.0f, 1.0f}},
-        {{1.0f, 1.0f, 1.0f}},
-    };
-
-    uint64_t buffer_size = sizeof(vertices[0]) * vertices.size();
-
-    er::Helper::createBufferWithSrcData(
-        device_info_,
-        SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT),
-        buffer_size,
-        vertices.data(),
-        vertex_buffer_.buffer,
-        vertex_buffer_.memory);
-}
-
-void RealWorldApplication::createIndexBuffer() {
-    const std::vector<uint16_t> indices = {
-        0, 1, 2, 2, 1, 3,
-        4, 6, 5, 5, 6, 7,
-        0, 4, 1, 1, 4, 5,
-        2, 3, 6, 6, 3, 7,
-        1, 5, 3, 3, 5, 7,
-        0, 2, 4, 4, 2, 6 };
-
-    uint64_t buffer_size =
-        sizeof(indices[0]) * indices.size();
-
-    er::Helper::createBufferWithSrcData(
-        device_info_,
-        SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT),
-        buffer_size,
-        indices.data(),
-        index_buffer_.buffer,
-        index_buffer_.memory);
-}
-
 void RealWorldApplication::createDescriptorSetLayout() {
     // global texture descriptor set layout.
     {
@@ -1065,13 +918,6 @@ void RealWorldApplication::createDescriptorSetLayout() {
         bindings[0] = ubo_layout_binding;
 
         view_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
-    }
-
-    {
-        std::vector<er::DescriptorSetLayoutBinding> bindings(1);
-        bindings[0] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX);
-
-        skybox_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
     }
 
     // ibl texture descriptor set layout.
@@ -1182,25 +1028,6 @@ std::vector<er::TextureDescriptor> RealWorldApplication::addGlobalTextures(
     return descriptor_writes;
 }
 
-std::vector<er::TextureDescriptor> RealWorldApplication::addSkyboxTextures(
-    const std::shared_ptr<er::DescriptorSet>& description_set)
-{
-    std::vector<er::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(1);
-
-    // envmap texture.
-    er::Helper::addOneTexture(
-        descriptor_writes,
-        BASE_COLOR_TEX_INDEX,
-        texture_sampler_,
-        rt_envmap_tex_.view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
-        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-
-    return descriptor_writes;
-}
-
 std::vector<er::TextureDescriptor> RealWorldApplication::addPanoramaTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set)
 {
@@ -1226,11 +1053,12 @@ std::vector<er::TextureDescriptor> RealWorldApplication::addIblTextures(
     std::vector<er::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(1);
 
+    const auto& rt_envmap_tex = skydome_->getEnvmapTexture();
     er::Helper::addOneTexture(
         descriptor_writes,
         ENVMAP_TEX_INDEX,
         texture_sampler_,
-        rt_envmap_tex_.view,
+        rt_envmap_tex.view,
         description_set,
         er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -1292,15 +1120,6 @@ void RealWorldApplication::createDescriptorSets() {
 
             device_->updateDescriptorSets({}, buffer_descs);
         }
-    }
-
-    // skybox
-    {
-        skybox_tex_desc_set_ = device_->createDescriptorSets(descriptor_pool_, skybox_desc_set_layout_, 1)[0];
-
-        // create a global ibl texture descriptor set.
-        auto skybox_texture_descs = addSkyboxTextures(skybox_tex_desc_set_);
-        device_->updateDescriptorSets(skybox_texture_descs, {});
     }
 
     // envmap
@@ -1496,8 +1315,9 @@ void RealWorldApplication::drawScene(
     if (0)
     {
         // generate envmap cubemap from panorama hdr image.
+        auto rt_envmap_tex = skydome_->getEnvmapTexture();
         cmd_buf->addImageBarrier(
-            rt_envmap_tex_.image,
+            rt_envmap_tex.image,
             er::Helper::getImageAsSource(),
             er::Helper::getImageAsColorAttachment(),
             0, 1, 0, 6);
@@ -1505,7 +1325,11 @@ void RealWorldApplication::drawScene(
         cmd_buf->bindPipeline(er::PipelineBindPoint::GRAPHICS, envmap_pipeline_);
 
         std::vector<er::ClearValue> envmap_clear_values(6, clear_values[0]);
-        cmd_buf->beginRenderPass(cubemap_render_pass_, rt_envmap_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
+        cmd_buf->beginRenderPass(
+            cubemap_render_pass_,
+            rt_envmap_tex.framebuffers[0],
+            glm::uvec2(kCubemapSize, kCubemapSize),
+            envmap_clear_values);
 
         glsl::IblParams ibl_params = {};
         cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), ibl_pipeline_layout_, &ibl_params, sizeof(ibl_params));
@@ -1520,45 +1344,18 @@ void RealWorldApplication::drawScene(
 
         er::Helper::generateMipmapLevels(
             cmd_buf,
-            rt_envmap_tex_.image,
+            rt_envmap_tex.image,
             num_mips,
             kCubemapSize,
             kCubemapSize,
             er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
     }
     else {
-        // generate envmap from skybox.
-        cmd_buf->addImageBarrier(
-            rt_envmap_tex_.image,
-            er::Helper::getImageAsSource(),
-            er::Helper::getImageAsColorAttachment(),
-            0, 1, 0, 6);
-
-        cmd_buf->bindPipeline(er::PipelineBindPoint::GRAPHICS, cube_skybox_pipeline_);
-
-        std::vector<er::ClearValue> envmap_clear_values(6, clear_values[0]);
-        cmd_buf->beginRenderPass(cubemap_render_pass_, rt_envmap_tex_.framebuffers[0], glm::uvec2(kCubemapSize, kCubemapSize), envmap_clear_values);
-
-        glsl::SunSkyParams sun_sky_params = {};
-        sun_sky_params.sun_pos = glm::vec3(cos(s_sun_angle), sin(s_sun_angle), -0.3f);
-
-        cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), cube_skybox_pipeline_layout_, &sun_sky_params, sizeof(sun_sky_params));
-
-        cmd_buf->bindDescriptorSets(er::PipelineBindPoint::GRAPHICS, cube_skybox_pipeline_layout_, { envmap_tex_desc_set_ });
-
-        cmd_buf->draw(3);
-
-        cmd_buf->endRenderPass();
-
-        uint32_t num_mips = static_cast<uint32_t>(std::log2(kCubemapSize) + 1);
-
-        er::Helper::generateMipmapLevels(
+        skydome_->drawCubeSkyBox(
             cmd_buf,
-            rt_envmap_tex_.image,
-            num_mips,
-            kCubemapSize,
-            kCubemapSize,
-            er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+            cubemap_render_pass_,
+            envmap_tex_desc_set_,
+            kCubemapSize);
     }
 
     // generate ibl diffuse texture.
@@ -1769,24 +1566,7 @@ void RealWorldApplication::drawScene(
 
         // render skybox.
         {
-            cmd_buf->bindPipeline(er::PipelineBindPoint::GRAPHICS, skybox_pipeline_);
-            std::vector<std::shared_ptr<er::Buffer>> buffers(1);
-            std::vector<uint64_t> offsets(1);
-            buffers[0] = vertex_buffer_.buffer;
-            offsets[0] = 0;
-
-            cmd_buf->bindVertexBuffers(0, buffers, offsets);
-            cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, er::IndexType::UINT16);
-
-            glsl::SunSkyParams sun_sky_params = {};
-            sun_sky_params.sun_pos = glm::vec3(cos(s_sun_angle), sin(s_sun_angle), -0.3f);
-            s_sun_angle += 0.0001f;
-            cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT), skybox_pipeline_layout_, &sun_sky_params, sizeof(sun_sky_params));
-
-            er::DescriptorSetList desc_sets{ skybox_tex_desc_set_, frame_desc_set };
-            cmd_buf->bindDescriptorSets(er::PipelineBindPoint::GRAPHICS, skybox_pipeline_layout_, desc_sets);
-
-            cmd_buf->drawIndexed(36);
+            skydome_->draw(cmd_buf, frame_desc_set);
         }
 
         cmd_buf->endRenderPass();
@@ -1985,6 +1765,8 @@ void RealWorldApplication::drawFrame() {
 
     updateViewConstBuffer(image_index);
 
+    skydome_->update();
+
     device_->resetFences(in_flight_fences);
 
     ego::TileObject::updateAllTiles(
@@ -2079,9 +1861,7 @@ void RealWorldApplication::cleanupSwapChain() {
     }
 
     device_->freeCommandBuffers(command_pool_, command_buffers_);
-    device_->destroyPipeline(skybox_pipeline_);
     device_->destroyPipeline(blur_comp_pipeline_);
-    device_->destroyPipelineLayout(skybox_pipeline_layout_);
     device_->destroyPipelineLayout(ibl_comp_pipeline_layout_);
     device_->destroyRenderPass(final_render_pass_);
     device_->destroyRenderPass(hdr_render_pass_);
@@ -2104,12 +1884,12 @@ void RealWorldApplication::cleanup() {
     cleanupSwapChain();
 
     device_->destroyPipeline(envmap_pipeline_);
-    device_->destroyPipeline(cube_skybox_pipeline_);
     device_->destroyPipeline(lambertian_pipeline_);
     device_->destroyPipeline(ggx_pipeline_);
     device_->destroyPipeline(charlie_pipeline_);
     device_->destroyPipelineLayout(ibl_pipeline_layout_);
-    device_->destroyPipelineLayout(cube_skybox_pipeline_layout_);
+
+    skydome_->destroy(device_);
 
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
@@ -2129,7 +1909,6 @@ void RealWorldApplication::cleanup() {
     ibl_diffuse_tex_.destroy(device_);
     ibl_specular_tex_.destroy(device_);
     ibl_sheen_tex_.destroy(device_);
-    rt_envmap_tex_.destroy(device_);
     tmp_ibl_diffuse_tex_.destroy(device_);
     tmp_ibl_specular_tex_.destroy(device_);
     tmp_ibl_sheen_tex_.destroy(device_);
@@ -2138,7 +1917,6 @@ void RealWorldApplication::cleanup() {
     rt_ibl_sheen_tex_.destroy(device_);
     device_->destroyDescriptorSetLayout(view_desc_set_layout_);
     device_->destroyDescriptorSetLayout(global_tex_desc_set_layout_);
-    device_->destroyDescriptorSetLayout(skybox_desc_set_layout_);
     device_->destroyDescriptorSetLayout(ibl_desc_set_layout_);
     device_->destroyDescriptorSetLayout(ibl_comp_desc_set_layout_);
     
@@ -2146,9 +1924,6 @@ void RealWorldApplication::cleanup() {
     ego::TileObject::destoryStaticMembers(device_);
     gltf_objects_.clear();
     ego::GltfObject::destoryStaticMembers(device_);
-
-    vertex_buffer_.destroy(device_);
-    index_buffer_.destroy(device_);
 
     for (uint64_t i = 0; i < kMaxFramesInFlight; i++) {
         device_->destroySemaphore(render_finished_semaphores_[i]);

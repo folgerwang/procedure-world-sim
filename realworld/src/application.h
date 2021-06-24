@@ -3,9 +3,11 @@
 #include "shaders/global_definition.glsl.h"
 #include "engine/game_object/gltf.h"
 #include "engine/game_object/terrain.h"
+#include "engine/scene_rendering/skydome.h"
 
 namespace er = engine::renderer;
 namespace ego = engine::game_object;
+namespace es = engine::scene_rendering;
 
 struct GLFWwindow;
 namespace work {
@@ -29,9 +31,7 @@ private:
     void createGraphicsPipeline(const glm::uvec2& display_size);
     void createCubeGraphicsPipeline();
     void createComputePipeline();
-    void createGraphicPipelineLayout();
     void createCubemapPipelineLayout();
-    void createCubeSkyboxPipelineLayout();
     void createCubemapComputePipelineLayout();
     void createRenderPasses();
     void createCubemapRenderPass();
@@ -46,17 +46,12 @@ private:
         er::Format format,
         er::TextureInfo& texture);
     void createTextureSampler();
-    void createVertexBuffer();
-    void createIndexBuffer();
     void createUniformBuffers();
-    void createDescriptorPool();
     void createDescriptorSets();
     void createCommandBuffers();
     void createSyncObjects();
     void updateViewConstBuffer(uint32_t current_image, float near_z = 0.5f);
     std::vector<er::TextureDescriptor> addGlobalTextures(
-        const std::shared_ptr<er::DescriptorSet>& description_set);
-    std::vector<er::TextureDescriptor> addSkyboxTextures(
         const std::shared_ptr<er::DescriptorSet>& description_set);
     std::vector<er::TextureDescriptor> addPanoramaTextures(
         const std::shared_ptr<er::DescriptorSet>& description_set);
@@ -109,11 +104,9 @@ private:
     std::vector<std::shared_ptr<er::DescriptorSet>> desc_sets_;
     std::shared_ptr<er::DescriptorSetLayout> view_desc_set_layout_;
     std::shared_ptr<er::DescriptorSetLayout> global_tex_desc_set_layout_;
-    std::shared_ptr<er::DescriptorSetLayout> skybox_desc_set_layout_;
     std::shared_ptr<er::DescriptorSetLayout> ibl_desc_set_layout_;
     std::shared_ptr<er::DescriptorSetLayout> ibl_comp_desc_set_layout_;
     std::shared_ptr<er::DescriptorSet> global_tex_desc_set_;
-    std::shared_ptr<er::DescriptorSet> skybox_tex_desc_set_;
     std::shared_ptr<er::DescriptorSet> envmap_tex_desc_set_;
     std::shared_ptr<er::DescriptorSet> ibl_tex_desc_set_;
     std::shared_ptr<er::DescriptorSet> ibl_diffuse_tex_desc_set_;
@@ -121,13 +114,9 @@ private:
     std::shared_ptr<er::DescriptorSet> ibl_sheen_tex_desc_set_;
     std::shared_ptr<er::RenderPass> final_render_pass_;
     std::shared_ptr<er::RenderPass> cubemap_render_pass_;
-    std::shared_ptr<er::PipelineLayout> skybox_pipeline_layout_;
     std::shared_ptr<er::PipelineLayout> ibl_pipeline_layout_;
-    std::shared_ptr<er::PipelineLayout> cube_skybox_pipeline_layout_;
     std::shared_ptr<er::PipelineLayout> ibl_comp_pipeline_layout_;
-    std::shared_ptr<er::Pipeline> skybox_pipeline_;
     std::shared_ptr<er::Pipeline> envmap_pipeline_;
-    std::shared_ptr<er::Pipeline> cube_skybox_pipeline_;
     std::shared_ptr<er::Pipeline> lambertian_pipeline_;
     std::shared_ptr<er::Pipeline> ggx_pipeline_;
     std::shared_ptr<er::Pipeline> charlie_pipeline_;
@@ -145,8 +134,6 @@ private:
     std::shared_ptr<er::RenderPass> hdr_render_pass_;
     std::shared_ptr<er::RenderPass> hdr_water_render_pass_;
 
-    er::BufferInfo vertex_buffer_;
-    er::BufferInfo index_buffer_;
     er::TextureInfo sample_tex_;
     er::TextureInfo ggx_lut_tex_;
     er::TextureInfo brdf_lut_tex_;
@@ -156,7 +143,6 @@ private:
     er::TextureInfo ibl_diffuse_tex_;
     er::TextureInfo ibl_specular_tex_;
     er::TextureInfo ibl_sheen_tex_;
-    er::TextureInfo rt_envmap_tex_;
     er::TextureInfo tmp_ibl_diffuse_tex_;
     er::TextureInfo tmp_ibl_specular_tex_;
     er::TextureInfo tmp_ibl_sheen_tex_;
@@ -175,6 +161,7 @@ private:
     std::vector<std::shared_ptr<ego::GltfObject>> gltf_objects_;
     std::vector<std::string> gltf_file_names_;
     std::vector<std::string> to_load_gltf_names_;
+    std::shared_ptr<es::Skydome> skydome_;
 
     glsl::ViewParams view_params_{};
     std::chrono::high_resolution_clock::time_point last_frame_time_point_;
