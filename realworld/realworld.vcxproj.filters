@@ -111,6 +111,12 @@
     <ClCompile Include="src\engine\scene_rendering\menu.cpp">
       <Filter>Source Files\engine\scene_rendering</Filter>
     </ClCompile>
+    <ClCompile Include="src\engine\scene_rendering\volume_cloud.cpp">
+      <Filter>Source Files\engine\scene_rendering</Filter>
+    </ClCompile>
+    <ClCompile Include="src\engine\scene_rendering\volume_noise.cpp">
+      <Filter>Source Files\engine\scene_rendering</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\shaders\functions.glsl.h">
@@ -204,6 +210,12 @@
       <Filter>Header Files\engine\scene_rendering</Filter>
     </ClInclude>
     <ClInclude Include="src\engine\scene_rendering\menu.h">
+      <Filter>Header Files\engine\scene_rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="src\engine\scene_rendering\volume_cloud.h">
+      <Filter>Header Files\engine\scene_rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="src\engine\scene_rendering\volume_noise.h">
       <Filter>Header Files\engine\scene_rendering</Filter>
     </ClInclude>
   </ItemGroup>

@@ -211,6 +211,10 @@ struct SunSkyParams {
     float           pad;
 };
 
+struct CloudParams {
+    float           pad;
+};
+
 struct GameObjectsUpdateParams {
     vec3            camera_pos;
     uint            num_objects;

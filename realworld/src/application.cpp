@@ -152,7 +152,7 @@ static float s_yaw = 0.0f;
 static float s_pitch = 0.0f;
 const float s_camera_speed = 1.0f;
 static glm::vec3 s_camera_pos = glm::vec3(0, -100.0f, 0);
-static glm::vec3 s_camera_dir = glm::normalize(glm::vec3(1.0f, 0.0f, 0));
+static glm::vec3 s_camera_dir = glm::normalize(glm::vec3(1.0f, 0.0f, 0.0f));
 static glm::vec3 s_camera_up = glm::vec3(0, 1, 0);
 
 static void keyInputCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
@@ -1098,7 +1098,18 @@ void RealWorldApplication::drawFrame() {
 
     updateViewConstBuffer(image_index);
 
-    skydome_->update();
+    time_t now = time(0);
+    tm* localtm = localtime(&now);
+
+    float latitude = 37.4419f;
+    float longtitude = 122.1430f; // west.
+
+    static float hour = 6.0f;
+
+    skydome_->update(latitude, localtm->tm_yday, hour/*localtm->tm_hour*/, localtm->tm_min, localtm->tm_sec);
+    hour += 0.001f;
+
+    if (hour > 24.0f) hour = 0;
 
     device_->resetFences(in_flight_fences);
 
