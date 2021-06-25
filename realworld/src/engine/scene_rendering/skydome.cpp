@@ -412,17 +412,17 @@ void Skydome::drawCubeSkyBox(
         renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 }
 
-void Skydome::update(float latitude, float d, float th, float tm, float ts) {
+void Skydome::update(float latitude, float longtitude, float d, float th, float tm, float ts) {
     float latitude_r = glm::radians(latitude);
     float decline_angle = glm::radians(
         -23.44f * cos(2.0f * PI / 365.0f * (d + 10.0f)));
     float t = th + tm / 60.0f + ts / 3600.0f;
-    float h = -((t - 12.0f) / 24.0f) * 2.0f * PI;
+    float h = -15.0f * (t - 12.0f);
+    float delta_h = glm::radians(h - longtitude);
 
-    sun_dir_.x = cos(latitude_r) * sin(decline_angle) - sin(latitude_r) * cos(decline_angle) * cos(h);
-    sun_dir_.z = -cos(decline_angle) * sin(h);
-    sun_dir_.y = sin(latitude_r) * sin(decline_angle) + cos(latitude_r) * cos(decline_angle) * cos(h);
-
+    sun_dir_.x = cos(latitude_r) * sin(decline_angle) - sin(latitude_r) * cos(decline_angle) * cos(delta_h);
+    sun_dir_.z = cos(decline_angle) * sin(delta_h);
+    sun_dir_.y = sin(latitude_r) * sin(decline_angle) + cos(latitude_r) * cos(decline_angle) * cos(delta_h);
 }
 
 void Skydome::destroy(
