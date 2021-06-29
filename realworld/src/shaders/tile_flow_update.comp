@@ -50,11 +50,22 @@ uint adjustLayersHeight(ivec2 src_coords, ivec2 global_src_coords) {
     vec2 h_diff;
     h_diff.x = center_h.x > min_h.x ? (center_h.x - min_h.x) : 0;
     h_diff.y = center_h.y > min_h.y ? (center_h.y - min_h.y) : 0;
-    h_diff = min(h_diff * 0.5f, layer_thickness.yz * 1.2f);
 
-    float noise = smoothNoise(vec2(global_src_coords) * vec2(0.343, 0.434) + tile_params.current_time);
+    h_diff.x = min(h_diff.x * 0.125f, layer_thickness.y * 0.125f);
+    h_diff.y = min(h_diff.y * 0.5f, layer_thickness.z * 1.2f);
 
-    h_diff *= (noise + 0.5f);
+    if (layer_thickness.z < 0.05f) {
+        h_diff.x = 0.0f;
+    }
+    else {
+        h_diff.x = min(h_diff.x, 0.005f);
+    }
+
+    float noise = smoothNoise(
+        vec2(global_src_coords) *
+        vec2(0.343, 0.434) +
+        tile_params.current_time);
+    h_diff.y *= (noise + 0.5f);
 
     uint packed_adj_height = 0;
     if (h_diff.x > 0) { // adjust soil height.

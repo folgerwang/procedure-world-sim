@@ -1865,16 +1865,24 @@ VkWriteDescriptorSet addDescriptWrite(
     return result;
 }
 
-void create2DImage(
+void createTextureImage(
     const std::shared_ptr<renderer::Device>& device,
-    glm::vec2 tex_size,
+    const glm::vec3& tex_size,
     const renderer::Format& format,
     const renderer::ImageTiling& tiling,
     const renderer::ImageUsageFlags& usage,
     const renderer::MemoryPropertyFlags& properties,
     std::shared_ptr<renderer::Image>& image,
     std::shared_ptr<renderer::DeviceMemory>& image_memory) {
-    image = device->createImage(renderer::ImageType::TYPE_2D, glm::uvec3(tex_size, 1), format, usage, tiling, renderer::ImageLayout::UNDEFINED);
+    image = device->createImage(
+        tex_size.z > 1 ?
+            renderer::ImageType::TYPE_3D :
+            renderer::ImageType::TYPE_2D,
+        tex_size,
+        format,
+        usage,
+        tiling,
+        renderer::ImageLayout::UNDEFINED);
     auto mem_requirements = device->getImageMemoryRequirements(image);
     image_memory = device->allocateMemory(mem_requirements.size,
         mem_requirements.memory_type_bits,

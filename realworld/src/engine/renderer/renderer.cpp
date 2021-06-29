@@ -282,9 +282,9 @@ void Helper::create2DTextureImage(
 
     device->updateBufferMemory(staging_buffer_memory, image_size, pixels);
 
-    vk::helper::create2DImage(
+    vk::helper::createTextureImage(
         device,
-        glm::vec2(tex_width, tex_height),
+        glm::vec3(tex_width, tex_height, 1),
         format,
         ImageTiling::OPTIMAL,
         SET_FLAG_BIT(ImageUsage, TRANSFER_DST_BIT) |
@@ -304,15 +304,15 @@ void Helper::create2DTextureImage(
 void Helper::create2DTextureImage(
     const DeviceInfo& device_info,
     Format format,
-    glm::uvec2 size,
+    const glm::uvec2& size,
     TextureInfo& texture_2d,
     const renderer::ImageUsageFlags& usage,
     const renderer::ImageLayout& image_layout) {
     const auto& device = device_info.device;
     auto is_depth = vk::helper::isDepthFormat(format);
-    vk::helper::create2DImage(
+    vk::helper::createTextureImage(
         device,
-        size,
+        glm::uvec3(size, 1),
         format,
         ImageTiling::OPTIMAL,
         usage,
@@ -332,6 +332,42 @@ void Helper::create2DTextureImage(
     vk::helper::transitionImageLayout(
         device_info,
         texture_2d.image,
+        format,
+        ImageLayout::UNDEFINED,
+        image_layout);
+}
+
+void Helper::create3DTextureImage(
+    const DeviceInfo& device_info,
+    Format format,
+    const glm::uvec3& size,
+    TextureInfo& texture_3d,
+    const renderer::ImageUsageFlags& usage,
+    const renderer::ImageLayout& image_layout) {
+    const auto& device = device_info.device;
+    auto is_depth = vk::helper::isDepthFormat(format);
+    vk::helper::createTextureImage(
+        device,
+        size,
+        format,
+        ImageTiling::OPTIMAL,
+        usage,
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        texture_3d.image,
+        texture_3d.memory);
+
+    texture_3d.view =
+        device->createImageView(
+            texture_3d.image,
+            ImageViewType::VIEW_3D,
+            format,
+            is_depth ?
+            SET_FLAG_BIT(ImageAspect, DEPTH_BIT) :
+            SET_FLAG_BIT(ImageAspect, COLOR_BIT));
+
+    vk::helper::transitionImageLayout(
+        device_info,
+        texture_3d.image,
         format,
         ImageLayout::UNDEFINED,
         image_layout);

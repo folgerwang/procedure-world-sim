@@ -1742,7 +1742,7 @@ static renderer::ShaderModuleList getTileShaderModules(
     std::shared_ptr<renderer::Device> device) {
     uint64_t vert_code_size, frag_code_size;
     renderer::ShaderModuleList shader_modules(2);
-    auto vert_shader_code = engine::helper::readFile("lib/shaders/tile_vert.spv", vert_code_size);
+    auto vert_shader_code = engine::helper::readFile("lib/shaders/tile_soil_vert.spv", vert_code_size);
     auto frag_shader_code = engine::helper::readFile("lib/shaders/tile_frag.spv", frag_code_size);
 
     shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());

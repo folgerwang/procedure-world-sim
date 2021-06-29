@@ -354,8 +354,16 @@ public:
     static void create2DTextureImage(
         const DeviceInfo& device_info,
         Format depth_format,
-        glm::uvec2 size,
-        TextureInfo& depth_buffer,
+        const glm::uvec2& size,
+        TextureInfo& texture_info,
+        const renderer::ImageUsageFlags& usage,
+        const renderer::ImageLayout& image_layout);
+
+    static void create3DTextureImage(
+        const DeviceInfo& device_info,
+        Format depth_format,
+        const glm::uvec3& size,
+        TextureInfo& texture_info,
         const renderer::ImageUsageFlags& usage,
         const renderer::ImageLayout& image_layout);
 

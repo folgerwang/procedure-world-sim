@@ -140,9 +140,9 @@ VkWriteDescriptorSet addDescriptWrite(
     uint32_t binding,
     const VkDescriptorType& desc_type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 
-void create2DImage(
+void createTextureImage(
     const std::shared_ptr<renderer::Device>& device,
-    glm::vec2 tex_size,
+    const glm::vec3& tex_size,
     const renderer::Format& format,
     const renderer::ImageTiling& tiling,
     const renderer::ImageUsageFlags& usage,

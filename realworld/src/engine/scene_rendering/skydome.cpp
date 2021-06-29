@@ -412,7 +412,7 @@ void Skydome::drawCubeSkyBox(
         renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 }
 
-void Skydome::update(float latitude, float longtitude, float d, float th, float tm, float ts) {
+void Skydome::update(float latitude, float longtitude, int d, int th, int tm, int ts) {
     float latitude_r = glm::radians(latitude);
     float decline_angle = glm::radians(
         -23.44f * cos(2.0f * PI / 365.0f * (d + 10.0f)));

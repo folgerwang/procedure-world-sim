@@ -54,7 +54,7 @@ public:
         const std::vector<renderer::ClearValue>& clear_values,
         const uint32_t& cube_size);
 
-    void update(float latitude, float longtitude, float d, float h, float m, float s);
+    void update(float latitude, float longtitude, int d, int h, int m, int s);
 
     void destroy(const std::shared_ptr<renderer::Device>& device);
 };

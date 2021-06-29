@@ -32,7 +32,16 @@ void main()
     height_info = terrainMap(map_coords1);
     imageStore(rock_layer, pixel_coords * 2 + ivec2(1, 1), vec4(height_info.x));
 
-    imageStore(soil_water_layer, pixel_coords, vec4(0, 10.0f / SOIL_WATER_LAYER_MAX_THICKNESS, 0, 0));
+    const float kWaterInitLevel = 5.0f;
+    const float kSoilInitLevel = 20.0f;
+
+    imageStore(
+        soil_water_layer,
+        pixel_coords,
+        vec4(
+            kSoilInitLevel / SOIL_WATER_LAYER_MAX_THICKNESS,
+            kWaterInitLevel / SOIL_WATER_LAYER_MAX_THICKNESS,
+            0, 0));
 
     if (((pixel_coords.x | pixel_coords.y) & 0x01) == 0) {
         imageStore(orther_info_layer, pixel_coords / 2, vec4(0.5f / SNOW_LAYER_MAX_THICKNESS));

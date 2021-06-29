@@ -1104,7 +1104,7 @@ void RealWorldApplication::drawFrame() {
     float latitude = 37.4419f;
     float longtitude = -122.1430f; // west.
 
-    skydome_->update(latitude, longtitude, localtm->tm_yday, localtm->tm_hour, localtm->tm_min, localtm->tm_sec);
+    skydome_->update(latitude, longtitude, localtm->tm_yday, 22/*localtm->tm_hour*/, localtm->tm_min, localtm->tm_sec);
 
     device_->resetFences(in_flight_fences);
 
