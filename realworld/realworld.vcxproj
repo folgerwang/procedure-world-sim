@@ -157,6 +157,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_gltf_indirect_draw.comp -o $(ProjectDir)lib\shaders\update_gltf_indirect_draw_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_instance_buffer.comp -o $(ProjectDir)lib\shaders\update_instance_buffer_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_game_objects.comp -o $(ProjectDir)lib\shaders\update_game_objects_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\airflow_update.comp -o $(ProjectDir)lib\shaders\airflow_update_comp.spv
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -242,6 +243,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_gltf_indirect_draw.comp -o $(ProjectDir)lib\shaders\update_gltf_indirect_draw_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_instance_buffer.comp -o $(ProjectDir)lib\shaders\update_instance_buffer_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_game_objects.comp -o $(ProjectDir)lib\shaders\update_game_objects_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\airflow_update.comp -o $(ProjectDir)lib\shaders\airflow_update_comp.spv
 </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
@@ -257,6 +259,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\updat
     <ClCompile Include="src\engine\renderer\vulkan\vk_renderer_helper.cpp" />
     <ClCompile Include="src\engine\scene_rendering\ibl_creator.cpp" />
     <ClCompile Include="src\engine\scene_rendering\menu.cpp" />
+    <ClCompile Include="src\engine\scene_rendering\natural_system.cpp" />
     <ClCompile Include="src\engine\scene_rendering\skydome.cpp" />
     <ClCompile Include="src\engine\scene_rendering\volume_cloud.cpp" />
     <ClCompile Include="src\engine\scene_rendering\volume_noise.cpp" />
@@ -286,6 +289,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\updat
     <ClInclude Include="src\engine\renderer\vulkan\vk_renderer_helper.h" />
     <ClInclude Include="src\engine\scene_rendering\ibl_creator.h" />
     <ClInclude Include="src\engine\scene_rendering\menu.h" />
+    <ClInclude Include="src\engine\scene_rendering\natural_system.h" />
     <ClInclude Include="src\engine\scene_rendering\skydome.h" />
     <ClInclude Include="src\engine\scene_rendering\volume_cloud.h" />
     <ClInclude Include="src\engine\scene_rendering\volume_noise.h" />
@@ -304,6 +308,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\updat
     <ClInclude Include="src\third_party\imgui\imgui_internal.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="src\shaders\airflow_update.comp" />
     <None Include="src\shaders\base.frag" />
     <None Include="src\shaders\base.vert" />
     <None Include="src\shaders\cube_skybox.frag" />

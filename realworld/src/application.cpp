@@ -415,6 +415,11 @@ void RealWorldApplication::initVulkan() {
         swap_chain_info_.extent,
         kCubemapSize);
 
+    natural_system_ = std::make_shared<es::NaturalSystem>(
+        device_info_,
+        descriptor_pool_,
+        texture_sampler_);
+
     createDescriptorSets();
 
     for (auto& image : swap_chain_info_.images) {
@@ -449,7 +454,8 @@ void RealWorldApplication::initVulkan() {
         descriptor_pool_,
         texture_sampler_,
         hdr_color_buffer_copy_.view,
-        depth_buffer_copy_.view);
+        depth_buffer_copy_.view,
+        natural_system_->getAirflowTex());
 
     menu_ = std::make_shared<es::Menu>(
         device_info_,
@@ -553,7 +559,8 @@ void RealWorldApplication::recreateSwapChain() {
         descriptor_pool_,
         texture_sampler_,
         hdr_color_buffer_copy_.view,
-        depth_buffer_copy_.view);
+        depth_buffer_copy_.view,
+        natural_system_->getAirflowTex());
 
     menu_->init(
         device_info_,
@@ -926,6 +933,10 @@ void RealWorldApplication::drawScene(
             ego::TileObject::updateTileFlowBuffers(cmd_buf, current_time_, s_soil_water);
             ego::TileObject::updateTileBuffers(cmd_buf, current_time_, s_soil_water);
         }
+    }
+
+    {
+        natural_system_->updateAirflowBuffer(cmd_buf);
     }
 
     // this has to be happened after tile update, or you wont get the right height info.

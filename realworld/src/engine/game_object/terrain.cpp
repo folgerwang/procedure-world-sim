@@ -1633,9 +1633,10 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     const std::shared_ptr<renderer::ImageView>& soil_water_layer,
     const std::shared_ptr<renderer::ImageView>& grass_snow_layer,
     const std::shared_ptr<renderer::ImageView>& water_normal,
-    const std::shared_ptr<renderer::ImageView>& water_flow) {
+    const std::shared_ptr<renderer::ImageView>& water_flow,
+    const std::shared_ptr<renderer::ImageView>& airflow_tex) {
     std::vector<renderer::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(7);
+    descriptor_writes.reserve(8);
 
     // src color.
     renderer::Helper::addOneTexture(
@@ -1698,6 +1699,15 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
         WATER_FLOW_BUFFER_INDEX,
         texture_sampler,
         water_flow,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_VOLUME_TEST_INDEX,
+        texture_sampler,
+        airflow_tex,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -1825,7 +1835,7 @@ static std::shared_ptr<renderer::DescriptorSetLayout> createTileFlowUpdateDescri
 
 static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescriptorSetLayout(
     const std::shared_ptr<renderer::Device>& device) {
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings(7);
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings(8);
     bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
         SRC_COLOR_TEX_INDEX);
     bindings[1] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
@@ -1844,6 +1854,9 @@ static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescript
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     bindings[6] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
         WATER_FLOW_BUFFER_INDEX,
+        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
+    bindings[7] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        SRC_VOLUME_TEST_INDEX,
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     return device->createDescriptorSetLayout(bindings);
 }
@@ -2014,59 +2027,6 @@ size_t generateHash(
     hash_combine(hash, max.y);
     hash_combine(hash, segment_count);
     return hash;
-}
-
-static void transitMapTextureToStoreImage(
-    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
-    const std::vector<std::shared_ptr<renderer::Image>>& images) {
-    renderer::BarrierList barrier_list;
-    barrier_list.image_barriers.reserve(images.size());
-
-    for (auto& image : images) {
-        renderer::ImageMemoryBarrier barrier;
-        barrier.image = image;
-        barrier.old_layout = renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
-        barrier.new_layout = renderer::ImageLayout::GENERAL;
-        barrier.src_access_mask = SET_FLAG_BIT(Access, SHADER_READ_BIT);
-        barrier.dst_access_mask = 
-            SET_FLAG_BIT(Access, SHADER_READ_BIT) |
-            SET_FLAG_BIT(Access, SHADER_WRITE_BIT);
-        barrier.subresource_range.aspect_mask = SET_FLAG_BIT(ImageAspect, COLOR_BIT);
-        barrier_list.image_barriers.push_back(barrier);
-    }
-
-    cmd_buf->addBarriers(
-        barrier_list,
-        SET_FLAG_BIT(PipelineStage, VERTEX_SHADER_BIT) |
-        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT),
-        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT));
-}
-
-static void transitMapTextureFromStoreImage(
-    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
-    const std::vector<std::shared_ptr<renderer::Image>>& images) {
-    renderer::BarrierList barrier_list;
-    barrier_list.image_barriers.reserve(images.size());
-
-    for (auto& image : images) {
-        renderer::ImageMemoryBarrier barrier;
-        barrier.image = image;
-        barrier.old_layout = renderer::ImageLayout::GENERAL;
-        barrier.new_layout = renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
-        barrier.src_access_mask = 
-            SET_FLAG_BIT(Access, SHADER_READ_BIT) |
-            SET_FLAG_BIT(Access, SHADER_WRITE_BIT);
-        barrier.dst_access_mask = SET_FLAG_BIT(Access, SHADER_READ_BIT);
-            
-        barrier.subresource_range.aspect_mask = SET_FLAG_BIT(ImageAspect, COLOR_BIT);
-        barrier_list.image_barriers.push_back(barrier);
-    }
-
-    cmd_buf->addBarriers(
-        barrier_list,
-        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT),
-        SET_FLAG_BIT(PipelineStage, VERTEX_SHADER_BIT) |
-        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT));
 }
 
 } // namespace
@@ -2507,7 +2467,8 @@ void TileObject::updateStaticDescriptorSet(
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& src_texture,
-    const std::shared_ptr<renderer::ImageView>& src_depth) {
+    const std::shared_ptr<renderer::ImageView>& src_depth,
+    const std::shared_ptr<renderer::ImageView>& airflow_tex) {
 
     if (tile_res_desc_set_[0] == nullptr) {
         generateStaticDescriptorSet(
@@ -2527,7 +2488,8 @@ void TileObject::updateStaticDescriptorSet(
             soil_water_layer_[soil_water].view,
             grass_snow_layer_.view,
             water_normal_.view,
-            water_flow_.view);
+            water_flow_.view,
+            airflow_tex);
         device->updateDescriptorSets(tile_res_descs, {});
     }
 }
@@ -2548,7 +2510,7 @@ bool TileObject::validTileBySize(
 void TileObject::generateTileBuffers(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
 
-    transitMapTextureToStoreImage(
+    renderer::helper::transitMapTextureToStoreImage(
         cmd_buf,
         {rock_layer_.image,
          soil_water_layer_[0].image,
@@ -2575,7 +2537,7 @@ void TileObject::generateTileBuffers(
         (dispatch_count + 7) / 8,
         (dispatch_count + 7) / 8, 1);
 
-    transitMapTextureFromStoreImage(
+    renderer::helper::transitMapTextureFromStoreImage(
         cmd_buf,
         { rock_layer_.image,
          soil_water_layer_[0].image,
@@ -2587,7 +2549,7 @@ void TileObject::updateTileBuffers(
     float current_time,
     int soil_water) {
 
-    transitMapTextureToStoreImage(
+    renderer::helper::transitMapTextureToStoreImage(
         cmd_buf,
         {soil_water_layer_[soil_water].image,
          water_normal_.image});
@@ -2617,7 +2579,7 @@ void TileObject::updateTileBuffers(
         (dispatch_count + 15) / 16,
         (dispatch_count + 15) / 16, 1);
 
-    transitMapTextureFromStoreImage(
+    renderer::helper::transitMapTextureFromStoreImage(
         cmd_buf,
         {soil_water_layer_[soil_water].image,
          water_normal_.image});
@@ -2628,7 +2590,7 @@ void TileObject::updateTileFlowBuffers(
     float current_time,
     int soil_water) {
 
-    transitMapTextureToStoreImage(
+    renderer::helper::transitMapTextureToStoreImage(
         cmd_buf,
         {soil_water_layer_[soil_water].image,
          soil_water_layer_[1 - soil_water].image,
@@ -2660,7 +2622,7 @@ void TileObject::updateTileFlowBuffers(
         (dispatch_count + 15) / 16,
         (dispatch_count + 15) / 16, 1);
 
-    transitMapTextureFromStoreImage(
+    renderer::helper::transitMapTextureFromStoreImage(
         cmd_buf,
         {soil_water_layer_[soil_water].image,
          soil_water_layer_[1 - soil_water].image,

@@ -117,6 +117,9 @@
     <ClCompile Include="src\engine\scene_rendering\volume_noise.cpp">
       <Filter>Source Files\engine\scene_rendering</Filter>
     </ClCompile>
+    <ClCompile Include="src\engine\scene_rendering\natural_system.cpp">
+      <Filter>Source Files\engine\scene_rendering</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\shaders\functions.glsl.h">
@@ -218,6 +221,9 @@
     <ClInclude Include="src\engine\scene_rendering\volume_noise.h">
       <Filter>Header Files\engine\scene_rendering</Filter>
     </ClInclude>
+    <ClInclude Include="src\engine\scene_rendering\natural_system.h">
+      <Filter>Header Files\engine\scene_rendering</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\shaders\cube_ibl.frag">
@@ -284,6 +290,9 @@
       <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\tile_flow_update.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\airflow_update.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
   </ItemGroup>

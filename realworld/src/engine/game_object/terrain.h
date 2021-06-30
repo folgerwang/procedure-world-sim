@@ -120,7 +120,8 @@ public:
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
         const std::shared_ptr<renderer::ImageView>& src_texture,
-        const std::shared_ptr<renderer::ImageView>& src_depth);
+        const std::shared_ptr<renderer::ImageView>& src_depth,
+        const std::shared_ptr<renderer::ImageView>& airflow_tex);
 
     static void generateStaticDescriptorSet(
         const std::shared_ptr<renderer::Device>& device,

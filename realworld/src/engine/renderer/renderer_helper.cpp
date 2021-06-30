@@ -160,6 +160,59 @@ PipelineDepthStencilStateCreateInfo fillPipelineDepthStencilStateCreateInfo(
     return depth_stencil;
 }
 
+void transitMapTextureToStoreImage(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    const std::vector<std::shared_ptr<renderer::Image>>& images) {
+    renderer::BarrierList barrier_list;
+    barrier_list.image_barriers.reserve(images.size());
+
+    for (auto& image : images) {
+        renderer::ImageMemoryBarrier barrier;
+        barrier.image = image;
+        barrier.old_layout = renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+        barrier.new_layout = renderer::ImageLayout::GENERAL;
+        barrier.src_access_mask = SET_FLAG_BIT(Access, SHADER_READ_BIT);
+        barrier.dst_access_mask =
+            SET_FLAG_BIT(Access, SHADER_READ_BIT) |
+            SET_FLAG_BIT(Access, SHADER_WRITE_BIT);
+        barrier.subresource_range.aspect_mask = SET_FLAG_BIT(ImageAspect, COLOR_BIT);
+        barrier_list.image_barriers.push_back(barrier);
+    }
+
+    cmd_buf->addBarriers(
+        barrier_list,
+        SET_FLAG_BIT(PipelineStage, VERTEX_SHADER_BIT) |
+        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT),
+        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT));
+}
+
+void transitMapTextureFromStoreImage(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    const std::vector<std::shared_ptr<renderer::Image>>& images) {
+    renderer::BarrierList barrier_list;
+    barrier_list.image_barriers.reserve(images.size());
+
+    for (auto& image : images) {
+        renderer::ImageMemoryBarrier barrier;
+        barrier.image = image;
+        barrier.old_layout = renderer::ImageLayout::GENERAL;
+        barrier.new_layout = renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+        barrier.src_access_mask =
+            SET_FLAG_BIT(Access, SHADER_READ_BIT) |
+            SET_FLAG_BIT(Access, SHADER_WRITE_BIT);
+        barrier.dst_access_mask = SET_FLAG_BIT(Access, SHADER_READ_BIT);
+
+        barrier.subresource_range.aspect_mask = SET_FLAG_BIT(ImageAspect, COLOR_BIT);
+        barrier_list.image_barriers.push_back(barrier);
+    }
+
+    cmd_buf->addBarriers(
+        barrier_list,
+        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT),
+        SET_FLAG_BIT(PipelineStage, VERTEX_SHADER_BIT) |
+        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT));
+}
+
 } // namespace helper
 } // namespace renderer
 } // namespace engine

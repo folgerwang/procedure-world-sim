@@ -67,6 +67,10 @@
 #define DST_SOIL_WATER_LAYER_BUFFER_INDEX   7
 #define DST_WATER_NORMAL_BUFFER_INDEX       8
 #define DST_WATER_FLOW_BUFFER_INDEX         9
+#define SRC_VOLUME_TEST_INDEX               10
+
+// Airflow texture.
+#define DST_AIRFLOW_TEX_INDEX               0
 
 // IBL texure index
 #define PANORAMA_TEX_INDEX          0
@@ -183,6 +187,10 @@ struct TileUpdateParams {
     float           inv_width_pixel_count;
     float           current_time;
     float           pad;
+};
+
+struct AirflowUpdateParams {
+    vec4            pad;
 };
 
 struct TileParams {

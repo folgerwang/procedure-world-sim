@@ -4,6 +4,7 @@
 #include "engine/game_object/gltf.h"
 #include "engine/game_object/terrain.h"
 #include "engine/scene_rendering/skydome.h"
+#include "engine/scene_rendering/natural_system.h"
 #include "engine/scene_rendering/ibl_creator.h"
 #include "engine/scene_rendering/menu.h"
 
@@ -119,6 +120,7 @@ private:
 
     std::vector<std::shared_ptr<ego::GltfObject>> gltf_objects_;
     std::shared_ptr<es::Skydome> skydome_;
+    std::shared_ptr<es::NaturalSystem> natural_system_;
     std::shared_ptr<es::IblCreator> ibl_creator_;
     std::shared_ptr<es::Menu> menu_;
 

@@ -71,6 +71,14 @@ PipelineDepthStencilStateCreateInfo fillPipelineDepthStencilStateCreateInfo(
     StencilOpState front = {},
     StencilOpState back = {});
 
+void transitMapTextureToStoreImage(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    const std::vector<std::shared_ptr<renderer::Image>>& images);
+
+void transitMapTextureFromStoreImage(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    const std::vector<std::shared_ptr<renderer::Image>>& images);
+
 } // namespace helper
 } // namespace renderer
 } // namespace engine
