@@ -120,8 +120,8 @@ void main() {
     float ior = 1.5;
     float f0_ior = 0.04;
 
-    material_info.metallic = 0.3f;//material.metallic_factor;
-    material_info.perceptualRoughness = 0.8f;//material.roughness_factor;
+    material_info.metallic = 0.6;//0.3f;//material.metallic_factor;
+    material_info.perceptualRoughness = 0.4;//0.8f;//material.roughness_factor;
 
     // Achromatic f0 based on IOR.
     vec3 f0 = vec3(f0_ior);

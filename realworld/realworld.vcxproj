@@ -250,6 +250,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\airfl
   <ItemGroup>
     <ClCompile Include="src\application.cpp" />
     <ClCompile Include="src\engine\engine_helper.cpp" />
+    <ClCompile Include="src\engine\game_object\debug_draw.cpp" />
     <ClCompile Include="src\engine\game_object\gltf.cpp" />
     <ClCompile Include="src\engine\game_object\terrain.cpp" />
     <ClCompile Include="src\engine\renderer\renderer.cpp" />
@@ -274,6 +275,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\airfl
   <ItemGroup>
     <ClInclude Include="src\application.h" />
     <ClInclude Include="src\engine\engine_helper.h" />
+    <ClInclude Include="src\engine\game_object\debug_draw.h" />
     <ClInclude Include="src\engine\game_object\gltf.h" />
     <ClInclude Include="src\engine\game_object\terrain.h" />
     <ClInclude Include="src\engine\renderer\command_buffer.h" />

@@ -135,7 +135,7 @@ void main() {
     // bump map
     vec3 normal = water_normal;
 
-    vec3 albedo = vec3(0.10, 0.10, 0.3)*.75f;
+    vec3 albedo = vec3(0.11, 0.115, 0.15)*.75f;
     albedo = mix(albedo, bg_color, thickness_fade_rate);
 
     MaterialInfo material_info;

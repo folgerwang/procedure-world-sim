@@ -120,6 +120,9 @@
     <ClCompile Include="src\engine\scene_rendering\weather_system.cpp">
       <Filter>Source Files\engine\scene_rendering</Filter>
     </ClCompile>
+    <ClCompile Include="src\engine\game_object\debug_draw.cpp">
+      <Filter>Source Files\engine\game_object</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\shaders\functions.glsl.h">
@@ -223,6 +226,9 @@
     </ClInclude>
     <ClInclude Include="src\engine\scene_rendering\weather_system.h">
       <Filter>Header Files\engine\scene_rendering</Filter>
+    </ClInclude>
+    <ClInclude Include="src\engine\game_object\debug_draw.h">
+      <Filter>Header Files\engine\game_object</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

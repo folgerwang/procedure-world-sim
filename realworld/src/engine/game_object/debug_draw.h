@@ -1,0 +1,137 @@
+#pragma once
+#include "engine/renderer/renderer.h"
+
+namespace engine {
+namespace game_object {
+
+class DebugDrawObject {
+    const renderer::DeviceInfo& device_info_;
+
+    glm::vec2 min_;
+    glm::vec2 max_;
+
+    static std::shared_ptr<renderer::DescriptorSet> creator_buffer_desc_set_;
+    static std::shared_ptr<renderer::DescriptorSet> tile_update_buffer_desc_set_[2]; // soil and water double buffer.
+    static std::shared_ptr<renderer::DescriptorSet> tile_flow_update_buffer_desc_set_[2]; // soil and water double buffer.
+    static std::shared_ptr<renderer::DescriptorSetLayout> tile_creator_desc_set_layout_;
+    static std::shared_ptr<renderer::PipelineLayout> tile_creator_pipeline_layout_;
+    static std::shared_ptr<renderer::Pipeline> tile_creator_pipeline_;
+    static std::shared_ptr<renderer::DescriptorSetLayout> tile_update_desc_set_layout_;
+    static std::shared_ptr<renderer::PipelineLayout> tile_update_pipeline_layout_;
+    static std::shared_ptr<renderer::Pipeline> tile_update_pipeline_;
+    static std::shared_ptr<renderer::DescriptorSetLayout> tile_flow_update_desc_set_layout_;
+    static std::shared_ptr<renderer::PipelineLayout> tile_flow_update_pipeline_layout_;
+    static std::shared_ptr<renderer::Pipeline> tile_flow_update_pipeline_;
+    static std::shared_ptr<renderer::PipelineLayout> tile_pipeline_layout_;
+    static std::shared_ptr<renderer::Pipeline> tile_pipeline_;
+    static std::shared_ptr<renderer::DescriptorSetLayout> tile_res_desc_set_layout_;
+    static std::shared_ptr<renderer::DescriptorSet> tile_res_desc_set_[2];
+    static std::shared_ptr<renderer::Pipeline> tile_water_pipeline_;
+
+public:
+    DebugDrawObject() = delete;
+    DebugDrawObject(
+        const renderer::DeviceInfo& device_info,
+        const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,
+        const glm::vec2& min,
+        const glm::vec2& max,
+        const size_t& hash_value,
+        const uint32_t& block_idx);
+
+    ~DebugDrawObject() {
+        destory();
+    }
+
+    void destory();
+
+    static void initStaticMembers(
+        const renderer::DeviceInfo& device_info,
+        const std::shared_ptr<renderer::RenderPass>& render_pass,
+        const std::shared_ptr<renderer::RenderPass>& water_render_pass,
+        const renderer::GraphicPipelineInfo& graphic_pipeline_info,
+        const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
+        const glm::uvec2& display_size);
+
+    static void createStaticMembers(
+        const std::shared_ptr<renderer::Device>& device,
+        const std::shared_ptr<renderer::RenderPass>& render_pass,
+        const std::shared_ptr<renderer::RenderPass>& water_render_pass,
+        const renderer::GraphicPipelineInfo& graphic_pipeline_info,
+        const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
+        const glm::uvec2& display_size);
+
+    static void recreateStaticMembers(
+        const std::shared_ptr<renderer::Device>& device,
+        const std::shared_ptr<renderer::RenderPass>& render_pass,
+        const std::shared_ptr<renderer::RenderPass>& water_render_pass,
+        const renderer::GraphicPipelineInfo& graphic_pipeline_info,
+        const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
+        const glm::uvec2& display_size);
+
+    static void destoryStaticMembers(
+        const std::shared_ptr<renderer::Device>& device);
+
+    static void updateStaticDescriptorSet(
+        const std::shared_ptr<renderer::Device>& device,
+        const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+        const std::shared_ptr<renderer::Sampler>& texture_sampler,
+        const std::shared_ptr<renderer::ImageView>& src_texture,
+        const std::shared_ptr<renderer::ImageView>& src_depth,
+        const std::shared_ptr<renderer::ImageView>& airflow_tex);
+
+    static void generateStaticDescriptorSet(
+        const std::shared_ptr<renderer::Device>& device,
+        const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+        const std::shared_ptr<renderer::Sampler>& texture_sampler);
+
+    static void generateAllDescriptorSets(
+        const std::shared_ptr<renderer::Device>& device,
+        const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+        const std::shared_ptr<renderer::Sampler>& texture_sampler);
+
+    static void generateTileBuffers(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
+
+    static void updateTileBuffers(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+        float current_time,
+        int soil_water);
+
+    static void updateTileFlowBuffers(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+        float current_time,
+        int soil_water);
+
+    static void drawAllVisibleTiles(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+        const renderer::DescriptorSetList& desc_set_list,
+        const glm::uvec2 display_size,
+        int soil_water,
+        float delta_t,
+        float cur_time,
+        bool is_base_pass);
+
+    static void updateAllTiles(
+        const renderer::DeviceInfo& device_info,
+        const std::shared_ptr<renderer::DescriptorPool> descriptor_pool,
+        const float& tile_size,
+        const glm::vec2& camera_pos);
+
+    static void destoryAllTiles();
+
+    bool validTileBySize(
+        const glm::ivec2& min_tile_idx,
+        const glm::ivec2& max_tile_idx,
+        const float& tile_size);
+       
+    void draw(const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+        const renderer::DescriptorSetList& desc_set_list,
+        const glm::uvec2 display_size,
+        int soil_water,
+        float delta_t,
+        float cur_time,
+        bool is_base_pass);
+};
+
+} // namespace game_object
+} // namespace engine
