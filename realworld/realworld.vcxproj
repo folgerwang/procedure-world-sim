@@ -259,10 +259,10 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\airfl
     <ClCompile Include="src\engine\renderer\vulkan\vk_renderer_helper.cpp" />
     <ClCompile Include="src\engine\scene_rendering\ibl_creator.cpp" />
     <ClCompile Include="src\engine\scene_rendering\menu.cpp" />
-    <ClCompile Include="src\engine\scene_rendering\natural_system.cpp" />
     <ClCompile Include="src\engine\scene_rendering\skydome.cpp" />
     <ClCompile Include="src\engine\scene_rendering\volume_cloud.cpp" />
     <ClCompile Include="src\engine\scene_rendering\volume_noise.cpp" />
+    <ClCompile Include="src\engine\scene_rendering\weather_system.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\third_party\imgui\backends\imgui_impl_glfw.cpp" />
     <ClCompile Include="src\third_party\imgui\backends\imgui_impl_vulkan.cpp" />
@@ -289,7 +289,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\airfl
     <ClInclude Include="src\engine\renderer\vulkan\vk_renderer_helper.h" />
     <ClInclude Include="src\engine\scene_rendering\ibl_creator.h" />
     <ClInclude Include="src\engine\scene_rendering\menu.h" />
-    <ClInclude Include="src\engine\scene_rendering\natural_system.h" />
+    <ClInclude Include="src\engine\scene_rendering\weather_system.h" />
     <ClInclude Include="src\engine\scene_rendering\skydome.h" />
     <ClInclude Include="src\engine\scene_rendering\volume_cloud.h" />
     <ClInclude Include="src\engine\scene_rendering\volume_noise.h" />

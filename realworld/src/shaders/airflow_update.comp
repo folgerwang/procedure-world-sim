@@ -4,16 +4,24 @@
 #include "tile_common.glsl.h"
 
 layout(push_constant) uniform AirflowUniformBufferObject {
-  AirflowUpdateParams airflow_params;
+  AirflowUpdateParams params;
 };
 
-layout(set = 0, binding = DST_AIRFLOW_TEX_INDEX, rgba8_snorm) uniform image3D dst_airflow;
+layout(set = 0, binding = DST_AIRFLOW_TEX_INDEX, rg16) uniform image3D dst_airflow;
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 void main()
 {
   // skip 2 lines on border.
   ivec3 pixel_coords = ivec3(gl_GlobalInvocationID.xyz);
+  vec3 uvw = (pixel_coords + 0.5f) * params.inv_size;
+  vec3 position_ws;
+  position_ws.xy = uvw.xy * params.world_range.xy + params.world_min.xy;
+  position_ws.z = exp2(uvw.z * log2(1.0f + params.world_range.z)) - 1.0f + params.world_min.z;
 
-  imageStore(dst_airflow, pixel_coords, vec4(pixel_coords.x / 1024.0f, pixel_coords.y / 1024.0f,  pixel_coords.z / 32.0f, 0));
+  float sea_level_temp = 24.0f;
+  float temperature = sea_level_temp - position_ws.z /1000.0f * 6.5f;
+  float temp_normalized = (temperature + 100.0f) / 200.0f;
+
+  imageStore(dst_airflow, pixel_coords, vec4(temp_normalized));
 }

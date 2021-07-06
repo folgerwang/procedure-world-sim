@@ -29,7 +29,6 @@ layout(set = TILE_PARAMS_SET, binding = SRC_COLOR_TEX_INDEX) uniform sampler2D s
 layout(set = TILE_PARAMS_SET, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
 layout(set = TILE_PARAMS_SET, binding = WATER_NORMAL_BUFFER_INDEX) uniform sampler2D water_normal_tex;
 layout(set = TILE_PARAMS_SET, binding = WATER_FLOW_BUFFER_INDEX) uniform sampler2D water_flow_tex;
-layout(set = TILE_PARAMS_SET, binding = SRC_VOLUME_TEST_INDEX) uniform sampler3D src_volume;
 
 struct MaterialInfo
 {
@@ -166,8 +165,6 @@ void main() {
     vec3 color = f_diffuse + f_specular;
     color = mix(linearTosRGB(color), bg_color, fade_rate);
     outColor = vec4(color, 1.0f);
-
-    outColor.xyz = texture(src_volume, vec3(pos.x / 2048.0f, pos.z / 2048.0f, pos.y / 200.0f) * 0.5 + 0.5).xyz;
 /*
 	vec2 uv = gl_FragCoord.xy / vec2(1920, 1080) * 12.0;
     vec2 i = floor(uv);

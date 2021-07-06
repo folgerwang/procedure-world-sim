@@ -3,7 +3,8 @@
 #include "engine/renderer/renderer_helper.h"
 #include "engine/engine_helper.h"
 #include "shaders/global_definition.glsl.h"
-#include "natural_system.h"
+#include "engine/game_object/terrain.h"
+#include "weather_system.h"
 
 namespace {
 namespace er = engine::renderer;
@@ -73,7 +74,7 @@ static std::shared_ptr<er::Pipeline> createAirflowUpdatePipeline(
 namespace engine {
 namespace scene_rendering {
 
-NaturalSystem::NaturalSystem(
+WeatherSystem::WeatherSystem(
     const renderer::DeviceInfo& device_info,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
     const std::shared_ptr<renderer::Sampler>& texture_sampler) {
@@ -82,11 +83,11 @@ NaturalSystem::NaturalSystem(
 
     renderer::Helper::create3DTextureImage(
         device_info,
-        renderer::Format::R8G8B8A8_UNORM,
+        renderer::Format::R16G16_UNORM,
         glm::uvec3(
-            NaturalSystemConst::kAirflowWidth,
-            NaturalSystemConst::kAirflowWidth,
-            NaturalSystemConst::kAirflowHeight),
+            WeatherSystemConst::kAirflowWidth,
+            WeatherSystemConst::kAirflowWidth,
+            WeatherSystemConst::kAirflowHeight),
         airflow_volume_,
         SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
         SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
@@ -108,7 +109,7 @@ NaturalSystem::NaturalSystem(
         texture_sampler);
 }
 
-void NaturalSystem::recreate(
+void WeatherSystem::recreate(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
     const std::shared_ptr<renderer::Sampler>& texture_sampler) {
@@ -149,17 +150,22 @@ void NaturalSystem::recreate(
 }
 
 // render skybox.
-void NaturalSystem::updateAirflowBuffer(
+void WeatherSystem::updateAirflowBuffer(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
 
     renderer::helper::transitMapTextureToStoreImage(
         cmd_buf,
         { airflow_volume_.image });
 
-    auto w = static_cast<uint32_t>(NaturalSystemConst::kAirflowWidth);
-    auto h = static_cast<uint32_t>(NaturalSystemConst::kAirflowHeight);
+    auto w = static_cast<uint32_t>(WeatherSystemConst::kAirflowWidth);
+    auto h = static_cast<uint32_t>(WeatherSystemConst::kAirflowHeight);
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, airflow_pipeline_);
     glsl::AirflowUpdateParams airflow_params = {};
+    airflow_params.world_min =
+        glm::vec3(-kWorldMapSize / 2.0f, -kWorldMapSize / 2.0f, -100.0f);
+    airflow_params.world_range =
+        glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, 10000.0f) - airflow_params.world_min;
+    airflow_params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         airflow_pipeline_layout_,
@@ -181,10 +187,10 @@ void NaturalSystem::updateAirflowBuffer(
         { airflow_volume_.image });
 }
 
-void NaturalSystem::update() {
+void WeatherSystem::update() {
 }
 
-void NaturalSystem::destroy(
+void WeatherSystem::destroy(
     const std::shared_ptr<renderer::Device>& device) {
     airflow_volume_.destroy(device);
     device->destroyDescriptorSetLayout(airflow_desc_set_layout_);

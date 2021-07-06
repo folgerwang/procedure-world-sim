@@ -190,7 +190,12 @@ struct TileUpdateParams {
 };
 
 struct AirflowUpdateParams {
-    vec4            pad;
+    vec3            world_min;
+    float           pad1;
+    vec3            world_range;
+    float           pad2;
+    vec3            inv_size;
+    float           pad3;
 };
 
 struct TileParams {

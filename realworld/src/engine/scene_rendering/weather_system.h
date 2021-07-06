@@ -4,10 +4,10 @@
 namespace engine {
 namespace scene_rendering {
 
-class NaturalSystem {
-    enum class NaturalSystemConst {
-        kAirflowWidth = 1024,
-        kAirflowHeight = 32
+class WeatherSystem {
+    enum class WeatherSystemConst {
+        kAirflowWidth = 512,
+        kAirflowHeight = 128
     };
 
     renderer::TextureInfo airflow_volume_;
@@ -18,7 +18,7 @@ class NaturalSystem {
     std::shared_ptr<renderer::Pipeline> airflow_pipeline_;
 
 public:
-    NaturalSystem(
+    WeatherSystem(
         const renderer::DeviceInfo& device_info,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
         const std::shared_ptr<renderer::Sampler>& texture_sampler);

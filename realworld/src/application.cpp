@@ -151,7 +151,7 @@ static glm::vec2 s_last_mouse_pos;
 static float s_yaw = 0.0f;
 static float s_pitch = 0.0f;
 const float s_camera_speed = 1.0f;
-static glm::vec3 s_camera_pos = glm::vec3(0, 0.0f, 0);
+static glm::vec3 s_camera_pos = glm::vec3(0, 500.0f, 0);
 static glm::vec3 s_camera_dir = glm::normalize(glm::vec3(1.0f, 0.0f, 0.0f));
 static glm::vec3 s_camera_up = glm::vec3(0, 1, 0);
 
@@ -415,7 +415,7 @@ void RealWorldApplication::initVulkan() {
         swap_chain_info_.extent,
         kCubemapSize);
 
-    natural_system_ = std::make_shared<es::NaturalSystem>(
+    weather_system_ = std::make_shared<es::WeatherSystem>(
         device_info_,
         descriptor_pool_,
         texture_sampler_);
@@ -455,7 +455,7 @@ void RealWorldApplication::initVulkan() {
         texture_sampler_,
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
-        natural_system_->getAirflowTex());
+        weather_system_->getAirflowTex());
 
     menu_ = std::make_shared<es::Menu>(
         device_info_,
@@ -528,6 +528,11 @@ void RealWorldApplication::recreateSwapChain() {
         descriptor_pool_,
         texture_sampler_);
 
+    weather_system_->recreate(
+        device_,
+        descriptor_pool_,
+        texture_sampler_);
+
     createDescriptorSets();
 
     for (auto& image : swap_chain_info_.images) {
@@ -560,7 +565,7 @@ void RealWorldApplication::recreateSwapChain() {
         texture_sampler_,
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
-        natural_system_->getAirflowTex());
+        weather_system_->getAirflowTex());
 
     menu_->init(
         device_info_,
@@ -856,7 +861,7 @@ void RealWorldApplication::createDescriptorSets() {
 void RealWorldApplication::createTextureSampler() {
     texture_sampler_ = device_->createSampler(
         er::Filter::LINEAR,
-        er::SamplerAddressMode::REPEAT,
+        er::SamplerAddressMode::CLAMP_TO_EDGE,
         er::SamplerMipmapMode::LINEAR, 16.0f);
 }
 
@@ -936,7 +941,7 @@ void RealWorldApplication::drawScene(
     }
 
     {
-        natural_system_->updateAirflowBuffer(cmd_buf);
+        weather_system_->updateAirflowBuffer(cmd_buf);
     }
 
     // this has to be happened after tile update, or you wont get the right height info.

@@ -18,6 +18,7 @@ layout(push_constant) uniform TileUniformBufferObject {
 
 layout(location = 0) in VsPsData {
     vec3 vertex_position;
+    vec2 world_map_uv;
 } in_data;
 
 layout(location = 0) out vec4 outColor;
@@ -26,6 +27,7 @@ vec3  kSunDir = vec3(-0.624695f, 0.468521f, -0.624695f);
 
 layout(set = TILE_PARAMS_SET, binding = SRC_COLOR_TEX_INDEX) uniform sampler2D src_tex;
 layout(set = TILE_PARAMS_SET, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
+layout(set = TILE_PARAMS_SET, binding = SRC_VOLUME_TEST_INDEX) uniform sampler3D src_volume;
 
 struct MaterialInfo
 {
@@ -77,8 +79,14 @@ void main() {
     vec4 tt = fbmd_8(pos * 0.3f * vec3(1.0f, 0.2f, 1.0f));
     vec3 normal = normalize(tnor + 0.8f*(1.0f - abs(tnor.y))*0.8f*vec3(tt.y, tt.z, tt.w));
 
+    float uvw_y = log2(max((pos.y - (-100.0f)), 0.0f) + 1.0f) / log2(10000.0f - (-100.0f) + 1.0f);
+    float temp = texture(src_volume, vec3(in_data.world_map_uv, uvw_y)).x * 200.0f - 100.0f;
+
     vec3 albedo = vec3(0.18, 0.11, 0.10)*.75f;
     albedo = 1.0f* mix(albedo, vec3(0.1, 0.1, 0.0)*0.2f, smoothstep(0.7f, 0.9f, normal.y));
+    float cold_index = clamp((15.0f - temp) / 5.0f, 0.0f, 1.0f);
+
+    albedo = mix(albedo, vec3(1.0, 1.0, 1.0), cold_index);
 
     MaterialInfo material_info;
     material_info.baseColor = albedo;
@@ -127,6 +135,7 @@ void main() {
     #endif
 
     vec3 color = f_diffuse + f_specular;
+
     float alpha = 1.0f;
     outColor = vec4(linearTosRGB(color), alpha);
 }
