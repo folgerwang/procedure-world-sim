@@ -117,6 +117,9 @@
 #define SOIL_WATER_LAYER_MAX_THICKNESS    (512.0f - 1.0f / 32.0f)
 #define SNOW_LAYER_MAX_THICKNESS          (8.0f - 1.0f / 32.0f)
 
+#define kAirflowMaxHeight                 12000.0f
+#define kAirflowLowHeight                 -100.0f
+
 #ifdef __cplusplus
 #include "glm/glm.hpp"
 using namespace glm;

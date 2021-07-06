@@ -85,9 +85,9 @@ WeatherSystem::WeatherSystem(
         device_info,
         renderer::Format::R16G16_UNORM,
         glm::uvec3(
-            WeatherSystemConst::kAirflowWidth,
-            WeatherSystemConst::kAirflowWidth,
-            WeatherSystemConst::kAirflowHeight),
+            WeatherSystemConst::kAirflowBufferWidth,
+            WeatherSystemConst::kAirflowBufferWidth,
+            WeatherSystemConst::kAirflowBufferHeight),
         airflow_volume_,
         SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
         SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
@@ -157,14 +157,14 @@ void WeatherSystem::updateAirflowBuffer(
         cmd_buf,
         { airflow_volume_.image });
 
-    auto w = static_cast<uint32_t>(WeatherSystemConst::kAirflowWidth);
-    auto h = static_cast<uint32_t>(WeatherSystemConst::kAirflowHeight);
+    auto w = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferWidth);
+    auto h = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferHeight);
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, airflow_pipeline_);
     glsl::AirflowUpdateParams airflow_params = {};
     airflow_params.world_min =
-        glm::vec3(-kWorldMapSize / 2.0f, -kWorldMapSize / 2.0f, -100.0f);
+        glm::vec3(-kWorldMapSize / 2.0f, -kWorldMapSize / 2.0f, kAirflowLowHeight);
     airflow_params.world_range =
-        glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, 10000.0f) - airflow_params.world_min;
+        glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - airflow_params.world_min;
     airflow_params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),

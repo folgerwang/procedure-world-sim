@@ -79,7 +79,8 @@ void main() {
     vec4 tt = fbmd_8(pos * 0.3f * vec3(1.0f, 0.2f, 1.0f));
     vec3 normal = normalize(tnor + 0.8f*(1.0f - abs(tnor.y))*0.8f*vec3(tt.y, tt.z, tt.w));
 
-    float uvw_y = log2(max((pos.y - (-100.0f)), 0.0f) + 1.0f) / log2(10000.0f - (-100.0f) + 1.0f);
+    float uvw_y = log2(max((pos.y - kAirflowLowHeight), 0.0f) + 1.0f) /
+                  log2(kAirflowMaxHeight - kAirflowLowHeight + 1.0f);
     float temp = texture(src_volume, vec3(in_data.world_map_uv, uvw_y)).x * 200.0f - 100.0f;
 
     vec3 albedo = vec3(0.18, 0.11, 0.10)*.75f;
