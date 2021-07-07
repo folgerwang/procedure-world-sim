@@ -213,6 +213,19 @@ struct TileParams {
     float           time;
 };
 
+struct DebugDrawParams {
+    vec2            world_min;
+    vec2            inv_world_range;
+    vec3            debug_min;
+    float           pad0;
+    vec3            debug_range;
+    float           pad1;
+    uvec3           size;
+    uint            pad2;
+    vec3            inv_size;
+    uint            pad3;
+};
+
 // 1 float base layer, rock.
 // 1 half soil layer.
 // 1 half grass layer.

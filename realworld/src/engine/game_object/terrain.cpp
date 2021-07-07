@@ -2317,7 +2317,7 @@ void TileObject::initStaticMembers(
 void TileObject::recreateStaticMembers(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::RenderPass>& render_pass,
-    const std::shared_ptr<renderer::RenderPass>& wateer_render_pass,
+    const std::shared_ptr<renderer::RenderPass>& water_render_pass,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
     const glm::uvec2& display_size) {
@@ -2369,7 +2369,7 @@ void TileObject::recreateStaticMembers(
     createStaticMembers(
         device,
         render_pass,
-        wateer_render_pass,
+        water_render_pass,
         graphic_pipeline_info,
         global_desc_set_layouts,
         display_size);

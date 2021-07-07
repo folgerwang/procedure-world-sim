@@ -114,7 +114,12 @@ bool Menu::draw(
         }
         if (ImGui::BeginMenu("Tools"))
         {
-            if (ImGui::MenuItem("Turn off water pass", NULL)) {}
+            if (ImGui::MenuItem("Turn off water pass", NULL, turn_off_water_pass_)) {
+                turn_off_water_pass_ = !turn_off_water_pass_;
+            }
+            if (ImGui::MenuItem("Turn on debug draw volume", NULL, turn_on_debug_draw_volume_)) {
+                turn_on_debug_draw_volume_ = !turn_on_debug_draw_volume_;
+            }
             ImGui::Separator();
             if (ImGui::MenuItem("Cut", "CTRL+X")) {}
             ImGui::EndMenu();

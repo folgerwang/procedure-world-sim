@@ -158,7 +158,8 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\updat
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_instance_buffer.comp -o $(ProjectDir)lib\shaders\update_instance_buffer_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_game_objects.comp -o $(ProjectDir)lib\shaders\update_game_objects_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\airflow_update.comp -o $(ProjectDir)lib\shaders\airflow_update_comp.spv
-</Command>
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug_draw.vert -o $(ProjectDir)lib\shaders\debug_draw_vert.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug_draw.frag -o $(ProjectDir)lib\shaders\debug_draw_frag.spv</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -244,7 +245,8 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\updat
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_instance_buffer.comp -o $(ProjectDir)lib\shaders\update_instance_buffer_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_game_objects.comp -o $(ProjectDir)lib\shaders\update_game_objects_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\airflow_update.comp -o $(ProjectDir)lib\shaders\airflow_update_comp.spv
-</Command>
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug_draw.vert -o $(ProjectDir)lib\shaders\debug_draw_vert.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug_draw.frag -o $(ProjectDir)lib\shaders\debug_draw_frag.spv</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -314,6 +316,8 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\airfl
     <None Include="src\shaders\base.frag" />
     <None Include="src\shaders\base.vert" />
     <None Include="src\shaders\cube_skybox.frag" />
+    <None Include="src\shaders\debug_draw.frag" />
+    <None Include="src\shaders\debug_draw.vert" />
     <None Include="src\shaders\glsl_compile.bat" />
     <None Include="src\shaders\cube_ibl.frag" />
     <None Include="src\shaders\cube.vert" />

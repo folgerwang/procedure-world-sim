@@ -3,6 +3,7 @@
 #include "shaders/global_definition.glsl.h"
 #include "engine/game_object/gltf.h"
 #include "engine/game_object/terrain.h"
+#include "engine/game_object/debug_draw.h"
 #include "engine/scene_rendering/skydome.h"
 #include "engine/scene_rendering/weather_system.h"
 #include "engine/scene_rendering/ibl_creator.h"

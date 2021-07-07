@@ -301,5 +301,11 @@
     <None Include="src\shaders\airflow_update.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
+    <None Include="src\shaders\debug_draw.vert">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\debug_draw.frag">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

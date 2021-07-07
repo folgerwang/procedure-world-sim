@@ -448,6 +448,12 @@ void RealWorldApplication::initVulkan() {
         ego::TileObject::getSoilWaterLayer(0),
         ego::TileObject::getSoilWaterLayer(1),
         ego::TileObject::getWaterFlow());
+    ego::DebugDrawObject::initStaticMembers(
+        device_info_,
+        hdr_render_pass_,
+        graphic_pipeline_info_,
+        desc_set_layouts,
+        swap_chain_info_.extent);
 
     ego::TileObject::updateStaticDescriptorSet(
         device_,
@@ -455,6 +461,11 @@ void RealWorldApplication::initVulkan() {
         texture_sampler_,
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
+        weather_system_->getAirflowTex());
+    ego::DebugDrawObject::updateStaticDescriptorSet(
+        device_,
+        descriptor_pool_,
+        texture_sampler_,
         weather_system_->getAirflowTex());
 
     menu_ = std::make_shared<es::Menu>(
@@ -508,6 +519,12 @@ void RealWorldApplication::recreateSwapChain() {
         graphic_pipeline_info_,
         desc_set_layouts,
         swap_chain_info_.extent);
+    ego::DebugDrawObject::recreateStaticMembers(
+        device_,
+        hdr_render_pass_,
+        graphic_pipeline_info_,
+        desc_set_layouts,
+        swap_chain_info_.extent);
     recreateRenderBuffer(swap_chain_info_.extent);
     createUniformBuffers();
     descriptor_pool_ = device_->createDescriptorPool();
@@ -549,6 +566,12 @@ void RealWorldApplication::recreateSwapChain() {
         descriptor_pool_,
         texture_sampler_);
 
+    ego::DebugDrawObject::generateAllDescriptorSets(
+        device_,
+        descriptor_pool_,
+        texture_sampler_,
+        weather_system_->getAirflowTex());
+
     ego::GltfObject::generateDescriptorSet(
         device_,
         descriptor_pool_,
@@ -565,6 +588,12 @@ void RealWorldApplication::recreateSwapChain() {
         texture_sampler_,
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
+        weather_system_->getAirflowTex());
+
+    ego::DebugDrawObject::updateStaticDescriptorSet(
+        device_,
+        descriptor_pool_,
+        texture_sampler_,
         weather_system_->getAirflowTex());
 
     menu_->init(
@@ -990,6 +1019,13 @@ void RealWorldApplication::drawScene(
                 true);
         }
 
+        if (menu_->isDebugDrawVolumeTurnOn()) {
+            ego::DebugDrawObject::draw(
+                cmd_buf,
+                desc_sets,
+                s_camera_pos);
+        }
+
         // render skybox.
         {
             skydome_->draw(cmd_buf, frame_desc_set);
@@ -997,69 +1033,71 @@ void RealWorldApplication::drawScene(
 
         cmd_buf->endRenderPass();
 
-        er::ImageResourceInfo src_info = {
-            er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
-            SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
+        if (!menu_->isWaterPassTurnOff()) {
+            er::ImageResourceInfo src_info = {
+                er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
+                SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
 
-        er::ImageResourceInfo dst_info = {
-            er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            SET_FLAG_BIT(Access, SHADER_READ_BIT),
-            SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
+            er::ImageResourceInfo dst_info = {
+                er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                SET_FLAG_BIT(Access, SHADER_READ_BIT),
+                SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
 
-        er::Helper::blitImage(
-            cmd_buf,
-            hdr_color_buffer_.image,
-            hdr_color_buffer_copy_.image,
-            src_info,
-            src_info,
-            dst_info,
-            dst_info,
-            SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-            SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-            glm::ivec3(screen_size.x, screen_size.y, 1));
-
-        src_info = {
-            er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-            SET_FLAG_BIT(Access, DEPTH_STENCIL_ATTACHMENT_WRITE_BIT),
-            SET_FLAG_BIT(PipelineStage, EARLY_FRAGMENT_TESTS_BIT) };
-
-        dst_info = {
-            er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            SET_FLAG_BIT(Access, SHADER_READ_BIT),
-            SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
-
-        er::Helper::blitImage(
-            cmd_buf,
-            depth_buffer_.image,
-            depth_buffer_copy_.image,
-            src_info,
-            src_info,
-            dst_info,
-            dst_info,
-            SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
-            SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
-            glm::ivec3(screen_size.x, screen_size.y, 1));
-
-        cmd_buf->beginRenderPass(
-            hdr_water_render_pass_,
-            hdr_water_frame_buffer_,
-            screen_size,
-            clear_values_);
-
-        // render terrain water pass.
-        {
-            ego::TileObject::drawAllVisibleTiles(
+            er::Helper::blitImage(
                 cmd_buf,
-                desc_sets,
-                screen_size,
-                s_soil_water,
-                delta_t,
-                current_time,
-                false);
-        }
+                hdr_color_buffer_.image,
+                hdr_color_buffer_copy_.image,
+                src_info,
+                src_info,
+                dst_info,
+                dst_info,
+                SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+                SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+                glm::ivec3(screen_size.x, screen_size.y, 1));
 
-        cmd_buf->endRenderPass();
+            src_info = {
+                er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                SET_FLAG_BIT(Access, DEPTH_STENCIL_ATTACHMENT_WRITE_BIT),
+                SET_FLAG_BIT(PipelineStage, EARLY_FRAGMENT_TESTS_BIT) };
+
+            dst_info = {
+                er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                SET_FLAG_BIT(Access, SHADER_READ_BIT),
+                SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
+
+            er::Helper::blitImage(
+                cmd_buf,
+                depth_buffer_.image,
+                depth_buffer_copy_.image,
+                src_info,
+                src_info,
+                dst_info,
+                dst_info,
+                SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
+                SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
+                glm::ivec3(screen_size.x, screen_size.y, 1));
+
+            cmd_buf->beginRenderPass(
+                hdr_water_render_pass_,
+                hdr_water_frame_buffer_,
+                screen_size,
+                clear_values_);
+
+            // render terrain water pass.
+            {
+                ego::TileObject::drawAllVisibleTiles(
+                    cmd_buf,
+                    desc_sets,
+                    screen_size,
+                    s_soil_water,
+                    delta_t,
+                    current_time,
+                    false);
+            }
+
+            cmd_buf->endRenderPass();
+        }
     }
 
     er::ImageResourceInfo src_info = {
