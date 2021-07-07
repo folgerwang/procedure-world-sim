@@ -8,6 +8,8 @@ layout(push_constant) uniform AirflowUniformBufferObject {
 };
 
 layout(set = 0, binding = DST_AIRFLOW_TEX_INDEX, rg16) uniform image3D dst_airflow;
+layout(set = 0, binding = ROCK_LAYER_BUFFER_INDEX) uniform sampler2D rock_layer;
+layout(set = 0, binding = SOIL_WATER_LAYER_BUFFER_INDEX) uniform sampler2D soil_water_layer;
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 void main()
@@ -19,8 +21,8 @@ void main()
   position_ws.xy = uvw.xy * params.world_range.xy + params.world_min.xy;
   position_ws.z = exp2(uvw.z * log2(1.0f + params.world_range.z)) - 1.0f + params.world_min.z;
 
-  float sea_level_temp = 24.0f;
-  float temperature = sea_level_temp - position_ws.z /1000.0f * 6.5f;
+  float sea_level_temp = 30.0f;
+  float temperature = sea_level_temp - position_ws.z * kDegreeDecreasePerKm;
   float temp_normalized = (temperature + 100.0f) / 200.0f;
 
   imageStore(dst_airflow, pixel_coords, vec4(temp_normalized));

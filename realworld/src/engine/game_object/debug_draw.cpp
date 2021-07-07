@@ -263,13 +263,13 @@ void DebugDrawObject::draw(
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, debug_draw_pipeline_);
 
-    glm::vec3 aligned_camera_pos = glm::vec3(glm::ivec3(camera_pos / 16.0f)) * 16.0f;
+    glm::vec3 aligned_camera_pos = glm::vec3(glm::ivec3(camera_pos / 128.0f)) * 128.0f;
 
     glsl::DebugDrawParams debug_params = {};
     debug_params.world_min = glm::vec2(-kWorldMapSize / 2.0f);
     debug_params.inv_world_range = 1.0f / (glm::vec2(kWorldMapSize / 2.0f) - debug_params.world_min);
-    debug_params.debug_min = aligned_camera_pos - glm::vec3(512.0f, 256.0f, 512.0f);
-    debug_params.debug_range = glm::vec3(1024.0f, 512.0f, 1024.0f);
+    debug_params.debug_min = aligned_camera_pos - glm::vec3(4096.0f, 2048.0f, 4096.0f);
+    debug_params.debug_range = glm::vec3(8192.0f, 4096.0f, 8192.0f);
     debug_params.size = glm::uvec3(64, 32, 64);
     debug_params.inv_size = 1.0f / glm::vec3(debug_params.size);
     cmd_buf->pushConstants(

@@ -28,18 +28,21 @@ void main() {
 
     vec3 f_xyz = (vec3(ix, iy, iz) + 0.5f) * params.inv_size;
 
+    vec3 sample_pos = f_xyz * params.debug_range + params.debug_min;
+    vec4 position_ss = view_params.proj * view_params.view * vec4(sample_pos, 1.0);
+
     vec3 offset = vec3(0);
     if (vertex_idx == 0) {
-        offset = vec3(0.2f, 0, 0);
+        offset = vec3(0.002f, 0, 0);
     }
     else if (vertex_idx == 1) {
-        offset = vec3(-0.2f, 0, 0);
+        offset = vec3(-0.002f, 0, 0);
     }
     else {
-        offset = vec3(0, 2.0f, 0);
+        offset = vec3(0, 0.02f, 0);
     }
 
-    vec3 sample_pos = f_xyz * params.debug_range + params.debug_min + offset;
+    sample_pos += offset * position_ss.w;
 
     vec3 uvw;
     uvw.z = log2(max((sample_pos.y - kAirflowLowHeight), 0.0f) + 1.0f) /

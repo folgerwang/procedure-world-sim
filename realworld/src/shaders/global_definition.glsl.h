@@ -119,6 +119,7 @@
 
 #define kAirflowMaxHeight                 12000.0f
 #define kAirflowLowHeight                 -100.0f
+#define kDegreeDecreasePerKm              (10.0f / 1000.0f)
 
 #ifdef __cplusplus
 #include "glm/glm.hpp"
