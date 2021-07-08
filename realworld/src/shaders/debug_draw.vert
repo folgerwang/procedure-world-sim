@@ -31,6 +31,13 @@ void main() {
     vec3 sample_pos = f_xyz * params.debug_range + params.debug_min;
     vec4 position_ss = view_params.proj * view_params.view * vec4(sample_pos, 1.0);
 
+    vec3 uvw;
+    uvw.z = log2(max((sample_pos.y - kAirflowLowHeight), 0.0f) + 1.0f) /
+            log2(kAirflowMaxHeight - kAirflowLowHeight + 1.0f);
+
+    uvw.xy = (sample_pos.xz - params.world_min) * params.inv_world_range;
+    out_data.debug_info.x = texture(src_volume, uvw).x;
+
     vec3 offset = vec3(0);
     if (vertex_idx == 0) {
         offset = vec3(0.002f, 0, 0);
@@ -43,14 +50,6 @@ void main() {
     }
 
     sample_pos += offset * position_ss.w;
-
-    vec3 uvw;
-    uvw.z = log2(max((sample_pos.y - kAirflowLowHeight), 0.0f) + 1.0f) /
-            log2(kAirflowMaxHeight - kAirflowLowHeight + 1.0f);
-
-    uvw.xy = (sample_pos.xz - params.world_min) * params.inv_world_range;
-    float temp = texture(src_volume, uvw).x * 200.0f - 100.0f;
-    out_data.debug_info.x = temp;
 
     vec4 position_ws = vec4(sample_pos, 1.0);
     gl_Position = view_params.proj * view_params.view * position_ws;

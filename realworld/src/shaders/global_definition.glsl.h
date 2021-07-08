@@ -70,7 +70,8 @@
 #define SRC_VOLUME_TEST_INDEX               10
 
 // Airflow texture.
-#define DST_AIRFLOW_TEX_INDEX               0
+#define DST_TEMPERATURE_TEX_INDEX           0
+#define SRC_TEMPERATURE_TEX_INDEX           1
 
 // IBL texure index
 #define PANORAMA_TEX_INDEX          0
@@ -200,6 +201,8 @@ struct AirflowUpdateParams {
     float           pad2;
     vec3            inv_size;
     float           pad3;
+    ivec3           size;
+    uint            pad4;
 };
 
 struct TileParams {

@@ -7,23 +7,122 @@ layout(push_constant) uniform AirflowUniformBufferObject {
   AirflowUpdateParams params;
 };
 
-layout(set = 0, binding = DST_AIRFLOW_TEX_INDEX, rg16) uniform image3D dst_airflow;
+layout(set = 0, binding = DST_TEMPERATURE_TEX_INDEX, r16f) uniform writeonly image3D dst_temperature;
+layout(set = 0, binding = SRC_TEMPERATURE_TEX_INDEX, r16f) uniform readonly image3D src_temperature;
 layout(set = 0, binding = ROCK_LAYER_BUFFER_INDEX) uniform sampler2D rock_layer;
 layout(set = 0, binding = SOIL_WATER_LAYER_BUFFER_INDEX) uniform sampler2D soil_water_layer;
 
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+shared vec2 s_ground_info[12][12];
+shared uint s_temperature_grid[12][12][6];
+shared uint s_airflow_grid[10][10][5];
+
+vec2 getPackedLayers(vec2 uv) {
+    float rock_height = texture(rock_layer, uv).x;
+    vec2 soil_water_thickness = 
+        texture(soil_water_layer, uv).xy * SOIL_WATER_LAYER_MAX_THICKNESS;
+
+    float soil_layer_height = rock_height + soil_water_thickness.x;
+    float water_layer_height = soil_layer_height + soil_water_thickness.y;
+    
+    return vec2(soil_layer_height, water_layer_height);
+}
+
+vec4 getPositionWS(vec3 uvw) {
+    vec4 position_ws;
+    position_ws.xy = uvw.xy * params.world_range.xy + params.world_min.xy;
+    position_ws.z = exp2((uvw.z - params.inv_size.z * 0.5f) * log2(1.0f + params.world_range.z)) - 1.0f + params.world_min.z;
+    position_ws.w = exp2((uvw.z + params.inv_size.z * 0.5f) * log2(1.0f + params.world_range.z)) - 1.0f + params.world_min.z;
+    return position_ws;
+}
+
+float getUpdatedTemperature(ivec3 src_local_coords, ivec3 block_coords, vec2 ground_info) {
+    ivec3 src_coords = clamp(src_local_coords + block_coords - 2,
+                             ivec3(0),
+                             params.size - 1);
+    float src_temp = imageLoad(src_temperature, src_coords).x;
+    vec4 position_ws = getPositionWS((src_coords + 0.5) * params.inv_size);
+    float water_depth = ground_info.y - ground_info.x;
+    bool cell_touch_ground = (ground_info.y >= position_ws.z - 0.01f);// && (ground_info.y <= position_ws.w + 0.01f);
+    bool cell_above_ground = ground_info.y < position_ws.z;
+    float temp_adjust = 0.0f;
+    if (cell_touch_ground) {
+        temp_adjust += mix(0.1f, 0.05f, clamp(water_depth * 10.0f, 0.0f, 1.0f));
+    }
+    else if (cell_above_ground) {
+        temp_adjust += 0.001f;
+    }
+    return src_temp + temp_adjust;
+}
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 void main()
 {
-  // skip 2 lines on border.
+  ivec3 buffer_size = ivec3(params.size);
+
   ivec3 pixel_coords = ivec3(gl_GlobalInvocationID.xyz);
-  vec3 uvw = (pixel_coords + 0.5f) * params.inv_size;
-  vec3 position_ws;
-  position_ws.xy = uvw.xy * params.world_range.xy + params.world_min.xy;
-  position_ws.z = exp2(uvw.z * log2(1.0f + params.world_range.z)) - 1.0f + params.world_min.z;
+  ivec3 local_coords = ivec3(gl_LocalInvocationID.xyz);
+  ivec3 block_coords = ivec3(gl_WorkGroupID.xyz) * 8;
+  int pixel_index = int(gl_LocalInvocationIndex);
 
-  float sea_level_temp = 30.0f;
-  float temperature = sea_level_temp - position_ws.z * kDegreeDecreasePerKm;
-  float temp_normalized = (temperature + 100.0f) / 200.0f;
+  if (pixel_index < 12 * 12) {
+     ivec2 src_local_coords = ivec2(pixel_index % 12, pixel_index / 12);
+     ivec2 src_coords = clamp(src_local_coords + block_coords.xy - 2,
+                        ivec2(0),
+                        buffer_size.xy - 1);
+     s_ground_info[src_local_coords.y][src_local_coords.x] =
+            getPackedLayers((src_coords + 0.5) * params.inv_size.xy);
+  }
 
-  imageStore(dst_airflow, pixel_coords, vec4(temp_normalized));
+  barrier();
+  memoryBarrierShared();
+
+  if (pixel_index < 6 * 12 * 6) {
+     int iz = pixel_index / (12 * 6);
+     int ixy = pixel_index % (12 * 6);
+     ivec3 src_local_coords_0 = ivec3((ixy % 6) * 2, ixy / 6, iz);
+     ivec3 src_local_coords_1 = src_local_coords_0;
+     src_local_coords_1.x += 1;
+
+     vec2 ground_info_0 = s_ground_info[src_local_coords_0.y][src_local_coords_0.x];
+     vec2 ground_info_1 = s_ground_info[src_local_coords_1.y][src_local_coords_1.x];
+
+     float t0 = getUpdatedTemperature(src_local_coords_0, block_coords, ground_info_0);
+     float t1 = getUpdatedTemperature(src_local_coords_1, block_coords, ground_info_1);
+     s_temperature_grid[src_local_coords_0.z][src_local_coords_0.y][src_local_coords_0.x / 2] =
+        packHalf2x16(vec2(t0, t1));
+     
+     src_local_coords_0.z += 6;
+     src_local_coords_1.z += 6;
+     t0 = getUpdatedTemperature(src_local_coords_0, block_coords, ground_info_0);
+     t1 = getUpdatedTemperature(src_local_coords_1, block_coords, ground_info_1);
+     s_temperature_grid[src_local_coords_0.z][src_local_coords_0.y][src_local_coords_0.x / 2] =
+        packHalf2x16(vec2(t0, t1));
+  }
+
+  barrier();
+  memoryBarrierShared();
+
+  if (pixel_index < 10 * 10 * 5) {
+     int iz = pixel_index / (10 * 5);
+     int ixy = pixel_index % (10 * 5);
+     ivec3 slc0 = ivec3(ixy % 5, ixy / 5 + 1, iz + 1);
+
+     uint back = s_temperature_grid[slc0.z][slc0.y-1][slc0.x] >> 16;
+     uint front = s_temperature_grid[slc0.z][slc0.y+1][slc0.x] >> 16;
+     uint top = s_temperature_grid[slc0.z-1][slc0.y][slc0.x] >> 16;
+     uint bottom = s_temperature_grid[slc0.z+1][slc0.y][slc0.x] >> 16;
+     uint left = s_temperature_grid[slc0.z][slc0.y][slc0.x] & 0xffff;
+     uint right = s_temperature_grid[slc0.z][slc0.y][slc0.x+1] & 0xffff;
+
+
+
+  }
+  // skip 2 lines on border.
+  uint packed_temp = s_temperature_grid[local_coords.z+2][local_coords.y+2][local_coords.x/2+1];
+  vec2 t = unpackHalf2x16(packed_temp);
+
+  if (local_coords.x % 2 == 1)
+    t.x = t.y;
+
+  imageStore(dst_temperature, pixel_coords, vec4(t.x));
 }

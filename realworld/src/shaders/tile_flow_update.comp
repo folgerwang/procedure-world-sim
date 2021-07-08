@@ -52,7 +52,7 @@ uint adjustLayersHeight(ivec2 src_coords, ivec2 global_src_coords) {
     h_diff.y = center_h.y > min_h.y ? (center_h.y - min_h.y) : 0;
 
     h_diff.x = min(h_diff.x * 0.125f, layer_thickness.y * 0.125f);
-    h_diff.y = min(h_diff.y * 0.5f, layer_thickness.z * 1.2f);
+    h_diff.y = min(h_diff.y * 0.8f, layer_thickness.z * 1.2f);
 
     if (layer_thickness.z < 0.05f) {
         h_diff.x = 0.0f;
@@ -60,12 +60,6 @@ uint adjustLayersHeight(ivec2 src_coords, ivec2 global_src_coords) {
     else {
         h_diff.x = min(h_diff.x, 0.005f);
     }
-
-    float noise = smoothNoise(
-        vec2(global_src_coords) *
-        vec2(0.343, 0.434) +
-        tile_params.current_time);
-    h_diff.y *= (noise + 0.5f);
 
     uint packed_adj_height = 0;
     if (h_diff.x > 0) { // adjust soil height.
@@ -216,6 +210,6 @@ void main()
         layer_adjust.xy * vec2(1.0f / SOIL_WATER_LAYER_MAX_THICKNESS) * 0.8f;
     imageStore(dst_soil_water_layer, pixel_coords, vec4(soil_water_layers, 0, 0));
     vec4 current_flow = imageLoad(dst_water_flow, pixel_coords);
-    imageStore(dst_water_flow, pixel_coords, vec4(mix(layer_adjust.zw, current_flow.xy, 0.5), 0, 0));
+    imageStore(dst_water_flow, pixel_coords, vec4(mix(layer_adjust.zw, current_flow.xy, 0.85), 0, 0));
   }
 }

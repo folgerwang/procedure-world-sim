@@ -121,7 +121,7 @@ public:
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
         const std::shared_ptr<renderer::ImageView>& src_texture,
         const std::shared_ptr<renderer::ImageView>& src_depth,
-        const std::shared_ptr<renderer::ImageView>& airflow_tex);
+        const std::vector<std::shared_ptr<renderer::ImageView>>& airflow_tex);
 
     static void generateStaticDescriptorSet(
         const std::shared_ptr<renderer::Device>& device,
@@ -139,18 +139,18 @@ public:
     static void updateTileBuffers(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         float current_time,
-        int soil_water);
+        int dbuf_idx);
 
     static void updateTileFlowBuffers(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         float current_time,
-        int soil_water);
+        int dbuf_idx);
 
     static void drawAllVisibleTiles(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const renderer::DescriptorSetList& desc_set_list,
         const glm::uvec2 display_size,
-        int soil_water,
+        int dbuf_idx,
         float delta_t,
         float cur_time,
         bool is_base_pass);
@@ -173,7 +173,7 @@ public:
     void draw(const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const renderer::DescriptorSetList& desc_set_list,
         const glm::uvec2 display_size,
-        int soil_water,
+        int dbuf_idx,
         float delta_t,
         float cur_time,
         bool is_base_pass);

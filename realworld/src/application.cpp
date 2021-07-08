@@ -415,11 +415,6 @@ void RealWorldApplication::initVulkan() {
         swap_chain_info_.extent,
         kCubemapSize);
 
-    weather_system_ = std::make_shared<es::WeatherSystem>(
-        device_info_,
-        descriptor_pool_,
-        texture_sampler_);
-
     createDescriptorSets();
 
     for (auto& image : swap_chain_info_.images) {
@@ -439,6 +434,17 @@ void RealWorldApplication::initVulkan() {
         graphic_pipeline_info_,
         desc_set_layouts,
         swap_chain_info_.extent);
+
+    std::vector<std::shared_ptr<er::ImageView>> soil_water_texes(2);
+    soil_water_texes[0] = ego::TileObject::getSoilWaterLayer(0).view;
+    soil_water_texes[1] = ego::TileObject::getSoilWaterLayer(1).view;
+    weather_system_ = std::make_shared<es::WeatherSystem>(
+        device_info_,
+        descriptor_pool_,
+        texture_sampler_,
+        ego::TileObject::getRockLayer().view,
+        soil_water_texes);
+
     ego::GltfObject::initStaticMembers(
         device_,
         descriptor_pool_,
@@ -448,6 +454,7 @@ void RealWorldApplication::initVulkan() {
         ego::TileObject::getSoilWaterLayer(0),
         ego::TileObject::getSoilWaterLayer(1),
         ego::TileObject::getWaterFlow());
+
     ego::DebugDrawObject::initStaticMembers(
         device_info_,
         hdr_render_pass_,
@@ -461,12 +468,13 @@ void RealWorldApplication::initVulkan() {
         texture_sampler_,
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
-        weather_system_->getAirflowTex());
+        weather_system_->getAirflowTexes());
+
     ego::DebugDrawObject::updateStaticDescriptorSet(
         device_,
         descriptor_pool_,
         texture_sampler_,
-        weather_system_->getAirflowTex());
+        weather_system_->getAirflowTex(0));
 
     menu_ = std::make_shared<es::Menu>(
         device_info_,
@@ -548,7 +556,10 @@ void RealWorldApplication::recreateSwapChain() {
     weather_system_->recreate(
         device_,
         descriptor_pool_,
-        texture_sampler_);
+        texture_sampler_,
+        ego::TileObject::getRockLayer().view,
+        { ego::TileObject::getSoilWaterLayer(0).view,
+          ego::TileObject::getSoilWaterLayer(1).view });
 
     createDescriptorSets();
 
@@ -570,7 +581,7 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         texture_sampler_,
-        weather_system_->getAirflowTex());
+        weather_system_->getAirflowTex(0));
 
     ego::GltfObject::generateDescriptorSet(
         device_,
@@ -588,13 +599,13 @@ void RealWorldApplication::recreateSwapChain() {
         texture_sampler_,
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
-        weather_system_->getAirflowTex());
+        weather_system_->getAirflowTexes());
 
     ego::DebugDrawObject::updateStaticDescriptorSet(
         device_,
         descriptor_pool_,
         texture_sampler_,
-        weather_system_->getAirflowTex());
+        weather_system_->getAirflowTex(0));
 
     menu_->init(
         device_info_,
@@ -918,7 +929,7 @@ void RealWorldApplication::drawScene(
 
     auto& cmd_buf = command_buffer;
 
-    static int s_soil_water = 0;
+    static int s_dbuf_idx = 0;
 
     if (0)
     {
@@ -961,16 +972,14 @@ void RealWorldApplication::drawScene(
         static bool s_tile_buffer_inited = false;
         if (!s_tile_buffer_inited) {
             ego::TileObject::generateTileBuffers(cmd_buf);
+            weather_system_->initTemperatureBuffer(cmd_buf);
             s_tile_buffer_inited = true;
         }
         else {
-            ego::TileObject::updateTileFlowBuffers(cmd_buf, current_time_, s_soil_water);
-            ego::TileObject::updateTileBuffers(cmd_buf, current_time_, s_soil_water);
+            ego::TileObject::updateTileFlowBuffers(cmd_buf, current_time_, s_dbuf_idx);
+            ego::TileObject::updateTileBuffers(cmd_buf, current_time_, s_dbuf_idx);
+            weather_system_->updateAirflowBuffer(cmd_buf, s_dbuf_idx);
         }
-    }
-
-    {
-        weather_system_->updateAirflowBuffer(cmd_buf);
     }
 
     // this has to be happened after tile update, or you wont get the right height info.
@@ -981,7 +990,7 @@ void RealWorldApplication::drawScene(
             ego::TileObject::getWorldRange(),
             s_camera_pos,
             s_update_frame_count,
-            s_soil_water);
+            s_dbuf_idx);
 
         for (auto& gltf_obj : gltf_objects_) {
             gltf_obj->updateBuffers(cmd_buf);
@@ -1013,7 +1022,7 @@ void RealWorldApplication::drawScene(
                 cmd_buf,
                 desc_sets,
                 screen_size,
-                s_soil_water,
+                s_dbuf_idx,
                 delta_t,
                 current_time,
                 true);
@@ -1090,7 +1099,7 @@ void RealWorldApplication::drawScene(
                     cmd_buf,
                     desc_sets,
                     screen_size,
-                    s_soil_water,
+                    s_dbuf_idx,
                     delta_t,
                     current_time,
                     false);
@@ -1122,7 +1131,7 @@ void RealWorldApplication::drawScene(
         SET_FLAG_BIT(ImageAspect, COLOR_BIT),
         glm::ivec3(screen_size.x, screen_size.y, 1));
 
-    s_soil_water = 1 - s_soil_water;
+    s_dbuf_idx = 1 - s_dbuf_idx;
 }
 
 void RealWorldApplication::drawFrame() {

@@ -21,23 +21,127 @@ er::ShaderModuleList getAirflowUpdateShaderModules(
     return shader_modules;
 }
 
-std::vector<er::TextureDescriptor> addAirflowTextures(
+er::ShaderModuleList getTemperatureInitShaderModules(
+    std::shared_ptr<er::Device> device)
+{
+    uint64_t compute_code_size;
+    er::ShaderModuleList shader_modules;
+    shader_modules.reserve(1);
+    auto compute_shader_code = engine::helper::readFile("lib/shaders/temperature_init_comp.spv", compute_code_size);
+    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
+
+    return shader_modules;
+}
+
+std::vector<er::TextureDescriptor> addTemperatureInitTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
-    const er::TextureInfo& airflow_tex,
-    const std::shared_ptr<er::Sampler>& texture_sampler) {
+    const er::TextureInfo& temperature_tex) {
     std::vector<er::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(1);
 
     er::Helper::addOneTexture(
         descriptor_writes,
-        DST_AIRFLOW_TEX_INDEX,
+        DST_TEMPERATURE_TEX_INDEX,
         nullptr,
-        airflow_tex.view,
+        temperature_tex.view,
         description_set,
         er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     return descriptor_writes;
+}
+
+std::vector<er::TextureDescriptor> addAirflowTextures(
+    const std::shared_ptr<er::DescriptorSet>& description_set,
+    const std::shared_ptr<er::Sampler>& texture_sampler,
+    const er::TextureInfo& src_temperature_tex,
+    const er::TextureInfo& dst_temperature_tex,
+    const std::shared_ptr<er::ImageView>& rock_layer_tex,
+    const std::shared_ptr<er::ImageView>& soil_water_layer_tex) {
+    std::vector<er::TextureDescriptor> descriptor_writes;
+    descriptor_writes.reserve(4);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_TEMPERATURE_TEX_INDEX,
+        nullptr,
+        src_temperature_tex.view,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
+        er::ImageLayout::GENERAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        DST_TEMPERATURE_TEX_INDEX,
+        nullptr,
+        dst_temperature_tex.view,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
+        er::ImageLayout::GENERAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        ROCK_LAYER_BUFFER_INDEX,
+        texture_sampler,
+        rock_layer_tex,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        SOIL_WATER_LAYER_BUFFER_INDEX,
+        texture_sampler,
+        soil_water_layer_tex,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    return descriptor_writes;
+}
+
+static std::shared_ptr<er::DescriptorSetLayout> createTemperatureInitDescSetLayout(
+    const std::shared_ptr<er::Device>& device) {
+    std::vector<er::DescriptorSetLayoutBinding> bindings(1);
+    bindings[0] =
+        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            DST_TEMPERATURE_TEX_INDEX,
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::STORAGE_IMAGE);
+
+    return device->createDescriptorSetLayout(bindings);
+}
+
+static std::shared_ptr<er::DescriptorSetLayout> createAirflowUpdateDescSetLayout(
+    const std::shared_ptr<er::Device>& device) {
+    std::vector<er::DescriptorSetLayoutBinding> bindings(4);
+    bindings[0] =
+        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            DST_TEMPERATURE_TEX_INDEX,
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::STORAGE_IMAGE);
+
+    bindings[1] =
+        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            SRC_TEMPERATURE_TEX_INDEX,
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::STORAGE_IMAGE);
+
+    bindings[2] =
+        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            ROCK_LAYER_BUFFER_INDEX,
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::COMBINED_IMAGE_SAMPLER);
+
+    bindings[3] =
+        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            SOIL_WATER_LAYER_BUFFER_INDEX,
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::COMBINED_IMAGE_SAMPLER);
+
+    
+
+    return device->createDescriptorSetLayout(bindings);
 }
 
 static std::shared_ptr<er::PipelineLayout> createAirflowUpdatePipelineLayout(
@@ -69,6 +173,35 @@ static std::shared_ptr<er::Pipeline> createAirflowUpdatePipeline(
     return pipeline;
 }
 
+static std::shared_ptr<er::PipelineLayout> createTemperatureInitPipelineLayout(
+    const std::shared_ptr<er::Device>& device,
+    const er::DescriptorSetLayoutList& desc_set_layouts) {
+    er::PushConstantRange push_const_range{};
+    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
+    push_const_range.offset = 0;
+    push_const_range.size = sizeof(glsl::AirflowUpdateParams);
+
+    return device->createPipelineLayout(desc_set_layouts, { push_const_range });
+}
+
+static std::shared_ptr<er::Pipeline> createTemperatureInitPipeline(
+    const std::shared_ptr<er::Device>& device,
+    const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
+
+    auto temperature_init_compute_shader_modules = getTemperatureInitShaderModules(device);
+    assert(temperature_init_compute_shader_modules.size() == 1);
+
+    auto pipeline = device->createPipeline(
+        pipeline_layout,
+        temperature_init_compute_shader_modules[0]);
+
+    for (auto& shader_module : temperature_init_compute_shader_modules) {
+        device->destroyShaderModule(shader_module);
+    }
+
+    return pipeline;
+}
+
 } // namespace
 
 namespace engine {
@@ -77,42 +210,43 @@ namespace scene_rendering {
 WeatherSystem::WeatherSystem(
     const renderer::DeviceInfo& device_info,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
-    const std::shared_ptr<renderer::Sampler>& texture_sampler) {
+    const std::shared_ptr<renderer::Sampler>& texture_sampler,
+    const std::shared_ptr<renderer::ImageView>& rock_layer_tex,
+    const std::vector<std::shared_ptr<renderer::ImageView>>& soil_water_layer_tex) {
 
     const auto& device = device_info.device;
 
-    renderer::Helper::create3DTextureImage(
-        device_info,
-        renderer::Format::R16G16_UNORM,
-        glm::uvec3(
-            WeatherSystemConst::kAirflowBufferWidth,
-            WeatherSystemConst::kAirflowBufferWidth,
-            WeatherSystemConst::kAirflowBufferHeight),
-        airflow_volume_,
-        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
-        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
-        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    for (int i = 0; i < 2; i++) {
+        renderer::Helper::create3DTextureImage(
+            device_info,
+            renderer::Format::R16_SFLOAT,
+            glm::uvec3(
+                WeatherSystemConst::kAirflowBufferWidth,
+                WeatherSystemConst::kAirflowBufferWidth,
+                WeatherSystemConst::kAirflowBufferHeight),
+            temperature_volume_[i],
+            SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+            SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+            renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    }
 
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings(1);
-    bindings[0] =
-        renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
-            DST_AIRFLOW_TEX_INDEX,
-            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-            renderer::DescriptorType::STORAGE_IMAGE);
-
-    airflow_desc_set_layout_ =
-        device->createDescriptorSetLayout(bindings);
+    temperature_init_desc_set_layout_ = createTemperatureInitDescSetLayout(device);
+    airflow_desc_set_layout_ = createAirflowUpdateDescSetLayout(device);
 
     recreate(
         device,
         descriptor_pool,
-        texture_sampler);
+        texture_sampler,
+        rock_layer_tex,
+        soil_water_layer_tex);
 }
 
 void WeatherSystem::recreate(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
-    const std::shared_ptr<renderer::Sampler>& texture_sampler) {
+    const std::shared_ptr<renderer::Sampler>& texture_sampler,
+    const std::shared_ptr<renderer::ImageView>& rock_layer_tex,
+    const std::vector<std::shared_ptr<renderer::ImageView>>& soil_water_layer_tex) {
 
     if (airflow_pipeline_layout_ != nullptr) {
         device->destroyPipelineLayout(airflow_pipeline_layout_);
@@ -124,38 +258,103 @@ void WeatherSystem::recreate(
         airflow_pipeline_ = nullptr;
     }
 
-    airflow_tex_desc_set_ = nullptr;
-
-    // skybox
-    airflow_tex_desc_set_ =
+    temperature_init_tex_desc_set_ = nullptr;
+    temperature_init_tex_desc_set_ =
         device->createDescriptorSets(
             descriptor_pool,
-            airflow_desc_set_layout_, 1)[0];
+            temperature_init_desc_set_layout_, 1)[0];
 
     // create a global ibl texture descriptor set.
-    auto airflow_texture_descs = addAirflowTextures(
-        airflow_tex_desc_set_,
-        airflow_volume_,
-        texture_sampler);
-    device->updateDescriptorSets(airflow_texture_descs, {});
+    auto temperature_init_texture_descs = addTemperatureInitTextures(
+        temperature_init_tex_desc_set_,
+        temperature_volume_[0]);
+    device->updateDescriptorSets(temperature_init_texture_descs, {});
+
+    for (int dbuf_idx = 0; dbuf_idx < 2; dbuf_idx++) {
+        airflow_tex_desc_set_[dbuf_idx] = nullptr;
+        airflow_tex_desc_set_[dbuf_idx] =
+            device->createDescriptorSets(
+                descriptor_pool,
+                airflow_desc_set_layout_, 1)[0];
+
+        // create a global ibl texture descriptor set.
+        auto airflow_texture_descs = addAirflowTextures(
+            airflow_tex_desc_set_[dbuf_idx],
+            texture_sampler,
+            temperature_volume_[1-dbuf_idx],
+            temperature_volume_[dbuf_idx],
+            rock_layer_tex,
+            soil_water_layer_tex[dbuf_idx]);
+        device->updateDescriptorSets(airflow_texture_descs, {});
+    }
+
+    temperature_init_pipeline_layout_ =
+        createTemperatureInitPipelineLayout(
+            device,
+            { temperature_init_desc_set_layout_ } );
+
+    temperature_init_pipeline_ = createTemperatureInitPipeline(
+        device,
+        temperature_init_pipeline_layout_);
 
     airflow_pipeline_layout_ =
         createAirflowUpdatePipelineLayout(
             device,
-            { airflow_desc_set_layout_ } );
+            { airflow_desc_set_layout_ });
 
     airflow_pipeline_ = createAirflowUpdatePipeline(
         device,
         airflow_pipeline_layout_);
 }
 
-// render skybox.
-void WeatherSystem::updateAirflowBuffer(
+// update air flow buffer.
+void WeatherSystem::initTemperatureBuffer(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
 
     renderer::helper::transitMapTextureToStoreImage(
         cmd_buf,
-        { airflow_volume_.image });
+        { temperature_volume_[0].image });
+
+    auto w = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferWidth);
+    auto h = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferHeight);
+    cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, temperature_init_pipeline_);
+    glsl::AirflowUpdateParams airflow_params = {};
+    airflow_params.world_min =
+        glm::vec3(-kWorldMapSize / 2.0f, -kWorldMapSize / 2.0f, kAirflowLowHeight);
+    airflow_params.world_range =
+        glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - airflow_params.world_min;
+    airflow_params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
+    airflow_params.size = glm::uvec3(w, w, h);
+    cmd_buf->pushConstants(
+        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+        temperature_init_pipeline_layout_,
+        &airflow_params,
+        sizeof(airflow_params));
+
+    cmd_buf->bindDescriptorSets(
+        renderer::PipelineBindPoint::COMPUTE,
+        temperature_init_pipeline_layout_,
+        { temperature_init_tex_desc_set_ });
+
+    cmd_buf->dispatch(
+        (w + 7) / 8,
+        (w + 7) / 8,
+        h);
+
+    renderer::helper::transitMapTextureFromStoreImage(
+        cmd_buf,
+        { temperature_volume_[0].image });
+}
+
+// update air flow buffer.
+void WeatherSystem::updateAirflowBuffer(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    int dbuf_idx) {
+
+    renderer::helper::transitMapTextureToStoreImage(
+        cmd_buf,
+        { temperature_volume_[dbuf_idx].image,
+          temperature_volume_[1-dbuf_idx].image });
 
     auto w = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferWidth);
     auto h = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferHeight);
@@ -166,6 +365,7 @@ void WeatherSystem::updateAirflowBuffer(
     airflow_params.world_range =
         glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - airflow_params.world_min;
     airflow_params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
+    airflow_params.size = glm::ivec3(w, w, h);
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         airflow_pipeline_layout_,
@@ -175,16 +375,17 @@ void WeatherSystem::updateAirflowBuffer(
     cmd_buf->bindDescriptorSets(
         renderer::PipelineBindPoint::COMPUTE,
         airflow_pipeline_layout_,
-        { airflow_tex_desc_set_ });
+        { airflow_tex_desc_set_[dbuf_idx] });
 
     cmd_buf->dispatch(
         (w + 7) / 8,
         (w + 7) / 8,
-        h);
+        (h + 7) / 8);
 
     renderer::helper::transitMapTextureFromStoreImage(
         cmd_buf,
-        { airflow_volume_.image });
+        { temperature_volume_[dbuf_idx].image,
+          temperature_volume_[1-dbuf_idx].image });
 }
 
 void WeatherSystem::update() {
@@ -192,10 +393,15 @@ void WeatherSystem::update() {
 
 void WeatherSystem::destroy(
     const std::shared_ptr<renderer::Device>& device) {
-    airflow_volume_.destroy(device);
+    for (int i = 0; i < 2; i++) {
+        temperature_volume_[i].destroy(device);
+    }
     device->destroyDescriptorSetLayout(airflow_desc_set_layout_);
     device->destroyPipelineLayout(airflow_pipeline_layout_);
     device->destroyPipeline(airflow_pipeline_);
+    device->destroyDescriptorSetLayout(temperature_init_desc_set_layout_);
+    device->destroyPipelineLayout(temperature_init_pipeline_layout_);
+    device->destroyPipeline(temperature_init_pipeline_);
 }
 
 }//namespace scene_rendering

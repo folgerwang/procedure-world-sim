@@ -307,5 +307,8 @@
     <None Include="src\shaders\debug_draw.frag">
       <Filter>Resource Files\shaders</Filter>
     </None>
+    <None Include="src\shaders\temperature_init.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

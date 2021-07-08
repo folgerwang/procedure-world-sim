@@ -158,6 +158,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\updat
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_instance_buffer.comp -o $(ProjectDir)lib\shaders\update_instance_buffer_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_game_objects.comp -o $(ProjectDir)lib\shaders\update_game_objects_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\airflow_update.comp -o $(ProjectDir)lib\shaders\airflow_update_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\temperature_init.comp -o $(ProjectDir)lib\shaders\temperature_init_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug_draw.vert -o $(ProjectDir)lib\shaders\debug_draw_vert.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug_draw.frag -o $(ProjectDir)lib\shaders\debug_draw_frag.spv</Command>
     </PostBuildEvent>
@@ -245,6 +246,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\updat
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_instance_buffer.comp -o $(ProjectDir)lib\shaders\update_instance_buffer_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_game_objects.comp -o $(ProjectDir)lib\shaders\update_game_objects_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\airflow_update.comp -o $(ProjectDir)lib\shaders\airflow_update_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\temperature_init.comp -o $(ProjectDir)lib\shaders\temperature_init_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug_draw.vert -o $(ProjectDir)lib\shaders\debug_draw_vert.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug_draw.frag -o $(ProjectDir)lib\shaders\debug_draw_frag.spv</Command>
     </PostBuildEvent>
@@ -328,6 +330,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug
     <None Include="src\shaders\ibl_smooth.comp" />
     <None Include="src\shaders\skybox.frag" />
     <None Include="src\shaders\skybox.vert" />
+    <None Include="src\shaders\temperature_init.comp" />
     <None Include="src\shaders\tile.frag" />
     <None Include="src\shaders\tile.vert" />
     <None Include="src\shaders\tile_creator.comp" />

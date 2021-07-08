@@ -2234,23 +2234,16 @@ void TileObject::initStaticMembers(
         SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
-    renderer::Helper::create2DTextureImage(
-        device_info,
-        renderer::Format::R16G16_UNORM,
-        glm::uvec2(static_cast<uint32_t>(TileConst::kSoilLayerSize)),
-        soil_water_layer_[0],
-        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
-        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
-        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-
-    renderer::Helper::create2DTextureImage(
-        device_info,
-        renderer::Format::R16G16_UNORM,
-        glm::uvec2(static_cast<uint32_t>(TileConst::kWaterlayerSize)),
-        soil_water_layer_[1],
-        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
-        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
-        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    for (int i = 0; i < 2; i++) {
+        renderer::Helper::create2DTextureImage(
+            device_info,
+            renderer::Format::R16G16_UNORM,
+            glm::uvec2(static_cast<uint32_t>(TileConst::kSoilLayerSize)),
+            soil_water_layer_[i],
+            SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+            SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+            renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    }
 
     renderer::Helper::create2DTextureImage(
         device_info,
@@ -2430,34 +2423,34 @@ void TileObject::generateStaticDescriptorSet(
     device->updateDescriptorSets(texture_descs, {});
 
     // tile creator buffer set.
-    for (int soil_water = 0; soil_water < 2; soil_water++) {
-        tile_update_buffer_desc_set_[soil_water] = device->createDescriptorSets(
+    for (int dbuf_idx = 0; dbuf_idx < 2; dbuf_idx++) {
+        tile_update_buffer_desc_set_[dbuf_idx] = device->createDescriptorSets(
             descriptor_pool, tile_update_desc_set_layout_, 1)[0];
 
         // create a global ibl texture descriptor set.
         texture_descs = addTileUpdateBuffers(
-            tile_update_buffer_desc_set_[soil_water],
+            tile_update_buffer_desc_set_[dbuf_idx],
             texture_sampler,
             rock_layer_,
-            soil_water_layer_[soil_water],
+            soil_water_layer_[dbuf_idx],
             water_normal_);
         device->updateDescriptorSets(texture_descs, {});
 
-        tile_flow_update_buffer_desc_set_[soil_water] = device->createDescriptorSets(
+        tile_flow_update_buffer_desc_set_[dbuf_idx] = device->createDescriptorSets(
             descriptor_pool, tile_flow_update_desc_set_layout_, 1)[0];
 
         // create a global ibl texture descriptor set.
         texture_descs = addTileFlowUpdateBuffers(
-            tile_flow_update_buffer_desc_set_[soil_water],
+            tile_flow_update_buffer_desc_set_[dbuf_idx],
             texture_sampler,
             rock_layer_,
-            soil_water_layer_[1 - soil_water],
-            soil_water_layer_[soil_water],
+            soil_water_layer_[1 - dbuf_idx],
+            soil_water_layer_[dbuf_idx],
             water_flow_);
         device->updateDescriptorSets(texture_descs, {});
 
         // tile params set.
-        tile_res_desc_set_[soil_water] = device->createDescriptorSets(
+        tile_res_desc_set_[dbuf_idx] = device->createDescriptorSets(
             descriptor_pool, tile_res_desc_set_layout_, 1)[0];
     }
 }
@@ -2468,7 +2461,7 @@ void TileObject::updateStaticDescriptorSet(
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& src_texture,
     const std::shared_ptr<renderer::ImageView>& src_depth,
-    const std::shared_ptr<renderer::ImageView>& airflow_tex) {
+    const std::vector<std::shared_ptr<renderer::ImageView>>& airflow_tex) {
 
     if (tile_res_desc_set_[0] == nullptr) {
         generateStaticDescriptorSet(
@@ -2477,19 +2470,19 @@ void TileObject::updateStaticDescriptorSet(
             texture_sampler);
     }
 
-    for (int soil_water = 0; soil_water < 2; soil_water++) {
+    for (int dbuf_idx = 0; dbuf_idx < 2; dbuf_idx++) {
         // create a global ibl texture descriptor set.
         auto tile_res_descs = addTileResourceTextures(
-            tile_res_desc_set_[soil_water],
+            tile_res_desc_set_[dbuf_idx],
             texture_sampler,
             src_texture,
             src_depth,
             rock_layer_.view,
-            soil_water_layer_[soil_water].view,
+            soil_water_layer_[dbuf_idx].view,
             grass_snow_layer_.view,
             water_normal_.view,
             water_flow_.view,
-            airflow_tex);
+            airflow_tex[dbuf_idx]);
         device->updateDescriptorSets(tile_res_descs, {});
     }
 }
@@ -2547,11 +2540,11 @@ void TileObject::generateTileBuffers(
 void TileObject::updateTileBuffers(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     float current_time,
-    int soil_water) {
+    int dbuf_idx) {
 
     renderer::helper::transitMapTextureToStoreImage(
         cmd_buf,
-        {soil_water_layer_[soil_water].image,
+        {soil_water_layer_[dbuf_idx].image,
          water_normal_.image});
 
     auto dispatch_count = static_cast<uint32_t>(TileConst::kWaterlayerSize);
@@ -2573,7 +2566,7 @@ void TileObject::updateTileBuffers(
     cmd_buf->bindDescriptorSets(
         renderer::PipelineBindPoint::COMPUTE,
         tile_update_pipeline_layout_,
-        { tile_update_buffer_desc_set_[soil_water] });
+        { tile_update_buffer_desc_set_[dbuf_idx] });
 
     cmd_buf->dispatch(
         (dispatch_count + 15) / 16,
@@ -2581,19 +2574,19 @@ void TileObject::updateTileBuffers(
 
     renderer::helper::transitMapTextureFromStoreImage(
         cmd_buf,
-        {soil_water_layer_[soil_water].image,
+        {soil_water_layer_[dbuf_idx].image,
          water_normal_.image});
 }
 
 void TileObject::updateTileFlowBuffers(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     float current_time,
-    int soil_water) {
+    int dbuf_idx) {
 
     renderer::helper::transitMapTextureToStoreImage(
         cmd_buf,
-        {soil_water_layer_[soil_water].image,
-         soil_water_layer_[1 - soil_water].image,
+        {soil_water_layer_[dbuf_idx].image,
+         soil_water_layer_[1 - dbuf_idx].image,
          water_flow_.image});
 
     auto dispatch_count = static_cast<uint32_t>(TileConst::kWaterlayerSize);
@@ -2616,7 +2609,7 @@ void TileObject::updateTileFlowBuffers(
     cmd_buf->bindDescriptorSets(
         renderer::PipelineBindPoint::COMPUTE,
         tile_flow_update_pipeline_layout_,
-        { tile_flow_update_buffer_desc_set_[soil_water] });
+        { tile_flow_update_buffer_desc_set_[dbuf_idx] });
 
     cmd_buf->dispatch(
         (dispatch_count + 15) / 16,
@@ -2624,8 +2617,8 @@ void TileObject::updateTileFlowBuffers(
 
     renderer::helper::transitMapTextureFromStoreImage(
         cmd_buf,
-        {soil_water_layer_[soil_water].image,
-         soil_water_layer_[1 - soil_water].image,
+        {soil_water_layer_[dbuf_idx].image,
+         soil_water_layer_[1 - dbuf_idx].image,
          water_flow_.image });
 }
 
@@ -2633,7 +2626,7 @@ void TileObject::draw(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const renderer::DescriptorSetList& desc_set_list,
     const glm::uvec2 display_size,
-    int soil_water,
+    int dbuf_idx,
     float delta_t,
     float cur_time,
     bool is_base_pass) {
@@ -2660,7 +2653,7 @@ void TileObject::draw(
         sizeof(tile_params));
 
     auto new_desc_sets = desc_set_list;
-    new_desc_sets.push_back(tile_res_desc_set_[soil_water]);
+    new_desc_sets.push_back(tile_res_desc_set_[dbuf_idx]);
 
     cmd_buf->bindDescriptorSets(
         renderer::PipelineBindPoint::GRAPHICS,
@@ -2681,7 +2674,7 @@ void TileObject::drawAllVisibleTiles(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const renderer::DescriptorSetList& desc_set_list,
     const glm::uvec2 display_size,
-    int soil_water,
+    int dbuf_idx,
     float delta_t,
     float cur_time,
     bool is_base_pass) {
@@ -2691,7 +2684,7 @@ void TileObject::drawAllVisibleTiles(
             cmd_buf,
             desc_set_list,
             display_size,
-            soil_water,
+            dbuf_idx,
             delta_t,
             cur_time,
             is_base_pass);
