@@ -36,7 +36,7 @@ void main() {
             log2(kAirflowMaxHeight - kAirflowLowHeight + 1.0f);
 
     uvw.xy = (sample_pos.xz - params.world_min) * params.inv_world_range;
-    out_data.debug_info.x = texture(src_volume, uvw).x;
+    out_data.debug_info.x = texture(src_volume, uvw).x - kAbsoluteDegreeFactor;
 
     vec3 offset = vec3(0);
     if (vertex_idx == 0) {

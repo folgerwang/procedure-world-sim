@@ -54,6 +54,18 @@ float getUpdatedTemperature(ivec3 src_local_coords, ivec3 block_coords, vec2 gro
     return src_temp + temp_adjust;
 }
 
+uint packTempDiff(uint min_temp, float center) {
+     float min_t = unpackHalf2x16(min_temp).y;
+
+     uint temp_diff = 0;
+     if (center > min_t) {
+        temp_diff = uint(min((center - min_t) * 0.5f, 7.9f) * 1024.0f);
+        temp_diff |= (min_temp & 0x0f) << 13;
+     }
+
+     return temp_diff;
+}
+
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
 void main()
 {
@@ -105,24 +117,93 @@ void main()
   if (pixel_index < 10 * 10 * 5) {
      int iz = pixel_index / (10 * 5);
      int ixy = pixel_index % (10 * 5);
-     ivec3 slc0 = ivec3(ixy % 5, ixy / 5 + 1, iz + 1);
 
-     uint back = s_temperature_grid[slc0.z][slc0.y-1][slc0.x] >> 16;
-     uint front = s_temperature_grid[slc0.z][slc0.y+1][slc0.x] >> 16;
-     uint top = s_temperature_grid[slc0.z-1][slc0.y][slc0.x] >> 16;
-     uint bottom = s_temperature_grid[slc0.z+1][slc0.y][slc0.x] >> 16;
-     uint left = s_temperature_grid[slc0.z][slc0.y][slc0.x] & 0xffff;
-     uint right = s_temperature_grid[slc0.z][slc0.y][slc0.x+1] & 0xffff;
+     ivec3 dlc = ivec3(ixy % 5, ixy / 5, iz);
+     ivec3 slc = dlc + ivec3(0, 1, 1);
 
+     uint c0 = s_temperature_grid[slc.z][slc.y][slc.x];
+     uint c1 = s_temperature_grid[slc.z][slc.y][slc.x+1];
 
+     uint cc0 = c0 & 0xffff0000;
+     vec2 center = unpackHalf2x16(cc0 | (c1 & 0x0000ffff));
 
+     uint left = c0 << 16;
+     uint right = (c1 << 16) | 0x01;
+     uint back = (s_temperature_grid[slc.z][slc.y-1][slc.x] & 0xffff0000) | 0x02;
+     uint front = (s_temperature_grid[slc.z][slc.y+1][slc.x] & 0xffff0000) | 0x03;
+     uint top = (s_temperature_grid[slc.z-1][slc.y][slc.x] & 0xffff0000) | 0x04;
+     uint bottom = (s_temperature_grid[slc.z+1][slc.y][slc.x] & 0xffff0000) | 0x05;
+
+     uint min_value = min(min(min(left, right), min(back, front)), min(top, bottom));
+     uint diff0 = packTempDiff(min_value, center.y);
+
+     left = cc0;
+     right = (c1 & 0xffff0000) | 0x01;
+     back = (s_temperature_grid[slc.z][slc.y-1][slc.x+1] << 16) | 0x02;
+     front = (s_temperature_grid[slc.z][slc.y+1][slc.x+1] << 16) | 0x03;
+     top = (s_temperature_grid[slc.z-1][slc.y][slc.x+1] << 16) | 0x04;
+     bottom = (s_temperature_grid[slc.z+1][slc.y][slc.x+1] << 16) | 0x05;
+
+     min_value = min(min(min(left, right), min(back, front)), min(top, bottom));
+     uint diff1 = packTempDiff(min_value, center.x);
+
+     s_airflow_grid[dlc.z][dlc.y][dlc.x] = (diff1 << 16) | diff0;
   }
+
+  barrier();
+  memoryBarrierShared();
+  int slot_idx = local_coords.x % 2;
+  int shift_bits = slot_idx > 0 ? 0 : 16;
+  int lr_shift_bits = 16 - shift_bits;
+
+  ivec3 slc = ivec3(local_coords.x / 2, local_coords.y + 1, local_coords.z + 1);
+  uint c0 = s_airflow_grid[slc.z][slc.y][slc.x];
+  uint c1 = s_airflow_grid[slc.z][slc.y][slc.x+1];
+  slc.x += slot_idx;
+  uint back = s_airflow_grid[slc.z][slc.y-1][slc.x] >> shift_bits;
+  uint front = s_airflow_grid[slc.z][slc.y+1][slc.x] >> shift_bits;
+  uint top = s_airflow_grid[slc.z-1][slc.y][slc.x] >> shift_bits;
+  uint bottom = s_airflow_grid[slc.z+1][slc.y][slc.x] >> shift_bits;
+  uint left = c0 >> lr_shift_bits;
+  uint right = c1 >> lr_shift_bits;
+
+  int temp_flow = 0;
+  if ((back & 0xe000) == 0x6000) {
+    temp_flow += int(back & 0x1fff);
+  }
+  if ((front & 0xe000) == 0x4000) {
+    temp_flow += int(front & 0x1fff);
+  }
+  if ((top & 0xe000) == 0xa000) {
+    temp_flow += int(top & 0x1fff);
+  }
+  if ((bottom & 0xe000) == 0x8000) {
+    temp_flow += int(bottom & 0x1fff);
+  }
+  if ((left & 0xe000) == 0x2000) {
+    temp_flow += int(left & 0x1fff);
+  }
+  right &= 0xffff;
+  if (right > 0 && (right & 0xe000) == 0x0000) {
+    temp_flow += int(right & 0x1fff);
+  }
+
+  if (slot_idx == 1) {
+    c0 = c1;
+  }
+
+  uint center = c0 >> shift_bits;
+  temp_flow -= int(center & 0x1fff);
+
   // skip 2 lines on border.
   uint packed_temp = s_temperature_grid[local_coords.z+2][local_coords.y+2][local_coords.x/2+1];
   vec2 t = unpackHalf2x16(packed_temp);
 
-  if (local_coords.x % 2 == 1)
+  if (slot_idx == 1) {
     t.x = t.y;
+  }   
+
+  t.x += temp_flow / 1024.0f;
 
   imageStore(dst_temperature, pixel_coords, vec4(t.x));
 }

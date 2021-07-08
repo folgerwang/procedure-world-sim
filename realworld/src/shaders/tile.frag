@@ -81,11 +81,11 @@ void main() {
 
     float uvw_y = log2(max((pos.y - kAirflowLowHeight), 0.0f) + 1.0f) /
                   log2(kAirflowMaxHeight - kAirflowLowHeight + 1.0f);
-    float temp = texture(src_volume, vec3(in_data.world_map_uv, uvw_y)).x - 273.15f;
+    float c_temp = texture(src_volume, vec3(in_data.world_map_uv, uvw_y)).x - kAbsoluteDegreeFactor;
 
     vec3 albedo = vec3(0.18, 0.11, 0.10)*.75f;
     albedo = 1.0f* mix(albedo, vec3(0.1, 0.1, 0.0)*0.2f, smoothstep(0.7f, 0.9f, normal.y));
-    float cold_index = clamp((15.0f - temp) / 5.0f, 0.0f, 1.0f);
+    float cold_index = clamp((15.0f - c_temp) / 5.0f, 0.0f, 1.0f);
 
     albedo = mix(albedo, vec3(1.0, 1.0, 1.0), cold_index);
 
