@@ -15,6 +15,7 @@ layout(location = 0) out VsPsData {
 } out_data;
 
 layout(set = TILE_PARAMS_SET, binding = SRC_VOLUME_TEST_INDEX) uniform sampler3D src_volume;
+layout(set = TILE_PARAMS_SET, binding = SRC_AIRFLOW_INDEX) uniform sampler3D src_airflow;
 
 void main() {
     uint vertex_idx = gl_VertexIndex % 3;
@@ -38,15 +39,19 @@ void main() {
     uvw.xy = (sample_pos.xz - params.world_min) * params.inv_world_range;
     out_data.debug_info.x = texture(src_volume, uvw).x - kAbsoluteDegreeFactor;
 
+    vec3 arrow_dir = texture(src_airflow, uvw).xyz * 2.0f - 1.0f;
+    vec3 view_dir = sample_pos - view_params.camera_pos.xyz;
+    vec3 left_dir = normalize(cross(arrow_dir, view_dir));
+
     vec3 offset = vec3(0);
     if (vertex_idx == 0) {
-        offset = vec3(0.002f, 0, 0);
+        offset = -left_dir * 0.002f;
     }
     else if (vertex_idx == 1) {
-        offset = vec3(-0.002f, 0, 0);
+        offset = left_dir * 0.002f;
     }
     else {
-        offset = vec3(0, 0.02f, 0);
+        offset = arrow_dir * 0.02f;
     }
 
     sample_pos += offset * position_ss.w;

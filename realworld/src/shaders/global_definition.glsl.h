@@ -68,10 +68,12 @@
 #define DST_WATER_NORMAL_BUFFER_INDEX       8
 #define DST_WATER_FLOW_BUFFER_INDEX         9
 #define SRC_VOLUME_TEST_INDEX               10
+#define SRC_AIRFLOW_INDEX                   11
 
 // Airflow texture.
 #define DST_TEMPERATURE_TEX_INDEX           0
 #define SRC_TEMPERATURE_TEX_INDEX           1
+#define DST_AIRFLOW_TEX_INDEX               4
 
 // IBL texure index
 #define PANORAMA_TEX_INDEX          0

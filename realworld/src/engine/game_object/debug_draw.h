@@ -57,19 +57,22 @@ public:
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
-        const std::shared_ptr<renderer::ImageView>& temp_volume_tex);
+        const std::shared_ptr<renderer::ImageView>& temp_volume_tex,
+        const std::shared_ptr<renderer::ImageView>& airflow_tex);
 
     static void generateStaticDescriptorSet(
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
-        const std::shared_ptr<renderer::ImageView>& temp_volume_tex);
+        const std::shared_ptr<renderer::ImageView>& temp_volume_tex,
+        const std::shared_ptr<renderer::ImageView>& airflow_tex);
 
     static void generateAllDescriptorSets(
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
-        const std::shared_ptr<renderer::ImageView>& temp_volume_tex);
+        const std::shared_ptr<renderer::ImageView>& temp_volume_tex,
+        const std::shared_ptr<renderer::ImageView>& airflow_tex);
 
     static void draw(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
