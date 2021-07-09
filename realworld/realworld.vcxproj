@@ -309,6 +309,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug
     <ClInclude Include="src\shaders\sun.glsl.h" />
     <ClInclude Include="src\shaders\sunlight_scattering.glsl.h" />
     <ClInclude Include="src\shaders\tile_common.glsl.h" />
+    <ClInclude Include="src\shaders\weather_common.glsl.h" />
     <ClInclude Include="src\third_party\imgui\imconfig.h" />
     <ClInclude Include="src\third_party\imgui\imgui.h" />
     <ClInclude Include="src\third_party\imgui\imgui_internal.h" />

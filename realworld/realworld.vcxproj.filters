@@ -230,6 +230,9 @@
     <ClInclude Include="src\engine\game_object\debug_draw.h">
       <Filter>Header Files\engine\game_object</Filter>
     </ClInclude>
+    <ClInclude Include="src\shaders\weather_common.glsl.h">
+      <Filter>Resource Files\shaders</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\shaders\cube_ibl.frag">

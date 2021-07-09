@@ -117,6 +117,9 @@ bool Menu::draw(
             if (ImGui::MenuItem("Turn off water pass", NULL, turn_off_water_pass_)) {
                 turn_off_water_pass_ = !turn_off_water_pass_;
             }
+            if (ImGui::MenuItem("Turn on air flow effect", NULL, turn_on_airflow_)) {
+                turn_on_airflow_ = !turn_on_airflow_;
+            }
             if (ImGui::MenuItem("Turn on debug draw volume", NULL, turn_on_debug_draw_volume_)) {
                 turn_on_debug_draw_volume_ = !turn_on_debug_draw_volume_;
             }

@@ -453,7 +453,8 @@ void RealWorldApplication::initVulkan() {
         ego::TileObject::getRockLayer(),
         ego::TileObject::getSoilWaterLayer(0),
         ego::TileObject::getSoilWaterLayer(1),
-        ego::TileObject::getWaterFlow());
+        ego::TileObject::getWaterFlow(),
+        weather_system_->getAirflowTex());
 
     ego::DebugDrawObject::initStaticMembers(
         device_info_,
@@ -593,7 +594,8 @@ void RealWorldApplication::recreateSwapChain() {
         ego::TileObject::getRockLayer(),
         ego::TileObject::getSoilWaterLayer(0),
         ego::TileObject::getSoilWaterLayer(1),
-        ego::TileObject::getWaterFlow());
+        ego::TileObject::getWaterFlow(),
+        weather_system_->getAirflowTex());
 
     ego::TileObject::updateStaticDescriptorSet(
         device_,
@@ -993,7 +995,8 @@ void RealWorldApplication::drawScene(
             ego::TileObject::getWorldRange(),
             s_camera_pos,
             s_update_frame_count,
-            s_dbuf_idx);
+            s_dbuf_idx,
+            menu_->isAirfowOn());
 
         for (auto& gltf_obj : gltf_objects_) {
             gltf_obj->updateBuffers(cmd_buf);

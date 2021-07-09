@@ -1,6 +1,7 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 #include "global_definition.glsl.h"
+#include "weather_common.glsl.h"
 #include "tile_common.glsl.h"
 
 layout(push_constant) uniform AirflowUniformBufferObject {
@@ -28,31 +29,34 @@ vec2 getPackedLayers(vec2 uv) {
     return vec2(soil_layer_height, water_layer_height);
 }
 
-vec4 getPositionWS(vec3 uvw) {
-    vec4 position_ws;
-    position_ws.xy = uvw.xy * params.world_range.xy + params.world_min.xy;
-    position_ws.z = exp2((uvw.z - params.inv_size.z * 0.5f) * log2(1.0f + params.world_range.z)) - 1.0f + params.world_min.z;
-    position_ws.w = exp2((uvw.z + params.inv_size.z * 0.5f) * log2(1.0f + params.world_range.z)) - 1.0f + params.world_min.z;
-    return position_ws;
-}
-
 float getUpdatedTemperature(ivec3 src_local_coords, ivec3 block_coords, vec2 ground_info) {
     ivec3 src_coords = clamp(src_local_coords + block_coords - 2,
                              ivec3(0),
                              params.size - 1);
     float src_temp = imageLoad(src_temperature, src_coords).x;
-    vec4 position_ws = getPositionWS((src_coords + 0.5) * params.inv_size);
+    float uvw_w = (src_coords.z + 0.5) * params.inv_size.z;
+
+    float min_h = getSampleHeight(uvw_w, -params.inv_size.z * 0.5f, params.height_params);
+    float max_h = getSampleHeight(uvw_w, params.inv_size.z * 0.5f, params.height_params);
+    float sample_h = getSampleHeight(uvw_w, 0, params.height_params);
+
+    float target_stable_temp = getReferenceDegree(params.sea_level_temperature, sample_h);
+
     float water_depth = ground_info.y - ground_info.x;
-    bool cell_touch_ground = (ground_info.y >= position_ws.z - 0.01f);// && (ground_info.y <= position_ws.w + 0.01f);
-    bool cell_above_ground = ground_info.y < position_ws.z;
+    bool cell_touch_ground = (ground_info.y >= min_h - 0.01f);// && (ground_info.y <= max_h + 0.01f);
+    bool cell_above_ground = ground_info.y < min_h;
     float temp_adjust = 0.0f;
     if (cell_touch_ground) {
-        temp_adjust += mix(0.48f, 0.245f, clamp(water_depth * 10.0f, 0.0f, 1.0f));
+        temp_adjust += mix(params.soil_temp_adj,
+                           params.water_temp_adj,
+                           clamp((water_depth - 0.01f) * 10.0f, 0.0f, 1.0f));
     }
     else if (cell_above_ground) {
-        temp_adjust += 0.001f;
+        temp_adjust += params.air_temp_adj;
     }
-    return src_temp + temp_adjust;
+
+    // make sure color different here is positive.
+    return max(src_temp + temp_adjust - target_stable_temp + kTemperatureDiffPositiveOffset, 0.0f);
 }
 
 uint packTempDiff(uint min_temp, float center) {
@@ -60,7 +64,7 @@ uint packTempDiff(uint min_temp, float center) {
 
      uint temp_diff = 0;
      if (center > min_t) {
-        temp_diff = uint(min((center - min_t) / 64.0f, 0.125f) * 8192.0f) & 0x1fff;
+        temp_diff = uint(min((center - min_t) / 2.0f, 0.5f) * 1024.0f) & 0x1fff;
         temp_diff |= (min_temp & 0x07) << 13;
      }
 
@@ -197,7 +201,7 @@ void main()
     temp_adj += temp_diff;
     airflow_dir += vec3(1, 0, 0) * temp_diff;
   }
-  if ((right & 0xe000) == 0x0000) {
+  if ((right & 0xe000) == (0 << 13)) {
     int temp_diff = int(right & 0x1fff);
     temp_adj += temp_diff;
     airflow_dir += vec3(-1, 0, 0) * temp_diff;
@@ -208,21 +212,33 @@ void main()
   }
 
   uint center = c0 >> shift_bits;
-  temp_adj -= int(center & 0x1fff);
+  uint flow_tag = (center >> 13) & 0x07;
+  int temp_diff = int(center & 0x1fff);
+  //temp_adj -= int(center & 0x1fff);
 
-  // skip 2 lines on border.
+  airflow_dir += vec3(flow_tag == 0 ? -1 : (flow_tag == 1 ? 1 : 0),
+                      flow_tag == 4 ? -1 : (flow_tag == 5 ? 1 : 0),
+                      flow_tag == 2 ? -1 : (flow_tag == 3 ? 1 : 0)) *
+                 temp_diff;
+
+  float uvw_w = (pixel_coords.z + 0.5) * params.inv_size.z;
+  float sample_h = getSampleHeight(uvw_w, 0, params.height_params);
+  float target_stable_temp = getReferenceDegree(params.sea_level_temperature, sample_h);
+
   uint packed_temp = s_temperature_grid[local_coords.z+2][local_coords.y+2][local_coords.x/2+1];
   vec2 t = unpackHalf2x16(packed_temp);
 
   if (slot_idx == 1) {
     t.x = t.y;
-  }   
+  }
+  t.x -= kTemperatureDiffPositiveOffset;
 
-  t.x += temp_adj / 8192.0f;
+  float cur_temp = target_stable_temp + t.x + temp_adj / 1024.0f;
+  imageStore(dst_temperature, pixel_coords, vec4(cur_temp));
 
-  imageStore(dst_temperature, pixel_coords, vec4(t.x));
-
-  vec3 src_airflow_dir = imageLoad(dst_airflow, pixel_coords).xyz;
-  airflow_dir = mix(normalize(airflow_dir), src_airflow_dir * 2.0f - 1.0f, 0.5f);
-  imageStore(dst_airflow, pixel_coords, vec4(normalize(airflow_dir) * 0.5f + 0.5f, 0.0f));
+  vec4 src_airflow = imageLoad(dst_airflow, pixel_coords);
+  vec3 src_airflow_dir = src_airflow.xyz * 2.0f - 1.0f;
+  airflow_dir = mix(airflow_dir, src_airflow_dir * src_airflow.w * 4.0f, 0.5f);
+  float new_airflow_str = length(airflow_dir) / 4.0f;
+  imageStore(dst_airflow, pixel_coords, vec4(normalize(airflow_dir) * 0.5f + 0.5f, new_airflow_str));
 }

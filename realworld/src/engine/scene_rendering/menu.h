@@ -8,6 +8,7 @@ class Menu {
     std::vector<std::string> gltf_file_names_;
     std::vector<std::string> to_load_gltf_names_;
     bool turn_off_water_pass_ = false;
+    bool turn_on_airflow_ = false;
     bool turn_on_debug_draw_volume_ = false;
 
 public:
@@ -30,6 +31,10 @@ public:
 
     inline bool isWaterPassTurnOff() {
         return turn_off_water_pass_; 
+    }
+
+    inline bool isAirfowOn() {
+        return turn_on_airflow_;
     }
 
     inline bool isDebugDrawVolumeTurnOn(){

@@ -120,12 +120,6 @@
 #define SOIL_WATER_LAYER_MAX_THICKNESS    (512.0f - 1.0f / 32.0f)
 #define SNOW_LAYER_MAX_THICKNESS          (8.0f - 1.0f / 32.0f)
 
-#define kAirflowMaxHeight                 12000.0f
-#define kAirflowLowHeight                 -100.0f
-#define kDegreeDecreasePerKm              (10.0f / 1000.0f)
-
-#define kAbsoluteDegreeFactor             273.15f
-
 #ifdef __cplusplus
 #include "glm/glm.hpp"
 using namespace glm;
@@ -200,13 +194,15 @@ struct TileUpdateParams {
 
 struct AirflowUpdateParams {
     vec3            world_min;
-    float           pad1;
+    float           sea_level_temperature;
     vec3            world_range;
-    float           pad2;
+    float           soil_temp_adj;
     vec3            inv_size;
-    float           pad3;
+    float           water_temp_adj;
     ivec3           size;
-    uint            pad4;
+    float           air_temp_adj;
+    vec2            height_params;
+    vec2            pad;
 };
 
 struct TileParams {
@@ -259,6 +255,8 @@ struct GameObjectsUpdateParams {
     vec2            inv_world_range;
     float           delta_t;
     int             frame_count;
+    int             enble_airflow;
+    int             pad;
 };
 
 struct InstanceBufferUpdateParams {

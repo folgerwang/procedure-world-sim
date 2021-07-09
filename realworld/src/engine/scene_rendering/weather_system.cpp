@@ -3,6 +3,7 @@
 #include "engine/renderer/renderer_helper.h"
 #include "engine/engine_helper.h"
 #include "shaders/global_definition.glsl.h"
+#include "shaders/weather_common.glsl.h"
 #include "engine/game_object/terrain.h"
 #include "weather_system.h"
 
@@ -352,6 +353,14 @@ void WeatherSystem::initTemperatureBuffer(
         glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - airflow_params.world_min;
     airflow_params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
     airflow_params.size = glm::uvec3(w, w, h);
+    airflow_params.sea_level_temperature = 30.0f;
+    airflow_params.soil_temp_adj = 0;
+    airflow_params.water_temp_adj = 0;
+    airflow_params.air_temp_adj = 0;
+    airflow_params.height_params =
+        glm::vec2(log2(1.0f + airflow_params.world_range.z),
+            -1.0f + airflow_params.world_min.z);
+
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         temperature_init_pipeline_layout_,
@@ -394,6 +403,14 @@ void WeatherSystem::updateAirflowBuffer(
         glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - airflow_params.world_min;
     airflow_params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
     airflow_params.size = glm::ivec3(w, w, h);
+    airflow_params.sea_level_temperature = 30.0f;
+    airflow_params.soil_temp_adj = 0.018f;
+    airflow_params.water_temp_adj = 0.1245f;
+    airflow_params.air_temp_adj = 0.001f;
+    airflow_params.height_params =
+        glm::vec2(log2(1.0f + airflow_params.world_range.z),
+            -1.0f + airflow_params.world_min.z);
+
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         airflow_pipeline_layout_,

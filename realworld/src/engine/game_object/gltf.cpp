@@ -958,7 +958,8 @@ std::vector<renderer::TextureDescriptor> addTileHeightmapTexture(
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const renderer::TextureInfo& rock_layer,
     const renderer::TextureInfo& soil_water_layer,
-    const renderer::TextureInfo& water_flow) {
+    const renderer::TextureInfo& water_flow,
+    const std::shared_ptr<renderer::ImageView>& airflow_tex) {
     std::vector<renderer::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(3);
 
@@ -989,6 +990,15 @@ std::vector<renderer::TextureDescriptor> addTileHeightmapTexture(
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_AIRFLOW_INDEX,
+        texture_sampler,
+        airflow_tex,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
     return descriptor_writes;
 }
 
@@ -1003,9 +1013,9 @@ static std::shared_ptr<renderer::DescriptorSetLayout> createGltfIndirectDrawDesc
     return device->createDescriptorSetLayout(bindings);
 }
 
-static std::shared_ptr<renderer::DescriptorSetLayout> createGameObjectsDescriptorSetLayout(
+static std::shared_ptr<renderer::DescriptorSetLayout> createUpdateGameObjectsDescriptorSetLayout(
     const std::shared_ptr<renderer::Device>& device) {
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings(4);
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings(5);
     bindings[0] = renderer::helper::getBufferDescriptionSetLayoutBinding(
         GAME_OBJECTS_BUFFER_INDEX,
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
@@ -1018,6 +1028,9 @@ static std::shared_ptr<renderer::DescriptorSetLayout> createGameObjectsDescripto
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     bindings[3] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
         WATER_FLOW_BUFFER_INDEX,
+        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
+    bindings[4] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        SRC_AIRFLOW_INDEX,
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
 
     return device->createDescriptorSetLayout(bindings);
@@ -1275,7 +1288,8 @@ void GltfObject::createGameObjectUpdateDescSet(
     const renderer::TextureInfo& rock_layer,
     const renderer::TextureInfo& soil_water_layer_0,
     const renderer::TextureInfo& soil_water_layer_1,
-    const renderer::TextureInfo& water_flow) {
+    const renderer::TextureInfo& water_flow,
+    const std::shared_ptr<renderer::ImageView>& airflow_tex) {
     // create a global ibl texture descriptor set.
     for (int soil_water = 0; soil_water < 2; soil_water++) {
         // game objects buffer update set.
@@ -1293,7 +1307,8 @@ void GltfObject::createGameObjectUpdateDescSet(
             texture_sampler,
             rock_layer,
             soil_water == 0 ? soil_water_layer_0 : soil_water_layer_1,
-            water_flow);
+            water_flow,
+            airflow_tex);
 
         device->updateDescriptorSets(texture_descs, buffer_descs);
     }
@@ -1307,7 +1322,8 @@ void GltfObject::initStaticMembers(
     const renderer::TextureInfo& rock_layer,
     const renderer::TextureInfo& soil_water_layer_0,
     const renderer::TextureInfo& soil_water_layer_1,
-    const renderer::TextureInfo& water_flow) {
+    const renderer::TextureInfo& water_flow,
+    const std::shared_ptr<renderer::ImageView>& airflow_tex) {
     if (!game_objects_buffer_) {
         game_objects_buffer_ = std::make_shared<renderer::BufferInfo>();
         device->createBuffer(
@@ -1330,7 +1346,7 @@ void GltfObject::initStaticMembers(
 
     if (update_game_objects_desc_set_layout_ == nullptr) {
         update_game_objects_desc_set_layout_ =
-            createGameObjectsDescriptorSetLayout(device);
+            createUpdateGameObjectsDescriptorSetLayout(device);
     }
 
     if (update_instance_buffer_desc_set_layout_ == nullptr) {
@@ -1347,7 +1363,8 @@ void GltfObject::initStaticMembers(
         rock_layer,
         soil_water_layer_0,
         soil_water_layer_1,
-        water_flow);
+        water_flow,
+        airflow_tex);
 }
 
 void GltfObject::createStaticMembers(
@@ -1494,7 +1511,8 @@ void GltfObject::generateDescriptorSet(
     const renderer::TextureInfo& rock_layer,
     const renderer::TextureInfo& soil_water_layer_0,
     const renderer::TextureInfo& soil_water_layer_1,
-    const renderer::TextureInfo& water_flow) {
+    const renderer::TextureInfo& water_flow,
+    const std::shared_ptr<renderer::ImageView>& airflow_tex) {
 
     for (auto& object : object_list_) {
         updateDescriptorSets(
@@ -1520,7 +1538,8 @@ void GltfObject::generateDescriptorSet(
         rock_layer,
         soil_water_layer_0,
         soil_water_layer_1,
-        water_flow);
+        water_flow,
+        airflow_tex);
 }
 
 void GltfObject::destoryStaticMembers(
@@ -1546,7 +1565,8 @@ void GltfObject::updateGameObjectsBuffer(
     const glm::vec2& world_range,
     const glm::vec3& camera_pos,
     int update_frame_count,
-    int soil_water) {
+    int soil_water,
+    bool enble_airflow) {
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, update_game_objects_pipeline_);
 
@@ -1562,6 +1582,7 @@ void GltfObject::updateGameObjectsBuffer(
     params.world_min = world_min;
     params.inv_world_range = 1.0f / world_range;
     params.camera_pos = camera_pos;
+    params.enble_airflow = enble_airflow ? 1 : 0;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         update_game_objects_pipeline_layout_,

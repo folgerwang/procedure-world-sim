@@ -1,6 +1,7 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 #include "global_definition.glsl.h"
+#include "weather_common.glsl.h"
 
 layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniformBufferObject {
     ViewParams view_params;
@@ -37,24 +38,25 @@ void main() {
             log2(kAirflowMaxHeight - kAirflowLowHeight + 1.0f);
 
     uvw.xy = (sample_pos.xz - params.world_min) * params.inv_world_range;
-    out_data.debug_info.x = texture(src_volume, uvw).x - kAbsoluteDegreeFactor;
+    out_data.debug_info.x = toCelsius(texture(src_volume, uvw).x);
 
-    vec3 arrow_dir = texture(src_airflow, uvw).xyz * 2.0f - 1.0f;
+    vec4 airflow_info = texture(src_airflow, uvw);
+    vec3 arrow_dir = airflow_info.xyz * 2.0f - 1.0f;
     vec3 view_dir = sample_pos - view_params.camera_pos.xyz;
     vec3 left_dir = normalize(cross(arrow_dir, view_dir));
 
     vec3 offset = vec3(0);
     if (vertex_idx == 0) {
-        offset = -left_dir * 0.002f;
+        offset = -left_dir * 0.001f;
     }
     else if (vertex_idx == 1) {
-        offset = left_dir * 0.002f;
+        offset = left_dir * 0.001f;
     }
     else {
-        offset = arrow_dir * 0.02f;
+        offset = arrow_dir * 0.01f;
     }
 
-    sample_pos += offset * position_ss.w;
+    sample_pos += offset * position_ss.w * airflow_info.w * 4.0f;
 
     vec4 position_ws = vec4(sample_pos, 1.0);
     gl_Position = view_params.proj * view_params.view * position_ws;

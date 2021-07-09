@@ -164,7 +164,8 @@ public:
         const renderer::TextureInfo& rock_layer,
         const renderer::TextureInfo& soil_water_layer_0,
         const renderer::TextureInfo& soil_water_layer_1,
-        const renderer::TextureInfo& water_flow);
+        const renderer::TextureInfo& water_flow,
+        const std::shared_ptr<renderer::ImageView>& airflow_tex);
 
     static void initStaticMembers(
         const std::shared_ptr<renderer::Device>& device,
@@ -174,7 +175,8 @@ public:
         const renderer::TextureInfo& rock_layer,
         const renderer::TextureInfo& soil_water_layer_0,
         const renderer::TextureInfo& soil_water_layer_1,
-        const renderer::TextureInfo& water_flow);
+        const renderer::TextureInfo& water_flow,
+        const std::shared_ptr<renderer::ImageView>& airflow_tex);
 
     static void createStaticMembers(
         const std::shared_ptr<renderer::Device>& device,
@@ -195,7 +197,8 @@ public:
         const renderer::TextureInfo& rock_layer,
         const renderer::TextureInfo& soil_water_layer_0,
         const renderer::TextureInfo& soil_water_layer_1,
-        const renderer::TextureInfo& water_flow);
+        const renderer::TextureInfo& water_flow,
+        const std::shared_ptr<renderer::ImageView>& airflow_tex);
 
     static void destoryStaticMembers(
         const std::shared_ptr<renderer::Device>& device);
@@ -206,7 +209,8 @@ public:
         const glm::vec2& world_range,
         const glm::vec3& camera_pos,
         int update_frame_count,
-        int soil_water);
+        int soil_water,
+        bool enble_airflow);
 };
 
 } // namespace game_object
