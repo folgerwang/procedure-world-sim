@@ -10,7 +10,7 @@ class WeatherSystem {
         kAirflowBufferHeight = 128,
     };
 
-    renderer::TextureInfo temperature_volume_[2];
+    renderer::TextureInfo temp_moisture_volume_[2];
     renderer::TextureInfo airflow_volume_;
 
     std::shared_ptr<renderer::DescriptorSet> temperature_init_tex_desc_set_;
@@ -30,12 +30,12 @@ public:
         const std::shared_ptr<renderer::ImageView>& rock_layer_tex,
         const std::vector<std::shared_ptr<renderer::ImageView>>& soil_water_layer_tex);
 
-    inline std::shared_ptr<renderer::ImageView> getTemperatureTex(int idx) {
-        return temperature_volume_[idx].view;
+    inline std::shared_ptr<renderer::ImageView> getTempMoistureTex(int idx) {
+        return temp_moisture_volume_[idx].view;
     }
 
-    inline std::vector<std::shared_ptr<renderer::ImageView>> getTemperatureTexes() {
-        return { temperature_volume_[0].view, temperature_volume_[1].view };
+    inline std::vector<std::shared_ptr<renderer::ImageView>> getTempMoistureTexes() {
+        return { temp_moisture_volume_[0].view, temp_moisture_volume_[1].view };
     }
 
     inline std::shared_ptr<renderer::ImageView> getAirflowTex() {

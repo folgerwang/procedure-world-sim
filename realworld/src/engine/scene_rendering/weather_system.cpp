@@ -36,15 +36,15 @@ er::ShaderModuleList getTemperatureInitShaderModules(
 
 std::vector<er::TextureDescriptor> addTemperatureInitTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
-    const er::TextureInfo& temperature_tex) {
+    const er::TextureInfo& temp_moisture_tex) {
     std::vector<er::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(1);
 
     er::Helper::addOneTexture(
         descriptor_writes,
-        DST_TEMPERATURE_TEX_INDEX,
+        DST_TEMP_MOISTURE_TEX_INDEX,
         nullptr,
-        temperature_tex.view,
+        temp_moisture_tex.view,
         description_set,
         er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
@@ -55,8 +55,8 @@ std::vector<er::TextureDescriptor> addTemperatureInitTextures(
 std::vector<er::TextureDescriptor> addAirflowTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
-    const er::TextureInfo& src_temperature_tex,
-    const er::TextureInfo& dst_temperature_tex,
+    const er::TextureInfo& src_temp_moisture_tex,
+    const er::TextureInfo& dst_temp_moisture_tex,
     const er::TextureInfo& dst_airflow_tex,
     const std::shared_ptr<er::ImageView>& rock_layer_tex,
     const std::shared_ptr<er::ImageView>& soil_water_layer_tex) {
@@ -65,18 +65,18 @@ std::vector<er::TextureDescriptor> addAirflowTextures(
 
     er::Helper::addOneTexture(
         descriptor_writes,
-        SRC_TEMPERATURE_TEX_INDEX,
+        SRC_TEMP_MOISTURE_TEX_INDEX,
         nullptr,
-        src_temperature_tex.view,
+        src_temp_moisture_tex.view,
         description_set,
         er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
-        DST_TEMPERATURE_TEX_INDEX,
+        DST_TEMP_MOISTURE_TEX_INDEX,
         nullptr,
-        dst_temperature_tex.view,
+        dst_temp_moisture_tex.view,
         description_set,
         er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
@@ -116,7 +116,7 @@ static std::shared_ptr<er::DescriptorSetLayout> createTemperatureInitDescSetLayo
     std::vector<er::DescriptorSetLayoutBinding> bindings(1);
     bindings[0] =
         er::helper::getTextureSamplerDescriptionSetLayoutBinding(
-            DST_TEMPERATURE_TEX_INDEX,
+            DST_TEMP_MOISTURE_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
 
@@ -128,13 +128,13 @@ static std::shared_ptr<er::DescriptorSetLayout> createAirflowUpdateDescSetLayout
     std::vector<er::DescriptorSetLayoutBinding> bindings(5);
     bindings[0] =
         er::helper::getTextureSamplerDescriptionSetLayoutBinding(
-            DST_TEMPERATURE_TEX_INDEX,
+            DST_TEMP_MOISTURE_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
 
     bindings[1] =
         er::helper::getTextureSamplerDescriptionSetLayoutBinding(
-            SRC_TEMPERATURE_TEX_INDEX,
+            SRC_TEMP_MOISTURE_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
 
@@ -234,12 +234,12 @@ WeatherSystem::WeatherSystem(
     for (int i = 0; i < 2; i++) {
         renderer::Helper::create3DTextureImage(
             device_info,
-            renderer::Format::R16_SFLOAT,
+            renderer::Format::R16G16_UNORM,
             glm::uvec3(
                 WeatherSystemConst::kAirflowBufferWidth,
                 WeatherSystemConst::kAirflowBufferWidth,
                 WeatherSystemConst::kAirflowBufferHeight),
-            temperature_volume_[i],
+            temp_moisture_volume_[i],
             SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
             SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
             renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -294,7 +294,7 @@ void WeatherSystem::recreate(
     // create a global ibl texture descriptor set.
     auto temperature_init_texture_descs = addTemperatureInitTextures(
         temperature_init_tex_desc_set_,
-        temperature_volume_[0]);
+        temp_moisture_volume_[0]);
     device->updateDescriptorSets(temperature_init_texture_descs, {});
 
     for (int dbuf_idx = 0; dbuf_idx < 2; dbuf_idx++) {
@@ -308,8 +308,8 @@ void WeatherSystem::recreate(
         auto airflow_texture_descs = addAirflowTextures(
             airflow_tex_desc_set_[dbuf_idx],
             texture_sampler,
-            temperature_volume_[1-dbuf_idx],
-            temperature_volume_[dbuf_idx],
+            temp_moisture_volume_[1-dbuf_idx],
+            temp_moisture_volume_[dbuf_idx],
             airflow_volume_,
             rock_layer_tex,
             soil_water_layer_tex[dbuf_idx]);
@@ -341,7 +341,7 @@ void WeatherSystem::initTemperatureBuffer(
 
     renderer::helper::transitMapTextureToStoreImage(
         cmd_buf,
-        { temperature_volume_[0].image });
+        { temp_moisture_volume_[0].image });
 
     auto w = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferWidth);
     auto h = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferHeight);
@@ -357,6 +357,8 @@ void WeatherSystem::initTemperatureBuffer(
     airflow_params.soil_temp_adj = 0;
     airflow_params.water_temp_adj = 0;
     airflow_params.air_temp_adj = 0;
+    airflow_params.tempeture_ratio_per_frame = 1.0f;
+    airflow_params.moisture_ratio_per_frame = 1.0f;
     airflow_params.height_params =
         glm::vec2(log2(1.0f + airflow_params.world_range.z),
             -1.0f + airflow_params.world_min.z);
@@ -379,7 +381,7 @@ void WeatherSystem::initTemperatureBuffer(
 
     renderer::helper::transitMapTextureFromStoreImage(
         cmd_buf,
-        { temperature_volume_[0].image });
+        { temp_moisture_volume_[0].image });
 }
 
 // update air flow buffer.
@@ -389,8 +391,8 @@ void WeatherSystem::updateAirflowBuffer(
 
     renderer::helper::transitMapTextureToStoreImage(
         cmd_buf,
-        { temperature_volume_[dbuf_idx].image,
-          temperature_volume_[1-dbuf_idx].image,
+        { temp_moisture_volume_[dbuf_idx].image,
+          temp_moisture_volume_[1-dbuf_idx].image,
           airflow_volume_.image});
 
     auto w = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferWidth);
@@ -404,9 +406,13 @@ void WeatherSystem::updateAirflowBuffer(
     airflow_params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
     airflow_params.size = glm::ivec3(w, w, h);
     airflow_params.sea_level_temperature = 30.0f;
-    airflow_params.soil_temp_adj = 0.018f;
-    airflow_params.water_temp_adj = 0.1245f;
-    airflow_params.air_temp_adj = 0.001f;
+    airflow_params.soil_temp_adj = 0.10f;
+    airflow_params.water_temp_adj = 0.51f;
+    airflow_params.air_temp_adj = 0.000f;
+    airflow_params.water_moist_adj = 0.1f;
+    airflow_params.soil_moist_adj = 0.02f;
+    airflow_params.tempeture_ratio_per_frame = 1.0f / 1.1f;
+    airflow_params.moisture_ratio_per_frame = 1.0f / 1.1f;
     airflow_params.height_params =
         glm::vec2(log2(1.0f + airflow_params.world_range.z),
             -1.0f + airflow_params.world_min.z);
@@ -425,12 +431,12 @@ void WeatherSystem::updateAirflowBuffer(
     cmd_buf->dispatch(
         (w + 7) / 8,
         (w + 7) / 8,
-        (h + 7) / 8);
+        (h + 15) / 16);
 
     renderer::helper::transitMapTextureFromStoreImage(
         cmd_buf,
-        { temperature_volume_[dbuf_idx].image,
-          temperature_volume_[1-dbuf_idx].image,
+        { temp_moisture_volume_[dbuf_idx].image,
+          temp_moisture_volume_[1-dbuf_idx].image,
           airflow_volume_.image });
 }
 
@@ -440,7 +446,7 @@ void WeatherSystem::update() {
 void WeatherSystem::destroy(
     const std::shared_ptr<renderer::Device>& device) {
     for (int i = 0; i < 2; i++) {
-        temperature_volume_[i].destroy(device);
+        temp_moisture_volume_[i].destroy(device);
     }
     airflow_volume_.destroy(device);
     device->destroyDescriptorSetLayout(airflow_desc_set_layout_);

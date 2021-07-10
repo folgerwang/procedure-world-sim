@@ -15,7 +15,7 @@ layout(location = 0) out VsPsData {
     vec4 debug_info;
 } out_data;
 
-layout(set = TILE_PARAMS_SET, binding = SRC_VOLUME_TEST_INDEX) uniform sampler3D src_volume;
+layout(set = TILE_PARAMS_SET, binding = SRC_TEMP_MOISTURE_INDEX) uniform sampler3D src_volume;
 layout(set = TILE_PARAMS_SET, binding = SRC_AIRFLOW_INDEX) uniform sampler3D src_airflow;
 
 void main() {
@@ -38,7 +38,9 @@ void main() {
             log2(kAirflowMaxHeight - kAirflowLowHeight + 1.0f);
 
     uvw.xy = (sample_pos.xz - params.world_min) * params.inv_world_range;
-    out_data.debug_info.x = toCelsius(texture(src_volume, uvw).x);
+    vec2 temp_moisture = texture(src_volume, uvw).xy;
+    out_data.debug_info.x = denormalizeTemperature(temp_moisture.x);
+    out_data.debug_info.y = denormalizeMoisture(temp_moisture.y);
 
     vec4 airflow_info = texture(src_airflow, uvw);
     vec3 arrow_dir = airflow_info.xyz * 2.0f - 1.0f;
@@ -47,16 +49,17 @@ void main() {
 
     vec3 offset = vec3(0);
     if (vertex_idx == 0) {
-        offset = -left_dir * 0.001f;
+        offset = -left_dir * 12.8f;
     }
     else if (vertex_idx == 1) {
-        offset = left_dir * 0.001f;
+        offset = left_dir * 12.8f;
     }
     else {
-        offset = arrow_dir * 0.01f;
+        offset = arrow_dir * 128.0f;
     }
 
-    sample_pos += offset * position_ss.w * airflow_info.w * 4.0f;
+    //sample_pos += offset * position_ss.w * getPackedVectorLength(airflow_info.w) * 0.001f;
+    sample_pos += offset * position_ss.w * /*out_data.debug_info.y * */0.001f;
 
     vec4 position_ws = vec4(sample_pos, 1.0);
     gl_Position = view_params.proj * view_params.view * position_ws;

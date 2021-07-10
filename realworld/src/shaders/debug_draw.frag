@@ -24,8 +24,9 @@ layout(location = 0) out vec4 outColor;
 
 void main() {
 
-    vec3 color = mix(vec3(0, 0, 1), vec3(1, 0, 0), clamp((in_data.debug_info.x - 10.0f) / 30.0f, 0, 1));
+    //vec3 color = mix(vec3(0, 0, 1), vec3(1, 0, 0), clamp((in_data.debug_info.x - 10.0f) / 30.0f, 0, 1));
+    vec3 color = vec3(in_data.debug_info.y);
 
-    float alpha = 1.0f;
+    float alpha = color.x;
     outColor = vec4(linearTosRGB(color), alpha);
 }

@@ -57,23 +57,23 @@
 #define OCCLUSION_TEX_INDEX         (BASE_COLOR_TEX_INDEX + 4)
 
 // TILE_TEXTURE_PARAMS_SET
-#define SRC_COLOR_TEX_INDEX                 0
-#define SRC_DEPTH_TEX_INDEX                 1
-#define ROCK_LAYER_BUFFER_INDEX             2
-#define SOIL_WATER_LAYER_BUFFER_INDEX       3
-#define ORTHER_INFO_LAYER_BUFFER_INDEX      4
-#define WATER_NORMAL_BUFFER_INDEX           5
-#define WATER_FLOW_BUFFER_INDEX             6
-#define DST_SOIL_WATER_LAYER_BUFFER_INDEX   7
-#define DST_WATER_NORMAL_BUFFER_INDEX       8
-#define DST_WATER_FLOW_BUFFER_INDEX         9
-#define SRC_VOLUME_TEST_INDEX               10
+#define DST_SOIL_WATER_LAYER_BUFFER_INDEX   0
+#define DST_WATER_NORMAL_BUFFER_INDEX       1
+#define DST_WATER_FLOW_BUFFER_INDEX         2
+#define SRC_COLOR_TEX_INDEX                 3
+#define SRC_DEPTH_TEX_INDEX                 4
+#define ROCK_LAYER_BUFFER_INDEX             5
+#define SOIL_WATER_LAYER_BUFFER_INDEX       6
+#define ORTHER_INFO_LAYER_BUFFER_INDEX      7
+#define WATER_NORMAL_BUFFER_INDEX           8
+#define WATER_FLOW_BUFFER_INDEX             9
+#define SRC_TEMP_MOISTURE_INDEX             10
 #define SRC_AIRFLOW_INDEX                   11
 
 // Airflow texture.
-#define DST_TEMPERATURE_TEX_INDEX           0
-#define SRC_TEMPERATURE_TEX_INDEX           1
-#define DST_AIRFLOW_TEX_INDEX               4
+#define DST_TEMP_MOISTURE_TEX_INDEX         0
+#define DST_AIRFLOW_TEX_INDEX               1
+#define SRC_TEMP_MOISTURE_TEX_INDEX         2
 
 // IBL texure index
 #define PANORAMA_TEX_INDEX          0
@@ -202,6 +202,10 @@ struct AirflowUpdateParams {
     ivec3           size;
     float           air_temp_adj;
     vec2            height_params;
+    float           soil_moist_adj;
+    float           water_moist_adj;
+    float           tempeture_ratio_per_frame;
+    float           moisture_ratio_per_frame;
     vec2            pad;
 };
 

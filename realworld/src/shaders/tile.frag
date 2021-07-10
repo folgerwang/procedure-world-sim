@@ -28,7 +28,7 @@ vec3  kSunDir = vec3(-0.624695f, 0.468521f, -0.624695f);
 
 layout(set = TILE_PARAMS_SET, binding = SRC_COLOR_TEX_INDEX) uniform sampler2D src_tex;
 layout(set = TILE_PARAMS_SET, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
-layout(set = TILE_PARAMS_SET, binding = SRC_VOLUME_TEST_INDEX) uniform sampler3D src_volume;
+layout(set = TILE_PARAMS_SET, binding = SRC_TEMP_MOISTURE_INDEX) uniform sampler3D src_temp_moisture;
 
 struct MaterialInfo
 {
@@ -82,7 +82,8 @@ void main() {
 
     float uvw_y = log2(max((pos.y - kAirflowLowHeight), 0.0f) + 1.0f) /
                   log2(kAirflowMaxHeight - kAirflowLowHeight + 1.0f);
-    float c_temp = toCelsius(texture(src_volume, vec3(in_data.world_map_uv, uvw_y)).x);
+    float c_temp = denormalizeTemperature(
+                        texture(src_temp_moisture, vec3(in_data.world_map_uv, uvw_y)).x);
 
     vec3 albedo = vec3(0.18, 0.11, 0.10)*.75f;
     albedo = 1.0f* mix(albedo, vec3(0.1, 0.1, 0.0)*0.2f, smoothstep(0.7f, 0.9f, normal.y));

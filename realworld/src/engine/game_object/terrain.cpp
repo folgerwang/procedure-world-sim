@@ -1634,7 +1634,7 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     const std::shared_ptr<renderer::ImageView>& grass_snow_layer,
     const std::shared_ptr<renderer::ImageView>& water_normal,
     const std::shared_ptr<renderer::ImageView>& water_flow,
-    const std::shared_ptr<renderer::ImageView>& airflow_tex) {
+    const std::shared_ptr<renderer::ImageView>& temp_moisture_tex) {
     std::vector<renderer::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(8);
 
@@ -1705,9 +1705,9 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
-        SRC_VOLUME_TEST_INDEX,
+        SRC_TEMP_MOISTURE_INDEX,
         texture_sampler,
-        airflow_tex,
+        temp_moisture_tex,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -1856,7 +1856,7 @@ static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescript
         WATER_FLOW_BUFFER_INDEX,
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     bindings[7] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
-        SRC_VOLUME_TEST_INDEX,
+        SRC_TEMP_MOISTURE_INDEX,
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     return device->createDescriptorSetLayout(bindings);
 }
@@ -2461,7 +2461,7 @@ void TileObject::updateStaticDescriptorSet(
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& src_texture,
     const std::shared_ptr<renderer::ImageView>& src_depth,
-    const std::vector<std::shared_ptr<renderer::ImageView>>& airflow_tex) {
+    const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_tex) {
 
     if (tile_res_desc_set_[0] == nullptr) {
         generateStaticDescriptorSet(
@@ -2482,7 +2482,7 @@ void TileObject::updateStaticDescriptorSet(
             grass_snow_layer_.view,
             water_normal_.view,
             water_flow_.view,
-            airflow_tex[dbuf_idx]);
+            temp_moisture_tex[dbuf_idx]);
         device->updateDescriptorSets(tile_res_descs, {});
     }
 }

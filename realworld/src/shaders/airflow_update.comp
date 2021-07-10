@@ -8,15 +8,15 @@ layout(push_constant) uniform AirflowUniformBufferObject {
   AirflowUpdateParams params;
 };
 
-layout(set = 0, binding = DST_TEMPERATURE_TEX_INDEX, r16f) uniform writeonly image3D dst_temperature;
-layout(set = 0, binding = SRC_TEMPERATURE_TEX_INDEX, r16f) uniform readonly image3D src_temperature;
+layout(set = 0, binding = DST_TEMP_MOISTURE_TEX_INDEX, rg16) uniform writeonly image3D dst_temp_moisture;
+layout(set = 0, binding = SRC_TEMP_MOISTURE_TEX_INDEX, rg16) uniform readonly image3D src_temp_moisture;
 layout(set = 0, binding = DST_AIRFLOW_TEX_INDEX, rgba8) uniform image3D dst_airflow;
 layout(set = 0, binding = ROCK_LAYER_BUFFER_INDEX) uniform sampler2D rock_layer;
 layout(set = 0, binding = SOIL_WATER_LAYER_BUFFER_INDEX) uniform sampler2D soil_water_layer;
 
 shared vec2 s_ground_info[12][12];
-shared uint s_temperature_grid[12][12][6];
-shared uint s_airflow_grid[10][10][5];
+shared uint s_temp_moisture_grid[20][12][12];
+shared uint s_flow_grid[18][10][10];
 
 vec2 getPackedLayers(vec2 uv) {
     float rock_height = texture(rock_layer, uv).x;
@@ -29,13 +29,38 @@ vec2 getPackedLayers(vec2 uv) {
     return vec2(soil_layer_height, water_layer_height);
 }
 
-float getUpdatedTemperature(ivec3 src_local_coords, ivec3 block_coords, vec2 ground_info) {
-    ivec3 src_coords = clamp(src_local_coords + block_coords - 2,
+uint packTempMoist(float temp, float moist, uint tag) {
+    temp *= params.tempeture_ratio_per_frame / kMaxTemperatureAdjustRange;
+    moist *= params.moisture_ratio_per_frame / kMaxMoistureIntensity;
+    uint packed_moist_temp = 
+        packUnorm2x16(vec2(
+            moist,
+            temp * 0.5f + 0.5f));
+    packed_moist_temp = (packed_moist_temp & 0xfffffff8) | (tag & 0x07);
+    return packed_moist_temp;
+}
+
+vec2 unpackTempMoist(uint packed_temp_moist) {
+    vec2 snorm_moist_temp = unpackUnorm2x16(packed_temp_moist & 0xfffffff8);
+    return vec2((snorm_moist_temp.y * 2.0f - 1.0f) * kMaxTemperatureAdjustRange,
+                snorm_moist_temp.x * kMaxMoistureIntensity);
+}
+
+uint packTempMoistDiff(float temp, float moist, uint tag) {
+    uint temp_moist_diff = packUnorm2x16(vec2(moist, temp) / kMaxTempMoistDiff);
+    temp_moist_diff = (temp_moist_diff & 0xfffffff8) | (tag & 0x07);
+    return temp_moist_diff;
+}
+
+uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
+    ivec3 src_coords = clamp(slc + block_coords - 2,
                              ivec3(0),
                              params.size - 1);
-    float src_temp = imageLoad(src_temperature, src_coords).x;
-    float uvw_w = (src_coords.z + 0.5) * params.inv_size.z;
+    vec2 src_temp_moist = imageLoad(src_temp_moisture, src_coords).xy;
+    float src_temp = denormalizeTemperature(src_temp_moist.x);
+    float src_moist = denormalizeMoisture(src_temp_moist.y);
 
+    float uvw_w = (src_coords.z + 0.5) * params.inv_size.z;
     float min_h = getSampleHeight(uvw_w, -params.inv_size.z * 0.5f, params.height_params);
     float max_h = getSampleHeight(uvw_w, params.inv_size.z * 0.5f, params.height_params);
     float sample_h = getSampleHeight(uvw_w, 0, params.height_params);
@@ -46,199 +71,188 @@ float getUpdatedTemperature(ivec3 src_local_coords, ivec3 block_coords, vec2 gro
     bool cell_touch_ground = (ground_info.y >= min_h - 0.01f);// && (ground_info.y <= max_h + 0.01f);
     bool cell_above_ground = ground_info.y < min_h;
     float temp_adjust = 0.0f;
+    float moist_adjust = 0.0f;
     if (cell_touch_ground) {
-        temp_adjust += mix(params.soil_temp_adj,
-                           params.water_temp_adj,
-                           clamp((water_depth - 0.01f) * 10.0f, 0.0f, 1.0f));
+        float water_level = clamp((water_depth - 0.01f) * 10.0f, 0.0f, 1.0f);
+        temp_adjust += mix(params.soil_temp_adj, params.water_temp_adj, water_level);
+        moist_adjust += mix(params.soil_moist_adj, params.water_moist_adj, water_level);
     }
     else if (cell_above_ground) {
         temp_adjust += params.air_temp_adj;
     }
 
     // make sure color different here is positive.
-    return max(src_temp + temp_adjust - target_stable_temp + kTemperatureDiffPositiveOffset, 0.0f);
+    return packTempMoist(src_temp + temp_adjust - target_stable_temp,
+                         src_moist + moist_adjust,
+                         0);
 }
 
-uint packTempDiff(uint min_temp, float center) {
-     float min_t = unpackHalf2x16(min_temp).y;
+void updateTempMoistureBuffer(int pixel_index, ivec3 block_coords) {
+    int iz = pixel_index / (12 * 12);
+    int ixy = pixel_index % (12 * 12);
+    ivec3 slc = ivec3(ixy % 12, ixy / 12, iz);
 
-     uint temp_diff = 0;
-     if (center > min_t) {
-        temp_diff = uint(min((center - min_t) / 2.0f, 0.5f) * 1024.0f) & 0x1fff;
-        temp_diff |= (min_temp & 0x07) << 13;
-     }
+    vec2 ground_info = s_ground_info[slc.y][slc.x];
 
-     return temp_diff;
+    uint temp_moist = getUpdatedTemperature(slc, block_coords, ground_info);
+    s_temp_moisture_grid[slc.z][slc.y][slc.x] = temp_moist;
 }
 
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+uint packTempDiff(uint min_temp_moist, uint center) {
+    vec2 min_tm = unpackTempMoist(min_temp_moist);
+    vec2 center_tm = unpackTempMoist(center);
+
+    uint packed_temp_moist_diff = 0;
+    if (center_tm.x > min_tm.x) {
+        float temp_diff = center_tm.x - min_tm.x;
+        float temp_diff_adj = temp_diff;
+        float transfer_ratio = temp_diff_adj / temp_diff;
+        float moist_adj = center_tm.y * transfer_ratio;
+        packed_temp_moist_diff = packTempMoistDiff(temp_diff_adj, moist_adj, min_temp_moist);
+    }
+
+    return packed_temp_moist_diff;
+}
+
+void createTempMoistureFlowBuffer(int pixel_index) {
+    int iz = pixel_index / (10 * 10);
+    int ixy = pixel_index % (10 * 10);
+
+    ivec3 dlc = ivec3(ixy % 10, ixy / 10, iz);
+    ivec3 slc = dlc + 1;
+
+    uint center = s_temp_moisture_grid[slc.z][slc.y][slc.x];
+
+    uint left = s_temp_moisture_grid[slc.z][slc.y][slc.x-1] | 0x00;
+    uint right = s_temp_moisture_grid[slc.z][slc.y][slc.x+1] | 0x01;
+    uint back = s_temp_moisture_grid[slc.z][slc.y-1][slc.x] | 0x02;
+    uint front = s_temp_moisture_grid[slc.z][slc.y+1][slc.x] | 0x03;
+    uint top = s_temp_moisture_grid[slc.z-1][slc.y][slc.x] | 0x04;
+    uint bottom = s_temp_moisture_grid[slc.z+1][slc.y][slc.x] | 0x05;
+
+    uint min_value = min(min(min(left, right), min(back, front)), min(top, bottom));
+
+    s_flow_grid[dlc.z][dlc.y][dlc.x] = packTempDiff(min_value, center);
+}
+
+vec2 generateAirflow(ivec3 dlc, out vec3 airflow_dir) {
+    ivec3 slc = dlc + 1;
+    uint center = s_flow_grid[slc.z][slc.y][slc.x];
+    uint back = s_flow_grid[slc.z][slc.y-1][slc.x];
+    uint front = s_flow_grid[slc.z][slc.y+1][slc.x];
+    uint top = s_flow_grid[slc.z-1][slc.y][slc.x];
+    uint bottom = s_flow_grid[slc.z+1][slc.y][slc.x];
+    uint left = s_flow_grid[slc.z][slc.y][slc.x-1];
+    uint right = s_flow_grid[slc.z][slc.y][slc.x+1];
+
+    uvec2 temp_moist_adj = ivec2(0);
+    ivec3 airflow_vec = ivec3(0);
+    if ((left & 0x07) == 1) {
+        uint temp_diff = left >> 16;
+        temp_moist_adj.x += temp_diff;
+        temp_moist_adj.y += left & 0xfff8;
+        airflow_vec += ivec3(temp_diff, 0, 0);
+    }
+    if ((right & 0x07) == 0) {
+        uint temp_diff = right >> 16;
+        temp_moist_adj.x += temp_diff;
+        temp_moist_adj.y += right & 0xfff8;
+        airflow_vec += ivec3(-temp_diff, 0, 0);
+    }
+    if ((back & 0x07) == 3) {
+        uint temp_diff = back >> 16;
+        temp_moist_adj.x += temp_diff;
+        temp_moist_adj.y += back & 0xfff8;
+        airflow_vec += ivec3(0, 0, temp_diff);
+    }
+    if ((front & 0x07) == 2) {
+        uint temp_diff = front >> 16;
+        temp_moist_adj.x += temp_diff;
+        temp_moist_adj.y += front & 0xfff8;
+        airflow_vec += ivec3(0, 0, -temp_diff);
+    }
+    if ((top & 0x07) == 5) {
+        uint temp_diff = top >> 16;
+        temp_moist_adj.x += temp_diff;
+        temp_moist_adj.y += top & 0xfff8;
+        airflow_vec += ivec3(0, temp_diff, 0);
+    }
+    if ((bottom & 0x07) == 4) {
+        uint temp_diff = bottom >> 16;
+        temp_moist_adj.x += temp_diff;
+        temp_moist_adj.y += bottom & 0xfff8;
+        airflow_vec += ivec3(0, -temp_diff, 0);
+    }
+
+    uint flow_tag = center & 0x07;
+    uint temp_diff = center >> 16;
+    uint moist_diff = center & 0xfff8;
+
+    airflow_vec += ivec3(flow_tag == 0 ? -temp_diff : (flow_tag == 1 ? temp_diff : 0),
+                        flow_tag == 4 ? -temp_diff : (flow_tag == 5 ? temp_diff : 0),
+                        flow_tag == 2 ? -temp_diff : (flow_tag == 3 ? temp_diff : 0));
+
+    airflow_dir = vec3(airflow_vec) * kTempMoistDiffToFloat;
+    return (ivec2(temp_moist_adj) - ivec2(temp_diff, moist_diff)) * kTempMoistDiffToFloat;
+}
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 16) in;
 void main()
 {
-  ivec3 buffer_size = ivec3(params.size);
+    ivec3 pixel_coords = ivec3(gl_GlobalInvocationID.xyz);
+    ivec3 local_coords = ivec3(gl_LocalInvocationID.xyz);
+    ivec3 block_coords = ivec3(gl_WorkGroupID.xyz) * ivec3(8, 8, 16);
+    int pixel_index = int(gl_LocalInvocationIndex);
 
-  ivec3 pixel_coords = ivec3(gl_GlobalInvocationID.xyz);
-  ivec3 local_coords = ivec3(gl_LocalInvocationID.xyz);
-  ivec3 block_coords = ivec3(gl_WorkGroupID.xyz) * 8;
-  int pixel_index = int(gl_LocalInvocationIndex);
-
-  if (pixel_index < 12 * 12) {
-     ivec2 src_local_coords = ivec2(pixel_index % 12, pixel_index / 12);
-     ivec2 src_coords = clamp(src_local_coords + block_coords.xy - 2,
-                        ivec2(0),
-                        buffer_size.xy - 1);
-     s_ground_info[src_local_coords.y][src_local_coords.x] =
+    if (pixel_index < 12 * 12) {
+        ivec2 slc = ivec2(pixel_index % 12, pixel_index / 12);
+        ivec2 src_coords = clamp(slc + block_coords.xy - 2,
+                                 ivec2(0),
+                                 params.size.xy - 1);
+        s_ground_info[slc.y][slc.x] =
             getPackedLayers((src_coords + 0.5) * params.inv_size.xy);
-  }
+    }
 
-  barrier();
-  memoryBarrierShared();
+    barrier();
+    memoryBarrierShared();
 
-  if (pixel_index < 6 * 12 * 6) {
-     int iz = pixel_index / (12 * 6);
-     int ixy = pixel_index % (12 * 6);
-     ivec3 src_local_coords_0 = ivec3((ixy % 6) * 2, ixy / 6, iz);
-     ivec3 src_local_coords_1 = src_local_coords_0;
-     src_local_coords_1.x += 1;
+    if (pixel_index < (20 * 12 * 12 / 3)) {
+        for (int i = 0; i < 3; i++) {
+            updateTempMoistureBuffer(pixel_index * 3 + i, block_coords);
+        }
+    }
 
-     vec2 ground_info_0 = s_ground_info[src_local_coords_0.y][src_local_coords_0.x];
-     vec2 ground_info_1 = s_ground_info[src_local_coords_1.y][src_local_coords_1.x];
+    barrier();
+    memoryBarrierShared();
 
-     float t0 = getUpdatedTemperature(src_local_coords_0, block_coords, ground_info_0);
-     float t1 = getUpdatedTemperature(src_local_coords_1, block_coords, ground_info_1);
-     s_temperature_grid[src_local_coords_0.z][src_local_coords_0.y][src_local_coords_0.x / 2] =
-        packHalf2x16(vec2(t0, t1));
-     
-     src_local_coords_0.z += 6;
-     src_local_coords_1.z += 6;
-     t0 = getUpdatedTemperature(src_local_coords_0, block_coords, ground_info_0);
-     t1 = getUpdatedTemperature(src_local_coords_1, block_coords, ground_info_1);
-     s_temperature_grid[src_local_coords_0.z][src_local_coords_0.y][src_local_coords_0.x / 2] =
-        packHalf2x16(vec2(t0, t1));
-  }
+    if (pixel_index < (18 * 10 * 10 / 2)) {
+        for (int i = 0; i < 2; i++) {
+            createTempMoistureFlowBuffer(pixel_index * 2 + i);
+        }
+    }
 
-  barrier();
-  memoryBarrierShared();
+    barrier();
+    memoryBarrierShared();
 
-  if (pixel_index < 10 * 10 * 5) {
-     int iz = pixel_index / (10 * 5);
-     int ixy = pixel_index % (10 * 5);
+    vec3 airflow_dir;
+    vec2 temp_moist_adj = generateAirflow(local_coords, airflow_dir);
 
-     ivec3 dlc = ivec3(ixy % 5, ixy / 5, iz);
-     ivec3 slc = dlc + ivec3(0, 1, 1);
+    float uvw_w = (pixel_coords.z + 0.5) * params.inv_size.z;
+    float sample_h = getSampleHeight(uvw_w, 0, params.height_params);
+    float target_stable_temp = getReferenceDegree(params.sea_level_temperature, sample_h);
 
-     uint c0 = s_temperature_grid[slc.z][slc.y][slc.x];
-     uint c1 = s_temperature_grid[slc.z][slc.y][slc.x+1];
+    ivec3 slc = local_coords + 2;
+    vec2 temp_moist = unpackTempMoist(s_temp_moisture_grid[slc.z][slc.y][slc.x]);
 
-     uint c0h = c0 & 0xffff0000;
-     uint c1h = c1 & 0xffff0000;
-     vec2 center = unpackHalf2x16(c0h | (c1 & 0x0000ffff));
+    float cur_temp = target_stable_temp + temp_moist.x + temp_moist_adj.x;
+    float cur_moist = temp_moist.y + temp_moist_adj.y;
+    imageStore(dst_temp_moisture,
+               pixel_coords,
+               vec4(normalizeTemperature(cur_temp), normalizeMoisture(cur_moist), 0, 0));
 
-     uint left = c0 << 16;
-     uint right = (c1 << 16) | 0x01;
-     uint back = (s_temperature_grid[slc.z][slc.y-1][slc.x] & 0xffff0000) | 0x02;
-     uint front = (s_temperature_grid[slc.z][slc.y+1][slc.x] & 0xffff0000) | 0x03;
-     uint top = (s_temperature_grid[slc.z-1][slc.y][slc.x] & 0xffff0000) | 0x04;
-     uint bottom = (s_temperature_grid[slc.z+1][slc.y][slc.x] & 0xffff0000) | 0x05;
-
-     uint min_value = min(min(min(left, right), min(back, front)), min(top, bottom));
-     uint diff0 = packTempDiff(min_value, center.y);
-
-     left = c0h;
-     right = c1h | 0x01;
-     back = (s_temperature_grid[slc.z][slc.y-1][slc.x+1] << 16) | 0x02;
-     front = (s_temperature_grid[slc.z][slc.y+1][slc.x+1] << 16) | 0x03;
-     top = (s_temperature_grid[slc.z-1][slc.y][slc.x+1] << 16) | 0x04;
-     bottom = (s_temperature_grid[slc.z+1][slc.y][slc.x+1] << 16) | 0x05;
-
-     min_value = min(min(min(left, right), min(back, front)), min(top, bottom));
-     uint diff1 = packTempDiff(min_value, center.x);
-
-     s_airflow_grid[dlc.z][dlc.y][dlc.x] = (diff1 << 16) | diff0;
-  }
-
-  barrier();
-  memoryBarrierShared();
-
-  int slot_idx = local_coords.x % 2;
-  int lr_shift_bits = slot_idx << 4;
-  int shift_bits = 16 - lr_shift_bits;
-
-  ivec3 slc = ivec3(local_coords.x / 2, local_coords.y + 1, local_coords.z + 1);
-  uint c0 = s_airflow_grid[slc.z][slc.y][slc.x];
-  uint c1 = s_airflow_grid[slc.z][slc.y][slc.x+1];
-  slc.x += slot_idx;
-  uint back = s_airflow_grid[slc.z][slc.y-1][slc.x] >> shift_bits;
-  uint front = s_airflow_grid[slc.z][slc.y+1][slc.x] >> shift_bits;
-  uint top = s_airflow_grid[slc.z-1][slc.y][slc.x] >> shift_bits;
-  uint bottom = s_airflow_grid[slc.z+1][slc.y][slc.x] >> shift_bits;
-  uint left = c0 >> lr_shift_bits;
-  uint right = c1 >> lr_shift_bits;
-
-  int temp_adj = 0;
-  vec3 airflow_dir = vec3(0);
-  if ((back & 0xe000) == (3 << 13)) {
-    int temp_diff = int(back & 0x1fff);
-    temp_adj += temp_diff;
-    airflow_dir += vec3(0, 0, 1) * temp_diff;
-  }
-  if ((front & 0xe000) == (2 << 13)) {
-    int temp_diff = int(front & 0x1fff);
-    temp_adj += temp_diff;
-    airflow_dir += vec3(0, 0, -1) * temp_diff;
-  }
-  if ((top & 0xe000) == (5 << 13)) {
-    int temp_diff = int(top & 0x1fff);
-    temp_adj += temp_diff;
-    airflow_dir += vec3(0, 1, 0) * temp_diff;
-  }
-  if ((bottom & 0xe000) == (4 << 13)) {
-    int temp_diff = int(bottom & 0x1fff);
-    temp_adj += temp_diff;
-    airflow_dir += vec3(0, -1, 0) * temp_diff;
-  }
-  if ((left & 0xe000) == (1 << 13)) {
-    int temp_diff = int(left & 0x1fff);
-    temp_adj += temp_diff;
-    airflow_dir += vec3(1, 0, 0) * temp_diff;
-  }
-  if ((right & 0xe000) == (0 << 13)) {
-    int temp_diff = int(right & 0x1fff);
-    temp_adj += temp_diff;
-    airflow_dir += vec3(-1, 0, 0) * temp_diff;
-  }
-
-  if (slot_idx == 1) {
-    c0 = c1;
-  }
-
-  uint center = c0 >> shift_bits;
-  uint flow_tag = (center >> 13) & 0x07;
-  int temp_diff = int(center & 0x1fff);
-  //temp_adj -= int(center & 0x1fff);
-
-  airflow_dir += vec3(flow_tag == 0 ? -1 : (flow_tag == 1 ? 1 : 0),
-                      flow_tag == 4 ? -1 : (flow_tag == 5 ? 1 : 0),
-                      flow_tag == 2 ? -1 : (flow_tag == 3 ? 1 : 0)) *
-                 temp_diff;
-
-  float uvw_w = (pixel_coords.z + 0.5) * params.inv_size.z;
-  float sample_h = getSampleHeight(uvw_w, 0, params.height_params);
-  float target_stable_temp = getReferenceDegree(params.sea_level_temperature, sample_h);
-
-  uint packed_temp = s_temperature_grid[local_coords.z+2][local_coords.y+2][local_coords.x/2+1];
-  vec2 t = unpackHalf2x16(packed_temp);
-
-  if (slot_idx == 1) {
-    t.x = t.y;
-  }
-  t.x -= kTemperatureDiffPositiveOffset;
-
-  float cur_temp = target_stable_temp + t.x + temp_adj / 1024.0f;
-  imageStore(dst_temperature, pixel_coords, vec4(cur_temp));
-
-  vec4 src_airflow = imageLoad(dst_airflow, pixel_coords);
-  vec3 src_airflow_dir = src_airflow.xyz * 2.0f - 1.0f;
-  airflow_dir = mix(airflow_dir, src_airflow_dir * src_airflow.w * 4.0f, 0.5f);
-  float new_airflow_str = length(airflow_dir) / 4.0f;
-  imageStore(dst_airflow, pixel_coords, vec4(normalize(airflow_dir) * 0.5f + 0.5f, new_airflow_str));
+    vec4 src_airflow = imageLoad(dst_airflow, pixel_coords);
+    vec3 src_airflow_dir = src_airflow.xyz * 2.0f - 1.0f;
+    airflow_dir = mix(airflow_dir, src_airflow_dir * getPackedVectorLength(src_airflow.w), 0.5f);
+    float new_airflow_str = getNormalizedVectorLength(airflow_dir);
+    imageStore(dst_airflow, pixel_coords, vec4(normalize(airflow_dir) * 0.5f + 0.5f, new_airflow_str));
 }

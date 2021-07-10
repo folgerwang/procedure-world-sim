@@ -121,7 +121,7 @@ public:
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
         const std::shared_ptr<renderer::ImageView>& src_texture,
         const std::shared_ptr<renderer::ImageView>& src_depth,
-        const std::vector<std::shared_ptr<renderer::ImageView>>& airflow_tex);
+        const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_tex);
 
     static void generateStaticDescriptorSet(
         const std::shared_ptr<renderer::Device>& device,

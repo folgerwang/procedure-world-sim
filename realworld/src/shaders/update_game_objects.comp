@@ -146,7 +146,7 @@ void main()
                     log2(kAirflowMaxHeight - kAirflowLowHeight + 1.0f);
 
             vec4 airflow_info = texture(air_flow, vec3(world_map_uv, uvw_z));
-            vec3 airflow_vec = (airflow_info.xyz * 2.0f - 1.0f) * airflow_info.w * 4.0f;
+            vec3 airflow_vec = (airflow_info.xyz * 2.0f - 1.0f) * getPackedVectorLength(airflow_info.w);
             info.position += vec3(0, moving_on_height, 0);
             info.position.xz += info.moving_dir.xz * delta_t;
             if (params.enble_airflow != 0) {

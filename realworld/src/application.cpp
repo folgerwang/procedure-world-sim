@@ -469,13 +469,13 @@ void RealWorldApplication::initVulkan() {
         texture_sampler_,
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
-        weather_system_->getTemperatureTexes());
+        weather_system_->getTempMoistureTexes());
 
     ego::DebugDrawObject::updateStaticDescriptorSet(
         device_,
         descriptor_pool_,
         texture_sampler_,
-        weather_system_->getTemperatureTex(0),
+        weather_system_->getTempMoistureTex(0),
         weather_system_->getAirflowTex());
 
     menu_ = std::make_shared<es::Menu>(
@@ -583,7 +583,7 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         texture_sampler_,
-        weather_system_->getTemperatureTex(0),
+        weather_system_->getTempMoistureTex(0),
         weather_system_->getAirflowTex());
 
     ego::GltfObject::generateDescriptorSet(
@@ -603,13 +603,13 @@ void RealWorldApplication::recreateSwapChain() {
         texture_sampler_,
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
-        weather_system_->getTemperatureTexes());
+        weather_system_->getTempMoistureTexes());
 
     ego::DebugDrawObject::updateStaticDescriptorSet(
         device_,
         descriptor_pool_,
         texture_sampler_,
-        weather_system_->getTemperatureTex(0),
+        weather_system_->getTempMoistureTex(0),
         weather_system_->getAirflowTex());
 
     menu_->init(

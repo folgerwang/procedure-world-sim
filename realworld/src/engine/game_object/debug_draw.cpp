@@ -40,7 +40,7 @@ std::vector<renderer::TextureDescriptor> addDebugDrawBuffers(
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
-        SRC_VOLUME_TEST_INDEX,
+        SRC_TEMP_MOISTURE_INDEX,
         texture_sampler,
         temp_volume_tex,
         description_set,
@@ -77,7 +77,7 @@ static std::shared_ptr<renderer::DescriptorSetLayout> CreateDebugDrawDescriptorS
     std::vector<renderer::DescriptorSetLayoutBinding> bindings(2);
 
     bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
-        SRC_VOLUME_TEST_INDEX,
+        SRC_TEMP_MOISTURE_INDEX,
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, VERTEX_BIT));
 
     bindings[1] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
