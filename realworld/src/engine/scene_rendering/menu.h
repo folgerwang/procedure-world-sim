@@ -9,7 +9,7 @@ class Menu {
     std::vector<std::string> to_load_gltf_names_;
     bool turn_off_water_pass_ = false;
     bool turn_on_airflow_ = false;
-    bool turn_on_debug_draw_volume_ = false;
+    uint32_t debug_draw_type_ = 0;
 
 public:
     Menu(
@@ -37,8 +37,8 @@ public:
         return turn_on_airflow_;
     }
 
-    inline bool isDebugDrawVolumeTurnOn(){
-        return turn_on_debug_draw_volume_;
+    inline uint32_t getDebugDrawType() {
+        return debug_draw_type_;
     }
 
     void init(

@@ -58,8 +58,12 @@ void main() {
         offset = arrow_dir * 128.0f;
     }
 
-    //sample_pos += offset * position_ss.w * getPackedVectorLength(airflow_info.w) * 0.001f;
-    sample_pos += offset * position_ss.w * /*out_data.debug_info.y * */0.001f;
+    if (params.debug_type == DEBUG_DRAW_TEMPRETURE) {
+        sample_pos += offset * position_ss.w * getPackedVectorLength(airflow_info.w) * 0.001f;
+    }
+    else {
+        sample_pos += offset * position_ss.w * /*out_data.debug_info.y * */0.001f;
+    }
 
     vec4 position_ws = vec4(sample_pos, 1.0);
     gl_Position = view_params.proj * view_params.view * position_ws;

@@ -77,7 +77,8 @@ public:
     static void draw(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const renderer::DescriptorSetList& desc_set_list,
-        const glm::vec3& camera_pos);
+        const glm::vec3& camera_pos,
+        uint32_t debug_type);
 };
 
 } // namespace game_object

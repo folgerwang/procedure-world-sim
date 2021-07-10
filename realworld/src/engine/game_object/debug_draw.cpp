@@ -278,7 +278,8 @@ void DebugDrawObject::updateStaticDescriptorSet(
 void DebugDrawObject::draw(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const renderer::DescriptorSetList& desc_set_list,
-    const glm::vec3& camera_pos) {
+    const glm::vec3& camera_pos,
+    uint32_t debug_type) {
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, debug_draw_pipeline_);
 
@@ -291,6 +292,7 @@ void DebugDrawObject::draw(
     debug_params.debug_range = glm::vec3(8192.0f, 4096.0f, 8192.0f);
     debug_params.size = glm::uvec3(64, 32, 64);
     debug_params.inv_size = 1.0f / glm::vec3(debug_params.size);
+    debug_params.debug_type = debug_type;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | 
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),

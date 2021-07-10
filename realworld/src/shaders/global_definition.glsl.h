@@ -120,6 +120,10 @@
 #define SOIL_WATER_LAYER_MAX_THICKNESS    (512.0f - 1.0f / 32.0f)
 #define SNOW_LAYER_MAX_THICKNESS          (8.0f - 1.0f / 32.0f)
 
+#define NO_DEBUG_DRAW               0
+#define DEBUG_DRAW_TEMPRETURE       1
+#define DEBUG_DRAW_MOISTURE         2
+
 #ifdef __cplusplus
 #include "glm/glm.hpp"
 using namespace glm;
@@ -225,7 +229,7 @@ struct DebugDrawParams {
     vec2            world_min;
     vec2            inv_world_range;
     vec3            debug_min;
-    float           pad0;
+    uint            debug_type;
     vec3            debug_range;
     float           pad1;
     uvec3           size;

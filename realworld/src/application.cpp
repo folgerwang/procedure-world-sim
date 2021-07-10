@@ -1034,11 +1034,12 @@ void RealWorldApplication::drawScene(
                 true);
         }
 
-        if (menu_->isDebugDrawVolumeTurnOn()) {
+        if (menu_->getDebugDrawType() != NO_DEBUG_DRAW) {
             ego::DebugDrawObject::draw(
                 cmd_buf,
                 desc_sets,
-                s_camera_pos);
+                s_camera_pos,
+                menu_->getDebugDrawType());
         }
 
         // render skybox.

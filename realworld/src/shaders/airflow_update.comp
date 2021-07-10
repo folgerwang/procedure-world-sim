@@ -252,7 +252,7 @@ void main()
 
     vec4 src_airflow = imageLoad(dst_airflow, pixel_coords);
     vec3 src_airflow_dir = src_airflow.xyz * 2.0f - 1.0f;
-    airflow_dir = mix(airflow_dir, src_airflow_dir * getPackedVectorLength(src_airflow.w), 0.5f);
+    airflow_dir = mix(airflow_dir, src_airflow_dir * getPackedVectorLength(src_airflow.w), 0.8f);
     float new_airflow_str = getNormalizedVectorLength(airflow_dir);
     imageStore(dst_airflow, pixel_coords, vec4(normalize(airflow_dir) * 0.5f + 0.5f, new_airflow_str));
 }

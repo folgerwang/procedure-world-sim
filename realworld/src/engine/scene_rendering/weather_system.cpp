@@ -406,12 +406,12 @@ void WeatherSystem::updateAirflowBuffer(
     airflow_params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
     airflow_params.size = glm::ivec3(w, w, h);
     airflow_params.sea_level_temperature = 30.0f;
-    airflow_params.soil_temp_adj = 0.10f;
-    airflow_params.water_temp_adj = 0.51f;
+    airflow_params.soil_temp_adj = 0.20f;
+    airflow_params.water_temp_adj = 1.02f;
     airflow_params.air_temp_adj = 0.000f;
-    airflow_params.water_moist_adj = 0.1f;
-    airflow_params.soil_moist_adj = 0.02f;
-    airflow_params.tempeture_ratio_per_frame = 1.0f / 1.1f;
+    airflow_params.water_moist_adj = 1.0f;
+    airflow_params.soil_moist_adj = 0.2f;
+    airflow_params.tempeture_ratio_per_frame = 1.0f;
     airflow_params.moisture_ratio_per_frame = 1.0f / 1.1f;
     airflow_params.height_params =
         glm::vec2(log2(1.0f + airflow_params.world_range.z),

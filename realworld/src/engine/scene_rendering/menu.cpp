@@ -120,11 +120,23 @@ bool Menu::draw(
             if (ImGui::MenuItem("Turn on air flow effect", NULL, turn_on_airflow_)) {
                 turn_on_airflow_ = !turn_on_airflow_;
             }
-            if (ImGui::MenuItem("Turn on debug draw volume", NULL, turn_on_debug_draw_volume_)) {
-                turn_on_debug_draw_volume_ = !turn_on_debug_draw_volume_;
-            }
             ImGui::Separator();
-            if (ImGui::MenuItem("Cut", "CTRL+X")) {}
+
+            const char* items[] = { "no debug draw", "debug temperature", "debug moisture" };
+            if (ImGui::BeginCombo("##debugmode", items[debug_draw_type_])) // The second parameter is the label previewed before opening the combo.
+            {
+                for (int n = 0; n < IM_ARRAYSIZE(items); n++)
+                {
+                    bool is_selected = (items[debug_draw_type_] == items[n]); // You can store your selection however you want, outside or inside your objects
+                    if (ImGui::Selectable(items[n], is_selected)) {
+                        debug_draw_type_ = n;
+                        if (is_selected)
+                            ImGui::SetItemDefaultFocus();   // You may set the initial focus when opening the combo (scrolling + for keyboard navigation support)
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
             ImGui::EndMenu();
         }
         ImGui::EndMainMenuBar();
