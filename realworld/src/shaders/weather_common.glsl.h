@@ -16,6 +16,8 @@
 #define kMaxTempMoistDiff                 4.0f
 #define kTempMoistDiffToFloat             (kMaxTempMoistDiff / 65536.0f)
 
+#define kMinSampleHeight                  4.0f
+
 float getReferenceDegree(float sea_level_temp_c, float altitude) {
 
     float sea_level_temp = sea_level_temp_c;
@@ -60,3 +62,4 @@ float getNormalizedVectorLength(vec3 dir_vec) {
 float getPackedVectorLength(float packed_w) {
     return packed_w / kAirflowStrengthNormalizeScale;
 }
+

@@ -20,6 +20,6 @@ void main()
 	position_ws.xy = uvw.xy * params.world_range.xy + params.world_min.xy;
 	position_ws.z = getSampleHeight(uvw.z, 0, params.height_params);
 
-	float temperature = getReferenceDegree(params.sea_level_temperature, position_ws.z);
+	float temperature = getReferenceDegree(params.controls.sea_level_temperature, position_ws.z);
 	imageStore(dst_temp_moisture, pixel_coords, vec4(normalizeTemperature(temperature), 0, 0, 0));
 }

@@ -65,7 +65,7 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
     float max_h = getSampleHeight(uvw_w, params.inv_size.z * 0.5f, params.height_params);
     float sample_h = getSampleHeight(uvw_w, 0, params.height_params);
 
-    float target_stable_temp = getReferenceDegree(params.sea_level_temperature, sample_h);
+    float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
     float water_depth = ground_info.y - ground_info.x;
     bool cell_touch_ground = (ground_info.y >= min_h - 0.01f);// && (ground_info.y <= max_h + 0.01f);
@@ -74,11 +74,11 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
     float moist_adjust = 0.0f;
     if (cell_touch_ground) {
         float water_level = clamp((water_depth - 0.01f) * 10.0f, 0.0f, 1.0f);
-        temp_adjust += mix(params.soil_temp_adj, params.water_temp_adj, water_level);
-        moist_adjust += mix(params.soil_moist_adj, params.water_moist_adj, water_level);
+        temp_adjust += mix(params.controls.soil_temp_adj, params.controls.water_temp_adj, water_level);
+        moist_adjust += mix(params.controls.soil_moist_adj, params.controls.water_moist_adj, water_level);
     }
     else if (cell_above_ground) {
-        temp_adjust += params.air_temp_adj;
+        temp_adjust += params.controls.air_temp_adj;
     }
 
     // make sure color different here is positive.
@@ -98,18 +98,24 @@ void updateTempMoistureBuffer(int pixel_index, ivec3 block_coords) {
     s_temp_moisture_grid[slc.z][slc.y][slc.x] = temp_moist;
 }
 
+vec4 hash44(vec4 p4)
+{
+	p4 = fract(p4  * vec4(.1031, .1030, .0973, .1099));
+    p4 += dot(p4, p4.wzxy+33.33);
+    return fract((p4.xxyz+p4.yzzw)*p4.zywx);
+}
+
 uint packTempDiff(uint min_temp_moist, uint center, ivec3 pixel_coords) {
     vec2 min_tm = unpackTempMoist(min_temp_moist);
     vec2 center_tm = unpackTempMoist(center);
 
-    vec4 noise_values = hash44(vec4(pixel_coords, params.current_time) * 2.0f - 1.0f;
+    vec4 noise_values = hash44(vec4(vec3(pixel_coords) * 0.334, params.current_time)) * 2.0f - 1.0f;
 
     uint packed_temp_moist_diff = 0;
     if (center_tm.x > min_tm.x) {
         float temp_diff = center_tm.x - min_tm.x;
-        float temp_diff_adj = temp_diff * params.heat_transfer_ratio * (1.0f + noise_values * 0.2f);
-        float transfer_ratio = temp_diff_adj / temp_diff;
-        float moist_adj = center_tm.y * transfer_ratio * params.moist_transfer_ratio;
+        float temp_diff_adj = temp_diff * params.controls.heat_transfer_ratio * (1.0f + noise_values.x * params.controls.heat_transfer_noise_weight);
+        float moist_adj = center_tm.y * params.controls.moist_transfer_ratio * (1.0f + noise_values.y * params.controls.moist_transfer_noise_weight);
         packed_temp_moist_diff = packTempMoistDiff(temp_diff_adj, moist_adj, min_temp_moist);
     }
 
@@ -241,7 +247,7 @@ void main()
 
     float uvw_w = (pixel_coords.z + 0.5) * params.inv_size.z;
     float sample_h = getSampleHeight(uvw_w, 0, params.height_params);
-    float target_stable_temp = getReferenceDegree(params.sea_level_temperature, sample_h);
+    float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
     ivec3 slc = local_coords + 2;
     vec2 temp_moist = unpackTempMoist(s_temp_moisture_grid[slc.z][slc.y][slc.x]);

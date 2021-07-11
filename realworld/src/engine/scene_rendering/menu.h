@@ -1,5 +1,6 @@
 #pragma once
 #include "engine/renderer/renderer.h"
+#include "shaders/global_definition.glsl.h"
 
 namespace engine {
 namespace scene_rendering {
@@ -10,6 +11,8 @@ class Menu {
     bool turn_off_water_pass_ = false;
     bool turn_on_airflow_ = false;
     uint32_t debug_draw_type_ = 0;
+
+    glsl::WeatherControl weather_controls_;
 
 public:
     Menu(
@@ -39,6 +42,10 @@ public:
 
     inline uint32_t getDebugDrawType() {
         return debug_draw_type_;
+    }
+
+    inline const glsl::WeatherControl& getWeatherControls() {
+        return weather_controls_;
     }
 
     void init(

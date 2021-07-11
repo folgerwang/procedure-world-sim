@@ -125,6 +125,7 @@
 #define DEBUG_DRAW_MOISTURE         2
 
 #ifdef __cplusplus
+#pragma once
 #include "glm/glm.hpp"
 using namespace glm;
 namespace glsl {
@@ -196,22 +197,32 @@ struct TileUpdateParams {
     float           pad;
 };
 
-struct AirflowUpdateParams {
-    vec3            world_min;
+struct WeatherControl {
     float           sea_level_temperature;
-    vec3            world_range;
     float           soil_temp_adj;
-    vec3            inv_size;
     float           water_temp_adj;
-    ivec3           size;
     float           air_temp_adj;
-    vec2            height_params;
     float           soil_moist_adj;
     float           water_moist_adj;
     float           heat_transfer_ratio;
     float           moist_transfer_ratio;
+    float           heat_transfer_noise_weight;
+    float           moist_transfer_noise_weight;
+};
+
+struct AirflowUpdateParams {
+    vec3            world_min;
     float           current_time;
-    float           pad;
+    vec3            world_range;
+    float           pad0;
+    vec3            inv_size;
+    float           pad1;
+    ivec3           size;
+    float           pad2;
+    vec2            height_params;
+    vec2            pad3;
+
+    WeatherControl  controls;
 };
 
 struct TileParams {

@@ -983,7 +983,7 @@ void RealWorldApplication::drawScene(
         else {
             ego::TileObject::updateTileFlowBuffers(cmd_buf, current_time_, s_dbuf_idx);
             ego::TileObject::updateTileBuffers(cmd_buf, current_time_, s_dbuf_idx);
-            weather_system_->updateAirflowBuffer(cmd_buf, s_dbuf_idx, current_time);
+            weather_system_->updateAirflowBuffer(cmd_buf, menu_->getWeatherControls(), s_dbuf_idx, current_time);
         }
     }
 

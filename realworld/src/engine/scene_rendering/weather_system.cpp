@@ -335,6 +335,24 @@ void WeatherSystem::recreate(
         airflow_pipeline_layout_);
 }
 
+void calculateHeightSamples(int h)
+{
+    float cloud_max_height = kAirflowMaxHeight / kDegreeDecreasePerKm / 1000.0f * 6.5f;
+    float cloud_height_range = cloud_max_height - kAirflowLowHeight;
+    float max_min_ratio = cloud_height_range / (h / 2) / kMinSampleHeight - 1.0f;
+    
+    float sample = 64.5f;
+    float sample_h = (kMinSampleHeight + ((max_min_ratio - 1) / h * kMinSampleHeight / 2) * sample) * sample;
+
+    float a = ((max_min_ratio - 1) / h * kMinSampleHeight / 2);
+    float b = kMinSampleHeight;
+
+    sample_h = (b + a * sample) * sample;
+    
+    int hit = 1;
+    
+}
+
 // update air flow buffer.
 void WeatherSystem::initTemperatureBuffer(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
@@ -353,16 +371,14 @@ void WeatherSystem::initTemperatureBuffer(
         glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - airflow_params.world_min;
     airflow_params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
     airflow_params.size = glm::uvec3(w, w, h);
-    airflow_params.sea_level_temperature = 30.0f;
-    airflow_params.soil_temp_adj = 0;
-    airflow_params.water_temp_adj = 0;
-    airflow_params.air_temp_adj = 0;
-    airflow_params.heat_transfer_ratio = 0;
-    airflow_params.moist_transfer_ratio = 0;
+    airflow_params.controls = {0};
+    airflow_params.controls.sea_level_temperature = 30.0f;
     airflow_params.current_time = 0;
     airflow_params.height_params =
         glm::vec2(log2(1.0f + airflow_params.world_range.z),
             -1.0f + airflow_params.world_min.z);
+
+    calculateHeightSamples(h);
 
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
@@ -388,6 +404,7 @@ void WeatherSystem::initTemperatureBuffer(
 // update air flow buffer.
 void WeatherSystem::updateAirflowBuffer(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    const glsl::WeatherControl& weather_controls,
     int dbuf_idx,
     float current_time) {
 
@@ -407,14 +424,7 @@ void WeatherSystem::updateAirflowBuffer(
         glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - airflow_params.world_min;
     airflow_params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
     airflow_params.size = glm::ivec3(w, w, h);
-    airflow_params.sea_level_temperature = 30.0f;
-    airflow_params.soil_temp_adj = 0.20f;
-    airflow_params.water_temp_adj = 1.02f;
-    airflow_params.air_temp_adj = 0.000f;
-    airflow_params.water_moist_adj = 1.0f;
-    airflow_params.soil_moist_adj = 0.2f;
-    airflow_params.heat_transfer_ratio = 1.0f;
-    airflow_params.moist_transfer_ratio = 0.8f;
+    airflow_params.controls = weather_controls;
     airflow_params.current_time = current_time;
     airflow_params.height_params =
         glm::vec2(log2(1.0f + airflow_params.world_range.z),

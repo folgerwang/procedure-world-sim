@@ -55,6 +55,17 @@ Menu::Menu(
         descriptor_pool,
         render_pass,
         command_buffer);
+
+    weather_controls_.sea_level_temperature = 30.0f;
+    weather_controls_.soil_temp_adj = 0.20f;
+    weather_controls_.water_temp_adj = 1.02f;
+    weather_controls_.air_temp_adj = 0.000f;
+    weather_controls_.water_moist_adj = 1.0f;
+    weather_controls_.soil_moist_adj = 0.2f;
+    weather_controls_.heat_transfer_ratio = 1.0f;
+    weather_controls_.moist_transfer_ratio = 0.8f;
+    weather_controls_.heat_transfer_noise_weight = 0.2f;
+    weather_controls_.moist_transfer_noise_weight = 0.2f;
 }
 
 void Menu::init(
@@ -120,9 +131,11 @@ bool Menu::draw(
             if (ImGui::MenuItem("Turn on air flow effect", NULL, turn_on_airflow_)) {
                 turn_on_airflow_ = !turn_on_airflow_;
             }
-            static float begin = 10, end = 90;
-            ImGui::DragFloatRange2("range", &begin, &end, 0.25f, 0.0f, 100.0f, "Min: %.1f %%", "Max: %.1f %%");
-
+            ImGui::Separator();
+            ImGui::SliderFloat("heat transfer rate", &weather_controls_.heat_transfer_ratio, 0.0f, 2.0f);
+            ImGui::SliderFloat("heat transfer noise level", &weather_controls_.heat_transfer_noise_weight, 0.0f, 1.0f);
+            ImGui::SliderFloat("moist transfer rate", &weather_controls_.moist_transfer_ratio, 0.0f, 2.0f);
+            ImGui::SliderFloat("moist transfer noise level", &weather_controls_.moist_transfer_noise_weight, 0.0f, 1.0f);
             ImGui::Separator();
 
             const char* items[] = { "no debug draw", "debug temperature", "debug moisture" };
