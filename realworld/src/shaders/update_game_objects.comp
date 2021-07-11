@@ -150,7 +150,7 @@ void main()
             info.position += vec3(0, moving_on_height, 0);
             info.position.xz += info.moving_dir.xz * delta_t;
             if (params.enble_airflow != 0) {
-                info.position += airflow_vec * delta_t * 16.0f;
+                info.position += airflow_vec * delta_t * 50.0f;
             }
 
             info.moving_dir.y += kGravityConst * delta_t;

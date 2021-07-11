@@ -49,20 +49,20 @@ void main() {
 
     vec3 offset = vec3(0);
     if (vertex_idx == 0) {
-        offset = -left_dir * 12.8f;
+        offset = -left_dir * 6.4f;
     }
     else if (vertex_idx == 1) {
-        offset = left_dir * 12.8f;
+        offset = left_dir * 6.4f;
     }
     else {
         offset = arrow_dir * 128.0f;
     }
 
     if (params.debug_type == DEBUG_DRAW_TEMPRETURE) {
-        sample_pos += offset * position_ss.w * getPackedVectorLength(airflow_info.w) * 0.001f;
+        sample_pos += offset * position_ss.w * getPackedVectorLength(airflow_info.w) * 0.0005f;
     }
     else {
-        sample_pos += offset * position_ss.w * /*out_data.debug_info.y * */0.001f;
+        sample_pos += offset * position_ss.w * /*out_data.debug_info.y * */0.0005f;
     }
 
     vec4 position_ws = vec4(sample_pos, 1.0);
