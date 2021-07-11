@@ -54,7 +54,8 @@ public:
 
     void updateAirflowBuffer(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
-        int dbuf_idx);
+        int dbuf_idx,
+        float current_time);
 
     void update();
 

@@ -120,6 +120,9 @@ bool Menu::draw(
             if (ImGui::MenuItem("Turn on air flow effect", NULL, turn_on_airflow_)) {
                 turn_on_airflow_ = !turn_on_airflow_;
             }
+            static float begin = 10, end = 90;
+            ImGui::DragFloatRange2("range", &begin, &end, 0.25f, 0.0f, 100.0f, "Min: %.1f %%", "Max: %.1f %%");
+
             ImGui::Separator();
 
             const char* items[] = { "no debug draw", "debug temperature", "debug moisture" };

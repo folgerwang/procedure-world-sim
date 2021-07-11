@@ -208,9 +208,10 @@ struct AirflowUpdateParams {
     vec2            height_params;
     float           soil_moist_adj;
     float           water_moist_adj;
-    float           tempeture_ratio_per_frame;
-    float           moisture_ratio_per_frame;
-    vec2            pad;
+    float           heat_transfer_ratio;
+    float           moist_transfer_ratio;
+    float           current_time;
+    float           pad;
 };
 
 struct TileParams {

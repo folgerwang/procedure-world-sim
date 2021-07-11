@@ -30,8 +30,8 @@ vec2 getPackedLayers(vec2 uv) {
 }
 
 uint packTempMoist(float temp, float moist, uint tag) {
-    temp *= params.tempeture_ratio_per_frame / kMaxTemperatureAdjustRange;
-    moist *= params.moisture_ratio_per_frame / kMaxMoistureIntensity;
+    temp /= kMaxTemperatureAdjustRange;
+    moist /= kMaxMoistureIntensity;
     uint packed_moist_temp = 
         packUnorm2x16(vec2(
             moist,
@@ -98,23 +98,25 @@ void updateTempMoistureBuffer(int pixel_index, ivec3 block_coords) {
     s_temp_moisture_grid[slc.z][slc.y][slc.x] = temp_moist;
 }
 
-uint packTempDiff(uint min_temp_moist, uint center) {
+uint packTempDiff(uint min_temp_moist, uint center, ivec3 pixel_coords) {
     vec2 min_tm = unpackTempMoist(min_temp_moist);
     vec2 center_tm = unpackTempMoist(center);
+
+    vec4 noise_values = hash44(vec4(pixel_coords, params.current_time) * 2.0f - 1.0f;
 
     uint packed_temp_moist_diff = 0;
     if (center_tm.x > min_tm.x) {
         float temp_diff = center_tm.x - min_tm.x;
-        float temp_diff_adj = temp_diff;
+        float temp_diff_adj = temp_diff * params.heat_transfer_ratio * (1.0f + noise_values * 0.2f);
         float transfer_ratio = temp_diff_adj / temp_diff;
-        float moist_adj = center_tm.y * transfer_ratio;
+        float moist_adj = center_tm.y * transfer_ratio * params.moist_transfer_ratio;
         packed_temp_moist_diff = packTempMoistDiff(temp_diff_adj, moist_adj, min_temp_moist);
     }
 
     return packed_temp_moist_diff;
 }
 
-void createTempMoistureFlowBuffer(int pixel_index) {
+void createTempMoistureFlowBuffer(int pixel_index, ivec3 block_coords) {
     int iz = pixel_index / (10 * 10);
     int ixy = pixel_index % (10 * 10);
 
@@ -132,7 +134,7 @@ void createTempMoistureFlowBuffer(int pixel_index) {
 
     uint min_value = min(min(min(left, right), min(back, front)), min(top, bottom));
 
-    s_flow_grid[dlc.z][dlc.y][dlc.x] = packTempDiff(min_value, center);
+    s_flow_grid[dlc.z][dlc.y][dlc.x] = packTempDiff(min_value, center, dlc + block_coords);
 }
 
 vec2 generateAirflow(ivec3 dlc, out vec3 airflow_dir) {
@@ -227,7 +229,7 @@ void main()
 
     if (pixel_index < (18 * 10 * 10 / 2)) {
         for (int i = 0; i < 2; i++) {
-            createTempMoistureFlowBuffer(pixel_index * 2 + i);
+            createTempMoistureFlowBuffer(pixel_index * 2 + i, block_coords);
         }
     }
 

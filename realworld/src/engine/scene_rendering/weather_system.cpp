@@ -357,8 +357,9 @@ void WeatherSystem::initTemperatureBuffer(
     airflow_params.soil_temp_adj = 0;
     airflow_params.water_temp_adj = 0;
     airflow_params.air_temp_adj = 0;
-    airflow_params.tempeture_ratio_per_frame = 1.0f;
-    airflow_params.moisture_ratio_per_frame = 1.0f;
+    airflow_params.heat_transfer_ratio = 0;
+    airflow_params.moist_transfer_ratio = 0;
+    airflow_params.current_time = 0;
     airflow_params.height_params =
         glm::vec2(log2(1.0f + airflow_params.world_range.z),
             -1.0f + airflow_params.world_min.z);
@@ -387,7 +388,8 @@ void WeatherSystem::initTemperatureBuffer(
 // update air flow buffer.
 void WeatherSystem::updateAirflowBuffer(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
-    int dbuf_idx) {
+    int dbuf_idx,
+    float current_time) {
 
     renderer::helper::transitMapTextureToStoreImage(
         cmd_buf,
@@ -411,8 +413,9 @@ void WeatherSystem::updateAirflowBuffer(
     airflow_params.air_temp_adj = 0.000f;
     airflow_params.water_moist_adj = 1.0f;
     airflow_params.soil_moist_adj = 0.2f;
-    airflow_params.tempeture_ratio_per_frame = 1.0f;
-    airflow_params.moisture_ratio_per_frame = 1.0f / 1.1f;
+    airflow_params.heat_transfer_ratio = 1.0f;
+    airflow_params.moist_transfer_ratio = 0.8f;
+    airflow_params.current_time = current_time;
     airflow_params.height_params =
         glm::vec2(log2(1.0f + airflow_params.world_range.z),
             -1.0f + airflow_params.world_min.z);
