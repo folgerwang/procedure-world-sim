@@ -297,17 +297,32 @@ void RealWorldApplication::createRenderPasses() {
 }
 
 void RealWorldApplication::initVulkan() {
-    static auto color_blend_attachment = er::helper::fillPipelineColorBlendAttachmentState();
+    static auto color_no_blend_attachment = er::helper::fillPipelineColorBlendAttachmentState();
+    static auto color_blend_attachment =
+        er::helper::fillPipelineColorBlendAttachmentState(
+            SET_FLAG_BIT(ColorComponent, ALL_BITS),
+            true,
+            er::BlendFactor::ONE,
+            er::BlendFactor::SRC_ALPHA,
+            er::BlendOp::ADD,
+            er::BlendFactor::ONE,
+            er::BlendFactor::ZERO,
+            er::BlendOp::ADD);
+    static std::vector<er::PipelineColorBlendAttachmentState> color_no_blend_attachments(1, color_no_blend_attachment);
     static std::vector<er::PipelineColorBlendAttachmentState> color_blend_attachments(1, color_blend_attachment);
-    static std::vector<er::PipelineColorBlendAttachmentState> cube_color_blend_attachments(6, color_blend_attachment);
+    static std::vector<er::PipelineColorBlendAttachmentState> cube_color_no_blend_attachments(6, color_no_blend_attachment);
+
+    auto single_no_blend_state_info =
+        std::make_shared<er::PipelineColorBlendStateCreateInfo>(
+            er::helper::fillPipelineColorBlendStateCreateInfo(color_no_blend_attachments));
 
     auto single_blend_state_info =
         std::make_shared<er::PipelineColorBlendStateCreateInfo>(
             er::helper::fillPipelineColorBlendStateCreateInfo(color_blend_attachments));
 
-    auto cube_blend_state_info =
+    auto cube_no_blend_state_info =
         std::make_shared<er::PipelineColorBlendStateCreateInfo>(
-            er::helper::fillPipelineColorBlendStateCreateInfo(cube_color_blend_attachments));
+            er::helper::fillPipelineColorBlendStateCreateInfo(cube_color_no_blend_attachments));
 
     auto cull_rasterization_info =
         std::make_shared<er::PipelineRasterizationStateCreateInfo>(
@@ -335,17 +350,22 @@ void RealWorldApplication::initVulkan() {
                 false,
                 er::CompareOp::ALWAYS));
 
-    graphic_pipeline_info_.blend_state_info = single_blend_state_info;
+    graphic_pipeline_info_.blend_state_info = single_no_blend_state_info;
     graphic_pipeline_info_.rasterization_info = cull_rasterization_info;
     graphic_pipeline_info_.ms_info = ms_info;
     graphic_pipeline_info_.depth_stencil_info = depth_stencil_info;
         
-    graphic_fs_pipeline_info_.blend_state_info = single_blend_state_info;
+    graphic_fs_pipeline_info_.blend_state_info = single_no_blend_state_info;
     graphic_fs_pipeline_info_.rasterization_info = no_cull_rasterization_info;
     graphic_fs_pipeline_info_.ms_info = ms_info;
     graphic_fs_pipeline_info_.depth_stencil_info = fs_depth_stencil_info;
-        
-    graphic_cubemap_pipeline_info_.blend_state_info = cube_blend_state_info;
+
+    graphic_fs_blend_pipeline_info_.blend_state_info = single_blend_state_info;
+    graphic_fs_blend_pipeline_info_.rasterization_info = no_cull_rasterization_info;
+    graphic_fs_blend_pipeline_info_.ms_info = ms_info;
+    graphic_fs_blend_pipeline_info_.depth_stencil_info = fs_depth_stencil_info;
+
+    graphic_cubemap_pipeline_info_.blend_state_info = cube_no_blend_state_info;
     graphic_cubemap_pipeline_info_.rasterization_info = no_cull_rasterization_info;
     graphic_cubemap_pipeline_info_.ms_info = ms_info;
     graphic_cubemap_pipeline_info_.depth_stencil_info = fs_depth_stencil_info;
@@ -497,9 +517,8 @@ void RealWorldApplication::initVulkan() {
         hdr_water_render_pass_,
         view_desc_set_layout_,
         ibl_creator_->getIblDescSetLayout(),
-        graphic_fs_pipeline_info_,
+        graphic_fs_blend_pipeline_info_,
         texture_sampler_,
-        hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
         weather_system_->getTempMoistureTexes(),
         swap_chain_info_.extent);
@@ -652,7 +671,6 @@ void RealWorldApplication::recreateSwapChain() {
         view_desc_set_layout_,
         graphic_fs_pipeline_info_,
         texture_sampler_,
-        hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
         weather_system_->getTempMoistureTexes(),
         swap_chain_info_.extent);
@@ -1170,18 +1188,6 @@ void RealWorldApplication::drawScene(
 
             er::Helper::blitImage(
                 cmd_buf,
-                hdr_color_buffer_.image,
-                hdr_color_buffer_copy_.image,
-                color_src_info,
-                color_src_info,
-                color_dst_info,
-                color_dst_info,
-                SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-                SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-                glm::ivec3(screen_size.x, screen_size.y, 1));
-
-            er::Helper::blitImage(
-                cmd_buf,
                 depth_buffer_.image,
                 depth_buffer_copy_.image,
                 depth_src_info,
@@ -1202,8 +1208,9 @@ void RealWorldApplication::drawScene(
                 volume_cloud_->drawVolumeMoisture(
                     cmd_buf,
                     frame_desc_set,
+                    screen_size,
                     s_dbuf_idx,
-                    skydome_->getSunDir());
+                    current_time);
 
                 cmd_buf->endRenderPass();
             }

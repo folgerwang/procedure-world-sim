@@ -132,11 +132,10 @@ std::vector<er::TextureDescriptor> addCloudTextures(
 std::vector<er::TextureDescriptor> addVolumeMoistureTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
-    const std::shared_ptr<er::ImageView>& src_color,
     const std::shared_ptr<er::ImageView>& src_depth,
     const std::shared_ptr<er::ImageView>& volume_moist_tex) {
     std::vector<er::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(3);
+    descriptor_writes.reserve(2);
 
     // envmap texture.
     er::Helper::addOneTexture(
@@ -144,15 +143,6 @@ std::vector<er::TextureDescriptor> addVolumeMoistureTextures(
         SRC_TEMP_MOISTURE_INDEX,
         texture_sampler,
         volume_moist_tex,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
-        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-
-    er::Helper::addOneTexture(
-        descriptor_writes,
-        SRC_COLOR_TEX_INDEX,
-        texture_sampler,
-        src_color,
         description_set,
         er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -272,7 +262,6 @@ VolumeCloud::VolumeCloud(
     const std::shared_ptr<renderer::DescriptorSetLayout>& ibl_desc_set_layout,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
-    const std::shared_ptr<renderer::ImageView>& src_texture,
     const std::shared_ptr<renderer::ImageView>& src_depth,
     const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_texes,
     const glm::uvec2& display_size) {
@@ -289,7 +278,6 @@ VolumeCloud::VolumeCloud(
     draw_volume_moist_desc_set_layout_ =
         device->createDescriptorSetLayout(
             { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_TEMP_MOISTURE_INDEX),
-              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_COLOR_TEX_INDEX),
               renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_DEPTH_TEX_INDEX)});
 
     recreate(
@@ -299,7 +287,6 @@ VolumeCloud::VolumeCloud(
         view_desc_set_layout,
         graphic_pipeline_info,
         texture_sampler,
-        src_texture,
         src_depth,
         temp_moisture_texes,
         display_size);
@@ -312,7 +299,6 @@ void VolumeCloud::recreate(
     const std::shared_ptr<renderer::DescriptorSetLayout>& view_desc_set_layout,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
-    const std::shared_ptr<renderer::ImageView>& src_texture,
     const std::shared_ptr<renderer::ImageView>& src_depth,
     const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_texes,
     const glm::uvec2& display_size) {
@@ -381,7 +367,6 @@ void VolumeCloud::recreate(
         auto draw_volume_moist_texture_descs = addVolumeMoistureTextures(
             draw_volume_moist_desc_set_[dbuf_idx],
             texture_sampler,
-            src_texture,
             src_depth,
             temp_moisture_texes[dbuf_idx]);
         device->updateDescriptorSets(draw_volume_moist_texture_descs, {});
@@ -437,8 +422,9 @@ void VolumeCloud::draw(
 void VolumeCloud::drawVolumeMoisture(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const std::shared_ptr<renderer::DescriptorSet>& frame_desc_set,
+    const glm::uvec2& display_size,
     int dbuf_idx,
-    glm::vec3 sun_dir) {
+    float current_time) {
     // render moisture volume.
 
     cmd_buf->bindPipeline(
@@ -448,6 +434,8 @@ void VolumeCloud::drawVolumeMoisture(
     glsl::VolumeMoistrueParams params = {};
     params.world_min = glm::vec2(-kWorldMapSize / 2.0f);
     params.inv_world_range = 1.0f / (glm::vec2(kWorldMapSize / 2.0f) - params.world_min);
+    params.inv_screen_size = 1.0f / glm::vec2(display_size);
+    params.time = current_time;
 
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),

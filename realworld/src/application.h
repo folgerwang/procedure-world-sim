@@ -69,6 +69,7 @@ private:
     er::QueueFamilyIndices queue_indices_;
     er::GraphicPipelineInfo graphic_pipeline_info_;
     er::GraphicPipelineInfo graphic_fs_pipeline_info_;
+    er::GraphicPipelineInfo graphic_fs_blend_pipeline_info_;
     er::GraphicPipelineInfo graphic_cubemap_pipeline_info_;
 
     std::shared_ptr<er::Instance> instance_;

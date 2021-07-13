@@ -257,6 +257,9 @@ struct DebugDrawParams {
 struct VolumeMoistrueParams {
     vec2            world_min;
     vec2            inv_world_range;
+    vec2            inv_screen_size;
+    float           time;
+    float           pad;
 };
 
 // 1 float base layer, rock.

@@ -26,7 +26,6 @@ public:
         const std::shared_ptr<renderer::DescriptorSetLayout>& ibl_desc_set_layout,
         const renderer::GraphicPipelineInfo& graphic_pipeline_info,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
-        const std::shared_ptr<renderer::ImageView>& src_texture,
         const std::shared_ptr<renderer::ImageView>& src_depth,
         const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_texes,
         const glm::uvec2& display_size);
@@ -38,7 +37,6 @@ public:
         const std::shared_ptr<renderer::DescriptorSetLayout>& view_desc_set_layout,
         const renderer::GraphicPipelineInfo& graphic_pipeline_info,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
-        const std::shared_ptr<renderer::ImageView>& src_texture,
         const std::shared_ptr<renderer::ImageView>& src_depth,
         const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_texes,
         const glm::uvec2& display_size);
@@ -50,8 +48,9 @@ public:
     void drawVolumeMoisture(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const std::shared_ptr<renderer::DescriptorSet>& frame_desc_set,
+        const glm::uvec2& display_size,
         int dbuf_idx,
-        glm::vec3 sun_dir);
+        float current_time);
 
     void update();
 

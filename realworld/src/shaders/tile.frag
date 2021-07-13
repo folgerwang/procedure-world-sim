@@ -89,7 +89,8 @@ void main() {
     albedo = 1.0f* mix(albedo, vec3(0.1, 0.1, 0.0)*0.2f, smoothstep(0.7f, 0.9f, normal.y));
     float cold_index = clamp((15.0f - c_temp) / 5.0f, 0.0f, 1.0f);
 
-    albedo = mix(albedo, vec3(1.0, 1.0, 1.0), cold_index);
+    // turn off right now, will fix flickering later.
+    //albedo = mix(albedo, vec3(1.0, 1.0, 1.0), cold_index);
 
     MaterialInfo material_info;
     material_info.baseColor = albedo;
