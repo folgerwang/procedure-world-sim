@@ -8,6 +8,7 @@
 #include "engine/scene_rendering/weather_system.h"
 #include "engine/scene_rendering/ibl_creator.h"
 #include "engine/scene_rendering/menu.h"
+#include "engine/scene_rendering/volume_cloud.h"
 
 namespace er = engine::renderer;
 namespace ego = engine::game_object;
@@ -30,7 +31,6 @@ private:
     void initWindow();
     void initVulkan();
     void createImageViews();
-    void createCubemapFramebuffers();
     void createDescriptorSetLayout();
     void createRenderPasses();
     void createCubemapRenderPass();
@@ -40,10 +40,6 @@ private:
     void createHdrColorBuffer(const glm::uvec2& display_size);
     void createColorBufferCopy(const glm::uvec2& display_size);
     void recreateRenderBuffer(const glm::uvec2& display_size);
-    void createTextureImage(
-        const std::string& file_name,
-        er::Format format,
-        er::TextureInfo& texture);
     void createTextureSampler();
     void createUniformBuffers();
     void createDescriptorSets();
@@ -72,6 +68,7 @@ private:
     er::DeviceInfo device_info_;
     er::QueueFamilyIndices queue_indices_;
     er::GraphicPipelineInfo graphic_pipeline_info_;
+    er::GraphicPipelineInfo graphic_fs_pipeline_info_;
     er::GraphicPipelineInfo graphic_cubemap_pipeline_info_;
 
     std::shared_ptr<er::Instance> instance_;
@@ -122,6 +119,7 @@ private:
     std::vector<std::shared_ptr<ego::GltfObject>> gltf_objects_;
     std::shared_ptr<es::Skydome> skydome_;
     std::shared_ptr<es::WeatherSystem> weather_system_;
+    std::shared_ptr<es::VolumeCloud> volume_cloud_;
     std::shared_ptr<es::IblCreator> ibl_creator_;
     std::shared_ptr<es::Menu> menu_;
 

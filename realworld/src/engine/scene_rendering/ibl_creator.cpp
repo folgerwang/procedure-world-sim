@@ -14,7 +14,7 @@ er::ShaderModuleList getIblShaderModules(
     uint64_t vert_code_size, frag_code_size;
     er::ShaderModuleList shader_modules;
     shader_modules.reserve(6);
-    auto vert_shader_code = engine::helper::readFile("lib/shaders/ibl_vert.spv", vert_code_size);
+    auto vert_shader_code = engine::helper::readFile("lib/shaders/full_screen_vert.spv", vert_code_size);
     shader_modules.push_back(device->createShaderModule(vert_code_size, vert_shader_code.data()));
     auto frag_shader_code = engine::helper::readFile("lib/shaders/panorama_to_cubemap_frag.spv", frag_code_size);
     shader_modules.push_back(device->createShaderModule(frag_code_size, frag_shader_code.data()));

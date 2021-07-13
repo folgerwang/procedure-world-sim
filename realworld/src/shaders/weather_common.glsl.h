@@ -1,7 +1,7 @@
 #define kAirflowMaxHeight                 12000.0f
 #define kAirflowLowHeight                 -100.0f
 
-#define kDegreeDecreasePerKm              (10.0f / 1000.0f)
+#define kDegreeDecreasePerKm              (15.0f / 1000.0f)
 #define kTemperaturePositiveOffset        78.0f
 #define kTemperatureNormalizer            (1.0f / 128.0f)
 #define kTemperatureDenormalizer          (1.0f / kTemperatureNormalizer)

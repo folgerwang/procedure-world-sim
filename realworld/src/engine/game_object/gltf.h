@@ -208,6 +208,8 @@ public:
         const glm::vec2& world_min,
         const glm::vec2& world_range,
         const glm::vec3& camera_pos,
+        float air_flow_strength,
+        float water_flow_strength,
         int update_frame_count,
         int soil_water,
         bool enble_airflow);

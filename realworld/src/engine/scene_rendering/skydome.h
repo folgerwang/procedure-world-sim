@@ -32,6 +32,10 @@ public:
         const glm::uvec2& display_size,
         const uint32_t& cube_size);
 
+    inline glm::vec3 getSunDir() {
+        return sun_dir_;
+    }
+
     void recreate(
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,

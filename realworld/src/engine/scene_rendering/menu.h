@@ -9,8 +9,11 @@ class Menu {
     std::vector<std::string> gltf_file_names_;
     std::vector<std::string> to_load_gltf_names_;
     bool turn_off_water_pass_ = false;
+    bool turn_off_volume_moist_ = false;
     bool turn_on_airflow_ = false;
     uint32_t debug_draw_type_ = 0;
+    float air_flow_strength_ = 50.0f;
+    float water_flow_strength_ = 1.0f;
 
     glsl::WeatherControl weather_controls_;
 
@@ -36,6 +39,10 @@ public:
         return turn_off_water_pass_; 
     }
 
+    inline bool isVolumeMoistTurnOff() {
+        return turn_off_volume_moist_;
+    }
+
     inline bool isAirfowOn() {
         return turn_on_airflow_;
     }
@@ -46,6 +53,14 @@ public:
 
     inline const glsl::WeatherControl& getWeatherControls() {
         return weather_controls_;
+    }
+
+    inline float getAirFlowStrength() {
+        return air_flow_strength_;
+    }
+
+    inline float getWaterFlowStrength() {
+        return water_flow_strength_;
     }
 
     void init(

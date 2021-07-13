@@ -158,6 +158,9 @@ struct ViewParams {
     vec4 camera_pos;
     mat4 view;
     mat4 proj;
+    mat4 view_proj;
+    mat4 inv_view_proj;
+    mat4 inv_view_proj_relative;
     uvec4 input_features;
     vec4 depth_params;
 };
@@ -199,11 +202,12 @@ struct TileUpdateParams {
 
 struct WeatherControl {
     float           sea_level_temperature;
+    float           mix_rate;
     float           soil_temp_adj;
     float           water_temp_adj;
     float           air_temp_adj;
-    float           soil_moist_adj;
     float           water_moist_adj;
+    float           soil_moist_adj;
     float           heat_transfer_ratio;
     float           moist_transfer_ratio;
     float           heat_transfer_noise_weight;
@@ -250,6 +254,11 @@ struct DebugDrawParams {
     uint            pad3;
 };
 
+struct VolumeMoistrueParams {
+    vec2            world_min;
+    vec2            inv_world_range;
+};
+
 // 1 float base layer, rock.
 // 1 half soil layer.
 // 1 half grass layer.
@@ -276,7 +285,9 @@ struct GameObjectsUpdateParams {
     float           delta_t;
     int             frame_count;
     int             enble_airflow;
-    int             pad;
+    float           water_flow_strength;
+    float           air_flow_strength;
+    vec3            pad;
 };
 
 struct InstanceBufferUpdateParams {

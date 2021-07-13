@@ -238,7 +238,7 @@
     <None Include="src\shaders\cube_ibl.frag">
       <Filter>Resource Files\shaders</Filter>
     </None>
-    <None Include="src\shaders\cube.vert">
+    <None Include="src\shaders\full_screen.vert">
       <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\ibl_smooth.comp">
@@ -311,6 +311,9 @@
       <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\temperature_init.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\draw_volume_moist.frag">
       <Filter>Resource Files\shaders</Filter>
     </None>
   </ItemGroup>

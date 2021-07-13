@@ -47,7 +47,7 @@ void main() {
 #endif
 
     vec4 position_ws = vec4(x, layer_height, y, 1.0);
-    gl_Position = view_params.proj * view_params.view * position_ws;
+    gl_Position = view_params.view_proj * position_ws;
 
     out_data.vertex_position = position_ws.xyz;
     out_data.world_map_uv = world_map_uv;

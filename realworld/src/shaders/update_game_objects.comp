@@ -130,7 +130,7 @@ void main()
             vec2 soil_water_thickness = texture(soil_water_layer, world_map_uv).xy * SOIL_WATER_LAYER_MAX_THICKNESS;
             //touch water.
             if (soil_water_thickness.y > 0.005f) {
-                info.position.xz += texture(water_flow, world_map_uv).xy;
+                info.position.xz += texture(water_flow, world_map_uv).xy * params.water_flow_strength;
             }
             else {
                 // bouncing.
@@ -150,7 +150,7 @@ void main()
             info.position += vec3(0, moving_on_height, 0);
             info.position.xz += info.moving_dir.xz * delta_t;
             if (params.enble_airflow != 0) {
-                info.position += airflow_vec * delta_t * 50.0f;
+                info.position += airflow_vec * delta_t * params.air_flow_strength;
             }
 
             info.moving_dir.y += kGravityConst * delta_t;

@@ -301,34 +301,54 @@ void RealWorldApplication::initVulkan() {
     static std::vector<er::PipelineColorBlendAttachmentState> color_blend_attachments(1, color_blend_attachment);
     static std::vector<er::PipelineColorBlendAttachmentState> cube_color_blend_attachments(6, color_blend_attachment);
 
-    graphic_pipeline_info_.blend_state_info = 
+    auto single_blend_state_info =
         std::make_shared<er::PipelineColorBlendStateCreateInfo>(
             er::helper::fillPipelineColorBlendStateCreateInfo(color_blend_attachments));
-    graphic_pipeline_info_.rasterization_info = 
+
+    auto cube_blend_state_info =
+        std::make_shared<er::PipelineColorBlendStateCreateInfo>(
+            er::helper::fillPipelineColorBlendStateCreateInfo(cube_color_blend_attachments));
+
+    auto cull_rasterization_info =
         std::make_shared<er::PipelineRasterizationStateCreateInfo>(
             er::helper::fillPipelineRasterizationStateCreateInfo());
-    graphic_pipeline_info_.ms_info =
-        std::make_shared<er::PipelineMultisampleStateCreateInfo>(
-            er::helper::fillPipelineMultisampleStateCreateInfo());
-    graphic_pipeline_info_.depth_stencil_info =
+
+    auto no_cull_rasterization_info =
+        std::make_shared<er::PipelineRasterizationStateCreateInfo>(
+            er::helper::fillPipelineRasterizationStateCreateInfo(
+                false,
+                false,
+                er::PolygonMode::FILL,
+                SET_FLAG_BIT(CullMode, NONE)));
+
+    auto ms_info = std::make_shared<er::PipelineMultisampleStateCreateInfo>(
+        er::helper::fillPipelineMultisampleStateCreateInfo());
+
+    auto depth_stencil_info =
         std::make_shared<er::PipelineDepthStencilStateCreateInfo>(
             er::helper::fillPipelineDepthStencilStateCreateInfo());
 
-    graphic_cubemap_pipeline_info_.blend_state_info =
-        std::make_shared<er::PipelineColorBlendStateCreateInfo>(
-            er::helper::fillPipelineColorBlendStateCreateInfo(cube_color_blend_attachments));
-    graphic_cubemap_pipeline_info_.rasterization_info =
-        std::make_shared<er::PipelineRasterizationStateCreateInfo>(
-            er::helper::fillPipelineRasterizationStateCreateInfo(
-                false, false, er::PolygonMode::FILL,
-                SET_FLAG_BIT(CullMode, NONE)));
-    graphic_cubemap_pipeline_info_.ms_info =
-        std::make_shared<er::PipelineMultisampleStateCreateInfo>(
-            er::helper::fillPipelineMultisampleStateCreateInfo());
-    graphic_cubemap_pipeline_info_.depth_stencil_info =
+    auto fs_depth_stencil_info =
         std::make_shared<er::PipelineDepthStencilStateCreateInfo>(
             er::helper::fillPipelineDepthStencilStateCreateInfo(
-                false, false, er::CompareOp::ALWAYS, false));
+                false,
+                false,
+                er::CompareOp::ALWAYS));
+
+    graphic_pipeline_info_.blend_state_info = single_blend_state_info;
+    graphic_pipeline_info_.rasterization_info = cull_rasterization_info;
+    graphic_pipeline_info_.ms_info = ms_info;
+    graphic_pipeline_info_.depth_stencil_info = depth_stencil_info;
+        
+    graphic_fs_pipeline_info_.blend_state_info = single_blend_state_info;
+    graphic_fs_pipeline_info_.rasterization_info = no_cull_rasterization_info;
+    graphic_fs_pipeline_info_.ms_info = ms_info;
+    graphic_fs_pipeline_info_.depth_stencil_info = fs_depth_stencil_info;
+        
+    graphic_cubemap_pipeline_info_.blend_state_info = cube_blend_state_info;
+    graphic_cubemap_pipeline_info_.rasterization_info = no_cull_rasterization_info;
+    graphic_cubemap_pipeline_info_.ms_info = ms_info;
+    graphic_cubemap_pipeline_info_.depth_stencil_info = fs_depth_stencil_info;
 
     // the initialization order has to be strict.
     instance_ = er::Helper::createInstance();
@@ -471,6 +491,19 @@ void RealWorldApplication::initVulkan() {
         depth_buffer_copy_.view,
         weather_system_->getTempMoistureTexes());
 
+    volume_cloud_ = std::make_shared<es::VolumeCloud>(
+        device_info_,
+        descriptor_pool_,
+        hdr_water_render_pass_,
+        view_desc_set_layout_,
+        ibl_creator_->getIblDescSetLayout(),
+        graphic_fs_pipeline_info_,
+        texture_sampler_,
+        hdr_color_buffer_copy_.view,
+        depth_buffer_copy_.view,
+        weather_system_->getTempMoistureTexes(),
+        swap_chain_info_.extent);
+
     ego::DebugDrawObject::updateStaticDescriptorSet(
         device_,
         descriptor_pool_,
@@ -611,6 +644,18 @@ void RealWorldApplication::recreateSwapChain() {
         texture_sampler_,
         weather_system_->getTempMoistureTex(0),
         weather_system_->getAirflowTex());
+
+    volume_cloud_->recreate(
+        device_info_.device,
+        descriptor_pool_,
+        hdr_water_render_pass_,
+        view_desc_set_layout_,
+        graphic_fs_pipeline_info_,
+        texture_sampler_,
+        hdr_color_buffer_copy_.view,
+        depth_buffer_copy_.view,
+        weather_system_->getTempMoistureTexes(),
+        swap_chain_info_.extent);
 
     menu_->init(
         device_info_,
@@ -827,11 +872,16 @@ void RealWorldApplication::createUniformBuffers() {
 
 void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, float near_z) {
     auto aspect = swap_chain_info_.extent.x / (float)swap_chain_info_.extent.y;
+    auto fov = glm::radians(45.0f);
 
     view_params_.camera_pos = glm::vec4(s_camera_pos, 0);
     view_params_.view = glm::lookAt(s_camera_pos, s_camera_pos + s_camera_dir, s_camera_up);
-    view_params_.proj = glm::perspective(glm::radians(45.0f), aspect, near_z, 10000.0f);
+    view_params_.proj = glm::perspective(fov, aspect, near_z, 10000.0f);
     view_params_.proj[1][1] *= -1;
+    view_params_.view_proj = view_params_.proj * view_params_.view;
+    view_params_.inv_view_proj = glm::inverse(view_params_.view_proj);
+    auto view_relative = glm::lookAt(vec3(0), s_camera_dir, s_camera_up);
+    view_params_.inv_view_proj_relative = glm::inverse(view_params_.proj * view_relative);
     view_params_.input_features = glm::uvec4(0, 0, 0, 0);
     view_params_.depth_params = glm::vec4(
         view_params_.proj[2][2],
@@ -994,6 +1044,8 @@ void RealWorldApplication::drawScene(
             ego::TileObject::getWorldMin(),
             ego::TileObject::getWorldRange(),
             s_camera_pos,
+            menu_->getAirFlowStrength(),
+            menu_->getWaterFlowStrength(),
             s_update_frame_count,
             s_dbuf_idx,
             menu_->isAirfowOn());
@@ -1049,59 +1101,62 @@ void RealWorldApplication::drawScene(
 
         cmd_buf->endRenderPass();
 
+        er::ImageResourceInfo color_src_info = {
+            er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
+            SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
+
+        er::ImageResourceInfo color_dst_info = {
+            er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            SET_FLAG_BIT(Access, SHADER_READ_BIT),
+            SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
+
+        er::ImageResourceInfo depth_src_info = {
+            er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            SET_FLAG_BIT(Access, DEPTH_STENCIL_ATTACHMENT_WRITE_BIT),
+            SET_FLAG_BIT(PipelineStage, EARLY_FRAGMENT_TESTS_BIT) };
+
+        er::ImageResourceInfo depth_dst_info = {
+            er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            SET_FLAG_BIT(Access, SHADER_READ_BIT),
+            SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
+
         if (!menu_->isWaterPassTurnOff()) {
-            er::ImageResourceInfo src_info = {
-                er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
-                SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
-
-            er::ImageResourceInfo dst_info = {
-                er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                SET_FLAG_BIT(Access, SHADER_READ_BIT),
-                SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
-
             er::Helper::blitImage(
                 cmd_buf,
                 hdr_color_buffer_.image,
                 hdr_color_buffer_copy_.image,
-                src_info,
-                src_info,
-                dst_info,
-                dst_info,
+                color_src_info,
+                color_src_info,
+                color_dst_info,
+                color_dst_info,
                 SET_FLAG_BIT(ImageAspect, COLOR_BIT),
                 SET_FLAG_BIT(ImageAspect, COLOR_BIT),
                 glm::ivec3(screen_size.x, screen_size.y, 1));
-
-            src_info = {
-                er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                SET_FLAG_BIT(Access, DEPTH_STENCIL_ATTACHMENT_WRITE_BIT),
-                SET_FLAG_BIT(PipelineStage, EARLY_FRAGMENT_TESTS_BIT) };
-
-            dst_info = {
-                er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                SET_FLAG_BIT(Access, SHADER_READ_BIT),
-                SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
 
             er::Helper::blitImage(
                 cmd_buf,
                 depth_buffer_.image,
                 depth_buffer_copy_.image,
-                src_info,
-                src_info,
-                dst_info,
-                dst_info,
+                depth_src_info,
+                depth_src_info,
+                depth_dst_info,
+                depth_dst_info,
                 SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
                 SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
                 glm::ivec3(screen_size.x, screen_size.y, 1));
+        }
 
-            cmd_buf->beginRenderPass(
-                hdr_water_render_pass_,
-                hdr_water_frame_buffer_,
-                screen_size,
-                clear_values_);
-
+        {
             // render terrain water pass.
+            if (!menu_->isWaterPassTurnOff())
             {
+                cmd_buf->beginRenderPass(
+                    hdr_water_render_pass_,
+                    hdr_water_frame_buffer_,
+                    screen_size,
+                    clear_values_);
+
                 ego::TileObject::drawAllVisibleTiles(
                     cmd_buf,
                     desc_sets,
@@ -1110,9 +1165,50 @@ void RealWorldApplication::drawScene(
                     delta_t,
                     current_time,
                     false);
+                cmd_buf->endRenderPass();
             }
 
-            cmd_buf->endRenderPass();
+            er::Helper::blitImage(
+                cmd_buf,
+                hdr_color_buffer_.image,
+                hdr_color_buffer_copy_.image,
+                color_src_info,
+                color_src_info,
+                color_dst_info,
+                color_dst_info,
+                SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+                SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+                glm::ivec3(screen_size.x, screen_size.y, 1));
+
+            er::Helper::blitImage(
+                cmd_buf,
+                depth_buffer_.image,
+                depth_buffer_copy_.image,
+                depth_src_info,
+                depth_src_info,
+                depth_dst_info,
+                depth_dst_info,
+                SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
+                SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
+                glm::ivec3(screen_size.x, screen_size.y, 1));
+
+            if (!menu_->isVolumeMoistTurnOff()) {
+                cmd_buf->beginRenderPass(
+                    hdr_water_render_pass_,
+                    hdr_water_frame_buffer_,
+                    screen_size,
+                    clear_values_);
+
+                volume_cloud_->drawVolumeMoisture(
+                    cmd_buf,
+                    frame_desc_set,
+                    s_dbuf_idx,
+                    skydome_->getSunDir());
+
+                cmd_buf->endRenderPass();
+            }
+
+            
         }
     }
 

@@ -112,7 +112,7 @@ void main() {
         local_world_rot_mat *
         position_ls +
         in_loc_pos_scale.xyz;
-    gl_Position = view_params.proj * view_params.view * vec4(position_ws, 1.0);
+    gl_Position = view_params.view_proj * vec4(position_ws, 1.0);
     out_data.vertex_position = position_ws;
     out_data.vertex_tex_coord = vec4(0);
 #ifdef HAS_UV_SET0

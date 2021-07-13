@@ -1564,6 +1564,8 @@ void GltfObject::updateGameObjectsBuffer(
     const glm::vec2& world_min,
     const glm::vec2& world_range,
     const glm::vec3& camera_pos,
+    float air_flow_strength,
+    float water_flow_strength,
     int update_frame_count,
     int soil_water,
     bool enble_airflow) {
@@ -1583,6 +1585,8 @@ void GltfObject::updateGameObjectsBuffer(
     params.inv_world_range = 1.0f / world_range;
     params.camera_pos = camera_pos;
     params.enble_airflow = enble_airflow ? 1 : 0;
+    params.air_flow_strength = air_flow_strength;
+    params.water_flow_strength = water_flow_strength;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         update_game_objects_pipeline_layout_,

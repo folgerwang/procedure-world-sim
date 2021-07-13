@@ -2,6 +2,7 @@
 
 #include "engine/renderer/renderer_helper.h"
 #include "engine/engine_helper.h"
+#include "engine/game_object/terrain.h"
 #include "shaders/global_definition.glsl.h"
 #include "volume_cloud.h"
 
@@ -35,6 +36,20 @@ er::ShaderModuleList getCloudShaderModules(
     er::ShaderModuleList shader_modules(2);
     auto vert_shader_code = engine::helper::readFile("lib/shaders/cloud_vert.spv", vert_code_size);
     auto frag_shader_code = engine::helper::readFile("lib/shaders/cloud_frag.spv", frag_code_size);
+
+    shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
+    shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
+
+    return shader_modules;
+}
+
+er::ShaderModuleList getDrawVolumeMoistureShaderModules(
+    std::shared_ptr<er::Device> device)
+{
+    uint64_t vert_code_size, frag_code_size;
+    er::ShaderModuleList shader_modules(2);
+    auto vert_shader_code = engine::helper::readFile("lib/shaders/full_screen_vert.spv", vert_code_size);
+    auto frag_shader_code = engine::helper::readFile("lib/shaders/draw_volume_moist_frag.spv", frag_code_size);
 
     shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
     shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
@@ -96,7 +111,8 @@ er::BufferInfo createIndexBuffer(
 
 std::vector<er::TextureDescriptor> addCloudTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
-    const std::shared_ptr<er::Sampler>& texture_sampler) {
+    const std::shared_ptr<er::Sampler>& texture_sampler,
+    const std::shared_ptr<er::ImageView>& volume_moist_tex) {
     std::vector<er::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(1);
 
@@ -105,11 +121,50 @@ std::vector<er::TextureDescriptor> addCloudTextures(
         descriptor_writes,
         BASE_COLOR_TEX_INDEX,
         texture_sampler,
-        nullptr,
+        volume_moist_tex,
         description_set,
         er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
+    return descriptor_writes;
+}
+
+std::vector<er::TextureDescriptor> addVolumeMoistureTextures(
+    const std::shared_ptr<er::DescriptorSet>& description_set,
+    const std::shared_ptr<er::Sampler>& texture_sampler,
+    const std::shared_ptr<er::ImageView>& src_color,
+    const std::shared_ptr<er::ImageView>& src_depth,
+    const std::shared_ptr<er::ImageView>& volume_moist_tex) {
+    std::vector<er::TextureDescriptor> descriptor_writes;
+    descriptor_writes.reserve(3);
+
+    // envmap texture.
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_TEMP_MOISTURE_INDEX,
+        texture_sampler,
+        volume_moist_tex,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_COLOR_TEX_INDEX,
+        texture_sampler,
+        src_color,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_DEPTH_TEX_INDEX,
+        texture_sampler,
+        src_depth,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
     return descriptor_writes;
 }
 
@@ -168,6 +223,42 @@ std::shared_ptr<er::Pipeline> createGraphicsPipeline(
     return cloud_pipeline;
 }
 
+std::shared_ptr<er::PipelineLayout> createDrawVolumeMoisturePipelineLayout(
+    const std::shared_ptr<er::Device>& device,
+    const std::shared_ptr<er::DescriptorSetLayout>& desc_set_layout,
+    const std::shared_ptr<er::DescriptorSetLayout>& view_desc_set_layout)
+{
+    er::PushConstantRange push_const_range{};
+    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
+    push_const_range.offset = 0;
+    push_const_range.size = sizeof(glsl::VolumeMoistrueParams);
+
+    return device->createPipelineLayout(
+        { desc_set_layout , view_desc_set_layout },
+        { push_const_range });
+}
+
+std::shared_ptr<er::Pipeline> createDrawVolumeMoisturePipeline(
+    const std::shared_ptr<er::Device>& device,
+    const std::shared_ptr<er::RenderPass>& render_pass,
+    const std::shared_ptr<er::PipelineLayout>& pipeline_layout,
+    const er::GraphicPipelineInfo& graphic_pipeline_info,
+    const glm::uvec2& display_size) {
+    er::PipelineInputAssemblyStateCreateInfo input_assembly;
+    input_assembly.topology = er::PrimitiveTopology::TRIANGLE_LIST;
+    input_assembly.restart_enable = false;
+    auto draw_volume_moist_shader_modules =
+        getDrawVolumeMoistureShaderModules(device);
+    return device->createPipeline(
+        render_pass,
+        pipeline_layout,
+        {}, {},
+        input_assembly,
+        graphic_pipeline_info,
+        draw_volume_moist_shader_modules,
+        display_size);
+}
+
 } // namespace
 
 namespace engine {
@@ -181,6 +272,9 @@ VolumeCloud::VolumeCloud(
     const std::shared_ptr<renderer::DescriptorSetLayout>& ibl_desc_set_layout,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
+    const std::shared_ptr<renderer::ImageView>& src_texture,
+    const std::shared_ptr<renderer::ImageView>& src_depth,
+    const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_texes,
     const glm::uvec2& display_size) {
 
     const auto& device = device_info.device;
@@ -188,11 +282,15 @@ VolumeCloud::VolumeCloud(
     vertex_buffer_ = createVertexBuffer(device_info);
     index_buffer_ = createIndexBuffer(device_info);
 
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings(1);
-    bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX);
-
     cloud_desc_set_layout_ =
-        device->createDescriptorSetLayout(bindings);
+        device->createDescriptorSetLayout(
+            { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX) });
+
+    draw_volume_moist_desc_set_layout_ =
+        device->createDescriptorSetLayout(
+            { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_TEMP_MOISTURE_INDEX),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_COLOR_TEX_INDEX),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_DEPTH_TEX_INDEX)});
 
     recreate(
         device,
@@ -201,6 +299,9 @@ VolumeCloud::VolumeCloud(
         view_desc_set_layout,
         graphic_pipeline_info,
         texture_sampler,
+        src_texture,
+        src_depth,
+        temp_moisture_texes,
         display_size);
 }
 
@@ -211,6 +312,9 @@ void VolumeCloud::recreate(
     const std::shared_ptr<renderer::DescriptorSetLayout>& view_desc_set_layout,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
+    const std::shared_ptr<renderer::ImageView>& src_texture,
+    const std::shared_ptr<renderer::ImageView>& src_depth,
+    const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_texes,
     const glm::uvec2& display_size) {
 
     if (cloud_pipeline_layout_ != nullptr) {
@@ -223,6 +327,17 @@ void VolumeCloud::recreate(
         cloud_pipeline_ = nullptr;
     }
 
+    if (draw_volume_moist_pipeline_layout_ != nullptr) {
+        device->destroyPipelineLayout(draw_volume_moist_pipeline_layout_);
+        draw_volume_moist_pipeline_layout_ = nullptr;
+    }
+
+    if (draw_volume_moist_pipeline_ != nullptr) {
+        device->destroyPipeline(draw_volume_moist_pipeline_);
+        draw_volume_moist_pipeline_ = nullptr;
+    }
+    
+#if 0
     cloud_tex_desc_set_ = nullptr;
 
     // skybox
@@ -234,7 +349,8 @@ void VolumeCloud::recreate(
     // create a global ibl texture descriptor set.
     auto cloud_texture_descs = addCloudTextures(
         cloud_tex_desc_set_,
-        texture_sampler);
+        texture_sampler,
+        temp_moisture_texes[0]);
     device->updateDescriptorSets(cloud_texture_descs, {});
 
     assert(view_desc_set_layout);
@@ -250,6 +366,40 @@ void VolumeCloud::recreate(
         cloud_pipeline_layout_,
         graphic_pipeline_info,
         display_size);
+#endif
+
+    for (auto dbuf_idx = 0; dbuf_idx < 2; dbuf_idx++) {
+        draw_volume_moist_desc_set_[dbuf_idx] = nullptr;
+
+        // skybox
+        draw_volume_moist_desc_set_[dbuf_idx] =
+            device->createDescriptorSets(
+                descriptor_pool,
+                draw_volume_moist_desc_set_layout_, 1)[0];
+
+        // create a global ibl texture descriptor set.
+        auto draw_volume_moist_texture_descs = addVolumeMoistureTextures(
+            draw_volume_moist_desc_set_[dbuf_idx],
+            texture_sampler,
+            src_texture,
+            src_depth,
+            temp_moisture_texes[dbuf_idx]);
+        device->updateDescriptorSets(draw_volume_moist_texture_descs, {});
+    }
+
+    draw_volume_moist_pipeline_layout_ =
+        createDrawVolumeMoisturePipelineLayout(
+            device,
+            draw_volume_moist_desc_set_layout_,
+            view_desc_set_layout);
+
+    draw_volume_moist_pipeline_ =
+        createDrawVolumeMoisturePipeline(
+            device,
+            render_pass,
+            draw_volume_moist_pipeline_layout_,
+            graphic_pipeline_info,
+            display_size);
 }
 
 // render skybox.
@@ -284,6 +434,35 @@ void VolumeCloud::draw(
     cmd_buf->drawIndexed(36);
 }
 
+void VolumeCloud::drawVolumeMoisture(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    const std::shared_ptr<renderer::DescriptorSet>& frame_desc_set,
+    int dbuf_idx,
+    glm::vec3 sun_dir) {
+    // render moisture volume.
+
+    cmd_buf->bindPipeline(
+        renderer::PipelineBindPoint::GRAPHICS,
+        draw_volume_moist_pipeline_);
+
+    glsl::VolumeMoistrueParams params = {};
+    params.world_min = glm::vec2(-kWorldMapSize / 2.0f);
+    params.inv_world_range = 1.0f / (glm::vec2(kWorldMapSize / 2.0f) - params.world_min);
+
+    cmd_buf->pushConstants(
+        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
+        draw_volume_moist_pipeline_layout_,
+        &params,
+        sizeof(params));
+
+    cmd_buf->bindDescriptorSets(
+        renderer::PipelineBindPoint::GRAPHICS,
+        draw_volume_moist_pipeline_layout_,
+        { draw_volume_moist_desc_set_[dbuf_idx], frame_desc_set });
+
+    cmd_buf->draw(3);
+}
+
 void VolumeCloud::update() {
 }
 
@@ -294,6 +473,9 @@ void VolumeCloud::destroy(
     device->destroyDescriptorSetLayout(cloud_desc_set_layout_);
     device->destroyPipelineLayout(cloud_pipeline_layout_);
     device->destroyPipeline(cloud_pipeline_);
+    device->destroyDescriptorSetLayout(draw_volume_moist_desc_set_layout_);
+    device->destroyPipelineLayout(draw_volume_moist_pipeline_layout_);
+    device->destroyPipeline(draw_volume_moist_pipeline_);
 }
 
 }//namespace scene_rendering
