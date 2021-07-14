@@ -343,6 +343,11 @@ void RealWorldApplication::initVulkan() {
         std::make_shared<er::PipelineDepthStencilStateCreateInfo>(
             er::helper::fillPipelineDepthStencilStateCreateInfo());
 
+    auto depth_no_write_stencil_info =
+        std::make_shared<er::PipelineDepthStencilStateCreateInfo>(
+            er::helper::fillPipelineDepthStencilStateCreateInfo(
+                true, false));
+
     auto fs_depth_stencil_info =
         std::make_shared<er::PipelineDepthStencilStateCreateInfo>(
             er::helper::fillPipelineDepthStencilStateCreateInfo(
@@ -354,6 +359,11 @@ void RealWorldApplication::initVulkan() {
     graphic_pipeline_info_.rasterization_info = cull_rasterization_info;
     graphic_pipeline_info_.ms_info = ms_info;
     graphic_pipeline_info_.depth_stencil_info = depth_stencil_info;
+
+    graphic_no_depth_write_pipeline_info_.blend_state_info = single_no_blend_state_info;
+    graphic_no_depth_write_pipeline_info_.rasterization_info = cull_rasterization_info;
+    graphic_no_depth_write_pipeline_info_.ms_info = ms_info;
+    graphic_no_depth_write_pipeline_info_.depth_stencil_info = depth_no_write_stencil_info;
         
     graphic_fs_pipeline_info_.blend_state_info = single_no_blend_state_info;
     graphic_fs_pipeline_info_.rasterization_info = no_cull_rasterization_info;
@@ -448,7 +458,7 @@ void RealWorldApplication::initVulkan() {
         cubemap_render_pass_,
         view_desc_set_layout_,
         ibl_creator_->getIblDescSetLayout(),
-        graphic_pipeline_info_,
+        graphic_no_depth_write_pipeline_info_,
         graphic_cubemap_pipeline_info_,
         ibl_creator_->getEnvmapTexture(),
         texture_sampler_,
@@ -597,7 +607,7 @@ void RealWorldApplication::recreateSwapChain() {
         descriptor_pool_,
         hdr_render_pass_,
         view_desc_set_layout_,
-        graphic_pipeline_info_,
+        graphic_no_depth_write_pipeline_info_,
         ibl_creator_->getEnvmapTexture(),
         texture_sampler_,
         swap_chain_info_.extent);
