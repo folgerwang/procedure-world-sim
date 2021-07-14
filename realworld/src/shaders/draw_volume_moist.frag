@@ -49,7 +49,7 @@ void main()
         cast_dist = max(view_params.camera_pos.y - kAirflowLowHeight, 0.0f) / abs(view_dir.y) * view_vec_length;
     }
 
-    cast_dist = min(min(cast_dist, bg_view_dist), 10000.0f);
+    cast_dist = min(cast_dist, bg_view_dist);
         
     vec2 noise = hash23(view_dir * 1334.0f);
     float dither = (1.0f + (noise.y * 2.0f - 1.0f) * 0.2f);

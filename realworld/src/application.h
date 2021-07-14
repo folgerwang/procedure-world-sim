@@ -110,6 +110,7 @@ private:
     er::TextureInfo thin_film_lut_tex_;
     std::vector<uint32_t> binding_list_;
     std::shared_ptr<er::Sampler> texture_sampler_;
+    std::shared_ptr<er::Sampler> mirror_repeat_sampler_;
     std::vector<er::BufferInfo> view_const_buffers_;
     std::vector<std::shared_ptr<er::CommandBuffer>> command_buffers_;
     std::vector<std::shared_ptr<er::Semaphore>> image_available_semaphores_;

@@ -99,8 +99,9 @@ void updateTempMoistureBuffer(int pixel_index, ivec3 block_coords) {
     s_temp_moisture_grid[slc.z][slc.y][slc.x] = temp_moist;
 }
 
-uint packTempDiff(uint min_temp_moist, uint center, ivec3 pixel_coords) {
-    vec2 min_tm = unpackTempMoist(min_temp_moist);
+uint packTempDiff(uint min_temp, uint min_moist, uint center, ivec3 pixel_coords) {
+    vec2 min_tm = unpackTempMoist(min_temp);
+    vec2 min_m = unpackTempMoist(min_moist);
     vec2 center_tm = unpackTempMoist(center);
 
     vec4 noise_values = hash44(vec4(vec3(pixel_coords) * 0.334, params.current_time)) * 2.0f - 1.0f;
@@ -109,13 +110,18 @@ uint packTempDiff(uint min_temp_moist, uint center, ivec3 pixel_coords) {
 
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
+    float temp_transfer = params.controls.heat_transfer_ratio * (1.0f + noise_values.x * params.controls.heat_transfer_noise_weight);
+    float moist_transfer = params.controls.moist_transfer_ratio * (1.0f + noise_values.y * params.controls.moist_transfer_noise_weight);
+
+    float transfer_frozen = (target_stable_temp - 15.0f) / 10.0f * (0.7f + noise_values.z * 0.3f) * 0.5f + 0.5f;
+
     uint packed_temp_moist_diff = 0;
     if (center_tm.x > min_tm.x) {
         float temp_diff = center_tm.x - min_tm.x;
         float moist_diff = center_tm.y - min_tm.y;
-        float temp_diff_adj = temp_diff * params.controls.heat_transfer_ratio * (1.0f + noise_values.x * params.controls.heat_transfer_noise_weight);
-        float moist_adj = center_tm.y * params.controls.moist_transfer_ratio * (1.0f + noise_values.y * params.controls.moist_transfer_noise_weight);
-        packed_temp_moist_diff = packTempMoistDiff(temp_diff_adj, moist_adj, min_temp_moist);
+        float temp_diff_adj = temp_diff * temp_transfer;
+        float moist_adj = center_tm.y * moist_transfer * transfer_frozen;
+        packed_temp_moist_diff = packTempMoistDiff(temp_diff_adj, moist_adj, min_temp);
     }
 
     return packed_temp_moist_diff;
@@ -137,9 +143,18 @@ void createTempMoistureFlowBuffer(int pixel_index, ivec3 block_coords) {
     uint top = s_temp_moisture_grid[slc.z-1][slc.y][slc.x] | 0x04;
     uint bottom = s_temp_moisture_grid[slc.z+1][slc.y][slc.x] | 0x05;
 
-    uint min_value = min(min(min(left, right), min(back, front)), min(top, bottom));
+    uint min_temp = min(min(min(left, right), min(back, front)), min(top, bottom));
 
-    s_flow_grid[dlc.z][dlc.y][dlc.x] = packTempDiff(min_value, center, dlc + block_coords);
+    left &= 0xffff;
+    right &= 0xffff;
+    back &= 0xffff;
+    front &= 0xffff;
+    top &= 0xffff;
+    bottom &= 0xffff;
+
+    uint min_moist = min(min(min(left, right), min(back, front)), min(top, bottom));
+
+    s_flow_grid[dlc.z][dlc.y][dlc.x] = packTempDiff(min_temp, min_moist, center, dlc + block_coords);
 }
 
 vec2 generateAirflow(ivec3 dlc, out vec3 airflow_dir) {

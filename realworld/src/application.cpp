@@ -518,7 +518,7 @@ void RealWorldApplication::initVulkan() {
         view_desc_set_layout_,
         ibl_creator_->getIblDescSetLayout(),
         graphic_fs_blend_pipeline_info_,
-        texture_sampler_,
+        mirror_repeat_sampler_,
         depth_buffer_copy_.view,
         weather_system_->getTempMoistureTexes(),
         swap_chain_info_.extent);
@@ -670,7 +670,7 @@ void RealWorldApplication::recreateSwapChain() {
         hdr_water_render_pass_,
         view_desc_set_layout_,
         graphic_fs_blend_pipeline_info_,
-        texture_sampler_,
+        mirror_repeat_sampler_,
         depth_buffer_copy_.view,
         weather_system_->getTempMoistureTexes(),
         swap_chain_info_.extent);
@@ -894,7 +894,7 @@ void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, float n
 
     view_params_.camera_pos = glm::vec4(s_camera_pos, 0);
     view_params_.view = glm::lookAt(s_camera_pos, s_camera_pos + s_camera_dir, s_camera_up);
-    view_params_.proj = glm::perspective(fov, aspect, near_z, 10000.0f);
+    view_params_.proj = glm::perspective(fov, aspect, near_z, 40000.0f);
     view_params_.proj[1][1] *= -1;
     view_params_.view_proj = view_params_.proj * view_params_.view;
     view_params_.inv_view_proj = glm::inverse(view_params_.view_proj);
@@ -975,6 +975,11 @@ void RealWorldApplication::createTextureSampler() {
     texture_sampler_ = device_->createSampler(
         er::Filter::LINEAR,
         er::SamplerAddressMode::CLAMP_TO_EDGE,
+        er::SamplerMipmapMode::LINEAR, 16.0f);
+
+    mirror_repeat_sampler_ = device_->createSampler(
+        er::Filter::LINEAR,
+        er::SamplerAddressMode::MIRRORED_REPEAT,
         er::SamplerMipmapMode::LINEAR, 16.0f);
 }
 
@@ -1401,6 +1406,7 @@ void RealWorldApplication::cleanup() {
 
     assert(device_);
     device_->destroySampler(texture_sampler_);
+    device_->destroySampler(mirror_repeat_sampler_);
     sample_tex_.destroy(device_);
     er::Helper::destroy(device_);
     ggx_lut_tex_.destroy(device_);
