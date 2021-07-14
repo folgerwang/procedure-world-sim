@@ -112,6 +112,7 @@ uint packTempDiff(uint min_temp_moist, uint center, ivec3 pixel_coords) {
     uint packed_temp_moist_diff = 0;
     if (center_tm.x > min_tm.x) {
         float temp_diff = center_tm.x - min_tm.x;
+        float moist_diff = center_tm.y - min_tm.y;
         float temp_diff_adj = temp_diff * params.controls.heat_transfer_ratio * (1.0f + noise_values.x * params.controls.heat_transfer_noise_weight);
         float moist_adj = center_tm.y * params.controls.moist_transfer_ratio * (1.0f + noise_values.y * params.controls.moist_transfer_noise_weight);
         packed_temp_moist_diff = packTempMoistDiff(temp_diff_adj, moist_adj, min_temp_moist);
@@ -258,7 +259,7 @@ void main()
     float cur_moist = temp_moist.y + temp_moist_adj.y;
 
     cur_temp = mix(cur_temp, src_temp, 0.0f);
-    cur_moist = mix(cur_moist, src_moist, 0.4f);
+    cur_moist = mix(cur_moist, src_moist, 0.8f);
     imageStore(dst_temp_moisture,
                pixel_coords,
                vec4(normalizeTemperature(cur_temp), normalizeMoisture(cur_moist), 0, 0));

@@ -1,5 +1,5 @@
 #define kRealWorldAirflowMaxHeight        12000.0f
-#define kDegreeDecreasePerKm              (10.0f / 1000.0f)
+#define kDegreeDecreasePerKm              (6.5f / 1000.0f)
 
 #define kAirflowMaxHeight                 (kRealWorldAirflowMaxHeight / kDegreeDecreasePerKm / 1000.0f * 6.5f)
 #define kAirflowLowHeight                 -100.0f

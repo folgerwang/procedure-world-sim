@@ -32,8 +32,7 @@ layout(location = 0) out vec4 outColor;
 // entry point
 void main() 
 {
-    vec2 ss_noise = vec2(0);//(hash23(vec3(in_uv * 1343.0f, params.time)) * 2.0f - 1.0f) * 0.5f;
-    vec2 ss_xy = (in_uv + ss_noise * params.inv_screen_size) * 2.0f - 1.0f;
+    vec2 ss_xy = in_uv * 2.0f - 1.0f;
     vec4 position_ss = vec4(ss_xy, -1.0f * view_params.proj[2][2] + view_params.proj[3][2], 1.0f);
     vec3 view_dir = normalize((view_params.inv_view_proj_relative * position_ss).xyz);
     float view_vec_length = length(view_dir);

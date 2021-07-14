@@ -669,7 +669,7 @@ void RealWorldApplication::recreateSwapChain() {
         descriptor_pool_,
         hdr_water_render_pass_,
         view_desc_set_layout_,
-        graphic_fs_pipeline_info_,
+        graphic_fs_blend_pipeline_info_,
         texture_sampler_,
         depth_buffer_copy_.view,
         weather_system_->getTempMoistureTexes(),
