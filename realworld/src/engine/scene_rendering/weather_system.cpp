@@ -22,6 +22,31 @@ er::ShaderModuleList getAirflowUpdateShaderModules(
     return shader_modules;
 }
 
+er::ShaderModuleList getCloudLightingShaderModules(
+    std::shared_ptr<er::Device> device)
+{
+    uint64_t compute_code_size;
+    er::ShaderModuleList shader_modules;
+    shader_modules.reserve(1);
+    auto compute_shader_code = engine::helper::readFile("lib/shaders/cloud_lighting_comp.spv", compute_code_size);
+    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
+
+    return shader_modules;
+}
+
+
+er::ShaderModuleList getCloudShadowShaderModules(
+    std::shared_ptr<er::Device> device)
+{
+    uint64_t compute_code_size;
+    er::ShaderModuleList shader_modules;
+    shader_modules.reserve(1);
+    auto compute_shader_code = engine::helper::readFile("lib/shaders/cloud_shadow_comp.spv", compute_code_size);
+    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
+
+    return shader_modules;
+}
+
 er::ShaderModuleList getTemperatureInitShaderModules(
     std::shared_ptr<er::Device> device)
 {
@@ -111,6 +136,74 @@ std::vector<er::TextureDescriptor> addAirflowTextures(
     return descriptor_writes;
 }
 
+std::vector<er::TextureDescriptor> addCloudLightingTextures(
+    const std::shared_ptr<er::DescriptorSet>& description_set,
+    const std::shared_ptr<er::Sampler>& texture_sampler,
+    const er::TextureInfo& src_temp_moisture_tex,
+    const er::TextureInfo& dst_cloud_shadow_tex,
+    const er::TextureInfo& dst_cloud_lighting_tex) {
+    std::vector<er::TextureDescriptor> descriptor_writes;
+    descriptor_writes.reserve(3);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_TEMP_MOISTURE_TEX_INDEX,
+        texture_sampler,
+        src_temp_moisture_tex.view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_CLOUD_SHADOW_TEX_INDEX,
+        texture_sampler,
+        dst_cloud_shadow_tex.view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        DST_CLOUD_LIGHTING_TEX_INDEX,
+        nullptr,
+        dst_cloud_lighting_tex.view,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
+        er::ImageLayout::GENERAL);
+
+    return descriptor_writes;
+}
+
+std::vector<er::TextureDescriptor> addCloudShadowTextures(
+    const std::shared_ptr<er::DescriptorSet>& description_set,
+    const std::shared_ptr<er::Sampler>& texture_sampler,
+    const er::TextureInfo& src_temp_moisture_tex,
+    const er::TextureInfo& dst_cloud_shadow_tex) {
+    std::vector<er::TextureDescriptor> descriptor_writes;
+    descriptor_writes.reserve(2);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_TEMP_MOISTURE_TEX_INDEX,
+        texture_sampler,
+        src_temp_moisture_tex.view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        DST_CLOUD_SHADOW_TEX_INDEX,
+        nullptr,
+        dst_cloud_shadow_tex.view,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
+        er::ImageLayout::GENERAL);
+
+    return descriptor_writes;
+}
+
 static std::shared_ptr<er::DescriptorSetLayout> createTemperatureInitDescSetLayout(
     const std::shared_ptr<er::Device>& device) {
     std::vector<er::DescriptorSetLayoutBinding> bindings(1);
@@ -159,6 +252,48 @@ static std::shared_ptr<er::DescriptorSetLayout> createAirflowUpdateDescSetLayout
     return device->createDescriptorSetLayout(bindings);
 }
 
+static std::shared_ptr<er::DescriptorSetLayout> createCloudLightingUpdateDescSetLayout(
+    const std::shared_ptr<er::Device>& device) {
+    std::vector<er::DescriptorSetLayoutBinding> bindings(3);
+    bindings[0] =
+        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            SRC_TEMP_MOISTURE_TEX_INDEX,
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::COMBINED_IMAGE_SAMPLER);
+
+    bindings[1] =
+        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            SRC_CLOUD_SHADOW_TEX_INDEX,
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::COMBINED_IMAGE_SAMPLER);
+
+    bindings[2] =
+        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            DST_CLOUD_LIGHTING_TEX_INDEX,
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::STORAGE_IMAGE);
+
+    return device->createDescriptorSetLayout(bindings);
+}
+
+static std::shared_ptr<er::DescriptorSetLayout> createCloudShadowUpdateDescSetLayout(
+    const std::shared_ptr<er::Device>& device) {
+    std::vector<er::DescriptorSetLayoutBinding> bindings(2);
+    bindings[0] =
+        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            SRC_TEMP_MOISTURE_TEX_INDEX,
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::COMBINED_IMAGE_SAMPLER);
+
+    bindings[1] =
+        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            DST_CLOUD_SHADOW_TEX_INDEX,
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::STORAGE_IMAGE);
+
+    return device->createDescriptorSetLayout(bindings);
+}
+
 static std::shared_ptr<er::PipelineLayout> createAirflowUpdatePipelineLayout(
     const std::shared_ptr<er::Device>& device,
     const er::DescriptorSetLayoutList& desc_set_layouts) {
@@ -182,6 +317,64 @@ static std::shared_ptr<er::Pipeline> createAirflowUpdatePipeline(
         airflow_update_compute_shader_modules[0]);
 
     for (auto& shader_module : airflow_update_compute_shader_modules) {
+        device->destroyShaderModule(shader_module);
+    }
+
+    return pipeline;
+}
+
+static std::shared_ptr<er::PipelineLayout> createCloudLightingPipelineLayout(
+    const std::shared_ptr<er::Device>& device,
+    const er::DescriptorSetLayoutList& desc_set_layouts) {
+    er::PushConstantRange push_const_range{};
+    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
+    push_const_range.offset = 0;
+    push_const_range.size = sizeof(glsl::CloudLightingParams);
+
+    return device->createPipelineLayout(desc_set_layouts, { push_const_range });
+}
+
+static std::shared_ptr<er::Pipeline> createCloudLightingPipeline(
+    const std::shared_ptr<er::Device>& device,
+    const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
+
+    auto cloud_lighting_compute_shader_modules = getCloudLightingShaderModules(device);
+    assert(cloud_lighting_compute_shader_modules.size() == 1);
+
+    auto pipeline = device->createPipeline(
+        pipeline_layout,
+        cloud_lighting_compute_shader_modules[0]);
+
+    for (auto& shader_module : cloud_lighting_compute_shader_modules) {
+        device->destroyShaderModule(shader_module);
+    }
+
+    return pipeline;
+}
+
+static std::shared_ptr<er::PipelineLayout> createCloudShadowPipelineLayout(
+    const std::shared_ptr<er::Device>& device,
+    const er::DescriptorSetLayoutList& desc_set_layouts) {
+    er::PushConstantRange push_const_range{};
+    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
+    push_const_range.offset = 0;
+    push_const_range.size = sizeof(glsl::CloudLightingParams);
+
+    return device->createPipelineLayout(desc_set_layouts, { push_const_range });
+}
+
+static std::shared_ptr<er::Pipeline> createCloudShadowPipeline(
+    const std::shared_ptr<er::Device>& device,
+    const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
+
+    auto cloud_shadow_compute_shader_modules = getCloudShadowShaderModules(device);
+    assert(cloud_shadow_compute_shader_modules.size() == 1);
+
+    auto pipeline = device->createPipeline(
+        pipeline_layout,
+        cloud_shadow_compute_shader_modules[0]);
+
+    for (auto& shader_module : cloud_shadow_compute_shader_modules) {
         device->destroyShaderModule(shader_module);
     }
 
@@ -225,6 +418,7 @@ namespace scene_rendering {
 WeatherSystem::WeatherSystem(
     const renderer::DeviceInfo& device_info,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+    const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& rock_layer_tex,
     const std::vector<std::shared_ptr<renderer::ImageView>>& soil_water_layer_tex) {
@@ -257,12 +451,39 @@ WeatherSystem::WeatherSystem(
         SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
+    renderer::Helper::create3DTextureImage(
+        device_info,
+        renderer::Format::R8_UNORM,
+        glm::uvec3(
+            WeatherSystemConst::kAirflowBufferWidth,
+            WeatherSystemConst::kAirflowBufferWidth,
+            WeatherSystemConst::kAirflowBufferHeight),
+        cloud_shadow_volume_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::create3DTextureImage(
+        device_info,
+        renderer::Format::B10G11R11_UFLOAT_PACK32,
+        glm::uvec3(
+            WeatherSystemConst::kAirflowBufferWidth,
+            WeatherSystemConst::kAirflowBufferWidth,
+            WeatherSystemConst::kAirflowBufferHeight),
+        cloud_lighting_volume_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
     temperature_init_desc_set_layout_ = createTemperatureInitDescSetLayout(device);
     airflow_desc_set_layout_ = createAirflowUpdateDescSetLayout(device);
+    cloud_lighting_desc_set_layout_ = createCloudLightingUpdateDescSetLayout(device);
+    cloud_shadow_desc_set_layout_ = createCloudShadowUpdateDescSetLayout(device);
 
     recreate(
         device,
         descriptor_pool,
+        global_desc_set_layouts,
         texture_sampler,
         rock_layer_tex,
         soil_water_layer_tex);
@@ -271,6 +492,7 @@ WeatherSystem::WeatherSystem(
 void WeatherSystem::recreate(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+    const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& rock_layer_tex,
     const std::vector<std::shared_ptr<renderer::ImageView>>& soil_water_layer_tex) {
@@ -283,6 +505,26 @@ void WeatherSystem::recreate(
     if (airflow_pipeline_ != nullptr) {
         device->destroyPipeline(airflow_pipeline_);
         airflow_pipeline_ = nullptr;
+    }
+
+    if (cloud_lighting_pipeline_layout_ != nullptr) {
+        device->destroyPipelineLayout(cloud_lighting_pipeline_layout_);
+        cloud_lighting_pipeline_layout_ = nullptr;
+    }
+
+    if (cloud_lighting_pipeline_ != nullptr) {
+        device->destroyPipeline(cloud_lighting_pipeline_);
+        cloud_lighting_pipeline_ = nullptr;
+    }
+
+    if (cloud_shadow_pipeline_layout_ != nullptr) {
+        device->destroyPipelineLayout(cloud_shadow_pipeline_layout_);
+        cloud_shadow_pipeline_layout_ = nullptr;
+    }
+
+    if (cloud_shadow_pipeline_ != nullptr) {
+        device->destroyPipeline(cloud_shadow_pipeline_);
+        cloud_shadow_pipeline_ = nullptr;
     }
 
     temperature_init_tex_desc_set_ = nullptr;
@@ -314,6 +556,35 @@ void WeatherSystem::recreate(
             rock_layer_tex,
             soil_water_layer_tex[dbuf_idx]);
         device->updateDescriptorSets(airflow_texture_descs, {});
+
+        cloud_lighting_tex_desc_set_[dbuf_idx] = nullptr;
+        cloud_lighting_tex_desc_set_[dbuf_idx] =
+            device->createDescriptorSets(
+                descriptor_pool,
+                cloud_lighting_desc_set_layout_, 1)[0];
+
+        // create a global ibl texture descriptor set.
+        auto cloud_lighting_texture_descs = addCloudLightingTextures(
+            cloud_lighting_tex_desc_set_[dbuf_idx],
+            texture_sampler,
+            temp_moisture_volume_[dbuf_idx],
+            cloud_shadow_volume_,
+            cloud_lighting_volume_);
+        device->updateDescriptorSets(cloud_lighting_texture_descs, {});
+
+        cloud_shadow_tex_desc_set_[dbuf_idx] = nullptr;
+        cloud_shadow_tex_desc_set_[dbuf_idx] =
+            device->createDescriptorSets(
+                descriptor_pool,
+                cloud_shadow_desc_set_layout_, 1)[0];
+
+        // create a global ibl texture descriptor set.
+        auto cloud_shadow_texture_descs = addCloudShadowTextures(
+            cloud_shadow_tex_desc_set_[dbuf_idx],
+            texture_sampler,
+            temp_moisture_volume_[dbuf_idx],
+            cloud_shadow_volume_);
+        device->updateDescriptorSets(cloud_shadow_texture_descs, {});
     }
 
     temperature_init_pipeline_layout_ =
@@ -333,6 +604,27 @@ void WeatherSystem::recreate(
     airflow_pipeline_ = createAirflowUpdatePipeline(
         device,
         airflow_pipeline_layout_);
+
+
+    auto desc_set_layouts = global_desc_set_layouts;
+    desc_set_layouts.push_back(cloud_lighting_desc_set_layout_);
+    cloud_lighting_pipeline_layout_ =
+        createCloudLightingPipelineLayout(
+            device,
+            desc_set_layouts);
+
+    cloud_lighting_pipeline_ = createCloudLightingPipeline(
+        device,
+        cloud_lighting_pipeline_layout_);
+
+    cloud_shadow_pipeline_layout_ =
+        createCloudShadowPipelineLayout(
+            device,
+            { cloud_shadow_desc_set_layout_ });
+
+    cloud_shadow_pipeline_ = createCloudShadowPipeline(
+        device,
+        cloud_shadow_pipeline_layout_);
 }
 
 void calculateHeightSamples(int h)
@@ -453,7 +745,106 @@ void WeatherSystem::updateAirflowBuffer(
           airflow_volume_.image });
 }
 
-void WeatherSystem::update() {
+void WeatherSystem::updateCloudShadow(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    const glm::vec3& sun_dir,
+    int dbuf_idx,
+    float current_time) {
+
+    auto w = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferWidth);
+    auto h = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferHeight);
+    renderer::helper::transitMapTextureToStoreImage(
+        cmd_buf,
+        { cloud_shadow_volume_.image });
+
+    cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, cloud_shadow_pipeline_);
+    glsl::CloudShadowParams cloud_shadow_params = {};
+    cloud_shadow_params.world_min =
+        glm::vec3(-kWorldMapSize / 2.0f, -kWorldMapSize / 2.0f, kAirflowLowHeight);
+    cloud_shadow_params.world_range =
+        glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - cloud_shadow_params.world_min;
+    cloud_shadow_params.inv_world_range = 1.0f / cloud_shadow_params.world_range;
+    cloud_shadow_params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
+    cloud_shadow_params.size = glm::ivec3(w, w, h);
+    cloud_shadow_params.current_time = current_time;
+    cloud_shadow_params.sun_dir = sun_dir;
+    cloud_shadow_params.opaque_scale = 0.5f;
+    cloud_shadow_params.height_params =
+        glm::vec2(log2(1.0f + cloud_shadow_params.world_range.z),
+            -1.0f + cloud_shadow_params.world_min.z);
+
+    for (uint32_t i = 0; i < h; i++) {
+        cloud_shadow_params.layer_idx = i;
+        cmd_buf->pushConstants(
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            cloud_shadow_pipeline_layout_,
+            &cloud_shadow_params,
+            sizeof(cloud_shadow_params));
+
+        cmd_buf->bindDescriptorSets(
+            renderer::PipelineBindPoint::COMPUTE,
+            cloud_shadow_pipeline_layout_,
+            { cloud_shadow_tex_desc_set_[dbuf_idx] });
+
+        cmd_buf->dispatch(
+            (w + 7) / 8,
+            (w + 7) / 8,
+            1);
+    }
+    renderer::helper::transitMapTextureFromStoreImage(
+        cmd_buf,
+        { cloud_shadow_volume_.image });
+}
+
+void WeatherSystem::updateCloudLighting(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    const renderer::DescriptorSetList& desc_set_list,
+    const glm::vec3& sun_dir,
+    int dbuf_idx,
+    float current_time) {
+    renderer::helper::transitMapTextureToStoreImage(
+        cmd_buf,
+        { cloud_lighting_volume_.image });
+
+    auto w = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferWidth);
+    auto h = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferHeight);
+    cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, cloud_lighting_pipeline_);
+    glsl::CloudLightingParams cloud_lighting_params = {};
+    cloud_lighting_params.world_min =
+        glm::vec3(-kWorldMapSize / 2.0f, -kWorldMapSize / 2.0f, kAirflowLowHeight);
+    cloud_lighting_params.world_range =
+        glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - cloud_lighting_params.world_min;
+    cloud_lighting_params.inv_world_range = 1.0f / cloud_lighting_params.world_range;
+    cloud_lighting_params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
+    cloud_lighting_params.size = glm::ivec3(w, w, h);
+    cloud_lighting_params.current_time = current_time;
+    cloud_lighting_params.sun_dir = sun_dir;
+    cloud_lighting_params.height_params =
+        glm::vec2(log2(1.0f + cloud_lighting_params.world_range.z),
+            -1.0f + cloud_lighting_params.world_min.z);
+
+    cmd_buf->pushConstants(
+        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+        cloud_lighting_pipeline_layout_,
+        &cloud_lighting_params,
+        sizeof(cloud_lighting_params));
+
+    auto new_desc_sets = desc_set_list;
+    new_desc_sets.push_back(cloud_lighting_tex_desc_set_[dbuf_idx]);
+
+    cmd_buf->bindDescriptorSets(
+        renderer::PipelineBindPoint::COMPUTE,
+        cloud_lighting_pipeline_layout_,
+        new_desc_sets);
+
+    cmd_buf->dispatch(
+        (w + 7) / 8,
+        (w + 7) / 8,
+        h);
+
+    renderer::helper::transitMapTextureFromStoreImage(
+        cmd_buf,
+        { cloud_lighting_volume_.image });
 }
 
 void WeatherSystem::destroy(
@@ -462,9 +853,14 @@ void WeatherSystem::destroy(
         temp_moisture_volume_[i].destroy(device);
     }
     airflow_volume_.destroy(device);
+    cloud_lighting_volume_.destroy(device);
+    cloud_shadow_volume_.destroy(device);
     device->destroyDescriptorSetLayout(airflow_desc_set_layout_);
     device->destroyPipelineLayout(airflow_pipeline_layout_);
     device->destroyPipeline(airflow_pipeline_);
+    device->destroyDescriptorSetLayout(cloud_lighting_desc_set_layout_);
+    device->destroyPipelineLayout(cloud_lighting_pipeline_layout_);
+    device->destroyPipeline(cloud_lighting_pipeline_);
     device->destroyDescriptorSetLayout(temperature_init_desc_set_layout_);
     device->destroyPipelineLayout(temperature_init_pipeline_layout_);
     device->destroyPipeline(temperature_init_pipeline_);

@@ -316,5 +316,11 @@
     <None Include="src\shaders\draw_volume_moist.frag">
       <Filter>Resource Files\shaders</Filter>
     </None>
+    <None Include="src\shaders\cloud_lighting.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\cloud_shadow.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

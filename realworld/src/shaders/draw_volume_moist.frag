@@ -22,6 +22,7 @@ layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniform
 };
 
 layout(set = 0, binding = SRC_TEMP_MOISTURE_INDEX) uniform sampler3D src_temp_moist;
+layout(set = 0, binding = SRC_CLOUD_LIGHTING_TEX_INDEX) uniform sampler3D src_cloud_lighting;
 layout(set = 0, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
 
 layout (location = 0) in vec2 in_uv;
@@ -70,9 +71,10 @@ void main()
         uvw.xy = (sample_pos.xz - params.world_min) * params.inv_world_range;
         vec2 temp_moisture = texture(src_temp_moist, uvw).xy;
         float moist = denormalizeMoisture(temp_moisture.y);
+        vec3 cloud_lighting = texture(src_cloud_lighting, uvw).xyz;
 
-        float cur_alpha = exp2(-thickness * moist * 0.001f * dither);
-        fg_color = mix(vec3(1.0f), fg_color, cur_alpha);
+        float cur_alpha = exp2(-thickness * moist * 0.02f * dither);
+        fg_color = mix(cloud_lighting, fg_color, cur_alpha);
         final_alpha *= cur_alpha;
 
         last_dist = cur_dist;

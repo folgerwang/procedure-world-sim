@@ -491,6 +491,7 @@ void RealWorldApplication::initVulkan() {
     weather_system_ = std::make_shared<es::WeatherSystem>(
         device_info_,
         descriptor_pool_,
+        desc_set_layouts,
         texture_sampler_,
         ego::TileObject::getRockLayer().view,
         soil_water_texes);
@@ -531,6 +532,7 @@ void RealWorldApplication::initVulkan() {
         mirror_repeat_sampler_,
         depth_buffer_copy_.view,
         weather_system_->getTempMoistureTexes(),
+        weather_system_->getCloudLightingTex(),
         swap_chain_info_.extent);
 
     ego::DebugDrawObject::updateStaticDescriptorSet(
@@ -620,6 +622,7 @@ void RealWorldApplication::recreateSwapChain() {
     weather_system_->recreate(
         device_,
         descriptor_pool_,
+        desc_set_layouts,
         texture_sampler_,
         ego::TileObject::getRockLayer().view,
         { ego::TileObject::getSoilWaterLayer(0).view,
@@ -683,6 +686,7 @@ void RealWorldApplication::recreateSwapChain() {
         mirror_repeat_sampler_,
         depth_buffer_copy_.view,
         weather_system_->getTempMoistureTexes(),
+        weather_system_->getCloudLightingTex(),
         swap_chain_info_.extent);
 
     menu_->init(
@@ -856,11 +860,21 @@ void RealWorldApplication::createDescriptorSetLayout() {
         std::vector<er::DescriptorSetLayoutBinding> bindings;
         bindings.reserve(5);
 
-        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(GGX_LUT_INDEX));
-        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(CHARLIE_LUT_INDEX));
-        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(LAMBERTIAN_ENV_TEX_INDEX));
-        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(GGX_ENV_TEX_INDEX));
-        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(CHARLIE_ENV_TEX_INDEX));
+        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            GGX_LUT_INDEX,
+            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
+        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            CHARLIE_LUT_INDEX,
+            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
+        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            LAMBERTIAN_ENV_TEX_INDEX,
+            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
+        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            GGX_ENV_TEX_INDEX,
+            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
+        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            CHARLIE_ENV_TEX_INDEX,
+            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
 
         global_tex_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
     }
@@ -874,7 +888,8 @@ void RealWorldApplication::createDescriptorSetLayout() {
         ubo_layout_binding.descriptor_type = er::DescriptorType::UNIFORM_BUFFER;
         ubo_layout_binding.stage_flags = 
             SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
-            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
+            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) |
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
         ubo_layout_binding.immutable_samplers = nullptr; // Optional
         bindings[0] = ubo_layout_binding;
 
@@ -1055,6 +1070,8 @@ void RealWorldApplication::drawScene(
         clear_values_,
         kCubemapSize);
  
+    er::DescriptorSetList desc_sets{ global_tex_desc_set_, frame_desc_set };
+
     {
         // only init one time.
         static bool s_tile_buffer_inited = false;
@@ -1066,8 +1083,25 @@ void RealWorldApplication::drawScene(
         else {
             ego::TileObject::updateTileFlowBuffers(cmd_buf, current_time_, s_dbuf_idx);
             ego::TileObject::updateTileBuffers(cmd_buf, current_time_, s_dbuf_idx);
-            weather_system_->updateAirflowBuffer(cmd_buf, menu_->getWeatherControls(), s_dbuf_idx, current_time);
+            weather_system_->updateAirflowBuffer(
+                cmd_buf,
+                menu_->getWeatherControls(),
+                s_dbuf_idx,
+                current_time);
         }
+
+        weather_system_->updateCloudShadow(
+            cmd_buf,
+            skydome_->getSunDir(),
+            s_dbuf_idx,
+            current_time);
+
+        weather_system_->updateCloudLighting(
+            cmd_buf,
+            desc_sets,
+            skydome_->getSunDir(),
+            s_dbuf_idx,
+            current_time);
     }
 
     // this has to be happened after tile update, or you wont get the right height info.
@@ -1099,7 +1133,6 @@ void RealWorldApplication::drawScene(
             screen_size,
             clear_values_);
 
-        er::DescriptorSetList desc_sets{ global_tex_desc_set_, frame_desc_set };
         // render gltf.
         {
             for (auto& gltf_obj : gltf_objects_) {

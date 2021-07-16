@@ -12,6 +12,8 @@ class WeatherSystem {
 
     renderer::TextureInfo temp_moisture_volume_[2];
     renderer::TextureInfo airflow_volume_;
+    renderer::TextureInfo cloud_lighting_volume_;
+    renderer::TextureInfo cloud_shadow_volume_;
 
     std::shared_ptr<renderer::DescriptorSet> temperature_init_tex_desc_set_;
     std::shared_ptr<renderer::DescriptorSetLayout> temperature_init_desc_set_layout_;
@@ -21,11 +23,20 @@ class WeatherSystem {
     std::shared_ptr<renderer::DescriptorSetLayout> airflow_desc_set_layout_;
     std::shared_ptr<renderer::PipelineLayout> airflow_pipeline_layout_;
     std::shared_ptr<renderer::Pipeline> airflow_pipeline_;
+    std::shared_ptr<renderer::DescriptorSet> cloud_lighting_tex_desc_set_[2];
+    std::shared_ptr<renderer::DescriptorSetLayout> cloud_lighting_desc_set_layout_;
+    std::shared_ptr<renderer::PipelineLayout> cloud_lighting_pipeline_layout_;
+    std::shared_ptr<renderer::Pipeline> cloud_lighting_pipeline_;
+    std::shared_ptr<renderer::DescriptorSet> cloud_shadow_tex_desc_set_[2];
+    std::shared_ptr<renderer::DescriptorSetLayout> cloud_shadow_desc_set_layout_;
+    std::shared_ptr<renderer::PipelineLayout> cloud_shadow_pipeline_layout_;
+    std::shared_ptr<renderer::Pipeline> cloud_shadow_pipeline_;
 
 public:
     WeatherSystem(
         const renderer::DeviceInfo& device_info,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+        const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
         const std::shared_ptr<renderer::ImageView>& rock_layer_tex,
         const std::vector<std::shared_ptr<renderer::ImageView>>& soil_water_layer_tex);
@@ -42,9 +53,14 @@ public:
         return airflow_volume_.view;
     }
 
+    inline std::shared_ptr<renderer::ImageView> getCloudLightingTex() {
+        return cloud_lighting_volume_.view;
+    }
+
     void recreate(
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+        const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
         const std::shared_ptr<renderer::ImageView>& rock_layer_tex,
         const std::vector<std::shared_ptr<renderer::ImageView>>& soil_water_layer_tex);
@@ -58,7 +74,18 @@ public:
         int dbuf_idx,
         float current_time);
 
-    void update();
+    void updateCloudLighting(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+        const renderer::DescriptorSetList& desc_set_list,
+        const glm::vec3& sun_dir,
+        int dbuf_idx,
+        float current_time);
+
+    void updateCloudShadow(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+        const glm::vec3& sun_dir,
+        int dbuf_idx,
+        float current_time);
 
     void destroy(const std::shared_ptr<renderer::Device>& device);
 };

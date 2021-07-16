@@ -57,23 +57,27 @@
 #define OCCLUSION_TEX_INDEX         (BASE_COLOR_TEX_INDEX + 4)
 
 // TILE_TEXTURE_PARAMS_SET
-#define DST_SOIL_WATER_LAYER_BUFFER_INDEX   0
-#define DST_WATER_NORMAL_BUFFER_INDEX       1
-#define DST_WATER_FLOW_BUFFER_INDEX         2
-#define SRC_COLOR_TEX_INDEX                 3
-#define SRC_DEPTH_TEX_INDEX                 4
-#define ROCK_LAYER_BUFFER_INDEX             5
-#define SOIL_WATER_LAYER_BUFFER_INDEX       6
-#define ORTHER_INFO_LAYER_BUFFER_INDEX      7
-#define WATER_NORMAL_BUFFER_INDEX           8
-#define WATER_FLOW_BUFFER_INDEX             9
-#define SRC_TEMP_MOISTURE_INDEX             10
-#define SRC_AIRFLOW_INDEX                   11
+#define DST_SOIL_WATER_LAYER_BUFFER_INDEX   6
+#define DST_WATER_NORMAL_BUFFER_INDEX       7
+#define DST_WATER_FLOW_BUFFER_INDEX         8
+#define SRC_COLOR_TEX_INDEX                 9
+#define SRC_DEPTH_TEX_INDEX                 10
+#define ROCK_LAYER_BUFFER_INDEX             11
+#define SOIL_WATER_LAYER_BUFFER_INDEX       12
+#define ORTHER_INFO_LAYER_BUFFER_INDEX      13
+#define WATER_NORMAL_BUFFER_INDEX           14
+#define WATER_FLOW_BUFFER_INDEX             15
+#define SRC_TEMP_MOISTURE_INDEX             16
+#define SRC_AIRFLOW_INDEX                   17
 
 // Airflow texture.
-#define DST_TEMP_MOISTURE_TEX_INDEX         0
-#define DST_AIRFLOW_TEX_INDEX               1
-#define SRC_TEMP_MOISTURE_TEX_INDEX         2
+#define DST_TEMP_MOISTURE_TEX_INDEX         18
+#define DST_AIRFLOW_TEX_INDEX               19
+#define DST_CLOUD_LIGHTING_TEX_INDEX        20
+#define DST_CLOUD_SHADOW_TEX_INDEX          21
+#define SRC_TEMP_MOISTURE_TEX_INDEX         22
+#define SRC_CLOUD_LIGHTING_TEX_INDEX        23
+#define SRC_CLOUD_SHADOW_TEX_INDEX          24
 
 // IBL texure index
 #define PANORAMA_TEX_INDEX          0
@@ -227,6 +231,40 @@ struct AirflowUpdateParams {
     vec2            pad3;
 
     WeatherControl  controls;
+};
+
+struct CloudLightingParams {
+    vec3            world_min;
+    float           current_time;
+    vec3            world_range;
+    uint            pad0;
+    vec3            inv_world_range;
+    float           pad1;
+    vec3            inv_size;
+    float           pad2;
+    ivec3           size;
+    float           pad3;
+    vec2            height_params;
+    vec2            pad4;
+    vec3            sun_dir;
+    float           pad5;
+};
+
+struct CloudShadowParams {
+    vec3            world_min;
+    float           current_time;
+    vec3            world_range;
+    uint            layer_idx;
+    vec3            inv_world_range;
+    float           opaque_scale;
+    vec3            inv_size;
+    float           pad1;
+    ivec3           size;
+    float           pad2;
+    vec2            height_params;
+    vec2            pad3;
+    vec3            sun_dir;
+    float           pad4;
 };
 
 struct TileParams {

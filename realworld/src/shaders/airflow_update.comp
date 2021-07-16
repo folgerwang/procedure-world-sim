@@ -113,7 +113,7 @@ uint packTempDiff(uint min_temp, uint min_moist, uint center, ivec3 pixel_coords
     float temp_transfer = params.controls.heat_transfer_ratio * (1.0f + noise_values.x * params.controls.heat_transfer_noise_weight);
     float moist_transfer = params.controls.moist_transfer_ratio * (1.0f + noise_values.y * params.controls.moist_transfer_noise_weight);
 
-    float transfer_frozen = (target_stable_temp - 15.0f) / 10.0f * (0.7f + noise_values.z * 0.3f) * 0.5f + 0.5f;
+    float transfer_frozen = (target_stable_temp - 15.0f) / 5.0f * (0.7f + noise_values.z * 0.3f) * 0.5f + 0.5f;
 
     uint packed_temp_moist_diff = 0;
     if (center_tm.x > min_tm.x) {

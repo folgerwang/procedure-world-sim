@@ -133,9 +133,10 @@ std::vector<er::TextureDescriptor> addVolumeMoistureTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
     const std::shared_ptr<er::ImageView>& src_depth,
-    const std::shared_ptr<er::ImageView>& volume_moist_tex) {
+    const std::shared_ptr<er::ImageView>& volume_moist_tex,
+    const std::shared_ptr<er::ImageView>& cloud_lighting_tex) {
     std::vector<er::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(2);
+    descriptor_writes.reserve(3);
 
     // envmap texture.
     er::Helper::addOneTexture(
@@ -155,6 +156,16 @@ std::vector<er::TextureDescriptor> addVolumeMoistureTextures(
         description_set,
         er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_CLOUD_LIGHTING_TEX_INDEX,
+        texture_sampler,
+        cloud_lighting_tex,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
     return descriptor_writes;
 }
 
@@ -264,6 +275,7 @@ VolumeCloud::VolumeCloud(
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& src_depth,
     const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_texes,
+    const std::shared_ptr<renderer::ImageView>& cloud_lighting_tex,
     const glm::uvec2& display_size) {
 
     const auto& device = device_info.device;
@@ -278,7 +290,8 @@ VolumeCloud::VolumeCloud(
     draw_volume_moist_desc_set_layout_ =
         device->createDescriptorSetLayout(
             { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_TEMP_MOISTURE_INDEX),
-              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_DEPTH_TEX_INDEX)});
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_DEPTH_TEX_INDEX),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_CLOUD_LIGHTING_TEX_INDEX)});
 
     recreate(
         device,
@@ -289,6 +302,7 @@ VolumeCloud::VolumeCloud(
         texture_sampler,
         src_depth,
         temp_moisture_texes,
+        cloud_lighting_tex,
         display_size);
 }
 
@@ -301,6 +315,7 @@ void VolumeCloud::recreate(
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& src_depth,
     const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_texes,
+    const std::shared_ptr<renderer::ImageView>& cloud_lighting_tex,
     const glm::uvec2& display_size) {
 
     if (cloud_pipeline_layout_ != nullptr) {
@@ -368,7 +383,8 @@ void VolumeCloud::recreate(
             draw_volume_moist_desc_set_[dbuf_idx],
             texture_sampler,
             src_depth,
-            temp_moisture_texes[dbuf_idx]);
+            temp_moisture_texes[dbuf_idx],
+            cloud_lighting_tex);
         device->updateDescriptorSets(draw_volume_moist_texture_descs, {});
     }
 
