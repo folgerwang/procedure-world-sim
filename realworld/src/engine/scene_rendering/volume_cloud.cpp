@@ -8,135 +8,83 @@
 
 namespace {
 namespace er = engine::renderer;
-struct CloudVertex {
-    glm::vec3 pos;
 
-    static std::vector<er::VertexInputBindingDescription> getBindingDescription() {
-        std::vector<er::VertexInputBindingDescription> binding_description(1);
-        binding_description[0].binding = 0;
-        binding_description[0].stride = sizeof(CloudVertex);
-        binding_description[0].input_rate = er::VertexInputRate::VERTEX;
-        return binding_description;
-    }
-
-    static std::vector<er::VertexInputAttributeDescription> getAttributeDescriptions() {
-        std::vector<er::VertexInputAttributeDescription> attribute_descriptions(1);
-        attribute_descriptions[0].binding = 0;
-        attribute_descriptions[0].location = 0;
-        attribute_descriptions[0].format = er::Format::R32G32B32_SFLOAT;
-        attribute_descriptions[0].offset = offsetof(CloudVertex, pos);
-        return attribute_descriptions;
-    }
-};
-
-er::ShaderModuleList getCloudShaderModules(
+er::ShaderModuleList getBlurImageXShaderModules(
     std::shared_ptr<er::Device> device)
 {
-    uint64_t vert_code_size, frag_code_size;
-    er::ShaderModuleList shader_modules(2);
-    auto vert_shader_code = engine::helper::readFile("lib/shaders/cloud_vert.spv", vert_code_size);
-    auto frag_shader_code = engine::helper::readFile("lib/shaders/cloud_frag.spv", frag_code_size);
-
-    shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
-    shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
+    uint64_t compute_code_size;
+    er::ShaderModuleList shader_modules;
+    shader_modules.reserve(1);
+    auto compute_shader_code = engine::helper::readFile("lib/shaders/blur_image_x_comp.spv", compute_code_size);
+    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
 
     return shader_modules;
 }
 
-er::ShaderModuleList getDrawVolumeMoistureShaderModules(
+er::ShaderModuleList getBlurImageYMergeShaderModules(
     std::shared_ptr<er::Device> device)
 {
-    uint64_t vert_code_size, frag_code_size;
-    er::ShaderModuleList shader_modules(2);
-    auto vert_shader_code = engine::helper::readFile("lib/shaders/full_screen_vert.spv", vert_code_size);
-    auto frag_shader_code = engine::helper::readFile("lib/shaders/draw_volume_moist_frag.spv", frag_code_size);
-
-    shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
-    shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
+    uint64_t compute_code_size;
+    er::ShaderModuleList shader_modules;
+    shader_modules.reserve(1);
+    auto compute_shader_code = engine::helper::readFile("lib/shaders/blur_image_y_merge_comp.spv", compute_code_size);
+    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
 
     return shader_modules;
 }
 
-er::BufferInfo createVertexBuffer(
-    const er::DeviceInfo& device_info) {
-    const std::vector<CloudVertex> vertices = {
-        {{-1.0f, -1.0f, -1.0f}},
-        {{1.0f, -1.0f, -1.0f}},
-        {{-1.0f, 1.0f, -1.0f}},
-        {{1.0f, 1.0f, -1.0f}},
-        {{-1.0f, -1.0f, 1.0f}},
-        {{1.0f, -1.0f, 1.0f}},
-        {{-1.0f, 1.0f, 1.0f}},
-        {{1.0f, 1.0f, 1.0f}},
-    };
+er::ShaderModuleList getRenderCloudFogShaderModules(
+    std::shared_ptr<er::Device> device)
+{
+    uint64_t compute_code_size;
+    er::ShaderModuleList shader_modules;
+    shader_modules.reserve(1);
+    auto compute_shader_code = engine::helper::readFile("lib/shaders/render_volume_cloud_comp.spv", compute_code_size);
+    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
 
-    uint64_t buffer_size = sizeof(vertices[0]) * vertices.size();
-
-    er::BufferInfo buffer;
-    er::Helper::createBufferWithSrcData(
-        device_info,
-        SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT),
-        buffer_size,
-        vertices.data(),
-        buffer.buffer,
-        buffer.memory);
-
-    return buffer;
+    return shader_modules;
 }
 
-er::BufferInfo createIndexBuffer(
-    const er::DeviceInfo& device_info) {
-    const std::vector<uint16_t> indices = {
-        0, 1, 2, 2, 1, 3,
-        4, 6, 5, 5, 6, 7,
-        0, 4, 1, 1, 4, 5,
-        2, 3, 6, 6, 3, 7,
-        1, 5, 3, 3, 5, 7,
-        0, 2, 4, 4, 2, 6 };
-
-    uint64_t buffer_size =
-        sizeof(indices[0]) * indices.size();
-
-    er::BufferInfo buffer;
-    er::Helper::createBufferWithSrcData(
-        device_info,
-        SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT),
-        buffer_size,
-        indices.data(),
-        buffer.buffer,
-        buffer.memory);
-
-    return buffer;
-}
-
-std::vector<er::TextureDescriptor> addCloudTextures(
+std::vector<er::TextureDescriptor> addBlurImageTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
-    const std::shared_ptr<er::ImageView>& volume_moist_tex) {
+    const std::shared_ptr<er::ImageView>& src_image,
+    const std::shared_ptr<er::ImageView>& dst_image) {
     std::vector<er::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(1);
+    descriptor_writes.reserve(2);
 
     // envmap texture.
     er::Helper::addOneTexture(
         descriptor_writes,
-        BASE_COLOR_TEX_INDEX,
+        SRC_TEX_INDEX,
         texture_sampler,
-        volume_moist_tex,
+        src_image,
         description_set,
         er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
+    // envmap texture.
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        DST_TEX_INDEX,
+        nullptr,
+        dst_image,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
+        er::ImageLayout::GENERAL);
+
     return descriptor_writes;
 }
 
-std::vector<er::TextureDescriptor> addVolumeMoistureTextures(
+std::vector<er::TextureDescriptor> addCloudFogTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
     const std::shared_ptr<er::ImageView>& src_depth,
+    const std::shared_ptr<er::ImageView>& cloud_fog_tex,
     const std::shared_ptr<er::ImageView>& volume_moist_tex,
     const std::shared_ptr<er::ImageView>& cloud_lighting_tex) {
     std::vector<er::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(3);
+    descriptor_writes.reserve(4);
 
     // envmap texture.
     er::Helper::addOneTexture(
@@ -166,71 +114,73 @@ std::vector<er::TextureDescriptor> addVolumeMoistureTextures(
         er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        DST_FOG_CLOUD_INDEX,
+        texture_sampler,
+        cloud_fog_tex,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
+        er::ImageLayout::GENERAL);
+
     return descriptor_writes;
 }
 
 std::shared_ptr<er::PipelineLayout>
-    createCloudPipelineLayout(
+    createBlurImagePipelineLayout(
         const std::shared_ptr<er::Device>& device,
-        const std::shared_ptr<er::DescriptorSetLayout>& desc_set_layout,
-        const std::shared_ptr<er::DescriptorSetLayout>& view_desc_set_layout) {
+        const std::shared_ptr<er::DescriptorSetLayout>& desc_set_layout) {
     er::PushConstantRange push_const_range{};
-    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
+    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
     push_const_range.offset = 0;
-    push_const_range.size = sizeof(glsl::SunSkyParams);
+    push_const_range.size = sizeof(glsl::BlurImageParams);
 
     return device->createPipelineLayout(
-        {desc_set_layout , view_desc_set_layout},
+        { desc_set_layout },
         { push_const_range });
 }
 
-std::shared_ptr<er::Pipeline> createGraphicsPipeline(
+std::shared_ptr<er::Pipeline> createBlurImageXPipeline(
     const std::shared_ptr<er::Device>& device,
-    const std::shared_ptr<er::RenderPass>& render_pass,
-    const std::shared_ptr<er::PipelineLayout>& pipeline_layout,
-    const er::GraphicPipelineInfo& graphic_pipeline_info,
-    const glm::uvec2& display_size) {
-#if 0
-    VkDynamicState dynamic_states[] = {
-        VK_DYNAMIC_STATE_VIEWPORT,
-        VK_DYNAMIC_STATE_LINE_WIDTH
-    };
+    const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
+    auto blur_image_x_cs_modules = getBlurImageXShaderModules(device);
+    assert(blur_image_x_cs_modules.size() == 1);
 
-    VkPipelineDynamicStateCreateInfo dynamic_state{};
-    dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamic_state.dynamicStateCount = 2;
-    dynamic_state.pDynamicStates = dynamic_states;
-#endif
-    er::PipelineInputAssemblyStateCreateInfo input_assembly;
-    input_assembly.topology = er::PrimitiveTopology::TRIANGLE_LIST;
-    input_assembly.restart_enable = false;
-
-    auto shader_modules = getCloudShaderModules(device);
-    std::shared_ptr<er::Pipeline> cloud_pipeline =
-        device->createPipeline(
-        render_pass,
+    auto pipeline = device->createPipeline(
         pipeline_layout,
-        CloudVertex::getBindingDescription(),
-        CloudVertex::getAttributeDescriptions(),
-        input_assembly,
-        graphic_pipeline_info,
-        shader_modules,
-        display_size);
+        blur_image_x_cs_modules[0]);
 
-    for (auto& shader_module : shader_modules) {
+    for (auto& shader_module : blur_image_x_cs_modules) {
         device->destroyShaderModule(shader_module);
     }
 
-    return cloud_pipeline;
+    return pipeline;
 }
 
-std::shared_ptr<er::PipelineLayout> createDrawVolumeMoisturePipelineLayout(
+std::shared_ptr<er::Pipeline> createBlurImageYMergePipeline(
+    const std::shared_ptr<er::Device>& device,
+    const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
+    auto blur_image_y_merge_cs_modules = getBlurImageYMergeShaderModules(device);
+    assert(blur_image_y_merge_cs_modules.size() == 1);
+
+    auto pipeline = device->createPipeline(
+        pipeline_layout,
+        blur_image_y_merge_cs_modules[0]);
+
+    for (auto& shader_module : blur_image_y_merge_cs_modules) {
+        device->destroyShaderModule(shader_module);
+    }
+
+    return pipeline;
+}
+
+std::shared_ptr<er::PipelineLayout> createRenderCloudFogPipelineLayout(
     const std::shared_ptr<er::Device>& device,
     const std::shared_ptr<er::DescriptorSetLayout>& desc_set_layout,
     const std::shared_ptr<er::DescriptorSetLayout>& view_desc_set_layout)
 {
     er::PushConstantRange push_const_range{};
-    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
+    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
     push_const_range.offset = 0;
     push_const_range.size = sizeof(glsl::VolumeMoistrueParams);
 
@@ -239,25 +189,21 @@ std::shared_ptr<er::PipelineLayout> createDrawVolumeMoisturePipelineLayout(
         { push_const_range });
 }
 
-std::shared_ptr<er::Pipeline> createDrawVolumeMoisturePipeline(
+std::shared_ptr<er::Pipeline> createRenderCloudFogPipeline(
     const std::shared_ptr<er::Device>& device,
-    const std::shared_ptr<er::RenderPass>& render_pass,
-    const std::shared_ptr<er::PipelineLayout>& pipeline_layout,
-    const er::GraphicPipelineInfo& graphic_pipeline_info,
-    const glm::uvec2& display_size) {
-    er::PipelineInputAssemblyStateCreateInfo input_assembly;
-    input_assembly.topology = er::PrimitiveTopology::TRIANGLE_LIST;
-    input_assembly.restart_enable = false;
-    auto draw_volume_moist_shader_modules =
-        getDrawVolumeMoistureShaderModules(device);
-    return device->createPipeline(
-        render_pass,
+    const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
+    auto render_cloud_fog_cs_modules = getRenderCloudFogShaderModules(device);
+    assert(render_cloud_fog_cs_modules.size() == 1);
+
+    auto pipeline = device->createPipeline(
         pipeline_layout,
-        {}, {},
-        input_assembly,
-        graphic_pipeline_info,
-        draw_volume_moist_shader_modules,
-        display_size);
+        render_cloud_fog_cs_modules[0]);
+
+    for (auto& shader_module : render_cloud_fog_cs_modules) {
+        device->destroyShaderModule(shader_module);
+    }
+
+    return pipeline;
 }
 
 } // namespace
@@ -268,218 +214,300 @@ namespace scene_rendering {
 VolumeCloud::VolumeCloud(
     const renderer::DeviceInfo& device_info,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
-    const std::shared_ptr<renderer::RenderPass>& render_pass,
     const std::shared_ptr<renderer::DescriptorSetLayout>& view_desc_set_layout,
-    const std::shared_ptr<renderer::DescriptorSetLayout>& ibl_desc_set_layout,
-    const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& src_depth,
+    const std::shared_ptr<renderer::ImageView>& hdr_color,
     const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_texes,
     const std::shared_ptr<renderer::ImageView>& cloud_lighting_tex,
     const glm::uvec2& display_size) {
 
     const auto& device = device_info.device;
 
-    vertex_buffer_ = createVertexBuffer(device_info);
-    index_buffer_ = createIndexBuffer(device_info);
-
-    cloud_desc_set_layout_ =
+    blur_image_desc_set_layout_ =
         device->createDescriptorSetLayout(
-            { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX) });
+            { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                SRC_TEX_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                DST_TEX_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::STORAGE_IMAGE) });
 
-    draw_volume_moist_desc_set_layout_ =
+    render_cloud_fog_desc_set_layout_ =
         device->createDescriptorSetLayout(
-            { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_TEMP_MOISTURE_INDEX),
-              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_DEPTH_TEX_INDEX),
-              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(SRC_CLOUD_LIGHTING_TEX_INDEX)});
+            { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                SRC_TEMP_MOISTURE_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                SRC_DEPTH_TEX_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                SRC_CLOUD_LIGHTING_TEX_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                DST_FOG_CLOUD_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::STORAGE_IMAGE) });
 
     recreate(
-        device,
+        device_info,
         descriptor_pool,
-        render_pass,
         view_desc_set_layout,
-        graphic_pipeline_info,
         texture_sampler,
         src_depth,
+        hdr_color,
         temp_moisture_texes,
         cloud_lighting_tex,
         display_size);
 }
 
 void VolumeCloud::recreate(
-    const std::shared_ptr<renderer::Device>& device,
+    const renderer::DeviceInfo& device_info,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
-    const std::shared_ptr<renderer::RenderPass>& render_pass,
     const std::shared_ptr<renderer::DescriptorSetLayout>& view_desc_set_layout,
-    const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& src_depth,
+    const std::shared_ptr<renderer::ImageView>& hdr_color,
     const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_texes,
     const std::shared_ptr<renderer::ImageView>& cloud_lighting_tex,
     const glm::uvec2& display_size) {
 
-    if (cloud_pipeline_layout_ != nullptr) {
-        device->destroyPipelineLayout(cloud_pipeline_layout_);
-        cloud_pipeline_layout_ = nullptr;
+    auto& device = device_info.device;
+    fog_cloud_tex_.destroy(device);
+    blurred_fog_cloud_tex_.destroy(device);
+
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        renderer::Format::R16G16B16A16_SFLOAT,
+        display_size,
+        fog_cloud_tex_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        renderer::Format::R16G16B16A16_SFLOAT,
+        display_size,
+        blurred_fog_cloud_tex_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    if (blur_image_pipeline_layout_ != nullptr) {
+        device->destroyPipelineLayout(blur_image_pipeline_layout_);
+        blur_image_pipeline_layout_ = nullptr;
     }
     
-    if (cloud_pipeline_ != nullptr) {
-        device->destroyPipeline(cloud_pipeline_);
-        cloud_pipeline_ = nullptr;
+    if (blur_image_x_pipeline_ != nullptr) {
+        device->destroyPipeline(blur_image_x_pipeline_);
+        blur_image_x_pipeline_ = nullptr;
     }
 
-    if (draw_volume_moist_pipeline_layout_ != nullptr) {
-        device->destroyPipelineLayout(draw_volume_moist_pipeline_layout_);
-        draw_volume_moist_pipeline_layout_ = nullptr;
+    if (blur_image_y_merge_pipeline_ != nullptr) {
+        device->destroyPipeline(blur_image_y_merge_pipeline_);
+        blur_image_y_merge_pipeline_ = nullptr;
     }
 
-    if (draw_volume_moist_pipeline_ != nullptr) {
-        device->destroyPipeline(draw_volume_moist_pipeline_);
-        draw_volume_moist_pipeline_ = nullptr;
-    }
-    
-#if 0
-    cloud_tex_desc_set_ = nullptr;
+    blur_image_x_tex_desc_set_ = nullptr;
+    blur_image_y_merge_tex_desc_set_ = nullptr;
 
-    // skybox
-    cloud_tex_desc_set_ =
+    // fog cloud
+    blur_image_x_tex_desc_set_ =
         device->createDescriptorSets(
             descriptor_pool,
-            cloud_desc_set_layout_, 1)[0];
+            blur_image_desc_set_layout_, 1)[0];
 
     // create a global ibl texture descriptor set.
-    auto cloud_texture_descs = addCloudTextures(
-        cloud_tex_desc_set_,
+    auto cloud_texture_descs = addBlurImageTextures(
+        blur_image_x_tex_desc_set_,
         texture_sampler,
-        temp_moisture_texes[0]);
+        fog_cloud_tex_.view,
+        blurred_fog_cloud_tex_.view);
+    device->updateDescriptorSets(cloud_texture_descs, {});
+
+    blur_image_y_merge_tex_desc_set_ =
+        device->createDescriptorSets(
+            descriptor_pool,
+            blur_image_desc_set_layout_, 1)[0];
+
+    // create a global ibl texture descriptor set.
+    cloud_texture_descs = addBlurImageTextures(
+        blur_image_y_merge_tex_desc_set_,
+        texture_sampler,
+        blurred_fog_cloud_tex_.view,
+        hdr_color);
     device->updateDescriptorSets(cloud_texture_descs, {});
 
     assert(view_desc_set_layout);
-    cloud_pipeline_layout_ =
-        createCloudPipelineLayout(
+    blur_image_pipeline_layout_ =
+        createBlurImagePipelineLayout(
             device,
-            cloud_desc_set_layout_,
-            view_desc_set_layout);
+            blur_image_desc_set_layout_);
 
-    cloud_pipeline_ = createGraphicsPipeline(
+    blur_image_x_pipeline_ = createBlurImageXPipeline(
         device,
-        render_pass,
-        cloud_pipeline_layout_,
-        graphic_pipeline_info,
-        display_size);
-#endif
+        blur_image_pipeline_layout_);
+
+    blur_image_y_merge_pipeline_ = createBlurImageYMergePipeline(
+        device,
+        blur_image_pipeline_layout_);
 
     for (auto dbuf_idx = 0; dbuf_idx < 2; dbuf_idx++) {
-        draw_volume_moist_desc_set_[dbuf_idx] = nullptr;
+        render_cloud_fog_desc_set_[dbuf_idx] = nullptr;
 
-        // skybox
-        draw_volume_moist_desc_set_[dbuf_idx] =
+        render_cloud_fog_desc_set_[dbuf_idx] =
             device->createDescriptorSets(
                 descriptor_pool,
-                draw_volume_moist_desc_set_layout_, 1)[0];
+                render_cloud_fog_desc_set_layout_, 1)[0];
 
         // create a global ibl texture descriptor set.
-        auto draw_volume_moist_texture_descs = addVolumeMoistureTextures(
-            draw_volume_moist_desc_set_[dbuf_idx],
+        auto render_cloud_fog_texture_descs = addCloudFogTextures(
+            render_cloud_fog_desc_set_[dbuf_idx],
             texture_sampler,
             src_depth,
+            fog_cloud_tex_.view,
             temp_moisture_texes[dbuf_idx],
             cloud_lighting_tex);
-        device->updateDescriptorSets(draw_volume_moist_texture_descs, {});
+        device->updateDescriptorSets(render_cloud_fog_texture_descs, {});
     }
 
-    draw_volume_moist_pipeline_layout_ =
-        createDrawVolumeMoisturePipelineLayout(
+    render_cloud_fog_pipeline_layout_ =
+        createRenderCloudFogPipelineLayout(
             device,
-            draw_volume_moist_desc_set_layout_,
+            render_cloud_fog_desc_set_layout_,
             view_desc_set_layout);
 
-    draw_volume_moist_pipeline_ =
-        createDrawVolumeMoisturePipeline(
+    render_cloud_fog_pipeline_ =
+        createRenderCloudFogPipeline(
             device,
-            render_pass,
-            draw_volume_moist_pipeline_layout_,
-            graphic_pipeline_info,
-            display_size);
+            render_cloud_fog_pipeline_layout_);
 }
 
-// render skybox.
-void VolumeCloud::draw(
-    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
-    const std::shared_ptr<renderer::DescriptorSet>& frame_desc_set) {
-    cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, cloud_pipeline_);
-    std::vector<std::shared_ptr<renderer::Buffer>> buffers(1);
-    std::vector<uint64_t> offsets(1);
-    buffers[0] = vertex_buffer_.buffer;
-    offsets[0] = 0;
-
-    cmd_buf->bindVertexBuffers(0, buffers, offsets);
-    cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, renderer::IndexType::UINT16);
-
-    glsl::CloudParams cloud_params = {};
-
-    cmd_buf->pushConstants(
-        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
-        cloud_pipeline_layout_,
-        &cloud_params,
-        sizeof(cloud_params));
-
-    renderer::DescriptorSetList desc_sets{
-        cloud_tex_desc_set_,
-        frame_desc_set };
-    cmd_buf->bindDescriptorSets(
-        renderer::PipelineBindPoint::GRAPHICS,
-        cloud_pipeline_layout_,
-        desc_sets);
-
-    cmd_buf->drawIndexed(36);
-}
-
-void VolumeCloud::drawVolumeMoisture(
+void VolumeCloud::renderVolumeCloud(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const std::shared_ptr<renderer::DescriptorSet>& frame_desc_set,
+    const std::shared_ptr<renderer::Image>& hdr_color,
     const glm::uvec2& display_size,
     int dbuf_idx,
     float current_time) {
     // render moisture volume.
+    {
+        renderer::helper::transitMapTextureToStoreImage(
+            cmd_buf,
+            { fog_cloud_tex_.image });
 
-    cmd_buf->bindPipeline(
-        renderer::PipelineBindPoint::GRAPHICS,
-        draw_volume_moist_pipeline_);
+        cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, render_cloud_fog_pipeline_);
+        glsl::VolumeMoistrueParams params = {};
+        params.world_min = glm::vec2(-kWorldMapSize / 2.0f);
+        params.inv_world_range = 1.0f / (glm::vec2(kWorldMapSize / 2.0f) - params.world_min);
+        params.size = display_size;
+        params.inv_screen_size = 1.0f / glm::vec2(display_size);
+        params.time = current_time;
 
-    glsl::VolumeMoistrueParams params = {};
-    params.world_min = glm::vec2(-kWorldMapSize / 2.0f);
-    params.inv_world_range = 1.0f / (glm::vec2(kWorldMapSize / 2.0f) - params.world_min);
-    params.inv_screen_size = 1.0f / glm::vec2(display_size);
-    params.time = current_time;
+        cmd_buf->pushConstants(
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            render_cloud_fog_pipeline_layout_,
+            &params,
+            sizeof(params));
 
-    cmd_buf->pushConstants(
-        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
-        draw_volume_moist_pipeline_layout_,
-        &params,
-        sizeof(params));
+        cmd_buf->bindDescriptorSets(
+            renderer::PipelineBindPoint::COMPUTE,
+            render_cloud_fog_pipeline_layout_,
+            { render_cloud_fog_desc_set_[dbuf_idx],
+              frame_desc_set });
 
-    cmd_buf->bindDescriptorSets(
-        renderer::PipelineBindPoint::GRAPHICS,
-        draw_volume_moist_pipeline_layout_,
-        { draw_volume_moist_desc_set_[dbuf_idx], frame_desc_set });
+        cmd_buf->dispatch(
+            (display_size.x + 7) / 8,
+            (display_size.y + 7) / 8,
+            1);
 
-    cmd_buf->draw(3);
-}
+        renderer::helper::transitMapTextureFromStoreImage(
+            cmd_buf,
+            { fog_cloud_tex_.image });
+    }
 
-void VolumeCloud::update() {
+    {
+        renderer::helper::transitMapTextureToStoreImage(
+            cmd_buf,
+            { blurred_fog_cloud_tex_.image });
+
+        cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, blur_image_x_pipeline_);
+        glsl::BlurImageParams params = {};
+        params.size = display_size;
+        params.inv_size = 1.0f / glm::vec2(display_size);
+
+        cmd_buf->pushConstants(
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            blur_image_pipeline_layout_,
+            &params,
+            sizeof(params));
+
+        cmd_buf->bindDescriptorSets(
+            renderer::PipelineBindPoint::COMPUTE,
+            blur_image_pipeline_layout_,
+            { blur_image_x_tex_desc_set_ });
+
+        cmd_buf->dispatch(
+            (display_size.x + 63) / 64,
+            display_size.y,
+            1);
+
+        renderer::helper::transitMapTextureFromStoreImage(
+            cmd_buf,
+            { blurred_fog_cloud_tex_.image });
+    }
+
+    {
+        renderer::helper::transitMapTextureToStoreImage(
+            cmd_buf,
+            { hdr_color },
+            renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
+        cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, blur_image_y_merge_pipeline_);
+        glsl::BlurImageParams params = {};
+        params.size = display_size;
+        params.inv_size = 1.0f / glm::vec2(display_size);
+
+        cmd_buf->pushConstants(
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            blur_image_pipeline_layout_,
+            &params,
+            sizeof(params));
+
+        cmd_buf->bindDescriptorSets(
+            renderer::PipelineBindPoint::COMPUTE,
+            blur_image_pipeline_layout_,
+            { blur_image_y_merge_tex_desc_set_ });
+
+        cmd_buf->dispatch(
+            display_size.x,
+            (display_size.y + 63) / 64,
+            1);
+
+        renderer::helper::transitMapTextureFromStoreImage(
+            cmd_buf,
+            { hdr_color },
+            renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+    }
 }
 
 void VolumeCloud::destroy(
     const std::shared_ptr<renderer::Device>& device) {
-    vertex_buffer_.destroy(device);
-    index_buffer_.destroy(device);
-    device->destroyDescriptorSetLayout(cloud_desc_set_layout_);
-    device->destroyPipelineLayout(cloud_pipeline_layout_);
-    device->destroyPipeline(cloud_pipeline_);
-    device->destroyDescriptorSetLayout(draw_volume_moist_desc_set_layout_);
-    device->destroyPipelineLayout(draw_volume_moist_pipeline_layout_);
-    device->destroyPipeline(draw_volume_moist_pipeline_);
+    fog_cloud_tex_.destroy(device);
+    blurred_fog_cloud_tex_.destroy(device);
+    device->destroyDescriptorSetLayout(blur_image_desc_set_layout_);
+    device->destroyPipelineLayout(blur_image_pipeline_layout_);
+    device->destroyPipeline(blur_image_x_pipeline_);
+    device->destroyPipeline(blur_image_y_merge_pipeline_);
+    device->destroyDescriptorSetLayout(render_cloud_fog_desc_set_layout_);
+    device->destroyPipelineLayout(render_cloud_fog_pipeline_layout_);
+    device->destroyPipeline(render_cloud_fog_pipeline_);
 }
 
 }//namespace scene_rendering

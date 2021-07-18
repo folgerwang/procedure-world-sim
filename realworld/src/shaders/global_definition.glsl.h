@@ -78,6 +78,7 @@
 #define SRC_TEMP_MOISTURE_TEX_INDEX         22
 #define SRC_CLOUD_LIGHTING_TEX_INDEX        23
 #define SRC_CLOUD_SHADOW_TEX_INDEX          24
+#define DST_FOG_CLOUD_INDEX                 25
 
 // IBL texure index
 #define PANORAMA_TEX_INDEX          0
@@ -295,9 +296,15 @@ struct DebugDrawParams {
 struct VolumeMoistrueParams {
     vec2            world_min;
     vec2            inv_world_range;
+    uvec2           size;
     vec2            inv_screen_size;
     float           time;
     float           pad;
+};
+
+struct BlurImageParams {
+    uvec2           size;
+    vec2            inv_size;
 };
 
 // 1 float base layer, rock.

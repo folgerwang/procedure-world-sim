@@ -1,4 +1,4 @@
-#version 460
+#version 450
 #extension GL_ARB_separate_shader_objects : enable
 #include "global_definition.glsl.h"
 #include "tile_common.glsl.h"
@@ -32,8 +32,8 @@ vec3 unpackNormalizedVector(uint packed_vector, uint sign) {
 UnpackedGameObjectInfo unpackGameObjectInfo(GameObjectInfo info) {
     UnpackedGameObjectInfo ugo_info;
     ugo_info.position = info.position;
-    ugo_info.up_vector = unpackNormalizedVector(info.packed_up_vector, info.packed_speed_signs & 0x00010000);
-    ugo_info.facing_dir = unpackNormalizedVector(info.packed_facing_dir, info.packed_speed_signs & 0x00020000);
+    ugo_info.up_vector = unpackNormalizedVector(info.packed_up_vector, info.packed_moving_dir_z_signs & 0x00010000);
+    ugo_info.facing_dir = unpackNormalizedVector(info.packed_facing_dir, info.packed_moving_dir_z_signs & 0x00020000);
     ugo_info.scale = unpackHalf2x16(info.packed_mass_scale).y;
 
     return ugo_info;

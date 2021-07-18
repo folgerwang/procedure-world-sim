@@ -162,14 +162,15 @@ PipelineDepthStencilStateCreateInfo fillPipelineDepthStencilStateCreateInfo(
 
 void transitMapTextureToStoreImage(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
-    const std::vector<std::shared_ptr<renderer::Image>>& images) {
+    const std::vector<std::shared_ptr<renderer::Image>>& images,
+    const renderer::ImageLayout& old_layout/* = renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL*/) {
     renderer::BarrierList barrier_list;
     barrier_list.image_barriers.reserve(images.size());
 
     for (auto& image : images) {
         renderer::ImageMemoryBarrier barrier;
         barrier.image = image;
-        barrier.old_layout = renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+        barrier.old_layout = old_layout;
         barrier.new_layout = renderer::ImageLayout::GENERAL;
         barrier.src_access_mask = SET_FLAG_BIT(Access, SHADER_READ_BIT);
         barrier.dst_access_mask =
@@ -188,7 +189,8 @@ void transitMapTextureToStoreImage(
 
 void transitMapTextureFromStoreImage(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
-    const std::vector<std::shared_ptr<renderer::Image>>& images) {
+    const std::vector<std::shared_ptr<renderer::Image>>& images,
+    const renderer::ImageLayout& new_layout/* = renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL*/) {
     renderer::BarrierList barrier_list;
     barrier_list.image_barriers.reserve(images.size());
 
@@ -196,7 +198,7 @@ void transitMapTextureFromStoreImage(
         renderer::ImageMemoryBarrier barrier;
         barrier.image = image;
         barrier.old_layout = renderer::ImageLayout::GENERAL;
-        barrier.new_layout = renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+        barrier.new_layout = new_layout;
         barrier.src_access_mask =
             SET_FLAG_BIT(Access, SHADER_READ_BIT) |
             SET_FLAG_BIT(Access, SHADER_WRITE_BIT);

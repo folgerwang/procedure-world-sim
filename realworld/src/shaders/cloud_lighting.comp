@@ -112,13 +112,12 @@ void main()
     //f_diffuse += getIBLRadianceLambertian(-normal, material_info.albedoColor);
     #endif
 
-    float g = 0.99f;
+    float g = 0.49f;
     float cos_theta = dot(view, -params.sun_dir);
     float phase = henyeyGreensteinPhaseFunc(g, cos_theta);
 
     //vec3 color = f_diffuse + f_specular;
-    vec3 color = (vec3(1.0) * phase + vec3(0.5)) * (1.0f - opaque);
-
+    vec3 color = (vec3(0.85) * phase + vec3(0.85)) * (max(1.0f - opaque, 0.0f) * 0.5f + 0.5f);
 
     imageStore(dst_cloud_lighting, pixel_coords, vec4(color, 0.0f));
 }

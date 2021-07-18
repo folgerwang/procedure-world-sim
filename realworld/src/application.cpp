@@ -260,6 +260,8 @@ void RealWorldApplication::createHdrColorBuffer(const glm::uvec2& display_size) 
         hdr_format_,
         display_size,
         hdr_color_buffer_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT) |
         SET_FLAG_BIT(ImageUsage, COLOR_ATTACHMENT_BIT) |
         SET_FLAG_BIT(ImageUsage, TRANSFER_SRC_BIT),
         er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
@@ -525,12 +527,10 @@ void RealWorldApplication::initVulkan() {
     volume_cloud_ = std::make_shared<es::VolumeCloud>(
         device_info_,
         descriptor_pool_,
-        hdr_water_render_pass_,
         view_desc_set_layout_,
-        ibl_creator_->getIblDescSetLayout(),
-        graphic_fs_blend_pipeline_info_,
         mirror_repeat_sampler_,
         depth_buffer_copy_.view,
+        hdr_color_buffer_.view,
         weather_system_->getTempMoistureTexes(),
         weather_system_->getCloudLightingTex(),
         swap_chain_info_.extent);
@@ -678,13 +678,12 @@ void RealWorldApplication::recreateSwapChain() {
         weather_system_->getAirflowTex());
 
     volume_cloud_->recreate(
-        device_info_.device,
+        device_info_,
         descriptor_pool_,
-        hdr_water_render_pass_,
         view_desc_set_layout_,
-        graphic_fs_blend_pipeline_info_,
         mirror_repeat_sampler_,
         depth_buffer_copy_.view,
+        hdr_color_buffer_.view,
         weather_system_->getTempMoistureTexes(),
         weather_system_->getCloudLightingTex(),
         swap_chain_info_.extent);
@@ -1247,23 +1246,14 @@ void RealWorldApplication::drawScene(
                 glm::ivec3(screen_size.x, screen_size.y, 1));
 
             if (!menu_->isVolumeMoistTurnOff()) {
-                cmd_buf->beginRenderPass(
-                    hdr_water_render_pass_,
-                    hdr_water_frame_buffer_,
-                    screen_size,
-                    clear_values_);
-
-                volume_cloud_->drawVolumeMoisture(
+                volume_cloud_->renderVolumeCloud(
                     cmd_buf,
                     frame_desc_set,
+                    hdr_color_buffer_.image,
                     screen_size,
                     s_dbuf_idx,
                     current_time);
-
-                cmd_buf->endRenderPass();
             }
-
-            
         }
     }
 

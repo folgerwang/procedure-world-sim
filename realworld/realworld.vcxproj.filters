@@ -313,13 +313,19 @@
     <None Include="src\shaders\temperature_init.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
-    <None Include="src\shaders\draw_volume_moist.frag">
-      <Filter>Resource Files\shaders</Filter>
-    </None>
     <None Include="src\shaders\cloud_lighting.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\cloud_shadow.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\render_volume_cloud.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\blur_image_x.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\blur_image_y_merge.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
   </ItemGroup>

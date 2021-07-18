@@ -73,11 +73,13 @@ PipelineDepthStencilStateCreateInfo fillPipelineDepthStencilStateCreateInfo(
 
 void transitMapTextureToStoreImage(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
-    const std::vector<std::shared_ptr<renderer::Image>>& images);
+    const std::vector<std::shared_ptr<renderer::Image>>& images,
+    const renderer::ImageLayout& old_layout = renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
 void transitMapTextureFromStoreImage(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
-    const std::vector<std::shared_ptr<renderer::Image>>& images);
+    const std::vector<std::shared_ptr<renderer::Image>>& images,
+    const renderer::ImageLayout& new_layout = renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
 } // namespace helper
 } // namespace renderer

@@ -37,8 +37,8 @@ void main()
 
     vec3 uvw = (pixel_coords + 0.5f) * params.inv_size;
 	vec3 position_ws;
-	position_ws.xy = uvw.xy * params.world_range.xy + params.world_min.xy;
-	position_ws.z = getSampleHeight(uvw.z, 0, params.height_params);
+	position_ws.xz = uvw.xy * params.world_range.xy + params.world_min.xy;
+	position_ws.y = getSampleHeight(uvw.z, 0, params.height_params);
 
     float src_opaque = 0.0f;
     // from top to bottom.

@@ -24,15 +24,13 @@ layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniform
 layout(set = 0, binding = SRC_TEMP_MOISTURE_INDEX) uniform sampler3D src_temp_moist;
 layout(set = 0, binding = SRC_CLOUD_LIGHTING_TEX_INDEX) uniform sampler3D src_cloud_lighting;
 layout(set = 0, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
+layout(set = 0, binding = DST_FOG_CLOUD_INDEX, rgba16f) uniform writeonly image2D dst_fog_cloud;
 
-layout (location = 0) in vec2 in_uv;
-
-// output cubemap faces
-layout(location = 0) out vec4 outColor;
-
-// entry point
-void main() 
+layout(local_size_x = 8, local_size_y = 8) in;
+void main()
 {
+    ivec2 pixel_coords = ivec2(gl_GlobalInvocationID.xy);
+    vec2 in_uv = (pixel_coords + 0.5) * params.inv_screen_size;
     vec2 ss_xy = in_uv * 2.0f - 1.0f;
     vec4 position_ss = vec4(ss_xy, -1.0f * view_params.proj[2][2] + view_params.proj[3][2], 1.0f);
     vec3 view_dir = normalize((view_params.inv_view_proj_relative * position_ss).xyz);
@@ -80,5 +78,5 @@ void main()
         last_dist = cur_dist;
     }
 
-    outColor = vec4(fg_color, final_alpha);
+    imageStore(dst_fog_cloud, pixel_coords, vec4(fg_color, final_alpha));
 }
