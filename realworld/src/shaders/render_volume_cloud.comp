@@ -51,6 +51,8 @@ void main()
     cast_dist = min(cast_dist, bg_view_dist);
         
     vec2 noise = hash23(view_dir * 1334.0f);
+    vec3 noise_dir = hash33(view_dir * 1434.0f) * 2.0f - 1.0f;
+    view_dir = normalize(view_dir + noise_dir * 0.0089f);
     float dither = (1.0f + (noise.y * 2.0f - 1.0f) * 0.2f);
 
     vec3 fg_color = vec3(0);
