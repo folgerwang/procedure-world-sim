@@ -143,14 +143,14 @@ std::shared_ptr<er::PipelineLayout>
 std::shared_ptr<er::Pipeline> createBlurImageXPipeline(
     const std::shared_ptr<er::Device>& device,
     const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
-    auto blur_image_x_cs_modules = getBlurImageXShaderModules(device);
-    assert(blur_image_x_cs_modules.size() == 1);
+    auto cs_modules = getBlurImageXShaderModules(device);
+    assert(cs_modules.size() == 1);
 
     auto pipeline = device->createPipeline(
         pipeline_layout,
-        blur_image_x_cs_modules[0]);
+        cs_modules[0]);
 
-    for (auto& shader_module : blur_image_x_cs_modules) {
+    for (auto& shader_module : cs_modules) {
         device->destroyShaderModule(shader_module);
     }
 
@@ -160,14 +160,14 @@ std::shared_ptr<er::Pipeline> createBlurImageXPipeline(
 std::shared_ptr<er::Pipeline> createBlurImageYMergePipeline(
     const std::shared_ptr<er::Device>& device,
     const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
-    auto blur_image_y_merge_cs_modules = getBlurImageYMergeShaderModules(device);
-    assert(blur_image_y_merge_cs_modules.size() == 1);
+    auto cs_modules = getBlurImageYMergeShaderModules(device);
+    assert(cs_modules.size() == 1);
 
     auto pipeline = device->createPipeline(
         pipeline_layout,
-        blur_image_y_merge_cs_modules[0]);
+        cs_modules[0]);
 
-    for (auto& shader_module : blur_image_y_merge_cs_modules) {
+    for (auto& shader_module : cs_modules) {
         device->destroyShaderModule(shader_module);
     }
 
@@ -177,8 +177,7 @@ std::shared_ptr<er::Pipeline> createBlurImageYMergePipeline(
 std::shared_ptr<er::PipelineLayout> createRenderCloudFogPipelineLayout(
     const std::shared_ptr<er::Device>& device,
     const std::shared_ptr<er::DescriptorSetLayout>& desc_set_layout,
-    const std::shared_ptr<er::DescriptorSetLayout>& view_desc_set_layout)
-{
+    const std::shared_ptr<er::DescriptorSetLayout>& view_desc_set_layout) {
     er::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
     push_const_range.offset = 0;
@@ -192,14 +191,14 @@ std::shared_ptr<er::PipelineLayout> createRenderCloudFogPipelineLayout(
 std::shared_ptr<er::Pipeline> createRenderCloudFogPipeline(
     const std::shared_ptr<er::Device>& device,
     const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
-    auto render_cloud_fog_cs_modules = getRenderCloudFogShaderModules(device);
-    assert(render_cloud_fog_cs_modules.size() == 1);
+    auto cs_modules = getRenderCloudFogShaderModules(device);
+    assert(cs_modules.size() == 1);
 
     auto pipeline = device->createPipeline(
         pipeline_layout,
-        render_cloud_fog_cs_modules[0]);
+        cs_modules[0]);
 
-    for (auto& shader_module : render_cloud_fog_cs_modules) {
+    for (auto& shader_module : cs_modules) {
         device->destroyShaderModule(shader_module);
     }
 
@@ -402,7 +401,9 @@ void VolumeCloud::renderVolumeCloud(
             cmd_buf,
             { fog_cloud_tex_.image });
 
-        cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, render_cloud_fog_pipeline_);
+        cmd_buf->bindPipeline(
+            renderer::PipelineBindPoint::COMPUTE,
+            render_cloud_fog_pipeline_);
         glsl::VolumeMoistrueParams params = {};
         params.world_min = glm::vec2(-kWorldMapSize / 2.0f);
         params.inv_world_range = 1.0f / (glm::vec2(kWorldMapSize / 2.0f) - params.world_min);
@@ -437,7 +438,9 @@ void VolumeCloud::renderVolumeCloud(
             cmd_buf,
             { blurred_fog_cloud_tex_.image });
 
-        cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, blur_image_x_pipeline_);
+        cmd_buf->bindPipeline(
+            renderer::PipelineBindPoint::COMPUTE,
+            blur_image_x_pipeline_);
         glsl::BlurImageParams params = {};
         params.size = display_size;
         params.inv_size = 1.0f / glm::vec2(display_size);
@@ -469,7 +472,9 @@ void VolumeCloud::renderVolumeCloud(
             { hdr_color },
             renderer::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-        cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, blur_image_y_merge_pipeline_);
+        cmd_buf->bindPipeline(
+            renderer::PipelineBindPoint::COMPUTE,
+            blur_image_y_merge_pipeline_);
         glsl::BlurImageParams params = {};
         params.size = display_size;
         params.inv_size = 1.0f / glm::vec2(display_size);

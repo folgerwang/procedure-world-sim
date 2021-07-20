@@ -88,15 +88,15 @@ void main() {
 
 #if RENDER_SUNLIGHT_SCATTERING
   color += atmosphere(view_dir,                       // normalized ray direction
-                      vec3(0, 6371e3, 0) + view_params.camera_pos.xyz,             // ray origin
+                      vec3(0, kPlanetRadius, 0) + view_params.camera_pos.xyz,             // ray origin
                       sun_pos,                        // position of the sun
                       22.0,                           // intensity of the sun
-                      6371e3,                         // radius of the planet in meters
-                      6471e3,                         // radius of the atmosphere in meters
+                      kPlanetRadius,                  // radius of the planet in meters
+                      kAtmosphereRadius,              // radius of the atmosphere in meters
                       vec3(5.5e-6, 13.0e-6, 22.4e-6), // Rayleigh scattering coefficient
                       21e-6,                          // Mie scattering coefficient
-                      8e3,                            // Rayleigh scale height
-                      1.2e3,                          // Mie scale height
+                      kRayleighScaleHeight,           // Rayleigh scale height
+                      kMieScaleHeight,                // Mie scale height
                       0.758                           // Mie preferred scattering direction
                       );
 #endif

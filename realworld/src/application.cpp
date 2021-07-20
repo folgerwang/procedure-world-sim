@@ -1089,6 +1089,8 @@ void RealWorldApplication::drawScene(
                 current_time);
         }
 
+        skydome_->updateSkyScatteringLut(cmd_buf, kRayleighScaleHeight, kMieScaleHeight);
+
         weather_system_->updateCloudShadow(
             cmd_buf,
             skydome_->getSunDir(),

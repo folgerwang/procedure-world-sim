@@ -30,6 +30,42 @@ struct SkyBoxVertex {
     }
 };
 
+er::ShaderModuleList getSkyScatteringLutFirstPassShaderModules(
+    std::shared_ptr<er::Device> device)
+{
+    uint64_t compute_code_size;
+    er::ShaderModuleList shader_modules;
+    shader_modules.reserve(1);
+    auto compute_shader_code = engine::helper::readFile("lib/shaders/sky_scattering_lut_first_pass_comp.spv", compute_code_size);
+    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
+
+    return shader_modules;
+}
+
+er::ShaderModuleList getSkyScatteringLutSumPassShaderModules(
+    std::shared_ptr<er::Device> device)
+{
+    uint64_t compute_code_size;
+    er::ShaderModuleList shader_modules;
+    shader_modules.reserve(1);
+    auto compute_shader_code = engine::helper::readFile("lib/shaders/sky_scattering_lut_sum_pass_comp.spv", compute_code_size);
+    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
+
+    return shader_modules;
+}
+
+er::ShaderModuleList getSkyScatteringLutFinalPassShaderModules(
+    std::shared_ptr<er::Device> device)
+{
+    uint64_t compute_code_size;
+    er::ShaderModuleList shader_modules;
+    shader_modules.reserve(1);
+    auto compute_shader_code = engine::helper::readFile("lib/shaders/sky_scattering_lut_final_pass_comp.spv", compute_code_size);
+    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
+
+    return shader_modules;
+}
+
 er::ShaderModuleList getSkyboxShaderModules(
     std::shared_ptr<er::Device> device)
 {
@@ -130,6 +166,80 @@ std::vector<er::TextureDescriptor> addSkyboxTextures(
     return descriptor_writes;
 }
 
+std::vector<er::TextureDescriptor> addSkyScatteringLutFirstPassTextures(
+    const std::shared_ptr<er::DescriptorSet>& description_set,
+    const std::shared_ptr<er::ImageView>& sky_scattering_lut_tex) {
+    std::vector<er::TextureDescriptor> descriptor_writes;
+    descriptor_writes.reserve(1);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        DST_SCATTERING_LUT_INDEX,
+        nullptr,
+        sky_scattering_lut_tex,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
+        er::ImageLayout::GENERAL);
+
+    return descriptor_writes;
+}
+
+std::vector<er::TextureDescriptor> addSkyScatteringLutSumPassTextures(
+    const std::shared_ptr<er::DescriptorSet>& description_set,
+    const std::shared_ptr<er::ImageView>& sky_scattering_lut_sum_tex,
+    const std::shared_ptr<er::ImageView>& sky_scattering_lut_tex) {
+    std::vector<er::TextureDescriptor> descriptor_writes;
+    descriptor_writes.reserve(2);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        DST_SCATTERING_LUT_SUM_INDEX,
+        nullptr,
+        sky_scattering_lut_sum_tex,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
+        er::ImageLayout::GENERAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_SCATTERING_LUT_INDEX,
+        nullptr,
+        sky_scattering_lut_tex,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
+        er::ImageLayout::GENERAL);
+
+    return descriptor_writes;
+}
+
+std::vector<er::TextureDescriptor> addSkyScatteringLutFinalPassTextures(
+    const std::shared_ptr<er::DescriptorSet>& description_set,
+    const std::shared_ptr<er::ImageView>& sky_scattering_lut_tex,
+    const std::shared_ptr<er::ImageView>& sky_scattering_lut_sum_tex) {
+    std::vector<er::TextureDescriptor> descriptor_writes;
+    descriptor_writes.reserve(2);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        DST_SCATTERING_LUT_INDEX,
+        nullptr,
+        sky_scattering_lut_tex,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
+        er::ImageLayout::GENERAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_SCATTERING_LUT_SUM_INDEX,
+        nullptr,
+        sky_scattering_lut_sum_tex,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
+        er::ImageLayout::GENERAL);
+
+    return descriptor_writes;
+}
+
 std::shared_ptr<er::PipelineLayout>
     createSkydomePipelineLayout(
         const std::shared_ptr<er::Device>& device,
@@ -221,6 +331,78 @@ std::shared_ptr<er::Pipeline> createCubeGraphicsPipeline(
         glm::uvec2(cube_size, cube_size));
 }
 
+std::shared_ptr<er::PipelineLayout> createSkyScatteringLutFirstPassPipelineLayout(
+    const std::shared_ptr<er::Device>& device,
+    const std::shared_ptr<er::DescriptorSetLayout>& desc_set_layout) {
+    er::PushConstantRange push_const_range{};
+    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
+    push_const_range.offset = 0;
+    push_const_range.size = sizeof(glsl::VolumeMoistrueParams);
+
+    return device->createPipelineLayout(
+        { desc_set_layout },
+        { push_const_range });
+}
+
+std::shared_ptr<er::PipelineLayout> createSkyScatteringLutPipelineLayout(
+    const std::shared_ptr<er::Device>& device,
+    const std::shared_ptr<er::DescriptorSetLayout>& desc_set_layout) {
+    return device->createPipelineLayout(
+        { desc_set_layout},
+        { });
+}
+
+std::shared_ptr<er::Pipeline> createSkyScatteringLutFirstPassPipeline(
+    const std::shared_ptr<er::Device>& device,
+    const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
+    auto cs_modules = getSkyScatteringLutFirstPassShaderModules(device);
+    assert(cs_modules.size() == 1);
+
+    auto pipeline = device->createPipeline(
+        pipeline_layout,
+        cs_modules[0]);
+
+    for (auto& shader_module : cs_modules) {
+        device->destroyShaderModule(shader_module);
+    }
+
+    return pipeline;
+}
+
+std::shared_ptr<er::Pipeline> createSkyScatteringLutSumPassPipeline(
+    const std::shared_ptr<er::Device>& device,
+    const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
+    auto cs_modules = getSkyScatteringLutSumPassShaderModules(device);
+    assert(cs_modules.size() == 1);
+
+    auto pipeline = device->createPipeline(
+        pipeline_layout,
+        cs_modules[0]);
+
+    for (auto& shader_module : cs_modules) {
+        device->destroyShaderModule(shader_module);
+    }
+
+    return pipeline;
+}
+
+std::shared_ptr<er::Pipeline> createSkyScatteringLutFinalPassPipeline(
+    const std::shared_ptr<er::Device>& device,
+    const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
+    auto cs_modules = getSkyScatteringLutFinalPassShaderModules(device);
+    assert(cs_modules.size() == 1);
+
+    auto pipeline = device->createPipeline(
+        pipeline_layout,
+        cs_modules[0]);
+
+    for (auto& shader_module : cs_modules) {
+        device->destroyShaderModule(shader_module);
+    }
+
+    return pipeline;
+}
+
 } // namespace
 
 namespace engine {
@@ -245,11 +427,57 @@ Skydome::Skydome(
     vertex_buffer_ = createVertexBuffer(device_info);
     index_buffer_ = createIndexBuffer(device_info);
 
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings(1);
-    bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX);
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        renderer::Format::R32G32_SFLOAT,
+        glm::uvec2(kAtmosphereScatteringLutWidth, kAtmosphereScatteringLutHeight),
+        sky_scattering_lut_tex_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        renderer::Format::R32G32_SFLOAT,
+        glm::uvec2(kAtmosphereScatteringLutWidth, kAtmosphereScatteringLutHeight / 64),
+        sky_scattering_lut_sum_tex_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     skybox_desc_set_layout_ =
-        device->createDescriptorSetLayout(bindings);
+        device->createDescriptorSetLayout(
+            { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                BASE_COLOR_TEX_INDEX) });
+
+    sky_scattering_lut_first_pass_desc_set_layout_ =
+        device->createDescriptorSetLayout(
+            { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                DST_SCATTERING_LUT_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::STORAGE_IMAGE) });
+
+    sky_scattering_lut_sum_pass_desc_set_layout_ =
+        device->createDescriptorSetLayout(
+            { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                DST_SCATTERING_LUT_SUM_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::STORAGE_IMAGE),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                SRC_SCATTERING_LUT_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::STORAGE_IMAGE) });
+
+    sky_scattering_lut_final_pass_desc_set_layout_ =
+        device->createDescriptorSetLayout(
+            { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                DST_SCATTERING_LUT_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::STORAGE_IMAGE),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                SRC_SCATTERING_LUT_SUM_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::STORAGE_IMAGE) });
 
     recreate(
         device,
@@ -272,6 +500,36 @@ Skydome::Skydome(
         cube_skybox_pipeline_layout_,
         cube_graphic_pipeline_info,
         cube_size);
+
+    sky_scattering_lut_first_pass_pipeline_layout_ =
+        createSkyScatteringLutFirstPassPipelineLayout(
+            device,
+            sky_scattering_lut_first_pass_desc_set_layout_);
+
+    sky_scattering_lut_sum_pass_pipeline_layout_ =
+        createSkyScatteringLutPipelineLayout(
+            device,
+            sky_scattering_lut_sum_pass_desc_set_layout_);
+
+    sky_scattering_lut_final_pass_pipeline_layout_ =
+        createSkyScatteringLutPipelineLayout(
+            device,
+            sky_scattering_lut_final_pass_desc_set_layout_);
+
+    sky_scattering_lut_first_pass_pipeline_ =
+        createSkyScatteringLutFirstPassPipeline(
+            device,
+            sky_scattering_lut_first_pass_pipeline_layout_);
+
+    sky_scattering_lut_sum_pass_pipeline_ =
+        createSkyScatteringLutSumPassPipeline(
+            device,
+            sky_scattering_lut_sum_pass_pipeline_layout_);
+
+    sky_scattering_lut_final_pass_pipeline_ =
+        createSkyScatteringLutFinalPassPipeline(
+            device,
+            sky_scattering_lut_final_pass_pipeline_layout_);
 }
 
 void Skydome::recreate(
@@ -308,6 +566,41 @@ void Skydome::recreate(
         texture_sampler,
         rt_envmap_tex);
     device->updateDescriptorSets(skybox_texture_descs, {});
+
+    sky_scattering_lut_first_pass_desc_set_ =
+        device->createDescriptorSets(
+            descriptor_pool,
+            sky_scattering_lut_first_pass_desc_set_layout_, 1)[0];
+    auto sky_scattering_lut_first_pass_texture_descs =
+        addSkyScatteringLutFirstPassTextures(
+            sky_scattering_lut_first_pass_desc_set_,
+            sky_scattering_lut_tex_.view);
+    device->updateDescriptorSets(
+        sky_scattering_lut_first_pass_texture_descs, {});
+
+    sky_scattering_lut_sum_pass_desc_set_ =
+        device->createDescriptorSets(
+            descriptor_pool,
+            sky_scattering_lut_sum_pass_desc_set_layout_, 1)[0];
+    auto sky_scattering_lut_sum_pass_texture_descs =
+        addSkyScatteringLutSumPassTextures(
+            sky_scattering_lut_sum_pass_desc_set_,
+            sky_scattering_lut_sum_tex_.view,
+            sky_scattering_lut_tex_.view);
+    device->updateDescriptorSets(
+        sky_scattering_lut_sum_pass_texture_descs, {});
+
+    sky_scattering_lut_final_pass_desc_set_ =
+        device->createDescriptorSets(
+            descriptor_pool,
+            sky_scattering_lut_final_pass_desc_set_layout_, 1)[0];
+    auto sky_scattering_lut_final_pass_texture_descs =
+        addSkyScatteringLutFinalPassTextures(
+            sky_scattering_lut_final_pass_desc_set_,
+            sky_scattering_lut_tex_.view,
+            sky_scattering_lut_sum_tex_.view);
+    device->updateDescriptorSets(
+        sky_scattering_lut_final_pass_texture_descs, {});
 
     assert(view_desc_set_layout);
     skybox_pipeline_layout_ =
@@ -425,15 +718,113 @@ void Skydome::update(float latitude, float longtitude, int d, int th, int tm, in
     sun_dir_.y = sin(latitude_r) * sin(decline_angle) + cos(latitude_r) * cos(decline_angle) * cos(delta_h);
 }
 
+void Skydome::updateSkyScatteringLut(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    float rayleigh_scale_height,
+    float mie_scale_height) {
+
+    if (rayleigh_scale_height_ != rayleigh_scale_height ||
+        mie_scale_height_ != mie_scale_height) {
+        renderer::helper::transitMapTextureToStoreImage(
+            cmd_buf,
+            { sky_scattering_lut_tex_.image,
+                sky_scattering_lut_sum_tex_.image });
+
+        const uint32_t scattering_lut_height_group =
+            (kAtmosphereScatteringLutHeight + kAtmosphereScatteringLutGroupSize - 1) /
+            kAtmosphereScatteringLutGroupSize;
+
+        {
+            cmd_buf->bindPipeline(
+                renderer::PipelineBindPoint::COMPUTE,
+                sky_scattering_lut_first_pass_pipeline_);
+
+            glsl::SkyScatteringParams params = {};
+            params.inv_rayleigh_scale_height = 1.0f / rayleigh_scale_height;
+            params.inv_mie_scale_height = 1.0f / mie_scale_height;
+
+            cmd_buf->pushConstants(
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                sky_scattering_lut_first_pass_pipeline_layout_,
+                &params,
+                sizeof(params));
+
+            cmd_buf->bindDescriptorSets(
+                renderer::PipelineBindPoint::COMPUTE,
+                sky_scattering_lut_first_pass_pipeline_layout_,
+                { sky_scattering_lut_first_pass_desc_set_ });
+
+            cmd_buf->dispatch(
+                kAtmosphereScatteringLutWidth,
+                scattering_lut_height_group,
+                1);
+        }
+
+        {
+            cmd_buf->bindPipeline(
+                renderer::PipelineBindPoint::COMPUTE,
+                sky_scattering_lut_sum_pass_pipeline_);
+
+            cmd_buf->bindDescriptorSets(
+                renderer::PipelineBindPoint::COMPUTE,
+                sky_scattering_lut_sum_pass_pipeline_layout_,
+                { sky_scattering_lut_sum_pass_desc_set_ });
+
+            cmd_buf->dispatch(
+                kAtmosphereScatteringLutWidth,
+                1,
+                1);
+        }
+
+        {
+            cmd_buf->bindPipeline(
+                renderer::PipelineBindPoint::COMPUTE,
+                sky_scattering_lut_final_pass_pipeline_);
+
+            cmd_buf->bindDescriptorSets(
+                renderer::PipelineBindPoint::COMPUTE,
+                sky_scattering_lut_final_pass_pipeline_layout_,
+                { sky_scattering_lut_final_pass_desc_set_ });
+
+            cmd_buf->dispatch(
+                kAtmosphereScatteringLutWidth,
+                scattering_lut_height_group,
+                1);
+        }
+
+        renderer::helper::transitMapTextureFromStoreImage(
+            cmd_buf,
+            { sky_scattering_lut_tex_.image,
+              sky_scattering_lut_sum_tex_.image });
+
+        rayleigh_scale_height_ = rayleigh_scale_height;
+        mie_scale_height_ = mie_scale_height;
+    }
+}
+
 void Skydome::destroy(
     const std::shared_ptr<renderer::Device>& device) {
     vertex_buffer_.destroy(device);
     index_buffer_.destroy(device);
+
+    sky_scattering_lut_tex_.destroy(device);
+    sky_scattering_lut_sum_tex_.destroy(device);
+
     device->destroyDescriptorSetLayout(skybox_desc_set_layout_);
     device->destroyPipelineLayout(skybox_pipeline_layout_);
     device->destroyPipeline(skybox_pipeline_);
     device->destroyPipelineLayout(cube_skybox_pipeline_layout_);
     device->destroyPipeline(cube_skybox_pipeline_);
+
+    device->destroyDescriptorSetLayout(sky_scattering_lut_first_pass_desc_set_layout_);
+    device->destroyDescriptorSetLayout(sky_scattering_lut_sum_pass_desc_set_layout_);
+    device->destroyDescriptorSetLayout(sky_scattering_lut_final_pass_desc_set_layout_);
+    device->destroyPipelineLayout(sky_scattering_lut_first_pass_pipeline_layout_);
+    device->destroyPipelineLayout(sky_scattering_lut_sum_pass_pipeline_layout_);
+    device->destroyPipelineLayout(sky_scattering_lut_final_pass_pipeline_layout_);
+    device->destroyPipeline(sky_scattering_lut_first_pass_pipeline_);
+    device->destroyPipeline(sky_scattering_lut_sum_pass_pipeline_);
+    device->destroyPipeline(sky_scattering_lut_final_pass_pipeline_);
 }
 
 }//namespace scene_rendering

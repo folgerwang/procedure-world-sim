@@ -93,6 +93,11 @@
 #define GAME_OBJECTS_BUFFER_INDEX   0
 #define INSTANCE_BUFFER_INDEX       1
 
+#define DST_SCATTERING_LUT_INDEX        0
+#define DST_SCATTERING_LUT_SUM_INDEX    0
+#define SRC_SCATTERING_LUT_INDEX        1
+#define SRC_SCATTERING_LUT_SUM_INDEX    1
+
 #define FEATURE_MATERIAL_SPECULARGLOSSINESS     0x00000001
 #define FEATURE_MATERIAL_METALLICROUGHNESS      0x00000002
 #define FEATURE_MATERIAL_SHEEN                  0x00000004
@@ -113,21 +118,29 @@
 
 #define FEATURE_INPUT_HAS_TANGENT               0x00000001
 
-#define LIGHT_COUNT             4
+#define LIGHT_COUNT                             4
 
-#define TONEMAP_DEFAULT         0
-#define TONEMAP_UNCHARTED       1
-#define TONEMAP_HEJLRICHARD     2
-#define TONEMAP_ACES            3
+#define TONEMAP_DEFAULT                         0
+#define TONEMAP_UNCHARTED                       1
+#define TONEMAP_HEJLRICHARD                     2
+#define TONEMAP_ACES                            3
 
-#define INDIRECT_DRAW_BUF_OFS   4
+#define INDIRECT_DRAW_BUF_OFS                   4
 
-#define SOIL_WATER_LAYER_MAX_THICKNESS    (512.0f - 1.0f / 32.0f)
-#define SNOW_LAYER_MAX_THICKNESS          (8.0f - 1.0f / 32.0f)
+#define SOIL_WATER_LAYER_MAX_THICKNESS      (512.0f - 1.0f / 32.0f)
+#define SNOW_LAYER_MAX_THICKNESS            (8.0f - 1.0f / 32.0f)
 
-#define NO_DEBUG_DRAW               0
-#define DEBUG_DRAW_TEMPRETURE       1
-#define DEBUG_DRAW_MOISTURE         2
+#define NO_DEBUG_DRAW                       0
+#define DEBUG_DRAW_TEMPRETURE               1
+#define DEBUG_DRAW_MOISTURE                 2
+
+#define kAtmosphereScatteringLutGroupSize   64
+#define kAtmosphereScatteringLutWidth       512
+#define kAtmosphereScatteringLutHeight      512
+#define kPlanetRadius                       6371e3
+#define kAtmosphereRadius                   6471e3
+#define kRayleighScaleHeight                8e3
+#define kMieScaleHeight                     1.2e3
 
 #ifdef __cplusplus
 #pragma once
@@ -305,6 +318,11 @@ struct VolumeMoistrueParams {
 struct BlurImageParams {
     uvec2           size;
     vec2            inv_size;
+};
+
+struct SkyScatteringParams {
+    float           inv_rayleigh_scale_height;
+    float           inv_mie_scale_height;
 };
 
 // 1 float base layer, rock.

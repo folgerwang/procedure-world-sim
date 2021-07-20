@@ -164,6 +164,9 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tempe
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\blur_image_x.comp -o $(ProjectDir)lib\shaders\blur_image_x_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\blur_image_y_merge.comp -o $(ProjectDir)lib\shaders\blur_image_y_merge_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\render_volume_cloud.comp -o $(ProjectDir)lib\shaders\render_volume_cloud_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\sky_scattering_lut_first_pass.comp -o $(ProjectDir)lib\shaders\sky_scattering_lut_first_pass_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\sky_scattering_lut_sum_pass.comp -o $(ProjectDir)lib\shaders\sky_scattering_lut_sum_pass_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\sky_scattering_lut_final_pass.comp -o $(ProjectDir)lib\shaders\sky_scattering_lut_final_pass_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug_draw.vert -o $(ProjectDir)lib\shaders\debug_draw_vert.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug_draw.frag -o $(ProjectDir)lib\shaders\debug_draw_frag.spv</Command>
     </PostBuildEvent>
@@ -257,6 +260,9 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tempe
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\blur_image_x.comp -o $(ProjectDir)lib\shaders\blur_image_x_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\blur_image_y_merge.comp -o $(ProjectDir)lib\shaders\blur_image_y_merge_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\render_volume_cloud.comp -o $(ProjectDir)lib\shaders\render_volume_cloud_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\sky_scattering_lut_first_pass.comp -o $(ProjectDir)lib\shaders\sky_scattering_lut_first_pass_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\sky_scattering_lut_sum_pass.comp -o $(ProjectDir)lib\shaders\sky_scattering_lut_sum_pass_comp.spv
+$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\sky_scattering_lut_final_pass.comp -o $(ProjectDir)lib\shaders\sky_scattering_lut_final_pass_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug_draw.vert -o $(ProjectDir)lib\shaders\debug_draw_vert.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug_draw.frag -o $(ProjectDir)lib\shaders\debug_draw_frag.spv</Command>
     </PostBuildEvent>
@@ -316,6 +322,7 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug
     <ClInclude Include="src\shaders\ibl.glsl.h" />
     <ClInclude Include="src\shaders\noise.glsl.h" />
     <ClInclude Include="src\shaders\punctual.glsl.h" />
+    <ClInclude Include="src\shaders\sky_scattering_lut_common.glsl.h" />
     <ClInclude Include="src\shaders\sun.glsl.h" />
     <ClInclude Include="src\shaders\sunlight_scattering.glsl.h" />
     <ClInclude Include="src\shaders\tile_common.glsl.h" />
@@ -346,6 +353,9 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug
     <None Include="src\shaders\render_volume_cloud.comp" />
     <None Include="src\shaders\skybox.frag" />
     <None Include="src\shaders\skybox.vert" />
+    <None Include="src\shaders\sky_scattering_lut_final_pass.comp" />
+    <None Include="src\shaders\sky_scattering_lut_first_pass.comp" />
+    <None Include="src\shaders\sky_scattering_lut_sum_pass.comp" />
     <None Include="src\shaders\temperature_init.comp" />
     <None Include="src\shaders\tile.frag" />
     <None Include="src\shaders\tile.vert" />

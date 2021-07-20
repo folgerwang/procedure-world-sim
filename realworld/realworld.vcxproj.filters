@@ -233,6 +233,9 @@
     <ClInclude Include="src\shaders\weather_common.glsl.h">
       <Filter>Resource Files\shaders</Filter>
     </ClInclude>
+    <ClInclude Include="src\shaders\sky_scattering_lut_common.glsl.h">
+      <Filter>Resource Files\shaders</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\shaders\cube_ibl.frag">
@@ -326,6 +329,15 @@
       <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\blur_image_y_merge.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\sky_scattering_lut_first_pass.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\sky_scattering_lut_sum_pass.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\sky_scattering_lut_final_pass.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
   </ItemGroup>
