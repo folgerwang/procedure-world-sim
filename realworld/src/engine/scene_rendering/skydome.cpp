@@ -614,6 +614,9 @@ void Skydome::draw(
 
     glsl::SunSkyParams sun_sky_params = {};
     sun_sky_params.sun_pos = sun_dir_;
+    sun_sky_params.inv_rayleigh_scale_height = 1.0f / rayleigh_scale_height_;
+    sun_sky_params.inv_mie_scale_height = 1.0f / mie_scale_height_;
+    sun_sky_params.g = g_;
 
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
@@ -659,6 +662,9 @@ void Skydome::drawCubeSkyBox(
 
     glsl::SunSkyParams sun_sky_params = {};
     sun_sky_params.sun_pos = sun_dir_;
+    sun_sky_params.inv_rayleigh_scale_height = 1.0f / rayleigh_scale_height_;
+    sun_sky_params.inv_mie_scale_height = 1.0f / mie_scale_height_;
+    sun_sky_params.g = g_;
 
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
@@ -700,12 +706,10 @@ void Skydome::update(float latitude, float longtitude, int d, int th, int tm, in
 }
 
 void Skydome::updateSkyScatteringLut(
-    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
-    float rayleigh_scale_height,
-    float mie_scale_height) {
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
 
-    if (rayleigh_scale_height_ != rayleigh_scale_height ||
-        mie_scale_height_ != mie_scale_height) {
+    if (rayleigh_scale_height_ != lut_rayleigh_scale_height_ ||
+        mie_scale_height_ != lut_mie_scale_height_) {
         renderer::helper::transitMapTextureToStoreImage(
             cmd_buf,
             { sky_scattering_lut_tex_.image,
@@ -721,8 +725,8 @@ void Skydome::updateSkyScatteringLut(
                 sky_scattering_lut_first_pass_pipeline_);
 
             glsl::SkyScatteringParams params = {};
-            params.inv_rayleigh_scale_height = 1.0f / rayleigh_scale_height;
-            params.inv_mie_scale_height = 1.0f / mie_scale_height;
+            params.inv_rayleigh_scale_height = 1.0f / rayleigh_scale_height_;
+            params.inv_mie_scale_height = 1.0f / mie_scale_height_;
 
             cmd_buf->pushConstants(
                 SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
@@ -778,8 +782,8 @@ void Skydome::updateSkyScatteringLut(
             { sky_scattering_lut_tex_.image,
               sky_scattering_lut_sum_tex_.image });
 
-        rayleigh_scale_height_ = rayleigh_scale_height;
-        mie_scale_height_ = mie_scale_height;
+        lut_rayleigh_scale_height_ = rayleigh_scale_height_;
+        lut_mie_scale_height_ = mie_scale_height_;
     }
 }
 

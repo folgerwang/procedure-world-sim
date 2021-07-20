@@ -14,7 +14,7 @@ const int jSteps = 8;
 #define UX3D_MATH_INV_PI (1.0 / UX3D_MATH_PI)
 
 layout(push_constant) uniform SunSkyUniformBufferObject {
-    SunSkyParams sun_sky_params;
+    SunSkyParams params;
 };
 
 layout (location = 0) in vec2 inUV;
@@ -89,12 +89,12 @@ void main()
 		view_dir = vec3(view_dir.x, -view_dir.y, view_dir.z);
 	
 		vec3 color = vec3(0.0, 0.0, 0.0);
-		vec3 sun_pos = normalize(sun_sky_params.sun_pos);
+		vec3 sun_pos = normalize(params.sun_pos);
 
 #if RENDER_SUNLIGHT_SCATTERING
     vec3 r = view_dir;
     vec3 r0 = vec3(0, kPlanetRadius, 0);// + view_params.camera_pos.xyz;
-    float g = 0.758;
+    float g = params.g;
     float cast_range = rsi(r0, r, kAtmosphereRadius);
 #if ATMOSPHERE_USE_LUT
     color += atmosphereLut(
@@ -107,8 +107,8 @@ void main()
         kAtmosphereRadius,              // radius of the atmosphere in meters
         vec3(5.5e-6, 13.0e-6, 22.4e-6), // Rayleigh scattering coefficient
         21e-6,                          // Mie scattering coefficient
-        kRayleighScaleHeight,           // Rayleigh scale height
-        kMieScaleHeight,                // Mie scale height
+        params.inv_rayleigh_scale_height,           // Rayleigh scale height
+        params.inv_mie_scale_height,                // Mie scale height
         g,                              // Mie preferred scattering direction
         vec2(1.0f, 1.0f),
         iSteps).xyz;
@@ -123,8 +123,8 @@ void main()
         kAtmosphereRadius,              // radius of the atmosphere in meters
         vec3(5.5e-6, 13.0e-6, 22.4e-6), // Rayleigh scattering coefficient
         21e-6,                          // Mie scattering coefficient
-        kRayleighScaleHeight,           // Rayleigh scale height
-        kMieScaleHeight,                // Mie scale height
+        params.inv_rayleigh_scale_height,           // Rayleigh scale height
+        params.inv_mie_scale_height,                // Mie scale height
         g                               // Mie preferred scattering direction
         );
 #endif

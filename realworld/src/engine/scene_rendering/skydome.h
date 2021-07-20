@@ -1,5 +1,6 @@
 #pragma once
 #include "engine/renderer/renderer.h"
+#include "shaders/global_definition.glsl.h"
 
 namespace engine {
 namespace scene_rendering {
@@ -10,8 +11,11 @@ class Skydome {
     renderer::BufferInfo vertex_buffer_;
     renderer::BufferInfo index_buffer_;
 
-    float rayleigh_scale_height_ = 0.0f;
-    float mie_scale_height_ = 0.0f;
+    float g_ = 0.562f;
+    float rayleigh_scale_height_ = kRayleighScaleHeight;
+    float mie_scale_height_ = kMieScaleHeight;
+    float lut_rayleigh_scale_height_ = 0.0f;
+    float lut_mie_scale_height_ = 0.0f;
 
     renderer::TextureInfo sky_scattering_lut_tex_;
     renderer::TextureInfo sky_scattering_lut_sum_tex_;
@@ -55,6 +59,18 @@ public:
         return sun_dir_;
     }
 
+    inline float& getRayleighScaleHeight() {
+        return rayleigh_scale_height_;
+    }
+
+    inline float& getMieScaleHeight() {
+        return mie_scale_height_;
+    }
+
+    inline float& getG() {
+        return g_;
+    }
+
     void recreate(
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
@@ -79,9 +95,7 @@ public:
     void update(float latitude, float longtitude, int d, int h, int m, int s);
 
     void updateSkyScatteringLut(
-        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
-        float rayleigh_scale_height,
-        float mie_scale_height);
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
 
     void destroy(const std::shared_ptr<renderer::Device>& device);
 };

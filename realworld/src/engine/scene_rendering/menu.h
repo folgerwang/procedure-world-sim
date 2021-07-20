@@ -1,5 +1,6 @@
 #pragma once
 #include "engine/renderer/renderer.h"
+#include "engine/scene_rendering/skydome.h"
 #include "shaders/global_definition.glsl.h"
 
 namespace engine {
@@ -79,6 +80,7 @@ public:
         const std::shared_ptr<renderer::RenderPass>& render_pass,
         const renderer::SwapChainInfo& swap_chain_info,
         const glm::uvec2& screen_size,
+        const std::shared_ptr<scene_rendering::Skydome>& skydome,
         uint32_t image_index);
 
     void destroy();

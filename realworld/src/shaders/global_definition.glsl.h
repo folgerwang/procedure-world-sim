@@ -336,7 +336,10 @@ struct TileVertexInfo {
 
 struct SunSkyParams {
     vec3            sun_pos;
-    float           pad;
+    float           g;
+    float           inv_rayleigh_scale_height;
+    float           inv_mie_scale_height;
+    vec2            pad1;
 };
 
 struct CloudParams {

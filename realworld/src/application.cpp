@@ -1087,7 +1087,7 @@ void RealWorldApplication::drawScene(
                 current_time);
         }
 
-        skydome_->updateSkyScatteringLut(cmd_buf, kRayleighScaleHeight, kMieScaleHeight);
+        skydome_->updateSkyScatteringLut(cmd_buf);
 
         weather_system_->updateCloudShadow(
             cmd_buf,
@@ -1372,6 +1372,7 @@ void RealWorldApplication::drawFrame() {
         final_render_pass_,
         swap_chain_info_,
         swap_chain_info_.extent,
+        skydome_,
         image_index);
 
     command_buffer->endCommandBuffer();

@@ -29,8 +29,8 @@ vec3 atmosphere(
     float rAtmos,
     vec3 kRlh,
     float kMie,
-    float shRlh,
-    float shMie,
+    float inv_rayleigh_scale_height,
+    float inv_mie_scale_height,
     float g) {
 
   // Normalize the sun position.
@@ -68,8 +68,8 @@ vec3 atmosphere(
 
     // Calculate the optical depth of the Rayleigh and Mie scattering for this
     // step.
-    float odStepRlh = exp(-iHeight / shRlh) * iStepSize;
-    float odStepMie = exp(-iHeight / shMie) * iStepSize;
+    float odStepRlh = exp(-iHeight * inv_rayleigh_scale_height) * iStepSize;
+    float odStepMie = exp(-iHeight * inv_mie_scale_height) * iStepSize;
 
     // Accumulate optical depth.
     iOdRlh += odStepRlh;
@@ -94,8 +94,8 @@ vec3 atmosphere(
       float jHeight = length(jPos) - rPlanet;
 
       // Accumulate the optical depth.
-      jOdRlh += exp(-jHeight / shRlh) * jStepSize;
-      jOdMie += exp(-jHeight / shMie) * jStepSize;
+      jOdRlh += exp(-jHeight * inv_rayleigh_scale_height) * jStepSize;
+      jOdMie += exp(-jHeight * inv_mie_scale_height) * jStepSize;
 
       // Increment the secondary ray time.
       jTime += jStepSize;
@@ -126,8 +126,8 @@ vec4 atmosphereLut(
     float rAtmos,
     vec3 kRlh,
     float kMie,
-    float shRlh,
-    float shMie,
+    float inv_rayleigh_scale_height,
+    float inv_mie_scale_height,
     float g,
     vec2 visi,
     int iSteps) {
@@ -176,8 +176,8 @@ vec4 atmosphereLut(
 
         // Calculate the optical depth of the Rayleigh and Mie scattering for this
         // step.
-        float odStepRlh = exp(-r_height / shRlh) * sample_dist;
-        float odStepMie = exp(-r_height / shMie) * sample_dist;
+        float odStepRlh = exp(-r_height * inv_rayleigh_scale_height) * sample_dist;
+        float odStepMie = exp(-r_height * inv_mie_scale_height) * sample_dist;
 
         // Accumulate optical depth.
         iOdRlh += odStepRlh;

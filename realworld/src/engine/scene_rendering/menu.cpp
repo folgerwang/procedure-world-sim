@@ -97,6 +97,7 @@ bool Menu::draw(
     const std::shared_ptr<renderer::RenderPass>& render_pass,
     const er::SwapChainInfo& swap_chain_info,
     const glm::uvec2& screen_size,
+    const std::shared_ptr<scene_rendering::Skydome>& skydome,
     uint32_t image_index) {
 
     ImGui_ImplGlfw_NewFrame();
@@ -126,6 +127,11 @@ bool Menu::draw(
         }
         if (ImGui::BeginMenu("Tools"))
         {
+            ImGui::SliderFloat("phase func g", &skydome->getG(), -1.0f, 2.0f);
+            ImGui::SliderFloat("rayleigh scale height", &skydome->getRayleighScaleHeight(), 0.0f, 16000.0f);
+            ImGui::SliderFloat("mei scale height", &skydome->getMieScaleHeight(), 0.0f, 2400.0f);
+
+            ImGui::Separator();
             if (ImGui::MenuItem("Turn off water pass", NULL, turn_off_water_pass_)) {
                 turn_off_water_pass_ = !turn_off_water_pass_;
             }
