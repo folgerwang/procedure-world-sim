@@ -44,7 +44,6 @@ public:
         const std::shared_ptr<renderer::RenderPass>& render_pass,
         const std::shared_ptr<renderer::RenderPass>& cube_render_pass,
         const std::shared_ptr<renderer::DescriptorSetLayout>& view_desc_set_layout,
-        const std::shared_ptr<renderer::DescriptorSetLayout>& ibl_desc_set_layout,
         const renderer::GraphicPipelineInfo& graphic_pipeline_info,
         const renderer::GraphicPipelineInfo& cube_graphic_pipeline_info,
         const renderer::TextureInfo& rt_envmap_tex,
@@ -73,7 +72,6 @@ public:
     void drawCubeSkyBox(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const std::shared_ptr<renderer::RenderPass>& render_pass,
-        const std::shared_ptr<renderer::DescriptorSet>& envmap_tex_desc_set,
         const renderer::TextureInfo& rt_envmap_tex,
         const std::vector<renderer::ClearValue>& clear_values,
         const uint32_t& cube_size);

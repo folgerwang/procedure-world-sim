@@ -92,18 +92,42 @@ void main()
 		vec3 sun_pos = normalize(sun_sky_params.sun_pos);
 
 #if RENDER_SUNLIGHT_SCATTERING
-		  color += atmosphere(view_dir,                       // normalized ray direction
-							  vec3(0, kPlanetRadius, 0)/* + view_params.camera_pos.xyz*/,             // ray origin
-							  sun_pos,                        // position of the sun
-							  22.0,                           // intensity of the sun
-							  kPlanetRadius,                  // radius of the planet in meters
-							  kAtmosphereRadius,              // radius of the atmosphere in meters
-							  vec3(5.5e-6, 13.0e-6, 22.4e-6), // Rayleigh scattering coefficient
-							  21e-6,                          // Mie scattering coefficient
-							  kRayleighScaleHeight,           // Rayleigh scale height
-							  kMieScaleHeight,                // Mie scale height
-							  0.758                           // Mie preferred scattering direction
-							  );
+    vec3 r = view_dir;
+    vec3 r0 = vec3(0, kPlanetRadius, 0);// + view_params.camera_pos.xyz;
+    float g = 0.758;
+    float cast_range = rsi(r0, r, kAtmosphereRadius);
+#if ATMOSPHERE_USE_LUT
+    color += atmosphereLut(
+        r,                               // normalized ray direction
+        r0,                              // ray origin
+        cast_range,
+        sun_pos,                        // position of the sun
+        22.0,                           // intensity of the sun
+        kPlanetRadius,                  // radius of the planet in meters
+        kAtmosphereRadius,              // radius of the atmosphere in meters
+        vec3(5.5e-6, 13.0e-6, 22.4e-6), // Rayleigh scattering coefficient
+        21e-6,                          // Mie scattering coefficient
+        kRayleighScaleHeight,           // Rayleigh scale height
+        kMieScaleHeight,                // Mie scale height
+        g,                              // Mie preferred scattering direction
+        vec2(1.0f, 1.0f),
+        iSteps).xyz;
+#else
+    color += atmosphere(
+        r,                              // normalized ray direction
+        r0,                             // ray origin
+        cast_range,
+        sun_pos,                        // position of the sun
+        22.0,                           // intensity of the sun
+        kPlanetRadius,                  // radius of the planet in meters
+        kAtmosphereRadius,              // radius of the atmosphere in meters
+        vec3(5.5e-6, 13.0e-6, 22.4e-6), // Rayleigh scattering coefficient
+        21e-6,                          // Mie scattering coefficient
+        kRayleighScaleHeight,           // Rayleigh scale height
+        kMieScaleHeight,                // Mie scale height
+        g                               // Mie preferred scattering direction
+        );
+#endif
 #endif
 
 #if RENDER_SUN

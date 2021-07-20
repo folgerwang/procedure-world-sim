@@ -149,16 +149,16 @@ er::BufferInfo createIndexBuffer(
 std::vector<er::TextureDescriptor> addSkyboxTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
-    const er::TextureInfo& envmap_tex) {
+    const std::shared_ptr<er::ImageView>& scattering_lut_tex) {
     std::vector<er::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(1);
 
     // envmap texture.
     er::Helper::addOneTexture(
         descriptor_writes,
-        BASE_COLOR_TEX_INDEX,
+        SRC_SCATTERING_LUT_INDEX,
         texture_sampler,
-        envmap_tex.view,
+        scattering_lut_tex,
         description_set,
         er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -243,32 +243,15 @@ std::vector<er::TextureDescriptor> addSkyScatteringLutFinalPassTextures(
 std::shared_ptr<er::PipelineLayout>
     createSkydomePipelineLayout(
         const std::shared_ptr<er::Device>& device,
-        const std::shared_ptr<er::DescriptorSetLayout>& desc_set_layout,
-        const std::shared_ptr<er::DescriptorSetLayout>& view_desc_set_layout) {
+        const er::DescriptorSetLayoutList& desc_set_layouts) {
     er::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
     push_const_range.offset = 0;
     push_const_range.size = sizeof(glsl::SunSkyParams);
 
     return device->createPipelineLayout(
-        {desc_set_layout , view_desc_set_layout},
+        desc_set_layouts,
         { push_const_range });
-}
-
-std::shared_ptr<er::PipelineLayout>
-    createCubeSkyboxPipelineLayout(
-        const std::shared_ptr<er::Device>& device,
-        const std::shared_ptr<er::DescriptorSetLayout> ibl_desc_set_layout)
-{
-    er::PushConstantRange push_const_range{};
-    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
-    push_const_range.offset = 0;
-    push_const_range.size = sizeof(glsl::SunSkyParams);
-
-    er::DescriptorSetLayoutList desc_set_layouts(1);
-    desc_set_layouts[0] = ibl_desc_set_layout;
-
-    return device->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
 
 std::shared_ptr<er::Pipeline> createGraphicsPipeline(
@@ -414,7 +397,6 @@ Skydome::Skydome(
     const std::shared_ptr<renderer::RenderPass>& render_pass,
     const std::shared_ptr<renderer::RenderPass>& cube_render_pass,
     const std::shared_ptr<renderer::DescriptorSetLayout>& view_desc_set_layout,
-    const std::shared_ptr<renderer::DescriptorSetLayout>& ibl_desc_set_layout,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const renderer::GraphicPipelineInfo& cube_graphic_pipeline_info,
     const renderer::TextureInfo& rt_envmap_tex,
@@ -429,7 +411,7 @@ Skydome::Skydome(
 
     renderer::Helper::create2DTextureImage(
         device_info,
-        renderer::Format::R32G32_SFLOAT,
+        renderer::Format::R16G16_SFLOAT,
         glm::uvec2(kAtmosphereScatteringLutWidth, kAtmosphereScatteringLutHeight),
         sky_scattering_lut_tex_,
         SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
@@ -438,7 +420,7 @@ Skydome::Skydome(
 
     renderer::Helper::create2DTextureImage(
         device_info,
-        renderer::Format::R32G32_SFLOAT,
+        renderer::Format::R16G16_SFLOAT,
         glm::uvec2(kAtmosphereScatteringLutWidth, kAtmosphereScatteringLutHeight / 64),
         sky_scattering_lut_sum_tex_,
         SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
@@ -448,7 +430,7 @@ Skydome::Skydome(
     skybox_desc_set_layout_ =
         device->createDescriptorSetLayout(
             { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
-                BASE_COLOR_TEX_INDEX) });
+                SRC_SCATTERING_LUT_INDEX) });
 
     sky_scattering_lut_first_pass_desc_set_layout_ =
         device->createDescriptorSetLayout(
@@ -490,9 +472,9 @@ Skydome::Skydome(
         display_size);
 
     cube_skybox_pipeline_layout_ =
-        createCubeSkyboxPipelineLayout(
+        createSkydomePipelineLayout(
             device,
-            ibl_desc_set_layout);
+            { skybox_desc_set_layout_ });
 
     cube_skybox_pipeline_ = createCubeGraphicsPipeline(
         device,
@@ -564,7 +546,7 @@ void Skydome::recreate(
     auto skybox_texture_descs = addSkyboxTextures(
         skybox_tex_desc_set_,
         texture_sampler,
-        rt_envmap_tex);
+        sky_scattering_lut_tex_.view);
     device->updateDescriptorSets(skybox_texture_descs, {});
 
     sky_scattering_lut_first_pass_desc_set_ =
@@ -606,8 +588,8 @@ void Skydome::recreate(
     skybox_pipeline_layout_ =
         createSkydomePipelineLayout(
             device,
-            skybox_desc_set_layout_,
-            view_desc_set_layout);
+            { skybox_desc_set_layout_,
+              view_desc_set_layout });
 
     skybox_pipeline_ = createGraphicsPipeline(
         device,
@@ -653,7 +635,6 @@ void Skydome::draw(
 void Skydome::drawCubeSkyBox(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const std::shared_ptr<renderer::RenderPass>& render_pass,
-    const std::shared_ptr<renderer::DescriptorSet>& envmap_tex_desc_set,
     const renderer::TextureInfo& rt_envmap_tex,
     const std::vector<er::ClearValue>& clear_values,
     const uint32_t& cube_size)
@@ -688,7 +669,7 @@ void Skydome::drawCubeSkyBox(
     cmd_buf->bindDescriptorSets(
         renderer::PipelineBindPoint::GRAPHICS,
         cube_skybox_pipeline_layout_,
-        { envmap_tex_desc_set });
+        { skybox_tex_desc_set_ });
 
     cmd_buf->draw(3);
 

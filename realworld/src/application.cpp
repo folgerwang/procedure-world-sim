@@ -459,7 +459,6 @@ void RealWorldApplication::initVulkan() {
         hdr_render_pass_,
         cubemap_render_pass_,
         view_desc_set_layout_,
-        ibl_creator_->getIblDescSetLayout(),
         graphic_no_depth_write_pipeline_info_,
         graphic_cubemap_pipeline_info_,
         ibl_creator_->getEnvmapTexture(),
@@ -1045,7 +1044,6 @@ void RealWorldApplication::drawScene(
         skydome_->drawCubeSkyBox(
             cmd_buf,
             cubemap_render_pass_,
-            ibl_creator_->getEnvmapTexDescSet(),
             ibl_creator_->getEnvmapTexture(),
             clear_values_,
             kCubemapSize);
