@@ -2730,7 +2730,7 @@ void TileObject::updateAllTiles(
 
     // add (kCacheTileSize * 2 + 1) x (kCacheTileSize * 2 + 1) tiles for caching.
     std::vector<std::shared_ptr<TileObject>> blocks(num_cached_blocks);
-    int32_t i = 0;
+    int32_t tile_idx = 0;
     for (int y = min_cache_tile_idx.y; y <= max_cache_tile_idx.y; y++) {
         for (int x = min_cache_tile_idx.x; x <= max_cache_tile_idx.x; x++) {
             auto tile = addOneTile(
@@ -2738,19 +2738,19 @@ void TileObject::updateAllTiles(
                 descriptor_pool,
                 glm::vec2(-tile_size / 2 + x * tile_size, -tile_size / 2 + y * tile_size),
                 glm::vec2(tile_size / 2 + x * tile_size, tile_size / 2 + y * tile_size));
-            blocks[i++] = tile;
+            blocks[tile_idx++] = tile;
         }
     }
 
-    i = 0;
+    int32_t i = 0;
     auto row_size = cache_tile_size * 2 + 1;
     for (int y = min_cache_tile_idx.y; y <= max_cache_tile_idx.y; y++) {
         for (int x = min_cache_tile_idx.x; x <= max_cache_tile_idx.x; x++) {
             glm::ivec4 neighbors = glm::ivec4(
-                x == min_cache_tile_idx.x ? -1 : blocks[i - 1]->block_idx_,
-                x == max_cache_tile_idx.x ? -1 : blocks[i + 1]->block_idx_,
-                y == min_cache_tile_idx.y ? -1 : blocks[i - row_size]->block_idx_,
-                y == max_cache_tile_idx.y ? -1 : blocks[i + row_size]->block_idx_);
+                x == min_cache_tile_idx.x ? -1 : (blocks[i - 1] ? blocks[i - 1]->block_idx_ : -1),
+                x == max_cache_tile_idx.x ? -1 : (blocks[i + 1] ? blocks[i + 1]->block_idx_ : -1),
+                y == min_cache_tile_idx.y ? -1 : (blocks[i - row_size] ? blocks[i - row_size]->block_idx_ : -1),
+                y == max_cache_tile_idx.y ? -1 : (blocks[i + row_size] ? blocks[i + row_size]->block_idx_ : -1));
             blocks[i++]->setNeighbors(neighbors);
         }
     }

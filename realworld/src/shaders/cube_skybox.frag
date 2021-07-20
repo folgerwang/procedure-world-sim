@@ -134,6 +134,6 @@ void main()
 		  color += renderSun(view_dir, sun_pos);
 #endif
 
-		writeFace(face, max(color * 5.0f, 0.0f));
+		writeFace(face, max(color * 1.0f, 0.0f));
 	}
 }

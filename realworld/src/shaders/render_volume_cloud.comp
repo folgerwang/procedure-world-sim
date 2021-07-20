@@ -65,8 +65,7 @@ void main()
         vec3 sample_pos = view_params.camera_pos.xyz + cur_dist * view_dir;
 
         vec3 uvw;
-        uvw.z = log2(max((sample_pos.y - kAirflowLowHeight), 0.0f) + 1.0f) /
-                log2(kAirflowMaxHeight - kAirflowLowHeight + 1.0f);
+        uvw.z = getHeightToSample(sample_pos.y);
 
         uvw.xy = (sample_pos.xz - params.world_min) * params.inv_world_range;
         vec2 temp_moisture = texture(src_temp_moist, uvw).xy;

@@ -430,9 +430,9 @@ WeatherSystem::WeatherSystem(
             device_info,
             renderer::Format::R16G16_UNORM,
             glm::uvec3(
-                WeatherSystemConst::kAirflowBufferWidth,
-                WeatherSystemConst::kAirflowBufferWidth,
-                WeatherSystemConst::kAirflowBufferHeight),
+                kAirflowBufferWidth,
+                kAirflowBufferWidth,
+                kAirflowBufferHeight),
             temp_moisture_volume_[i],
             SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
             SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
@@ -443,9 +443,9 @@ WeatherSystem::WeatherSystem(
         device_info,
         renderer::Format::R8G8B8A8_UNORM,
         glm::uvec3(
-            WeatherSystemConst::kAirflowBufferWidth,
-            WeatherSystemConst::kAirflowBufferWidth,
-            WeatherSystemConst::kAirflowBufferHeight),
+            kAirflowBufferWidth,
+            kAirflowBufferWidth,
+            kAirflowBufferHeight),
         airflow_volume_,
         SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
         SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
@@ -455,9 +455,9 @@ WeatherSystem::WeatherSystem(
         device_info,
         renderer::Format::R8_UNORM,
         glm::uvec3(
-            WeatherSystemConst::kAirflowBufferWidth,
-            WeatherSystemConst::kAirflowBufferWidth,
-            WeatherSystemConst::kAirflowBufferHeight),
+            kAirflowBufferWidth,
+            kAirflowBufferWidth,
+            kAirflowBufferHeight),
         cloud_shadow_volume_,
         SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
         SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
@@ -467,9 +467,9 @@ WeatherSystem::WeatherSystem(
         device_info,
         renderer::Format::B10G11R11_UFLOAT_PACK32,
         glm::uvec3(
-            WeatherSystemConst::kAirflowBufferWidth,
-            WeatherSystemConst::kAirflowBufferWidth,
-            WeatherSystemConst::kAirflowBufferHeight),
+            kAirflowBufferWidth,
+            kAirflowBufferWidth,
+            kAirflowBufferHeight),
         cloud_lighting_volume_,
         SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
         SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
@@ -627,24 +627,6 @@ void WeatherSystem::recreate(
         cloud_shadow_pipeline_layout_);
 }
 
-void calculateHeightSamples(int h)
-{
-    float cloud_max_height = kAirflowMaxHeight / kDegreeDecreasePerKm / 1000.0f * 6.5f;
-    float cloud_height_range = cloud_max_height - kAirflowLowHeight;
-    float max_min_ratio = cloud_height_range / (h / 2) / kMinSampleHeight - 1.0f;
-    
-    float sample = 64.5f;
-    float sample_h = (kMinSampleHeight + ((max_min_ratio - 1) / h * kMinSampleHeight / 2) * sample) * sample;
-
-    float a = ((max_min_ratio - 1) / h * kMinSampleHeight / 2);
-    float b = kMinSampleHeight;
-
-    sample_h = (b + a * sample) * sample;
-    
-    int hit = 1;
-    
-}
-
 // update air flow buffer.
 void WeatherSystem::initTemperatureBuffer(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
@@ -653,8 +635,8 @@ void WeatherSystem::initTemperatureBuffer(
         cmd_buf,
         { temp_moisture_volume_[0].image });
 
-    auto w = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferWidth);
-    auto h = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferHeight);
+    auto w = static_cast<uint32_t>(kAirflowBufferWidth);
+    auto h = static_cast<uint32_t>(kAirflowBufferHeight);
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, temperature_init_pipeline_);
     glsl::AirflowUpdateParams airflow_params = {};
     airflow_params.world_min =
@@ -666,11 +648,6 @@ void WeatherSystem::initTemperatureBuffer(
     airflow_params.controls = {0};
     airflow_params.controls.sea_level_temperature = 30.0f;
     airflow_params.current_time = 0;
-    airflow_params.height_params =
-        glm::vec2(log2(1.0f + airflow_params.world_range.z),
-            -1.0f + airflow_params.world_min.z);
-
-    calculateHeightSamples(h);
 
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
@@ -706,8 +683,8 @@ void WeatherSystem::updateAirflowBuffer(
           temp_moisture_volume_[1-dbuf_idx].image,
           airflow_volume_.image});
 
-    auto w = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferWidth);
-    auto h = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferHeight);
+    auto w = static_cast<uint32_t>(kAirflowBufferWidth);
+    auto h = static_cast<uint32_t>(kAirflowBufferHeight);
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, airflow_pipeline_);
     glsl::AirflowUpdateParams airflow_params = {};
     airflow_params.world_min =
@@ -718,9 +695,6 @@ void WeatherSystem::updateAirflowBuffer(
     airflow_params.size = glm::ivec3(w, w, h);
     airflow_params.controls = weather_controls;
     airflow_params.current_time = current_time;
-    airflow_params.height_params =
-        glm::vec2(log2(1.0f + airflow_params.world_range.z),
-            -1.0f + airflow_params.world_min.z);
 
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
@@ -751,8 +725,8 @@ void WeatherSystem::updateCloudShadow(
     int dbuf_idx,
     float current_time) {
 
-    auto w = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferWidth);
-    auto h = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferHeight);
+    auto w = static_cast<uint32_t>(kAirflowBufferWidth);
+    auto h = static_cast<uint32_t>(kAirflowBufferHeight);
     renderer::helper::transitMapTextureToStoreImage(
         cmd_buf,
         { cloud_shadow_volume_.image });
@@ -769,9 +743,6 @@ void WeatherSystem::updateCloudShadow(
     cloud_shadow_params.current_time = current_time;
     cloud_shadow_params.sun_dir = sun_dir;
     cloud_shadow_params.opaque_scale = 0.5f;
-    cloud_shadow_params.height_params =
-        glm::vec2(log2(1.0f + cloud_shadow_params.world_range.z),
-            -1.0f + cloud_shadow_params.world_min.z);
 
     for (uint32_t i = 0; i < h; i++) {
         cloud_shadow_params.layer_idx = i;
@@ -806,8 +777,8 @@ void WeatherSystem::updateCloudLighting(
         cmd_buf,
         { cloud_lighting_volume_.image });
 
-    auto w = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferWidth);
-    auto h = static_cast<uint32_t>(WeatherSystemConst::kAirflowBufferHeight);
+    auto w = static_cast<uint32_t>(kAirflowBufferWidth);
+    auto h = static_cast<uint32_t>(kAirflowBufferHeight);
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, cloud_lighting_pipeline_);
     glsl::CloudLightingParams cloud_lighting_params = {};
     cloud_lighting_params.world_min =
@@ -819,9 +790,6 @@ void WeatherSystem::updateCloudLighting(
     cloud_lighting_params.size = glm::ivec3(w, w, h);
     cloud_lighting_params.current_time = current_time;
     cloud_lighting_params.sun_dir = sun_dir;
-    cloud_lighting_params.height_params =
-        glm::vec2(log2(1.0f + cloud_lighting_params.world_range.z),
-            -1.0f + cloud_lighting_params.world_min.z);
 
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),

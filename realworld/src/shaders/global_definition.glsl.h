@@ -134,6 +134,9 @@
 #define DEBUG_DRAW_TEMPRETURE               1
 #define DEBUG_DRAW_MOISTURE                 2
 
+#define kAirflowBufferWidth                 256
+#define kAirflowBufferHeight                128
+
 #define kAtmosphereScatteringLutGroupSize   64
 #define kAtmosphereScatteringLutWidth       512
 #define kAtmosphereScatteringLutHeight      512
@@ -241,8 +244,6 @@ struct AirflowUpdateParams {
     float           pad1;
     ivec3           size;
     float           pad2;
-    vec2            height_params;
-    vec2            pad3;
 
     WeatherControl  controls;
 };

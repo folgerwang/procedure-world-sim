@@ -5,11 +5,6 @@ namespace engine {
 namespace scene_rendering {
 
 class WeatherSystem {
-    enum class WeatherSystemConst {
-        kAirflowBufferWidth = 256,
-        kAirflowBufferHeight = 128,
-    };
-
     renderer::TextureInfo temp_moisture_volume_[2];
     renderer::TextureInfo airflow_volume_;
     renderer::TextureInfo cloud_lighting_volume_;

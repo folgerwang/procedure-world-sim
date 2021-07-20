@@ -62,9 +62,9 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
     float src_moist = denormalizeMoisture(src_temp_moist.y);
 
     float uvw_w = (src_coords.z + 0.5) * params.inv_size.z;
-    float min_h = getSampleHeight(uvw_w, -params.inv_size.z * 0.5f, params.height_params);
-    float max_h = getSampleHeight(uvw_w, params.inv_size.z * 0.5f, params.height_params);
-    float sample_h = getSampleHeight(uvw_w, 0, params.height_params);
+    float min_h = getSampleToHeight(uvw_w - params.inv_size.z * 0.5f);
+    float max_h = getSampleToHeight(uvw_w + params.inv_size.z * 0.5f);
+    float sample_h = getSampleToHeight(uvw_w);
 
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
@@ -106,7 +106,7 @@ uint packTempDiff(uint min_temp, uint min_moist, uint center, ivec3 pixel_coords
 
     vec4 noise_values = hash44(vec4(vec3(pixel_coords), params.current_time)) * 2.0f - 1.0f;
     float uvw_w = (pixel_coords.z + 0.5) * params.inv_size.z;
-    float sample_h = getSampleHeight(uvw_w, 0, params.height_params);
+    float sample_h = getSampleToHeight(uvw_w);
 
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
@@ -260,7 +260,7 @@ void main()
     vec2 temp_moist_adj = generateAirflow(local_coords, airflow_dir);
 
     float uvw_w = (pixel_coords.z + 0.5) * params.inv_size.z;
-    float sample_h = getSampleHeight(uvw_w, 0, params.height_params);
+    float sample_h = getSampleToHeight(uvw_w);
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
     ivec3 slc = local_coords + 2;
