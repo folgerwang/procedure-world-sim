@@ -79,6 +79,10 @@
 #define SRC_CLOUD_LIGHTING_TEX_INDEX        23
 #define SRC_CLOUD_SHADOW_TEX_INDEX          24
 #define DST_FOG_CLOUD_INDEX                 25
+#define DST_SCATTERING_LUT_INDEX            26
+#define DST_SCATTERING_LUT_SUM_INDEX        26
+#define SRC_SCATTERING_LUT_INDEX            27
+#define SRC_SCATTERING_LUT_SUM_INDEX        27
 
 // IBL texure index
 #define PANORAMA_TEX_INDEX          0
@@ -92,11 +96,6 @@
 #define INDIRECT_DRAW_BUFFER_INDEX  0
 #define GAME_OBJECTS_BUFFER_INDEX   0
 #define INSTANCE_BUFFER_INDEX       1
-
-#define DST_SCATTERING_LUT_INDEX        0
-#define DST_SCATTERING_LUT_SUM_INDEX    0
-#define SRC_SCATTERING_LUT_INDEX        1
-#define SRC_SCATTERING_LUT_SUM_INDEX    1
 
 #define FEATURE_MATERIAL_SPECULARGLOSSINESS     0x00000001
 #define FEATURE_MATERIAL_METALLICROUGHNESS      0x00000002
@@ -312,8 +311,12 @@ struct VolumeMoistrueParams {
     vec2            inv_world_range;
     uvec2           size;
     vec2            inv_screen_size;
-    float           time;
+    vec3            sun_pos;
     float           pad;
+    float           time;
+    float           g;
+    float           inv_rayleigh_scale_height;
+    float           inv_mie_scale_height;
 };
 
 struct BlurImageParams {

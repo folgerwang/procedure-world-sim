@@ -71,6 +71,10 @@ public:
         return g_;
     }
 
+    inline const std::shared_ptr<renderer::ImageView>& getScatteringLutTex() {
+        return sky_scattering_lut_tex_.view;
+    }
+
     void recreate(
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,

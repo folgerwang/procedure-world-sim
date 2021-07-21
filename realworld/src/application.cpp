@@ -532,6 +532,7 @@ void RealWorldApplication::initVulkan() {
         hdr_color_buffer_.view,
         weather_system_->getTempMoistureTexes(),
         weather_system_->getCloudLightingTex(),
+        skydome_->getScatteringLutTex(),
         swap_chain_info_.extent);
 
     ego::DebugDrawObject::updateStaticDescriptorSet(
@@ -685,6 +686,7 @@ void RealWorldApplication::recreateSwapChain() {
         hdr_color_buffer_.view,
         weather_system_->getTempMoistureTexes(),
         weather_system_->getCloudLightingTex(),
+        skydome_->getScatteringLutTex(),
         swap_chain_info_.extent);
 
     menu_->init(
@@ -1250,6 +1252,7 @@ void RealWorldApplication::drawScene(
                     cmd_buf,
                     frame_desc_set,
                     hdr_color_buffer_.image,
+                    skydome_,
                     screen_size,
                     s_dbuf_idx,
                     current_time);

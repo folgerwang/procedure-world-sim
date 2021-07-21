@@ -1,7 +1,6 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
-#define RENDER_SUN 1
 #define RENDER_SUNLIGHT_SCATTERING  1
 const int iSteps = 16;
 const int jSteps = 8;
@@ -9,9 +8,7 @@ const int jSteps = 8;
 #include "global_definition.glsl.h"
 #include "noise.glsl.h"
 #include "weather_common.glsl.h"
-
-#define UX3D_MATH_PI 3.1415926535897932384626433832795
-#define UX3D_MATH_INV_PI (1.0 / UX3D_MATH_PI)
+#include "sunlight_scattering.glsl.h"
 
 layout(push_constant) uniform VolumeMoistUniformBufferObject {
     VolumeMoistrueParams params;
@@ -55,6 +52,29 @@ void main()
     view_dir = normalize(view_dir + noise_dir * 0.0089f);
     float dither = (1.0f + (noise.y * 2.0f - 1.0f) * 0.2f);
 
+    vec3 fog_color = vec3(0);
+#if RENDER_SUNLIGHT_SCATTERING
+    vec3 r = view_dir;
+    vec3 r0 = vec3(0, kPlanetRadius, 0) + view_params.camera_pos.xyz;
+    float g = params.g;
+    float cast_range = cast_dist;
+    fog_color += atmosphereLut(
+        r,                              // normalized ray direction
+        r0,                             // ray origin
+        cast_range,
+        normalize(params.sun_pos),      // position of the sun
+        22.0,                           // intensity of the sun
+        kPlanetRadius,                  // radius of the planet in meters
+        kAtmosphereRadius,              // radius of the atmosphere in meters
+        vec3(5.5e-6, 13.0e-6, 22.4e-6), // Rayleigh scattering coefficient
+        21e-6,                          // Mie scattering coefficient
+        params.inv_rayleigh_scale_height,           // Rayleigh scale height
+        params.inv_mie_scale_height,                // Mie scale height
+        g,                              // Mie preferred scattering direction
+        vec2(1.0f, 1.0f),
+        iSteps).xyz;
+#endif
+
     vec3 fg_color = vec3(0);
     float final_alpha = 1.0f;
     float last_dist = cast_dist / 32.0f * (32 + noise.x);
@@ -73,7 +93,7 @@ void main()
         vec3 cloud_lighting = texture(src_cloud_lighting, uvw).xyz;
 
         float cur_alpha = exp2(-thickness * moist * 0.02f * dither);
-        fg_color = mix(cloud_lighting, fg_color, cur_alpha);
+        fg_color = mix(cloud_lighting * fog_color, fg_color, cur_alpha);
         final_alpha *= cur_alpha;
 
         last_dist = cur_dist;

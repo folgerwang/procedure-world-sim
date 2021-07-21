@@ -82,9 +82,10 @@ std::vector<er::TextureDescriptor> addCloudFogTextures(
     const std::shared_ptr<er::ImageView>& src_depth,
     const std::shared_ptr<er::ImageView>& cloud_fog_tex,
     const std::shared_ptr<er::ImageView>& volume_moist_tex,
-    const std::shared_ptr<er::ImageView>& cloud_lighting_tex) {
+    const std::shared_ptr<er::ImageView>& cloud_lighting_tex,
+    const std::shared_ptr<er::ImageView>& scattering_lut_tex) {
     std::vector<er::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(4);
+    descriptor_writes.reserve(5);
 
     // envmap texture.
     er::Helper::addOneTexture(
@@ -110,6 +111,15 @@ std::vector<er::TextureDescriptor> addCloudFogTextures(
         SRC_CLOUD_LIGHTING_TEX_INDEX,
         texture_sampler,
         cloud_lighting_tex,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_SCATTERING_LUT_INDEX,
+        texture_sampler,
+        scattering_lut_tex,
         description_set,
         er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -219,6 +229,7 @@ VolumeCloud::VolumeCloud(
     const std::shared_ptr<renderer::ImageView>& hdr_color,
     const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_texes,
     const std::shared_ptr<renderer::ImageView>& cloud_lighting_tex,
+    const std::shared_ptr<renderer::ImageView>& scattering_lut_tex,
     const glm::uvec2& display_size) {
 
     const auto& device = device_info.device;
@@ -251,7 +262,11 @@ VolumeCloud::VolumeCloud(
               renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
                 DST_FOG_CLOUD_INDEX,
                 SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-                er::DescriptorType::STORAGE_IMAGE) });
+                er::DescriptorType::STORAGE_IMAGE),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                SRC_SCATTERING_LUT_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER) });
 
     recreate(
         device_info,
@@ -262,6 +277,7 @@ VolumeCloud::VolumeCloud(
         hdr_color,
         temp_moisture_texes,
         cloud_lighting_tex,
+        scattering_lut_tex,
         display_size);
 }
 
@@ -274,6 +290,7 @@ void VolumeCloud::recreate(
     const std::shared_ptr<renderer::ImageView>& hdr_color,
     const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_texes,
     const std::shared_ptr<renderer::ImageView>& cloud_lighting_tex,
+    const std::shared_ptr<renderer::ImageView>& scattering_lut_tex,
     const glm::uvec2& display_size) {
 
     auto& device = device_info.device;
@@ -372,7 +389,8 @@ void VolumeCloud::recreate(
             src_depth,
             fog_cloud_tex_.view,
             temp_moisture_texes[dbuf_idx],
-            cloud_lighting_tex);
+            cloud_lighting_tex,
+            scattering_lut_tex);
         device->updateDescriptorSets(render_cloud_fog_texture_descs, {});
     }
 
@@ -392,6 +410,7 @@ void VolumeCloud::renderVolumeCloud(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const std::shared_ptr<renderer::DescriptorSet>& frame_desc_set,
     const std::shared_ptr<renderer::Image>& hdr_color,
+    const std::shared_ptr<scene_rendering::Skydome>& skydome,
     const glm::uvec2& display_size,
     int dbuf_idx,
     float current_time) {
@@ -410,6 +429,10 @@ void VolumeCloud::renderVolumeCloud(
         params.size = display_size;
         params.inv_screen_size = 1.0f / glm::vec2(display_size);
         params.time = current_time;
+        params.g = skydome->getG();
+        params.inv_rayleigh_scale_height = 1.0f / skydome->getRayleighScaleHeight();
+        params.inv_mie_scale_height = 1.0f / skydome->getMieScaleHeight();
+        params.sun_pos = skydome->getSunDir();
 
         cmd_buf->pushConstants(
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),

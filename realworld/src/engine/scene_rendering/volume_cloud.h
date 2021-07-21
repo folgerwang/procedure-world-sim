@@ -1,5 +1,6 @@
 #pragma once
 #include "engine/renderer/renderer.h"
+#include "engine/scene_rendering/skydome.h"
 
 namespace engine {
 namespace scene_rendering {
@@ -29,6 +30,7 @@ public:
         const std::shared_ptr<renderer::ImageView>& hdr_color,
         const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_texes,
         const std::shared_ptr<renderer::ImageView>& cloud_lighting_tex,
+        const std::shared_ptr<renderer::ImageView>& scattering_lut_tex,
         const glm::uvec2& display_size);
 
     void recreate(
@@ -40,12 +42,14 @@ public:
         const std::shared_ptr<renderer::ImageView>& hdr_color,
         const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_texes,
         const std::shared_ptr<renderer::ImageView>& cloud_lighting_tex,
+        const std::shared_ptr<renderer::ImageView>& scattering_lut_tex,
         const glm::uvec2& display_size);
 
     void renderVolumeCloud(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const std::shared_ptr<renderer::DescriptorSet>& frame_desc_set,
         const std::shared_ptr<renderer::Image>& hdr_color,
+        const std::shared_ptr<scene_rendering::Skydome>& skydome,
         const glm::uvec2& display_size,
         int dbuf_idx,
         float current_time);
