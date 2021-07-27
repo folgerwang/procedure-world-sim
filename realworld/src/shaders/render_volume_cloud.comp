@@ -47,8 +47,8 @@ void main()
 
     cast_dist = min(cast_dist, bg_view_dist);
         
-    vec2 noise = hash23(view_dir * 1334.0f);
-    vec3 noise_dir = hash33(view_dir * 1434.0f) * 2.0f - 1.0f;
+    vec2 noise = hash23(floor(view_dir * 1334.0f));
+    vec3 noise_dir = hash33(floor(view_dir * 1434.0f)) * 2.0f - 1.0f;
     view_dir = normalize(view_dir + noise_dir * 0.0089f);
     float dither = (1.0f + (noise.y * 2.0f - 1.0f) * 0.2f);
 
@@ -93,7 +93,7 @@ void main()
         vec3 cloud_lighting = texture(src_cloud_lighting, uvw).xyz;
 
         float cur_alpha = exp2(-thickness * moist * 0.02f * dither);
-        fg_color = mix(cloud_lighting * fog_color, fg_color, cur_alpha);
+        fg_color = mix(cloud_lighting/* * fog_color*/, fg_color, cur_alpha);
         final_alpha *= cur_alpha;
 
         last_dist = cur_dist;

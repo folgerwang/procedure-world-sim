@@ -2,7 +2,7 @@
 #define kDegreeDecreasePerKm              (6.5f / 1000.0f)
 
 #define kAirflowMaxHeight                 (kRealWorldAirflowMaxHeight / kDegreeDecreasePerKm / 1000.0f * 6.5f)
-#define kAirflowLowHeight                 -400.0f
+#define kAirflowLowHeight                 -600.0f
 #define kAirflowHeightRange               (kAirflowMaxHeight - kAirflowLowHeight)
 
 #define kTemperaturePositiveOffset        78.0f
@@ -19,10 +19,10 @@
 #define kMaxTempMoistDiff                 4.0f
 #define kTempMoistDiffToFloat             (kMaxTempMoistDiff / 65536.0f)
 
-#define kMinSampleHeight                  1.0f
+#define kMinSampleHeight                  4.0f
 #define kAirflowHeightMinMaxRatio         (kAirflowHeightRange / (kAirflowBufferHeight / 2 * kMinSampleHeight) - 1.0f)
-#define kAirflowHeightFactorA             ((kAirflowHeightMinMaxRatio - 1.0f) / kAirflowBufferHeight * kMinSampleHeight / 2)
-#define kAirflowHeightFactorB             kMinSampleHeight
+#define kAirflowHeightFactorA             ((kAirflowHeightMinMaxRatio - 1.0f) * kAirflowBufferHeight * kMinSampleHeight / 2)
+#define kAirflowHeightFactorB             (kMinSampleHeight * kAirflowBufferHeight)
 #define kAirflowHeightFactorInvA          (1.0f / kAirflowHeightFactorA)
 #define kAirflowHeightFactorBInv2A        (kAirflowHeightFactorB / 2.0f * kAirflowHeightFactorInvA)
 #define kAirflowHeightFactorSqrBInv2A     (kAirflowHeightFactorBInv2A * kAirflowHeightFactorBInv2A)
@@ -31,11 +31,16 @@
 #define kAirflowToHeightParamsY           (-1.0f + kAirflowLowHeight)
 #define kAirflowFromHeightParamsX         (1.0f / log2(kAirflowMaxHeight - kAirflowLowHeight + 1.0f))
 
-#define USE_LINEAR_HEIGHT_SAMPLE          0
+#define USE_LINEAR_HEIGHT_SAMPLE          1
 
 float calculateAirflowSampleToHeight(float uvw_w) {
     float sample_h = (kAirflowHeightFactorB + kAirflowHeightFactorA * uvw_w) * uvw_w;
     return sample_h;
+}
+
+float calculateAirflowSampleToDeltaHeight(float uvw_w) {
+    float delta_h = kAirflowHeightFactorB + 2.0f * kAirflowHeightFactorA * uvw_w;
+    return delta_h / kAirflowBufferHeight;
 }
 
 float calculateAirflowSampleFromHeight(float sample_h) {
@@ -58,6 +63,14 @@ float getSampleToHeight(float uvw_w) {
     return calculateAirflowSampleToHeight(uvw_w);
 #else
     return exp2(uvw_w *kAirflowToHeightParamsX) + kAirflowToHeightParamsY;
+#endif
+}
+
+float getSampleToDeltaHeight(float uvw_w) {
+#if USE_LINEAR_HEIGHT_SAMPLE
+    return calculateAirflowSampleToDeltaHeight(uvw_w);
+#else
+    return exp2(uvw_w * kAirflowToHeightParamsX) * log(2.0f) * kAirflowToHeightParamsX / kAirflowBufferHeight;
 #endif
 }
 

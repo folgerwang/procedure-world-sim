@@ -57,7 +57,7 @@ Menu::Menu(
         command_buffer);
 
     weather_controls_.mix_rate = 0.92f;
-    weather_controls_.sea_level_temperature = 30.0f;
+    weather_controls_.sea_level_temperature = 0.0f;
     weather_controls_.soil_temp_adj = 0.20f;
     weather_controls_.water_temp_adj = 1.02f;
     weather_controls_.air_temp_adj = 0.000f;

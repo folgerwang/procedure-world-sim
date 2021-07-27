@@ -49,7 +49,8 @@ std::vector<er::TextureDescriptor> addBlurImageTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
     const std::shared_ptr<er::ImageView>& src_image,
-    const std::shared_ptr<er::ImageView>& dst_image) {
+    const std::shared_ptr<er::ImageView>& dst_image,
+    const std::shared_ptr<er::ImageView>& depth_image) {
     std::vector<er::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(2);
 
@@ -72,6 +73,15 @@ std::vector<er::TextureDescriptor> addBlurImageTextures(
         description_set,
         er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_DEPTH_TEX_INDEX,
+        texture_sampler,
+        depth_image,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
 }
@@ -139,14 +149,15 @@ std::vector<er::TextureDescriptor> addCloudFogTextures(
 std::shared_ptr<er::PipelineLayout>
     createBlurImagePipelineLayout(
         const std::shared_ptr<er::Device>& device,
-        const std::shared_ptr<er::DescriptorSetLayout>& desc_set_layout) {
+        const std::shared_ptr<er::DescriptorSetLayout>& desc_set_layout,
+        const std::shared_ptr<er::DescriptorSetLayout>& view_desc_set_layout) {
     er::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
     push_const_range.offset = 0;
     push_const_range.size = sizeof(glsl::BlurImageParams);
 
     return device->createPipelineLayout(
-        { desc_set_layout },
+        { desc_set_layout, view_desc_set_layout },
         { push_const_range });
 }
 
@@ -243,7 +254,11 @@ VolumeCloud::VolumeCloud(
               renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
                 DST_TEX_INDEX,
                 SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-                er::DescriptorType::STORAGE_IMAGE) });
+                er::DescriptorType::STORAGE_IMAGE),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                SRC_DEPTH_TEX_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER) });
 
     render_cloud_fog_desc_set_layout_ =
         device->createDescriptorSetLayout(
@@ -344,7 +359,8 @@ void VolumeCloud::recreate(
         blur_image_x_tex_desc_set_,
         texture_sampler,
         fog_cloud_tex_.view,
-        blurred_fog_cloud_tex_.view);
+        blurred_fog_cloud_tex_.view,
+        src_depth);
     device->updateDescriptorSets(cloud_texture_descs, {});
 
     blur_image_y_merge_tex_desc_set_ =
@@ -357,14 +373,16 @@ void VolumeCloud::recreate(
         blur_image_y_merge_tex_desc_set_,
         texture_sampler,
         blurred_fog_cloud_tex_.view,
-        hdr_color);
+        hdr_color,
+        src_depth);
     device->updateDescriptorSets(cloud_texture_descs, {});
 
     assert(view_desc_set_layout);
     blur_image_pipeline_layout_ =
         createBlurImagePipelineLayout(
             device,
-            blur_image_desc_set_layout_);
+            blur_image_desc_set_layout_,
+            view_desc_set_layout);
 
     blur_image_x_pipeline_ = createBlurImageXPipeline(
         device,
@@ -477,7 +495,8 @@ void VolumeCloud::renderVolumeCloud(
         cmd_buf->bindDescriptorSets(
             renderer::PipelineBindPoint::COMPUTE,
             blur_image_pipeline_layout_,
-            { blur_image_x_tex_desc_set_ });
+            { blur_image_x_tex_desc_set_,
+              frame_desc_set });
 
         cmd_buf->dispatch(
             (display_size.x + 63) / 64,
@@ -511,7 +530,8 @@ void VolumeCloud::renderVolumeCloud(
         cmd_buf->bindDescriptorSets(
             renderer::PipelineBindPoint::COMPUTE,
             blur_image_pipeline_layout_,
-            { blur_image_y_merge_tex_desc_set_ });
+            { blur_image_y_merge_tex_desc_set_,
+              frame_desc_set });
 
         cmd_buf->dispatch(
             display_size.x,

@@ -2,14 +2,23 @@
 #extension GL_ARB_separate_shader_objects : enable
 #include "global_definition.glsl.h"
 
+#define BLUR_RADIUS				12
+#define SHARED_BUFFER_SIZE		(64 + BLUR_RADIUS * 2)
+
 layout(push_constant) uniform BlurImageUniformBufferObject {
     BlurImageParams params;
 };
 
+layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniformBufferObject {
+    ViewParams view_params;
+};
+
 layout(set = 0, binding = SRC_TEX_INDEX) uniform sampler2D src_img;
 layout(set = 0, binding = DST_TEX_INDEX, rgba16f) uniform image2D dst_img;
+layout(set = 0, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D depth_img;
 
-shared vec4 s_src_color[80];
+shared vec4 s_src_color[SHARED_BUFFER_SIZE];
+shared float s_src_depth[SHARED_BUFFER_SIZE];
 layout(local_size_x = 64, local_size_y = 1) in;
 void main()
 {
@@ -19,25 +28,38 @@ void main()
 	ivec2 block_coords = ivec2(gl_WorkGroupID.x * 64, gl_WorkGroupID.y);
 	uint pixel_index = gl_LocalInvocationIndex;
 
-	if (pixel_index < 40) {
+	if (pixel_index < SHARED_BUFFER_SIZE / 2) {
 		ivec2 slc = ivec2(local_coords.x * 2, 0);
-		ivec2 sgc = clamp(slc + block_coords + ivec2(-8, 0),
+		ivec2 sgc = clamp(slc + block_coords + ivec2(-BLUR_RADIUS, 0),
                              ivec2(0),
                              ivec2(params.size - 1));
-	    s_src_color[slc.x] = texture(src_img, (sgc + 0.5) * params.inv_size);
-		s_src_color[slc.x+1] = texture(src_img, (sgc + vec2(1.5, 0.5)) * params.inv_size);
+		vec2 uv0 = (sgc + 0.5) * params.inv_size;
+		vec2 uv1 = vec2(uv0.x + params.inv_size.x, uv0.y);
+	    s_src_color[slc.x] = texture(src_img, uv0);
+		s_src_depth[slc.x] = view_params.proj[3].z / (texture(depth_img, uv0).x + view_params.proj[2].z);
+		s_src_color[slc.x+1] = texture(src_img, uv1);
+		s_src_depth[slc.x+1] = view_params.proj[3].z / (texture(depth_img, uv1).x + view_params.proj[2].z);
 	}
 
 	barrier();
     memoryBarrierShared();
 
-	vec4 sum_color = s_src_color[local_coords.x+8];
+	uint center_idx = local_coords.x+BLUR_RADIUS;
+	vec4 sum_color = s_src_color[center_idx];
+	float center_depth = s_src_depth[center_idx];
 	float sum_weight = 1.0f;
 
-	for (int i = 1; i <= 8; i++) {
-		float weight = 1.0f / i;
-		sum_color += (s_src_color[local_coords.x+8-i] + s_src_color[local_coords.x+8+i]) * weight;
-		sum_weight += weight * 2.0f;
+	float slope_dir = (s_src_depth[center_idx+1] -
+					   s_src_depth[center_idx-1]) * 0.5f;
+
+	for (int i = 1; i <= BLUR_RADIUS; i++) {
+		uint idx_0 = center_idx+i;
+		uint idx_1 = center_idx-i;
+		float weight = (1.0f / i) * 0.5f + 0.5f;
+		float weight_0 = exp2(-abs(s_src_depth[idx_0] - (slope_dir * i + center_depth)) / i) * weight;
+		float weight_1 = exp2(-abs(s_src_depth[idx_1] - (center_depth - slope_dir * i)) / i) * weight;
+		sum_color += s_src_color[idx_1] * weight_1 + s_src_color[idx_0] * weight_0;
+		sum_weight += weight_1 + weight_0;
 	}
 	sum_color /= sum_weight;
   
