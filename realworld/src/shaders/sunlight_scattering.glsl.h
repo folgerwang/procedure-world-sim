@@ -19,6 +19,18 @@ float rsi(vec3 r0, vec3 rd, float sr) {
   return (-b + sqrt((b * b) - 4.0 * a * c)) / (2.0 * a);
 }
 
+vec2 calculatePhaseFuncParams(vec3 ray, vec3 sun_dir, float g) {
+    // Calculate the Rayleigh and Mie phases.
+    float mu = dot(ray, sun_dir);
+    float mumu = mu * mu;
+    float gg = g * g;
+    float pRlh = 3.0 / (16.0 * PI) * (1.0 + mumu);
+    float pMie = 3.0 / (8.0 * PI) * ((1.0 - gg) * (mumu + 1.0)) /
+        (pow(1.0 + gg - 2.0 * mu * g, 1.5) * (2.0 + gg));
+    
+    return vec2(pRlh, pMie);
+}
+
 vec3 atmosphere(
     vec3 r,
     vec3 r0,
@@ -51,12 +63,7 @@ vec3 atmosphere(
   float iOdMie = 0.0;
 
   // Calculate the Rayleigh and Mie phases.
-  float mu = dot(r, pSun);
-  float mumu = mu * mu;
-  float gg = g * g;
-  float pRlh = 3.0 / (16.0 * PI) * (1.0 + mumu);
-  float pMie = 3.0 / (8.0 * PI) * ((1.0 - gg) * (mumu + 1.0)) /
-      (pow(1.0 + gg - 2.0 * mu * g, 1.5) * (2.0 + gg));
+  vec2 phase_fuc_params = calculatePhaseFuncParams(r, pSun, g);
 
   // Sample the primary ray.
   for (int i = 0; i < iSteps; i++) {
@@ -113,7 +120,28 @@ vec3 atmosphere(
   }
 
   // Calculate and return the final color.
-  return iSun * max(pRlh * kRlh * totalRlh + pMie * kMie * totalMie, 0.0f);
+  return iSun * max(phase_fuc_params.x * kRlh * totalRlh +
+                    phase_fuc_params.y * kMie * totalMie, 0.0f);
+}
+
+vec2 calculateLutUv(vec3 pos_ws, vec3 sun_dir, float atmos_radius, float sqr_sample_dist_to_core)
+{
+    float dist_to_line_middle = dot(pos_ws, sun_dir);
+    float sqr_dist_to_line_middle =
+        dist_to_line_middle * dist_to_line_middle;
+    float sqr_perpendicular_dist_to_core =
+        sqr_sample_dist_to_core - sqr_dist_to_line_middle;
+    float perpendicular_dist_to_core =
+        sqrt(sqr_perpendicular_dist_to_core);
+    float whole_line_length =
+        2.0f * sqrt(atmos_radius * atmos_radius - sqr_perpendicular_dist_to_core);
+    float sample_length = rsi(pos_ws, sun_dir, atmos_radius);
+
+    vec2 lut_uv;
+    lut_uv.x = perpendicular_dist_to_core / atmos_radius;
+    lut_uv.y = sample_length / whole_line_length;
+    
+    return lut_uv;
 }
 
 vec4 atmosphereLut(
@@ -151,14 +179,8 @@ vec4 atmosphereLut(
     float iOdMie = 0.0;
 
     // Calculate the Rayleigh and Mie phases.
-    float mu = dot(r, pSun);
-    float mumu = mu * mu;
-    float gg = g * g;
-    float pRlh = 3.0 / (16.0 * PI) * (1.0 + mumu);
-    float pMie = 3.0 / (8.0 * PI) * ((1.0 - gg) * (mumu + 1.0)) /
-        (pow(1.0 + gg - 2.0 * mu * g, 1.5) * (2.0 + gg));
+    vec2 phase_fuc_params = calculatePhaseFuncParams(r, pSun, g);
 
-    const float inv_log_atmos_radius = 1.0f / log2(rAtmos + 1.0f);
     float start_dist = 0;
     float end_dist = 0;
     // Sample the primary ray.
@@ -183,20 +205,7 @@ vec4 atmosphereLut(
         iOdRlh += odStepRlh;
         iOdMie += odStepMie;
 
-        float dist_to_line_middle = dot(iPos, pSun);
-        float sqr_dist_to_line_middle =
-            dist_to_line_middle * dist_to_line_middle;
-        float sqr_perpendicular_dist_to_core =
-            sqr_sample_dist_to_core - sqr_dist_to_line_middle;
-        float perpendicular_dist_to_core =
-            sqrt(sqr_perpendicular_dist_to_core);
-        float whole_line_length =
-            2.0f * sqrt(rAtmos * rAtmos - sqr_perpendicular_dist_to_core);
-        float sample_length = rsi(iPos, pSun, rAtmos);
-
-        vec2 lut_uv;
-        lut_uv.x = perpendicular_dist_to_core / rAtmos;
-        lut_uv.y = sample_length / whole_line_length;
+        vec2 lut_uv = calculateLutUv(iPos, pSun, rAtmos, sqr_sample_dist_to_core);
 
         vec2 lut_value = exp2(texture(sky_scattering_lut, lut_uv).xy);
         float jOdRlh = lut_value.x;
@@ -214,7 +223,8 @@ vec4 atmosphereLut(
 
     // Calculate and return the final color.
     return vec4(iSun * visi.x *
-                    max(pRlh * kRlh * totalRlh + pMie * kMie * totalMie, 0.0f),
+                    max(phase_fuc_params.x * kRlh * totalRlh +
+                        phase_fuc_params.y * kMie * totalMie, 0.0f),
                 visi.y);
 }
 

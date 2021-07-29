@@ -79,7 +79,7 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
         moist_adjust += mix(params.controls.soil_moist_adj, params.controls.water_moist_adj, water_level);
     }
     else if (cell_above_ground) {
-        temp_adjust += params.controls.air_temp_adj;
+        temp_adjust += params.controls.moist_temp_convert * src_moist;
     }
 
     // make sure color different here is positive.

@@ -47,33 +47,10 @@ void main()
 
     cast_dist = min(cast_dist, bg_view_dist);
         
-    vec2 noise = hash23(floor(view_dir * 1334.0f));
-    vec3 noise_dir = hash33(floor(view_dir * 1434.0f)) * 2.0f - 1.0f;
+    vec2 noise = hash23(view_dir * 1334.0f);
+    vec3 noise_dir = hash33(view_dir * 1434.0f) * 2.0f - 1.0f;
     view_dir = normalize(view_dir + noise_dir * 0.0089f);
     float dither = (1.0f + (noise.y * 2.0f - 1.0f) * 0.2f);
-
-    vec3 fog_color = vec3(0);
-#if RENDER_SUNLIGHT_SCATTERING
-    vec3 r = view_dir;
-    vec3 r0 = vec3(0, kPlanetRadius, 0) + view_params.camera_pos.xyz;
-    float g = params.g;
-    float cast_range = cast_dist;
-    fog_color += atmosphereLut(
-        r,                              // normalized ray direction
-        r0,                             // ray origin
-        cast_range,
-        normalize(params.sun_pos),      // position of the sun
-        22.0,                           // intensity of the sun
-        kPlanetRadius,                  // radius of the planet in meters
-        kAtmosphereRadius,              // radius of the atmosphere in meters
-        vec3(5.5e-6, 13.0e-6, 22.4e-6), // Rayleigh scattering coefficient
-        21e-6,                          // Mie scattering coefficient
-        params.inv_rayleigh_scale_height,           // Rayleigh scale height
-        params.inv_mie_scale_height,                // Mie scale height
-        g,                              // Mie preferred scattering direction
-        vec2(1.0f, 1.0f),
-        iSteps).xyz;
-#endif
 
     vec3 fg_color = vec3(0);
     float final_alpha = 1.0f;
@@ -89,11 +66,11 @@ void main()
 
         uvw.xy = (sample_pos.xz - params.world_min) * params.inv_world_range;
         vec2 temp_moisture = texture(src_temp_moist, uvw).xy;
-        float moist = denormalizeMoisture(temp_moisture.y);
+        float moist = max(denormalizeMoisture(temp_moisture.y) - 0.1f, 0.0f);
         vec3 cloud_lighting = texture(src_cloud_lighting, uvw).xyz;
 
         float cur_alpha = exp2(-thickness * moist * 0.02f * dither);
-        fg_color = mix(cloud_lighting/* * fog_color*/, fg_color, cur_alpha);
+        fg_color = mix(cloud_lighting, fg_color, cur_alpha);
         final_alpha *= cur_alpha;
 
         last_dist = cur_dist;

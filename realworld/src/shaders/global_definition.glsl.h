@@ -225,7 +225,7 @@ struct WeatherControl {
     float           mix_rate;
     float           soil_temp_adj;
     float           water_temp_adj;
-    float           air_temp_adj;
+    float           moist_temp_convert;
     float           water_moist_adj;
     float           soil_moist_adj;
     float           heat_transfer_ratio;
@@ -251,7 +251,7 @@ struct CloudLightingParams {
     vec3            world_min;
     float           current_time;
     vec3            world_range;
-    uint            pad0;
+    float           g;
     vec3            inv_world_range;
     float           pad1;
     vec3            inv_size;

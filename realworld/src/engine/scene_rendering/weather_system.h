@@ -1,5 +1,6 @@
 #pragma once
 #include "engine/renderer/renderer.h"
+#include "engine/scene_rendering/skydome.h"
 
 namespace engine {
 namespace scene_rendering {
@@ -72,7 +73,7 @@ public:
     void updateCloudLighting(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const renderer::DescriptorSetList& desc_set_list,
-        const glm::vec3& sun_dir,
+        const std::shared_ptr<scene_rendering::Skydome>& skydome,
         int dbuf_idx,
         float current_time);
 

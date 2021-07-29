@@ -1100,7 +1100,7 @@ void RealWorldApplication::drawScene(
         weather_system_->updateCloudLighting(
             cmd_buf,
             desc_sets,
-            skydome_->getSunDir(),
+            skydome_,
             s_dbuf_idx,
             current_time);
     }

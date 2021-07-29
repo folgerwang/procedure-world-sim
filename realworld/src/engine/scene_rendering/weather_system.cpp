@@ -732,30 +732,30 @@ void WeatherSystem::updateCloudShadow(
         { cloud_shadow_volume_.image });
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, cloud_shadow_pipeline_);
-    glsl::CloudShadowParams cloud_shadow_params = {};
-    cloud_shadow_params.world_min =
+    glsl::CloudShadowParams params = {};
+    params.world_min =
         glm::vec3(-kWorldMapSize / 2.0f, -kWorldMapSize / 2.0f, kAirflowLowHeight);
-    cloud_shadow_params.world_range =
-        glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - cloud_shadow_params.world_min;
-    cloud_shadow_params.inv_world_range = 1.0f / cloud_shadow_params.world_range;
-    cloud_shadow_params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
-    cloud_shadow_params.size = glm::ivec3(w, w, h);
-    cloud_shadow_params.current_time = current_time;
-    cloud_shadow_params.sun_dir = sun_dir;
-    cloud_shadow_params.opaque_scale = 0.5f;
+    params.world_range =
+        glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - params.world_min;
+    params.inv_world_range = 1.0f / params.world_range;
+    params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
+    params.size = glm::ivec3(w, w, h);
+    params.current_time = current_time;
+    params.sun_dir = sun_dir;
+    params.opaque_scale = 0.1f;
+
+    cmd_buf->bindDescriptorSets(
+        renderer::PipelineBindPoint::COMPUTE,
+        cloud_shadow_pipeline_layout_,
+        { cloud_shadow_tex_desc_set_[dbuf_idx] });
 
     for (uint32_t i = 0; i < h; i++) {
-        cloud_shadow_params.layer_idx = i;
+        params.layer_idx = i;
         cmd_buf->pushConstants(
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             cloud_shadow_pipeline_layout_,
-            &cloud_shadow_params,
-            sizeof(cloud_shadow_params));
-
-        cmd_buf->bindDescriptorSets(
-            renderer::PipelineBindPoint::COMPUTE,
-            cloud_shadow_pipeline_layout_,
-            { cloud_shadow_tex_desc_set_[dbuf_idx] });
+            &params,
+            sizeof(params));
 
         cmd_buf->dispatch(
             (w + 7) / 8,
@@ -770,7 +770,7 @@ void WeatherSystem::updateCloudShadow(
 void WeatherSystem::updateCloudLighting(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const renderer::DescriptorSetList& desc_set_list,
-    const glm::vec3& sun_dir,
+    const std::shared_ptr<scene_rendering::Skydome>& skydome,
     int dbuf_idx,
     float current_time) {
     renderer::helper::transitMapTextureToStoreImage(
@@ -780,22 +780,23 @@ void WeatherSystem::updateCloudLighting(
     auto w = static_cast<uint32_t>(kAirflowBufferWidth);
     auto h = static_cast<uint32_t>(kAirflowBufferHeight);
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, cloud_lighting_pipeline_);
-    glsl::CloudLightingParams cloud_lighting_params = {};
-    cloud_lighting_params.world_min =
+    glsl::CloudLightingParams params = {};
+    params.world_min =
         glm::vec3(-kWorldMapSize / 2.0f, -kWorldMapSize / 2.0f, kAirflowLowHeight);
-    cloud_lighting_params.world_range =
-        glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - cloud_lighting_params.world_min;
-    cloud_lighting_params.inv_world_range = 1.0f / cloud_lighting_params.world_range;
-    cloud_lighting_params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
-    cloud_lighting_params.size = glm::ivec3(w, w, h);
-    cloud_lighting_params.current_time = current_time;
-    cloud_lighting_params.sun_dir = sun_dir;
+    params.world_range =
+        glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - params.world_min;
+    params.inv_world_range = 1.0f / params.world_range;
+    params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
+    params.size = glm::ivec3(w, w, h);
+    params.current_time = current_time;
+    params.sun_dir = skydome->getSunDir();
+    params.g = skydome->getG();
 
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
         cloud_lighting_pipeline_layout_,
-        &cloud_lighting_params,
-        sizeof(cloud_lighting_params));
+        &params,
+        sizeof(params));
 
     auto new_desc_sets = desc_set_list;
     new_desc_sets.push_back(cloud_lighting_tex_desc_set_[dbuf_idx]);
