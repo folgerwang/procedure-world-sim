@@ -69,7 +69,7 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
     float water_depth = ground_info.y - ground_info.x;
-    bool cell_touch_ground = (ground_info.y >= min_h - 0.01f);// && (ground_info.y <= max_h + 0.01f);
+    bool cell_touch_ground = (ground_info.y >= min_h - 0.01f);
     bool cell_above_ground = ground_info.y < min_h;
     float temp_adjust = 0.0f;
     float moist_adjust = 0.0f;
@@ -81,6 +81,11 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
     else if (cell_above_ground) {
         temp_adjust += params.controls.moist_temp_convert * src_moist;
     }
+
+    vec4 noise_values = hash44(vec4(vec3(src_coords), params.current_time));
+
+    temp_adjust *= (noise_values.x + noise_values.y);
+    moist_adjust *= (noise_values.z + noise_values.w);
 
     // make sure color different here is positive.
     return packTempMoist(src_temp + temp_adjust - target_stable_temp,
@@ -113,14 +118,14 @@ uint packTempDiff(uint min_temp, uint min_moist, uint center, ivec3 pixel_coords
     float temp_transfer = params.controls.heat_transfer_ratio * (1.0f + noise_values.x * params.controls.heat_transfer_noise_weight);
     float moist_transfer = params.controls.moist_transfer_ratio * (1.0f + noise_values.y * params.controls.moist_transfer_noise_weight);
 
-    float transfer_frozen = (target_stable_temp - 15.0f) / 5.0f * (1.0f + noise_values.z * 0.3f) * 0.5f + 0.5f;
+    float frozen_transfer_rate = (target_stable_temp - 15.0f) / 5.0f;
+    float transfer_frozen = frozen_transfer_rate + noise_values.z * 0.3f;
 
     uint packed_temp_moist_diff = 0;
     if (center_tm.x > min_tm.x) {
         float temp_diff = center_tm.x - min_tm.x;
-        float moist_diff = center_tm.y - min_tm.y;
         float temp_diff_adj = temp_diff * temp_transfer;
-        float moist_adj = center_tm.y * moist_transfer * transfer_frozen;
+        float moist_adj = center_tm.y * clamp(moist_transfer * transfer_frozen, 0.0f, 1.0f);
         packed_temp_moist_diff = packTempMoistDiff(temp_diff_adj, moist_adj, min_temp);
     }
 
@@ -157,7 +162,7 @@ void createTempMoistureFlowBuffer(int pixel_index, ivec3 block_coords) {
     s_flow_grid[dlc.z][dlc.y][dlc.x] = packTempDiff(min_temp, min_moist, center, dlc + block_coords);
 }
 
-vec2 generateAirflow(ivec3 dlc, out vec3 airflow_dir) {
+vec2 generateAirflow(ivec3 dlc, out vec3 airflow_dir, float above_ratio, float below_ratio) {
     ivec3 slc = dlc + 1;
     uint center = s_flow_grid[slc.z][slc.y][slc.x];
     uint back = s_flow_grid[slc.z][slc.y-1][slc.x];
@@ -194,15 +199,15 @@ vec2 generateAirflow(ivec3 dlc, out vec3 airflow_dir) {
         airflow_vec += ivec3(0, 0, -temp_diff);
     }
     if ((top & 0x07) == 5) {
-        uint temp_diff = top >> 16;
+        uint temp_diff = uint(float(top >> 16) * above_ratio);
         temp_moist_adj.x += temp_diff;
-        temp_moist_adj.y += top & 0xfff8;
+        temp_moist_adj.y += uint(float(top & 0xfff8) * above_ratio);
         airflow_vec += ivec3(0, temp_diff, 0);
     }
     if ((bottom & 0x07) == 4) {
-        uint temp_diff = bottom >> 16;
+        uint temp_diff = uint(float(bottom >> 16) * below_ratio);
         temp_moist_adj.x += temp_diff;
-        temp_moist_adj.y += bottom & 0xfff8;
+        temp_moist_adj.y += uint(float(bottom & 0xfff8) * below_ratio);
         airflow_vec += ivec3(0, -temp_diff, 0);
     }
 
@@ -257,9 +262,15 @@ void main()
     memoryBarrierShared();
 
     vec3 airflow_dir;
-    vec2 temp_moist_adj = generateAirflow(local_coords, airflow_dir);
-
     float uvw_w = (pixel_coords.z + 0.5) * params.inv_size.z;
+    float sample_delta_h = getSampleToDeltaHeight(uvw_w);
+    float above_sample_delta_h = getSampleToDeltaHeight(uvw_w + params.inv_size.z);
+    float below_sample_delta_h = getSampleToDeltaHeight(uvw_w - params.inv_size.z);
+    vec2 temp_moist_adj = generateAirflow(local_coords,
+                                          airflow_dir,
+                                          above_sample_delta_h / sample_delta_h,
+                                          below_sample_delta_h / sample_delta_h);
+
     float sample_h = getSampleToHeight(uvw_w);
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 

@@ -55,7 +55,7 @@ void main()
         upper_uvw.xy = (upper_layer_position_ws.xz - params.world_min.xy) * params.inv_world_range.xy;
 
         vec2 upper_pixel_coord = mirrorRepeat(upper_uvw.xy * params.size.xy, params.size.xy);
-        vec2 noise = hash23(vec3(upper_pixel_coord, pixel_coords.z + 1));
+        vec2 noise = hash23(vec3(upper_pixel_coord, pixel_coords.z + 1)); 
         vec2 upc_ratio = fract(noise + upper_pixel_coord);
         ivec2 upc = ivec2(upper_pixel_coord);
 

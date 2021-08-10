@@ -58,9 +58,9 @@ Menu::Menu(
 
     weather_controls_.mix_rate = 0.92f;
     weather_controls_.sea_level_temperature = 30.0f;
-    weather_controls_.soil_temp_adj = 0.20f;
-    weather_controls_.water_temp_adj = 1.02f;
-    weather_controls_.moist_temp_convert = 0.001f;
+    weather_controls_.soil_temp_adj = 0.40f;
+    weather_controls_.water_temp_adj = 2.02f;
+    weather_controls_.moist_temp_convert = 0.01f;
     weather_controls_.soil_moist_adj = 0.001f;
     weather_controls_.water_moist_adj = 0.005f;
     weather_controls_.heat_transfer_ratio = 0.753f;
