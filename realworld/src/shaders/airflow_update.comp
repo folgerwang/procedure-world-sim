@@ -118,14 +118,13 @@ uint packTempDiff(uint min_temp, uint min_moist, uint center, ivec3 pixel_coords
     float temp_transfer = params.controls.heat_transfer_ratio * (1.0f + noise_values.x * params.controls.heat_transfer_noise_weight);
     float moist_transfer = params.controls.moist_transfer_ratio * (1.0f + noise_values.y * params.controls.moist_transfer_noise_weight);
 
-    float frozen_transfer_rate = (target_stable_temp - 15.0f) / 5.0f;
-    float transfer_frozen = frozen_transfer_rate + noise_values.z * 0.3f;
+    float frozen_transfer_rate = clamp((target_stable_temp - 15.0f) / 5.0f * 0.5f + 0.5f + noise_values.z * 0.3f, 0.0f, 1.0f);
 
     uint packed_temp_moist_diff = 0;
     if (center_tm.x > min_tm.x) {
         float temp_diff = center_tm.x - min_tm.x;
         float temp_diff_adj = temp_diff * temp_transfer;
-        float moist_adj = center_tm.y * clamp(moist_transfer * transfer_frozen, 0.0f, 1.0f);
+        float moist_adj = center_tm.y * moist_transfer * frozen_transfer_rate;
         packed_temp_moist_diff = packTempMoistDiff(temp_diff_adj, moist_adj, min_temp);
     }
 
@@ -139,88 +138,93 @@ void createTempMoistureFlowBuffer(int pixel_index, ivec3 block_coords) {
     ivec3 dlc = ivec3(ixy % 10, ixy / 10, iz);
     ivec3 slc = dlc + 1;
 
+    ivec3 pixel_coords = clamp(dlc + block_coords - 1,
+                               ivec3(0),
+                               params.size - 1);
+
     uint center = s_temp_moisture_grid[slc.z][slc.y][slc.x];
 
-    uint left = s_temp_moisture_grid[slc.z][slc.y][slc.x-1] | 0x00;
-    uint right = s_temp_moisture_grid[slc.z][slc.y][slc.x+1] | 0x01;
-    uint back = s_temp_moisture_grid[slc.z][slc.y-1][slc.x] | 0x02;
-    uint front = s_temp_moisture_grid[slc.z][slc.y+1][slc.x] | 0x03;
-    uint top = s_temp_moisture_grid[slc.z-1][slc.y][slc.x] | 0x04;
-    uint bottom = s_temp_moisture_grid[slc.z+1][slc.y][slc.x] | 0x05;
+    uint left = s_temp_moisture_grid[slc.z][slc.y][slc.x-1] | kNodeLeft;
+    uint right = s_temp_moisture_grid[slc.z][slc.y][slc.x+1] | kNodeRight;
+    uint back = s_temp_moisture_grid[slc.z][slc.y-1][slc.x] | kNodeBack;
+    uint front = s_temp_moisture_grid[slc.z][slc.y+1][slc.x] | kNodeFront;
+    uint below = s_temp_moisture_grid[slc.z-1][slc.y][slc.x] | kNodeBelow;
+    uint above = s_temp_moisture_grid[slc.z+1][slc.y][slc.x] | kNodeAbove;
 
-    uint min_temp = min(min(min(left, right), min(back, front)), min(top, bottom));
+    uint min_temp = min(min(min(left, right), min(back, front)), min(below, above));
 
     left &= 0xffff;
     right &= 0xffff;
     back &= 0xffff;
     front &= 0xffff;
-    top &= 0xffff;
-    bottom &= 0xffff;
+    below &= 0xffff;
+    above &= 0xffff;
 
-    uint min_moist = min(min(min(left, right), min(back, front)), min(top, bottom));
+    uint min_moist = min(min(min(left, right), min(back, front)), min(below, above));
 
-    s_flow_grid[dlc.z][dlc.y][dlc.x] = packTempDiff(min_temp, min_moist, center, dlc + block_coords);
+    s_flow_grid[dlc.z][dlc.y][dlc.x] = packTempDiff(min_temp, min_moist, center, pixel_coords);
 }
 
 vec2 generateAirflow(ivec3 dlc, out vec3 airflow_dir, float above_ratio, float below_ratio) {
     ivec3 slc = dlc + 1;
     uint center = s_flow_grid[slc.z][slc.y][slc.x];
-    uint back = s_flow_grid[slc.z][slc.y-1][slc.x];
-    uint front = s_flow_grid[slc.z][slc.y+1][slc.x];
-    uint top = s_flow_grid[slc.z-1][slc.y][slc.x];
-    uint bottom = s_flow_grid[slc.z+1][slc.y][slc.x];
+
     uint left = s_flow_grid[slc.z][slc.y][slc.x-1];
     uint right = s_flow_grid[slc.z][slc.y][slc.x+1];
+    uint back = s_flow_grid[slc.z][slc.y-1][slc.x];
+    uint front = s_flow_grid[slc.z][slc.y+1][slc.x];
+    uint below = s_flow_grid[slc.z-1][slc.y][slc.x];
+    uint above = s_flow_grid[slc.z+1][slc.y][slc.x];
 
     uvec2 temp_moist_adj = ivec2(0);
     ivec3 airflow_vec = ivec3(0);
-    if ((left & 0x07) == 1) {
+    if ((left & 0x07) == kNodeRight) {
         uint temp_diff = left >> 16;
         temp_moist_adj.x += temp_diff;
         temp_moist_adj.y += left & 0xfff8;
         airflow_vec += ivec3(temp_diff, 0, 0);
     }
-    if ((right & 0x07) == 0) {
+    if ((right & 0x07) == kNodeLeft) {
         uint temp_diff = right >> 16;
         temp_moist_adj.x += temp_diff;
         temp_moist_adj.y += right & 0xfff8;
         airflow_vec += ivec3(-temp_diff, 0, 0);
     }
-    if ((back & 0x07) == 3) {
+    if ((back & 0x07) == kNodeFront) {
         uint temp_diff = back >> 16;
         temp_moist_adj.x += temp_diff;
         temp_moist_adj.y += back & 0xfff8;
         airflow_vec += ivec3(0, 0, temp_diff);
     }
-    if ((front & 0x07) == 2) {
+    if ((front & 0x07) == kNodeBack) {
         uint temp_diff = front >> 16;
         temp_moist_adj.x += temp_diff;
         temp_moist_adj.y += front & 0xfff8;
         airflow_vec += ivec3(0, 0, -temp_diff);
     }
-    if ((top & 0x07) == 5) {
-        uint temp_diff = uint(float(top >> 16) * above_ratio);
+    if ((below & 0x07) == kNodeAbove) {
+        uint temp_diff = uint(float(below >> 16) * below_ratio);
         temp_moist_adj.x += temp_diff;
-        temp_moist_adj.y += uint(float(top & 0xfff8) * above_ratio);
+        temp_moist_adj.y += uint(float(below & 0xfff8) * below_ratio);
         airflow_vec += ivec3(0, temp_diff, 0);
     }
-    if ((bottom & 0x07) == 4) {
-        uint temp_diff = uint(float(bottom >> 16) * below_ratio);
+    if ((above & 0x07) == kNodeBelow) {
+        uint temp_diff = uint(float(above >> 16) * above_ratio);
         temp_moist_adj.x += temp_diff;
-        temp_moist_adj.y += uint(float(bottom & 0xfff8) * below_ratio);
+        temp_moist_adj.y += uint(float(above & 0xfff8) * above_ratio);
         airflow_vec += ivec3(0, -temp_diff, 0);
     }
 
     uint flow_tag = center & 0x07;
-    uint temp_diff = center >> 16;
-    uint moist_diff = center & 0xfff8;
+    uint center_temp_trans = center >> 16;
+    uint center_moist_trans = center & 0xfff8;
 
-    airflow_vec += ivec3(flow_tag == 0 ? -temp_diff : (flow_tag == 1 ? temp_diff : 0),
-                        flow_tag == 4 ? -temp_diff : (flow_tag == 5 ? temp_diff : 0),
-                        flow_tag == 2 ? -temp_diff : (flow_tag == 3 ? temp_diff : 0));
+    airflow_vec += ivec3(flow_tag == kNodeLeft ? -center_temp_trans : (flow_tag == kNodeRight ? center_temp_trans : 0),
+                        flow_tag == kNodeBelow ? -center_temp_trans : (flow_tag == kNodeAbove ? center_temp_trans : 0),
+                        flow_tag == kNodeBack ? -center_temp_trans : (flow_tag == kNodeFront ? center_temp_trans : 0));
 
     airflow_dir = vec3(airflow_vec) * kTempMoistDiffToFloat;
-    return (ivec2(temp_moist_adj) - ivec2(temp_diff, moist_diff)) * kTempMoistDiffToFloat;
+    return (ivec2(temp_moist_adj) - ivec2(center_temp_trans, center_moist_trans)) * kTempMoistDiffToFloat;
 }
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 16) in;
