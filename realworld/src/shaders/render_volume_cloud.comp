@@ -19,7 +19,7 @@ layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniform
 };
 
 layout(set = 0, binding = SRC_TEMP_MOISTURE_INDEX) uniform sampler3D src_temp_moist;
-layout(set = 0, binding = SRC_CLOUD_LIGHTING_TEX_INDEX) uniform sampler3D src_cloud_lighting;
+layout(set = 0, binding = SRC_CLOUD_LIGHTING_TEX_INDEX) uniform sampler3D src_cloud_shadow;
 layout(set = 0, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
 layout(set = 0, binding = DST_FOG_CLOUD_INDEX, rgba16f) uniform writeonly image2D dst_fog_cloud;
 
@@ -51,11 +51,19 @@ void main()
     vec3 noise_dir = hash33(view_dir * 1434.0f) * 2.0f - 1.0f;
     view_dir = normalize(view_dir + noise_dir * 0.0019f);
 
+    const uint num_samples = 16;
+    const float inv_num_samples = 1.0f / num_samples;
+
+    const float cast_dist_per_sample = cast_dist * inv_num_samples;
+
+    float cos_theta = dot(view_dir, -normalize(params.sun_pos));
+    float phase = henyeyGreensteinPhaseFunc(params.g, cos_theta);
+
     vec3 fg_color = vec3(0);
     float final_alpha = 1.0f;
-    float last_dist = cast_dist / 32.0f * (32 + noise.x * 0.5f);
-    for (int i = 0; i < 32; i++) {
-        float cur_dist = cast_dist / 32.0f * (32 - i + noise.x * 0.5f);
+    float last_dist = cast_dist_per_sample * (num_samples + noise.x * 0.5f);
+    for (int i = 0; i < num_samples; i++) {
+        float cur_dist = cast_dist_per_sample * (num_samples - i + noise.x * 0.5f);
         float thickness = max(last_dist - cur_dist, 0.0f);
 
         vec3 sample_pos = view_params.camera_pos.xyz + cur_dist * view_dir;
@@ -66,7 +74,9 @@ void main()
         uvw.xy = (sample_pos.xz - params.world_min) * params.inv_world_range;
         vec2 temp_moisture = texture(src_temp_moist, uvw).xy;
         float moist = denormalizeMoisture(temp_moisture.y);
-        vec3 cloud_lighting = texture(src_cloud_lighting, uvw).xyz;
+        float cloud_shadow = texture(src_cloud_shadow, uvw).x;
+
+        vec3 cloud_lighting = (vec3(0.5) * phase + vec3(1.0)) * cloud_shadow;
 
         float cur_alpha = exp2(-thickness * moist * 0.003f);
         fg_color = mix(cloud_lighting, fg_color, cur_alpha);

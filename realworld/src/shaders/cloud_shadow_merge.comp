@@ -24,6 +24,10 @@ vec2 mirrorRepeat(vec2 src_coord, vec2 size) {
     return scr_coord_mod;
 }
 
+vec2 repeat(vec2 src_coord, vec2 size) {
+    return mod(src_coord + 1000.0f * size, size);
+}
+
 layout(set = 0, binding = DST_CLOUD_SHADOW_TEX_INDEX, r16f) uniform image3D dst_cloud_shadow;
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;

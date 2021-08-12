@@ -158,7 +158,6 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\updat
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_game_objects.comp -o $(ProjectDir)lib\shaders\update_game_objects_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_instance_buffer.comp -o $(ProjectDir)lib\shaders\update_instance_buffer_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\airflow_update.comp -o $(ProjectDir)lib\shaders\airflow_update_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cloud_lighting.comp -o $(ProjectDir)lib\shaders\cloud_lighting_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cloud_shadow_init.comp -o $(ProjectDir)lib\shaders\cloud_shadow_init_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cloud_shadow_merge.comp -o $(ProjectDir)lib\shaders\cloud_shadow_merge_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\temperature_init.comp -o $(ProjectDir)lib\shaders\temperature_init_comp.spv
@@ -255,7 +254,6 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\updat
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_game_objects.comp -o $(ProjectDir)lib\shaders\update_game_objects_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_instance_buffer.comp -o $(ProjectDir)lib\shaders\update_instance_buffer_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\airflow_update.comp -o $(ProjectDir)lib\shaders\airflow_update_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cloud_lighting.comp -o $(ProjectDir)lib\shaders\cloud_lighting_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cloud_shadow_init.comp -o $(ProjectDir)lib\shaders\cloud_shadow_init_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cloud_shadow_merge.comp -o $(ProjectDir)lib\shaders\cloud_shadow_merge_comp.spv
 $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\temperature_init.comp -o $(ProjectDir)lib\shaders\temperature_init_comp.spv
@@ -339,7 +337,6 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug
     <None Include="src\shaders\base.vert" />
     <None Include="src\shaders\blur_image_x.comp" />
     <None Include="src\shaders\blur_image_y_merge.comp" />
-    <None Include="src\shaders\cloud_lighting.comp" />
     <None Include="src\shaders\cloud_shadow_merge.comp" />
     <None Include="src\shaders\cloud_shadow_init.comp" />
     <None Include="src\shaders\cube_skybox.frag" />

@@ -64,12 +64,13 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
     float src_temp = denormalizeTemperature(src_temp_moist.x);
     float src_moist = denormalizeMoisture(src_temp_moist.y);
 
-    float uvw_w = (src_coords.z + noise_values.x) * params.inv_size.z;
-    float min_h = getSampleToHeight(uvw_w - params.inv_size.z * 0.5f);
-    float max_h = getSampleToHeight(uvw_w + params.inv_size.z * 0.5f);
+    float uvw_w = (src_coords.z + 0.5f) * params.inv_size.z;
     float sample_h = getSampleToHeight(uvw_w);
-
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
+
+    // add some noise for contact detection.
+    float low_uvw_w = uvw_w + (noise_values.x - 1.0f) * params.inv_size.z;
+    float min_h = getSampleToHeight(low_uvw_w);
 
     float water_depth = ground_info.y - ground_info.x;
     bool cell_touch_ground = (ground_info.y >= min_h - 0.01f);
@@ -113,13 +114,13 @@ uint packTempDiff(uint min_temp, uint min_moist, uint center, ivec3 pixel_coords
     vec4 noise_values = hash44(vec4(vec3(pixel_coords), params.current_time)) * 2.0f - 1.0f;
     float uvw_w = (pixel_coords.z + 0.5) * params.inv_size.z;
     float sample_h = getSampleToHeight(uvw_w);
-
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
     float temp_transfer = params.controls.heat_transfer_ratio * (1.0f + noise_values.x * params.controls.heat_transfer_noise_weight);
     float moist_transfer = params.controls.moist_transfer_ratio * (1.0f + noise_values.y * params.controls.moist_transfer_noise_weight);
 
-    float frozen_transfer_rate = clamp((target_stable_temp - 15.0f) / 5.0f * 0.5f + 0.5f + noise_values.z * 0.3f, 0.0f, 1.0f);
+    float frozen_rate = (target_stable_temp - 15.0f) / 10.0f * 0.5f + 0.5f;
+    float frozen_transfer_rate = clamp(frozen_rate + noise_values.z * 0.3f, 0.0f, 1.0f);
 
     uint packed_temp_moist_diff = 0;
     if (center_tm.x > min_tm.x) {

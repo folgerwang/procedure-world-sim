@@ -1097,13 +1097,6 @@ void RealWorldApplication::drawScene(
             menu_->getLightExtFactor(),
             s_dbuf_idx,
             current_time);
-
-        weather_system_->updateCloudLighting(
-            cmd_buf,
-            desc_sets,
-            skydome_,
-            s_dbuf_idx,
-            current_time);
     }
 
     // this has to be happened after tile update, or you wont get the right height info.

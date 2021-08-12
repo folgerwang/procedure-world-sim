@@ -316,9 +316,6 @@
     <None Include="src\shaders\temperature_init.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
-    <None Include="src\shaders\cloud_lighting.comp">
-      <Filter>Resource Files\shaders</Filter>
-    </None>
     <None Include="src\shaders\render_volume_cloud.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>

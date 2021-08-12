@@ -125,3 +125,8 @@ float getPackedVectorLength(float packed_w) {
     return packed_w / kAirflowStrengthNormalizeScale;
 }
 
+float henyeyGreensteinPhaseFunc(float g, float cos_theta) {
+    float g2 = g * g;
+    const float kPi = 3.1415926535f;
+    return (1.0f - g2) / (pow(1.0f + g2 - 2.0f * g * cos_theta, 1.5f) * 4.0f * kPi);
+}
