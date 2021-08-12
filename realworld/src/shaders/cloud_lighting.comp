@@ -103,7 +103,7 @@ void main()
     material_info.f0 = mix(f0, material_info.baseColor.rgb, material_info.metallic);
 
     float moist_intensity = texture(src_temp_moisture, uvw).y;
-    float opaque = texture(src_cloud_shadow, uvw).x;
+    float light_pass_rate = texture(src_cloud_shadow, uvw).x;
 
     #ifdef USE_IBL
     float mip_count = 10;
@@ -115,7 +115,7 @@ void main()
     float cos_theta = dot(view, -params.sun_dir);
     float phase = henyeyGreensteinPhaseFunc(params.g, cos_theta);
 
-    vec3 color = (vec3(0.65) * phase + vec3(0.85)) * (max(1.0f - opaque, 0.0f) * 0.6f + 0.4f);
+    vec3 color = (vec3(0.65) * phase + vec3(0.85)) * light_pass_rate;
 
     imageStore(dst_cloud_lighting, pixel_coords, vec4(color, 0.0f));
 }

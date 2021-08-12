@@ -125,36 +125,38 @@ bool Menu::draw(
 
             ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu("Tools"))
-        {
+
+        if (ImGui::BeginMenu("Skydome")) {
             ImGui::SliderFloat("phase func g", &skydome->getG(), -1.0f, 2.0f);
             ImGui::SliderFloat("rayleigh scale height", &skydome->getRayleighScaleHeight(), 0.0f, 16000.0f);
             ImGui::SliderFloat("mei scale height", &skydome->getMieScaleHeight(), 0.0f, 2400.0f);
+            ImGui::EndMenu();
+        }
 
-            ImGui::Separator();
-            if (ImGui::MenuItem("Turn off water pass", NULL, turn_off_water_pass_)) {
-                turn_off_water_pass_ = !turn_off_water_pass_;
-            }
-
+        if (ImGui::BeginMenu("Weather System")) {
             if (ImGui::MenuItem("Turn off volume moist", NULL, turn_off_volume_moist_)) {
                 turn_off_volume_moist_ = !turn_off_volume_moist_;
             }
 
-            ImGui::Separator();
             if (ImGui::MenuItem("Turn on air flow effect", NULL, turn_on_airflow_)) {
                 turn_on_airflow_ = !turn_on_airflow_;
             }
 
+            ImGui::Separator();
+
+            ImGui::SliderFloat("Light Extinct Rate", &light_ext_factor_, 0.0f, 0.01f);
             ImGui::SliderFloat("water flow strength", &water_flow_strength_, 0.0f, 10.0f);
             ImGui::SliderFloat("air flow strength", &air_flow_strength_, 0.0f, 100.0f);
 
             ImGui::Separator();
+
             ImGui::SliderFloat("mix rate", &weather_controls_.mix_rate, 0.0f, 1.0f);
             ImGui::SliderFloat("sea level temperature", &weather_controls_.sea_level_temperature, -40.0f, 40.0f);
             ImGui::SliderFloat("heat transfer rate", &weather_controls_.heat_transfer_ratio, 0.0f, 2.0f);
             ImGui::SliderFloat("heat transfer noise level", &weather_controls_.heat_transfer_noise_weight, 0.0f, 1.0f);
             ImGui::SliderFloat("moist transfer rate", &weather_controls_.moist_transfer_ratio, 0.0f, 2.0f);
             ImGui::SliderFloat("moist transfer noise level", &weather_controls_.moist_transfer_noise_weight, 0.0f, 1.0f);
+
             ImGui::Separator();
 
             const char* items[] = { "no debug draw", "debug temperature", "debug moisture" };
@@ -170,6 +172,15 @@ bool Menu::draw(
                     }
                 }
                 ImGui::EndCombo();
+            }
+
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Tools"))
+        {
+            if (ImGui::MenuItem("Turn off water pass", NULL, turn_off_water_pass_)) {
+                turn_off_water_pass_ = !turn_off_water_pass_;
             }
 
             ImGui::EndMenu();

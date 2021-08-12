@@ -15,6 +15,7 @@ class Menu {
     uint32_t debug_draw_type_ = 0;
     float air_flow_strength_ = 50.0f;
     float water_flow_strength_ = 1.0f;
+    float light_ext_factor_ = 0.001f;
 
     glsl::WeatherControl weather_controls_;
 
@@ -54,6 +55,10 @@ public:
 
     inline const glsl::WeatherControl& getWeatherControls() {
         return weather_controls_;
+    }
+
+    inline const float& getLightExtFactor() const {
+        return light_ext_factor_;
     }
 
     inline float getAirFlowStrength() {

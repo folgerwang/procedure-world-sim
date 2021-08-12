@@ -1,6 +1,7 @@
 #pragma once
 #include "engine/renderer/renderer.h"
 #include "engine/scene_rendering/skydome.h"
+#include "shaders/global_definition.glsl.h"
 
 namespace engine {
 namespace scene_rendering {
@@ -27,6 +28,11 @@ class WeatherSystem {
     std::shared_ptr<renderer::DescriptorSetLayout> cloud_shadow_desc_set_layout_;
     std::shared_ptr<renderer::PipelineLayout> cloud_shadow_pipeline_layout_;
     std::shared_ptr<renderer::Pipeline> cloud_shadow_pipeline_;
+    std::shared_ptr<renderer::Pipeline> cloud_shadow_init_pipeline_;
+    std::shared_ptr<renderer::DescriptorSet> cloud_shadow_merge_tex_desc_set_;
+    std::shared_ptr<renderer::DescriptorSetLayout> cloud_shadow_merge_desc_set_layout_;
+    std::shared_ptr<renderer::PipelineLayout> cloud_shadow_merge_pipeline_layout_;
+    std::shared_ptr<renderer::Pipeline> cloud_shadow_merge_pipeline_;
 
 public:
     WeatherSystem(
@@ -80,8 +86,9 @@ public:
     void updateCloudShadow(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const glm::vec3& sun_dir,
-        int dbuf_idx,
-        float current_time);
+        const float& light_ext_factor,
+        const int& dbuf_idx,
+        const float& current_time);
 
     void destroy(const std::shared_ptr<renderer::Device>& device);
 };

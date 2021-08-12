@@ -319,9 +319,6 @@
     <None Include="src\shaders\cloud_lighting.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
-    <None Include="src\shaders\cloud_shadow.comp">
-      <Filter>Resource Files\shaders</Filter>
-    </None>
     <None Include="src\shaders\render_volume_cloud.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
@@ -338,6 +335,12 @@
       <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\sky_scattering_lut_final_pass.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\cloud_shadow_init.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\cloud_shadow_merge.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
   </ItemGroup>

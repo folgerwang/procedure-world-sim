@@ -1,4 +1,6 @@
-#define kRealWorldAirflowMaxHeight        12000.0f
+//#define kRealWorldAirflowMaxHeight        12000.0f
+//Reduce atmosphere height from 12000.0f to 6500.0f
+#define kRealWorldAirflowMaxHeight        6500.0f
 #define kDegreeDecreasePerKm              (6.5f / 1000.0f)
 
 #define kAirflowMaxHeight                 (kRealWorldAirflowMaxHeight / kDegreeDecreasePerKm / 1000.0f * 6.5f)
@@ -8,8 +10,10 @@
 #define kTemperaturePositiveOffset        78.0f
 #define kTemperatureNormalizer            (1.0f / 128.0f)
 #define kTemperatureDenormalizer          (1.0f / kTemperatureNormalizer)
-#define kMoistureNormalizer               (1.0f / 8.0f)
-#define kMoistureDenormalizer             (1.0f / kMoistureNormalizer)
+#define kMoistureNormalizerExpMin         (-16.0f)
+#define kMoistureNormalizerExpMax         (10.0f)
+#define kMoistureNormalizerExpRange       (kMoistureNormalizerExpMax - kMoistureNormalizerExpMin)
+#define kMoistureNormalizerMin            exp2(kMoistureNormalizerExpMin)
 
 #define kMaxTemperatureAdjustRange        8.0f
 #define kMaxMoistureIntensity             2.0f
@@ -106,11 +110,11 @@ vec2 denormalizeTemperature(vec2 normalized_temp) {
 }
 
 float normalizeMoisture(float moist) {
-    return moist * kMoistureNormalizer;
+    return (log2(max(moist, kMoistureNormalizerMin)) - kMoistureNormalizerExpMin) / kMoistureNormalizerExpRange;
 }
 
 float denormalizeMoisture(float normalized_moist) {
-    return normalized_moist * kMoistureDenormalizer;
+    return exp2(normalized_moist * kMoistureNormalizerExpRange + kMoistureNormalizerExpMin);
 }
 
 float getNormalizedVectorLength(vec3 dir_vec) {

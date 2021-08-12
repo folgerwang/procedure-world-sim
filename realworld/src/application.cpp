@@ -493,7 +493,7 @@ void RealWorldApplication::initVulkan() {
         device_info_,
         descriptor_pool_,
         desc_set_layouts,
-        texture_sampler_,
+        mirror_repeat_sampler_,
         ego::TileObject::getRockLayer().view,
         soil_water_texes);
 
@@ -623,7 +623,7 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         desc_set_layouts,
-        texture_sampler_,
+        mirror_repeat_sampler_,
         ego::TileObject::getRockLayer().view,
         { ego::TileObject::getSoilWaterLayer(0).view,
           ego::TileObject::getSoilWaterLayer(1).view });
@@ -1094,6 +1094,7 @@ void RealWorldApplication::drawScene(
         weather_system_->updateCloudShadow(
             cmd_buf,
             skydome_->getSunDir(),
+            menu_->getLightExtFactor(),
             s_dbuf_idx,
             current_time);
 

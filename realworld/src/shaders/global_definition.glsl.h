@@ -133,8 +133,9 @@
 #define DEBUG_DRAW_TEMPRETURE               1
 #define DEBUG_DRAW_MOISTURE                 2
 
-#define kAirflowBufferWidth                 256
+#define kAirflowBufferWidth                 128
 #define kAirflowBufferHeight                128
+#define kAirflowBufferCount                 7
 
 #define kAtmosphereScatteringLutGroupSize   64
 #define kAtmosphereScatteringLutWidth       512
@@ -270,7 +271,7 @@ struct CloudShadowParams {
     vec3            world_range;
     uint            layer_idx;
     vec3            inv_world_range;
-    float           opaque_scale;
+    float           light_ext_factor;
     vec3            inv_size;
     float           pad1;
     ivec3           size;
