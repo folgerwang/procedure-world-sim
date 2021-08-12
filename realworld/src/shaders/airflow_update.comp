@@ -57,11 +57,14 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
     ivec3 src_coords = clamp(slc + block_coords - 2,
                              ivec3(0),
                              params.size - 1);
+
+    vec4 noise_values = hash44(vec4(vec3(src_coords), params.current_time));
+
     vec2 src_temp_moist = imageLoad(src_temp_moisture, src_coords).xy;
     float src_temp = denormalizeTemperature(src_temp_moist.x);
     float src_moist = denormalizeMoisture(src_temp_moist.y);
 
-    float uvw_w = (src_coords.z + 0.5) * params.inv_size.z;
+    float uvw_w = (src_coords.z + noise_values.x) * params.inv_size.z;
     float min_h = getSampleToHeight(uvw_w - params.inv_size.z * 0.5f);
     float max_h = getSampleToHeight(uvw_w + params.inv_size.z * 0.5f);
     float sample_h = getSampleToHeight(uvw_w);
@@ -81,8 +84,6 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
     else if (cell_above_ground) {
         temp_adjust += params.controls.moist_temp_convert * src_moist;
     }
-
-    vec4 noise_values = hash44(vec4(vec3(src_coords), params.current_time));
 
     temp_adjust *= (noise_values.x + noise_values.y);
     moist_adjust *= (noise_values.z + noise_values.w);

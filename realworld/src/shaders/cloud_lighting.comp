@@ -115,7 +115,7 @@ void main()
     float cos_theta = dot(view, -params.sun_dir);
     float phase = henyeyGreensteinPhaseFunc(params.g, cos_theta);
 
-    vec3 color = (vec3(0.65) * phase + vec3(0.85)) * light_pass_rate;
+    vec3 color = /*(vec3(0.5) * phase + vec3(1.0)) * */vec3(light_pass_rate);
 
     imageStore(dst_cloud_lighting, pixel_coords, vec4(color, 0.0f));
 }

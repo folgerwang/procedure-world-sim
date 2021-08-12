@@ -64,7 +64,7 @@ Menu::Menu(
     weather_controls_.soil_moist_adj = 0.002f;
     weather_controls_.water_moist_adj = 0.01f;
     weather_controls_.heat_transfer_ratio = 0.753f;
-    weather_controls_.moist_transfer_ratio = 0.289f;
+    weather_controls_.moist_transfer_ratio = 0.589f;
     weather_controls_.heat_transfer_noise_weight = 0.2f;
     weather_controls_.moist_transfer_noise_weight = 0.727f;
 }
@@ -144,7 +144,7 @@ bool Menu::draw(
 
             ImGui::Separator();
 
-            ImGui::SliderFloat("Light Extinct Rate", &light_ext_factor_, 0.0f, 0.01f);
+            ImGui::SliderFloat("Light Extinct Rate", &light_ext_factor_, 0.0f, 2.0f);
             ImGui::SliderFloat("water flow strength", &water_flow_strength_, 0.0f, 10.0f);
             ImGui::SliderFloat("air flow strength", &air_flow_strength_, 0.0f, 100.0f);
 
