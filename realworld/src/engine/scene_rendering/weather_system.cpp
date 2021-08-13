@@ -476,9 +476,9 @@ void WeatherSystem::initTemperatureBuffer(
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, temperature_init_pipeline_);
     glsl::AirflowUpdateParams airflow_params = {};
     airflow_params.world_min =
-        glm::vec3(-kWorldMapSize / 2.0f, -kWorldMapSize / 2.0f, kAirflowLowHeight);
+        glm::vec3(-kCloudMapSize / 2.0f, -kCloudMapSize / 2.0f, kAirflowLowHeight);
     airflow_params.world_range =
-        glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - airflow_params.world_min;
+        glm::vec3(kCloudMapSize / 2.0f, kCloudMapSize / 2.0f, kAirflowMaxHeight) - airflow_params.world_min;
     airflow_params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
     airflow_params.size = glm::uvec3(w, w, h);
     airflow_params.controls = {0};
@@ -524,9 +524,9 @@ void WeatherSystem::updateAirflowBuffer(
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, airflow_pipeline_);
     glsl::AirflowUpdateParams airflow_params = {};
     airflow_params.world_min =
-        glm::vec3(-kWorldMapSize / 2.0f, -kWorldMapSize / 2.0f, kAirflowLowHeight);
+        glm::vec3(-kCloudMapSize / 2.0f, -kCloudMapSize / 2.0f, kAirflowLowHeight);
     airflow_params.world_range =
-        glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - airflow_params.world_min;
+        glm::vec3(kCloudMapSize / 2.0f, kCloudMapSize / 2.0f, kAirflowMaxHeight) - airflow_params.world_min;
     airflow_params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
     airflow_params.size = glm::ivec3(w, w, h);
     airflow_params.controls = weather_controls;
@@ -573,9 +573,9 @@ void WeatherSystem::updateCloudShadow(
         cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, cloud_shadow_init_pipeline_);
         glsl::CloudShadowParams params = {};
         params.world_min =
-            glm::vec3(-kWorldMapSize / 2.0f, -kWorldMapSize / 2.0f, kAirflowLowHeight);
+            glm::vec3(-kCloudMapSize / 2.0f, -kCloudMapSize / 2.0f, kAirflowLowHeight);
         params.world_range =
-            glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - params.world_min;
+            glm::vec3(kCloudMapSize / 2.0f, kCloudMapSize / 2.0f, kAirflowMaxHeight) - params.world_min;
         params.inv_world_range = 1.0f / params.world_range;
         params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
         params.size = glm::ivec3(w, w, h);
@@ -613,9 +613,9 @@ void WeatherSystem::updateCloudShadow(
 
         glsl::CloudShadowParams params = {};
         params.world_min =
-            glm::vec3(-kWorldMapSize / 2.0f, -kWorldMapSize / 2.0f, kAirflowLowHeight);
+            glm::vec3(-kCloudMapSize / 2.0f, -kCloudMapSize / 2.0f, kAirflowLowHeight);
         params.world_range =
-            glm::vec3(kWorldMapSize / 2.0f, kWorldMapSize / 2.0f, kAirflowMaxHeight) - params.world_min;
+            glm::vec3(kCloudMapSize / 2.0f, kCloudMapSize / 2.0f, kAirflowMaxHeight) - params.world_min;
         params.inv_world_range = 1.0f / params.world_range;
         params.inv_size = glm::vec3(1.0f / w, 1.0f / w, 1.0f / h);
         params.size = glm::ivec3(w, w, h);

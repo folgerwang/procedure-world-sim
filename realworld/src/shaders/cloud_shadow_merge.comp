@@ -40,22 +40,18 @@ void main()
     ivec3 pixel_coords = ivec3(gl_GlobalInvocationID.xy, new_z_idx);
 
     vec3 uvw = (pixel_coords + 0.5f) * params.inv_size;
-	vec3 position_ws;
-	position_ws.xz = uvw.xy * params.world_range.xy + params.world_min.xy;
-	position_ws.y = getSampleToHeight(uvw.z);
+	vec3 position_ws = uvwToWorldPosition(uvw);
 
     uint upper_z_idx = (((gl_GlobalInvocationID.z >> params.layer_idx) << 1) + 1) << params.layer_idx;
 
-    vec3 upper_uvw;
-    upper_uvw.z = (upper_z_idx + 0.5f) * params.inv_size.z;
+    float upper_uvw_z = (upper_z_idx + 0.5f) * params.inv_size.z;
 
-    float upper_layer_height = getSampleToHeight(upper_uvw.z);
-    float height_diff = upper_layer_height - position_ws.y;
-    float sample_dist = height_diff * length(params.sun_dir) / abs(params.sun_dir.y);
+    float upper_layer_height = getSampleToHeight(upper_uvw_z);
 
-    vec3 upper_layer_position_ws = position_ws.xzy + params.sun_dir * sample_dist;
+    float t = rsi_n(position_ws, params.sun_dir, upper_layer_height);
 
-    upper_uvw.xy = (upper_layer_position_ws.xz - params.world_min.xy) * params.inv_world_range.xy;
+    vec3 upper_layer_position_ws = position_ws + params.sun_dir * t;
+    vec3 upper_uvw = worldPositionToUvw(upper_layer_position_ws);
 
     vec2 upper_pixel_coord = mirrorRepeat(upper_uvw.xy * params.size.xy, params.size.xy);
     vec2 noise = hash23(vec3(upper_pixel_coord, upper_z_idx)); 

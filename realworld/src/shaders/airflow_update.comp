@@ -20,14 +20,20 @@ shared uint s_temp_moisture_grid[20][12][12];
 shared uint s_flow_grid[18][10][10];
 
 vec2 getPackedLayers(vec2 uv) {
-    float rock_height = texture(rock_layer, uv).x;
-    vec2 soil_water_thickness = 
-        texture(soil_water_layer, uv).xy * SOIL_WATER_LAYER_MAX_THICKNESS;
+    vec2 layer_height = vec2(-10.0f, 0.0f);
 
-    float soil_layer_height = rock_height + soil_water_thickness.x;
-    float water_layer_height = soil_layer_height + soil_water_thickness.y;
+    if (uv.x >= 0.0f && uv.x <= 1.0f && uv.y >= 0.0f && uv.y <= 1.0f) {
+        float rock_height = texture(rock_layer, uv).x;
+        vec2 soil_water_thickness = 
+            texture(soil_water_layer, uv).xy * SOIL_WATER_LAYER_MAX_THICKNESS;
+
+        float soil_layer_height = rock_height + soil_water_thickness.x;
+        float water_layer_height = soil_layer_height + soil_water_thickness.y;
     
-    return vec2(soil_layer_height, water_layer_height);
+        layer_height = vec2(soil_layer_height, water_layer_height);
+    }
+
+    return layer_height;
 }
 
 uint packTempMoist(float temp, float moist, uint tag) {
@@ -242,8 +248,9 @@ void main()
         ivec2 src_coords = clamp(slc + block_coords.xy - 2,
                                  ivec2(0),
                                  params.size.xy - 1);
+        vec2 uv = (src_coords + 0.5) * params.inv_size.xy;
         s_ground_info[slc.y][slc.x] =
-            getPackedLayers((src_coords + 0.5) * params.inv_size.xy);
+            getPackedLayers((uv - 0.5f) * 2.0f + 0.5f);
     }
 
     barrier();

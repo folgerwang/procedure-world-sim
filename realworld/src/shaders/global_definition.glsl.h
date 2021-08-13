@@ -133,7 +133,7 @@
 #define DEBUG_DRAW_TEMPRETURE               1
 #define DEBUG_DRAW_MOISTURE                 2
 
-#define kAirflowBufferWidth                 128
+#define kAirflowBufferWidth                 512
 #define kAirflowBufferHeight                128
 #define kAirflowBufferCount                 7
 
@@ -144,6 +144,9 @@
 #define kAtmosphereRadius                   6471e3
 #define kRayleighScaleHeight                8e3
 #define kMieScaleHeight                     1.2e3
+
+#define kWorldMapSize 16384.0f     // meters
+#define kCloudMapSize 32768.0f     // meters
 
 #ifdef __cplusplus
 #pragma once

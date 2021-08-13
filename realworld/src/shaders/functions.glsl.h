@@ -14,7 +14,7 @@ vec3 linearTosRGB(vec3 color)
 // see http://chilliant.blogspot.com/2012/08/srgb-approximations-for-hlsl.html
 vec3 sRGBToLinear(vec3 srgbIn)
 {
-    return vec3(pow(srgbIn.xyz, vec3(GAMMA)));
+    return vec3(pow(srgbIn, vec3(GAMMA)));
 }
 
 vec4 sRGBToLinear(vec4 srgbIn)
@@ -58,4 +58,14 @@ vec3 transmissionAbsorption(vec3 v, vec3 n, float ior, float thickness, vec3 abs
 {
     vec3 r = refract(-v, n, 1.0 / ior);
     return exp(-absorptionColor * thickness * dot(-n, r));
+}
+
+float rsi(vec3 r0, vec3 rd, float sr) {
+    // Simplified ray-sphere intersection that assumes
+    // the ray starts inside the sphere and that the
+    // sphere is centered at the origin. Always intersects.
+    float a = dot(rd, rd);
+    float b = 2.0 * dot(rd, r0);
+    float c = dot(r0, r0) - (sr * sr);
+    return (-b + sqrt((b * b) - 4.0 * a * c)) / (2.0 * a);
 }

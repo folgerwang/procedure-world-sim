@@ -443,8 +443,8 @@ void VolumeCloud::renderVolumeCloud(
             renderer::PipelineBindPoint::COMPUTE,
             render_cloud_fog_pipeline_);
         glsl::VolumeMoistrueParams params = {};
-        params.world_min = glm::vec2(-kWorldMapSize / 2.0f);
-        params.inv_world_range = 1.0f / (glm::vec2(kWorldMapSize / 2.0f) - params.world_min);
+        params.world_min = glm::vec2(-kCloudMapSize / 2.0f);
+        params.inv_world_range = 1.0f / (glm::vec2(kCloudMapSize / 2.0f) - params.world_min);
         params.size = display_size;
         params.inv_screen_size = 1.0f / glm::vec2(display_size);
         params.time = current_time;

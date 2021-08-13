@@ -7,7 +7,6 @@ namespace game_object {
 class TileObject {
     const renderer::DeviceInfo& device_info_;
 
-    #define kWorldMapSize 16384.0f     // meters
     enum class TileConst{
         kRockLayerSize = 8192,
         kSoilLayerSize = 4096,

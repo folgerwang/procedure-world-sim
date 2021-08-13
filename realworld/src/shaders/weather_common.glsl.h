@@ -23,7 +23,7 @@
 #define kMaxTempMoistDiff                 4.0f
 #define kTempMoistDiffToFloat             (kMaxTempMoistDiff / 65536.0f)
 
-#define kMinSampleHeight                  4.0f
+#define kMinSampleHeight                  8.0f
 #define kAirflowHeightMinMaxRatio         (kAirflowHeightRange / (kAirflowBufferHeight / 2 * kMinSampleHeight) - 1.0f)
 #define kAirflowHeightFactorA             ((kAirflowHeightMinMaxRatio - 1.0f) * kAirflowBufferHeight * kMinSampleHeight / 2)
 #define kAirflowHeightFactorB             (kMinSampleHeight * kAirflowBufferHeight)
@@ -130,3 +130,40 @@ float henyeyGreensteinPhaseFunc(float g, float cos_theta) {
     const float kPi = 3.1415926535f;
     return (1.0f - g2) / (pow(1.0f + g2 - 2.0f * g * cos_theta, 1.5f) * 4.0f * kPi);
 }
+
+float rsi_n(vec3 r0, vec3 rd_n, float sr) {
+    r0.y += kPlanetRadius;
+    sr += kPlanetRadius;
+    float b = dot(rd_n, r0);
+    float c = dot(r0, r0) - (sr * sr);
+
+    float result = 0.0f;
+    float delta = b * b - c;
+    if (delta >= 0) {
+        result = -b + sqrt(delta);
+    }
+
+    return result;
+}
+
+#ifndef __cplusplus
+vec3 worldPositionToUvw(vec3 pos_ws) {
+    float pos_ws_y_org = pos_ws.y + kPlanetRadius;
+    float scale = (kPlanetRadius + kAirflowLowHeight) / pos_ws_y_org;
+
+    vec3 uvw;
+    uvw.xy = (pos_ws.xz * scale + kCloudMapSize * 0.5f) / kCloudMapSize;
+
+    float dist_to_center = length(vec3(pos_ws.x, pos_ws_y_org, pos_ws.z));
+    uvw.z = getHeightToSample(dist_to_center - kPlanetRadius);
+    return uvw;
+}
+
+vec3 uvwToWorldPosition(vec3 uvw) {
+    float dist_to_center = getSampleToHeight(uvw.z) + kPlanetRadius;
+    vec2 pos_ws_xz_scaled = uvw.xy * kCloudMapSize - kCloudMapSize * 0.5f;
+    vec3 pos_ws_scaled = vec3(pos_ws_xz_scaled.x, kPlanetRadius + kAirflowLowHeight, pos_ws_xz_scaled.y);
+    float scale = dist_to_center / length(pos_ws_scaled);
+    return scale * pos_ws_scaled;
+}
+#endif
