@@ -313,7 +313,7 @@ struct VolumeMoistrueParams {
     uvec2           size;
     vec2            inv_screen_size;
     vec3            sun_pos;
-    float           pad;
+    float           view_ext_factor;
     float           time;
     float           g;
     float           inv_rayleigh_scale_height;

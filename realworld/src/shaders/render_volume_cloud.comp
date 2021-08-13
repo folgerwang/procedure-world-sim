@@ -78,7 +78,7 @@ void main()
 
         vec3 cloud_lighting = (vec3(0.5) * phase + vec3(1.0)) * cloud_shadow;
 
-        float cur_alpha = exp2(-thickness * moist * 0.003f);
+        float cur_alpha = exp2(-thickness * moist * params.view_ext_factor);
         fg_color = mix(cloud_lighting, fg_color, cur_alpha);
         final_alpha *= cur_alpha;
 
