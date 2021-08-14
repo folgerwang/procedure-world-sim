@@ -290,6 +290,10 @@ WeatherSystem::WeatherSystem(
 
     const auto& device = device_info.device;
 
+    float p0 = glsl::getAirPressure(30.0f, 0.0f);
+    float p1 = glsl::getAirPressure(30.0f, 6.0f);
+    float p2 = glsl::getAirPressure(29.0f, 0.0f);
+
     for (int i = 0; i < 2; i++) {
         renderer::Helper::create3DTextureImage(
             device_info,

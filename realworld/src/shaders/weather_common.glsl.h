@@ -44,6 +44,19 @@
 #define kNodeBelow                        0x04      // -z
 #define kNodeAbove                        0x05      // +z
 
+#ifdef __cplusplus
+#pragma once
+#include "glm/glm.hpp"
+using namespace glm;
+namespace glsl {
+#endif
+
+const float kG0 = 9.80665f;
+const float kM = 0.0289644f;
+const float kR = 8.3144598f;
+const float kPb = 0.8f;                   // a artifical const, make sure most of cases pressure return a value less than 1.0f;
+const float kAirPressureConst = kG0 * kM / kR;
+
 float calculateAirflowSampleToHeight(float uvw_w) {
     float sample_h = (kAirflowHeightFactorB + kAirflowHeightFactorA * uvw_w) * uvw_w;
     return sample_h;
@@ -146,6 +159,10 @@ float rsi_n(vec3 r0, vec3 rd_n, float sr) {
     return result;
 }
 
+float getAirPressure(float temp_sea_level, float altitude) {
+    return kPb * exp(-kAirPressureConst * altitude / (temp_sea_level + 273.15f));
+}
+
 #ifndef __cplusplus
 vec3 worldPositionToUvw(vec3 pos_ws) {
     float pos_ws_y_org = pos_ws.y + kPlanetRadius;
@@ -166,4 +183,8 @@ vec3 uvwToWorldPosition(vec3 uvw) {
     float scale = dist_to_center / length(pos_ws_scaled);
     return scale * pos_ws_scaled;
 }
+#endif
+
+#ifdef __cplusplus
+} //namespace glsl
 #endif
