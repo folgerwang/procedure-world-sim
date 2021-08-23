@@ -304,6 +304,28 @@ WeatherSystem::WeatherSystem(
             renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
     }
 
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        renderer::Format::R32_UINT,
+        glm::uvec2(
+            kAirflowBufferWidth * 8,
+            kAirflowBufferWidth * 8),
+        temp_ground_airflow_info_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        renderer::Format::R32G32_UINT,
+        glm::uvec2(
+            kAirflowBufferWidth,
+            kAirflowBufferWidth),
+        ground_airflow_info_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
     renderer::Helper::create3DTextureImage(
         device_info,
         renderer::Format::R8G8B8A8_UNORM,

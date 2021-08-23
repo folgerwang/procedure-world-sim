@@ -10,6 +10,8 @@ class WeatherSystem {
     renderer::TextureInfo temp_moisture_volume_[2];
     renderer::TextureInfo airflow_volume_;
     renderer::TextureInfo cloud_shadow_volume_;
+    renderer::TextureInfo ground_airflow_info_;
+    renderer::TextureInfo temp_ground_airflow_info_;
 
     std::shared_ptr<renderer::DescriptorSet> temperature_init_tex_desc_set_;
     std::shared_ptr<renderer::DescriptorSetLayout> temperature_init_desc_set_layout_;
