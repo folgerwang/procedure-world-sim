@@ -521,7 +521,8 @@ void RealWorldApplication::initVulkan() {
         texture_sampler_,
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
-        weather_system_->getTempMoistureTexes());
+        weather_system_->getTempMoistureTexes(),
+        weather_system_->getCloudShadowTex());
 
     volume_cloud_ = std::make_shared<es::VolumeCloud>(
         device_info_,
@@ -531,7 +532,7 @@ void RealWorldApplication::initVulkan() {
         depth_buffer_copy_.view,
         hdr_color_buffer_.view,
         weather_system_->getTempMoistureTexes(),
-        weather_system_->getCloudLightingTex(),
+        weather_system_->getCloudShadowTex(),
         skydome_->getScatteringLutTex(),
         swap_chain_info_.extent);
 
@@ -668,7 +669,8 @@ void RealWorldApplication::recreateSwapChain() {
         texture_sampler_,
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
-        weather_system_->getTempMoistureTexes());
+        weather_system_->getTempMoistureTexes(),
+        weather_system_->getCloudShadowTex());
 
     ego::DebugDrawObject::updateStaticDescriptorSet(
         device_,
@@ -685,7 +687,7 @@ void RealWorldApplication::recreateSwapChain() {
         depth_buffer_copy_.view,
         hdr_color_buffer_.view,
         weather_system_->getTempMoistureTexes(),
-        weather_system_->getCloudLightingTex(),
+        weather_system_->getCloudShadowTex(),
         skydome_->getScatteringLutTex(),
         swap_chain_info_.extent);
 

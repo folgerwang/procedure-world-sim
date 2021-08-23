@@ -76,7 +76,6 @@
 #define DST_CLOUD_LIGHTING_TEX_INDEX        20
 #define DST_CLOUD_SHADOW_TEX_INDEX          21
 #define SRC_TEMP_MOISTURE_TEX_INDEX         22
-#define SRC_CLOUD_LIGHTING_TEX_INDEX        23
 #define SRC_CLOUD_SHADOW_TEX_INDEX          24
 #define DST_FOG_CLOUD_INDEX                 25
 #define DST_SCATTERING_LUT_INDEX            26

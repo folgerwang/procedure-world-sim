@@ -19,7 +19,7 @@ layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniform
 };
 
 layout(set = 0, binding = SRC_TEMP_MOISTURE_INDEX) uniform sampler3D src_temp_moist;
-layout(set = 0, binding = SRC_CLOUD_LIGHTING_TEX_INDEX) uniform sampler3D src_cloud_shadow;
+layout(set = 0, binding = SRC_CLOUD_SHADOW_TEX_INDEX) uniform sampler3D src_cloud_shadow;
 layout(set = 0, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
 layout(set = 0, binding = DST_FOG_CLOUD_INDEX, rgba16f) uniform writeonly image2D dst_fog_cloud;
 
@@ -49,7 +49,7 @@ void main()
     vec3 noise_dir = hash33(view_dir * 1434.0f) * 2.0f - 1.0f;
     view_dir = normalize(view_dir + noise_dir * 0.0099f);
 
-    const uint num_samples = 32;
+    const uint num_samples = 16;
     const float inv_num_samples = 1.0f / num_samples;
 
     const float cast_dist_per_sample = cast_dist * inv_num_samples;

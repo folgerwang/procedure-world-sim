@@ -118,7 +118,7 @@ std::vector<er::TextureDescriptor> addCloudFogTextures(
 
     er::Helper::addOneTexture(
         descriptor_writes,
-        SRC_CLOUD_LIGHTING_TEX_INDEX,
+        SRC_CLOUD_SHADOW_TEX_INDEX,
         texture_sampler,
         cloud_lighting_tex,
         description_set,
@@ -271,7 +271,7 @@ VolumeCloud::VolumeCloud(
                 SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
                 er::DescriptorType::COMBINED_IMAGE_SAMPLER),
               renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
-                SRC_CLOUD_LIGHTING_TEX_INDEX,
+                SRC_CLOUD_SHADOW_TEX_INDEX,
                 SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
                 er::DescriptorType::COMBINED_IMAGE_SAMPLER),
               renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(

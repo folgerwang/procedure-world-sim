@@ -1634,9 +1634,10 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     const std::shared_ptr<renderer::ImageView>& grass_snow_layer,
     const std::shared_ptr<renderer::ImageView>& water_normal,
     const std::shared_ptr<renderer::ImageView>& water_flow,
-    const std::shared_ptr<renderer::ImageView>& temp_moisture_tex) {
+    const std::shared_ptr<renderer::ImageView>& temp_moisture_tex,
+    const std::shared_ptr<renderer::ImageView>& cloud_shadow_tex) {
     std::vector<renderer::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(8);
+    descriptor_writes.reserve(9);
 
     // src color.
     renderer::Helper::addOneTexture(
@@ -1708,6 +1709,15 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
         SRC_TEMP_MOISTURE_INDEX,
         texture_sampler,
         temp_moisture_tex,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_CLOUD_SHADOW_TEX_INDEX,
+        texture_sampler,
+        cloud_shadow_tex,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -1835,7 +1845,7 @@ static std::shared_ptr<renderer::DescriptorSetLayout> createTileFlowUpdateDescri
 
 static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescriptorSetLayout(
     const std::shared_ptr<renderer::Device>& device) {
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings(8);
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings(9);
     bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
         SRC_COLOR_TEX_INDEX);
     bindings[1] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
@@ -1857,6 +1867,9 @@ static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescript
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     bindings[7] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
         SRC_TEMP_MOISTURE_INDEX,
+        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
+    bindings[8] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        SRC_CLOUD_SHADOW_TEX_INDEX,
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     return device->createDescriptorSetLayout(bindings);
 }
@@ -2461,7 +2474,8 @@ void TileObject::updateStaticDescriptorSet(
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& src_texture,
     const std::shared_ptr<renderer::ImageView>& src_depth,
-    const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_tex) {
+    const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_tex,
+    const std::shared_ptr<renderer::ImageView>& cloud_shadow_tex) {
 
     if (tile_res_desc_set_[0] == nullptr) {
         generateStaticDescriptorSet(
@@ -2482,7 +2496,8 @@ void TileObject::updateStaticDescriptorSet(
             grass_snow_layer_.view,
             water_normal_.view,
             water_flow_.view,
-            temp_moisture_tex[dbuf_idx]);
+            temp_moisture_tex[dbuf_idx],
+            cloud_shadow_tex);
         device->updateDescriptorSets(tile_res_descs, {});
     }
 }

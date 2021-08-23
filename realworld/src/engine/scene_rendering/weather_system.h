@@ -49,7 +49,7 @@ public:
         return airflow_volume_.view;
     }
 
-    inline std::shared_ptr<renderer::ImageView> getCloudLightingTex() {
+    inline std::shared_ptr<renderer::ImageView> getCloudShadowTex() {
         return cloud_shadow_volume_.view;
     }
 
