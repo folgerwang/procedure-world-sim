@@ -242,9 +242,9 @@ struct AirflowUpdateParams {
     vec3            world_min;
     float           current_time;
     vec3            world_range;
-    float           pad0;
+    float           global_flow_angle;
     vec3            inv_size;
-    float           pad1;
+    float           global_flow_scale;
     ivec3           size;
     float           pad2;
 

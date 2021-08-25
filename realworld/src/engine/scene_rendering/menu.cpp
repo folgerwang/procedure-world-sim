@@ -60,13 +60,13 @@ Menu::Menu(
     weather_controls_.sea_level_temperature = 30.0f;
     weather_controls_.soil_temp_adj = 0.010f;
     weather_controls_.water_temp_adj = 0.052f;
-    weather_controls_.moist_temp_convert = 0.00001f;
-    weather_controls_.soil_moist_adj = 0.01f;
-    weather_controls_.water_moist_adj = 0.05f;
+    weather_controls_.moist_temp_convert = 0.0000f;
+    weather_controls_.soil_moist_adj = 0.024f;
+    weather_controls_.water_moist_adj = 0.075f;
     weather_controls_.heat_transfer_ratio = 0.253f;
     weather_controls_.moist_transfer_ratio = 0.189f;
     weather_controls_.heat_transfer_noise_weight = 0.1f;
-    weather_controls_.moist_transfer_noise_weight = 0.17f;
+    weather_controls_.moist_transfer_noise_weight = 0.37f;
 }
 
 void Menu::init(
@@ -153,6 +153,16 @@ bool Menu::draw(
 
             ImGui::SliderFloat("mix rate", &weather_controls_.mix_rate, 0.0f, 1.0f);
             ImGui::SliderFloat("sea level temperature", &weather_controls_.sea_level_temperature, -40.0f, 40.0f);
+            ImGui::SliderFloat("global flow dir", &global_flow_dir_, 0.0f, 360.0f);
+            ImGui::SliderFloat("global flow speed (m/f)", &global_flow_speed_, 0.0f, 10.0f);
+
+            ImGui::Separator();
+
+            ImGui::SliderFloat("soil moist regenerate", &weather_controls_.soil_moist_adj, 0.0f, 1.0f);
+            ImGui::SliderFloat("water moist regenerate", &weather_controls_.water_moist_adj, 0.0f, 1.0f);
+
+            ImGui::Separator();
+
             ImGui::SliderFloat("heat transfer rate", &weather_controls_.heat_transfer_ratio, 0.0f, 2.0f);
             ImGui::SliderFloat("heat transfer noise level", &weather_controls_.heat_transfer_noise_weight, 0.0f, 1.0f);
             ImGui::SliderFloat("moist transfer rate", &weather_controls_.moist_transfer_ratio, 0.0f, 2.0f);

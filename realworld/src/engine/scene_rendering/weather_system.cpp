@@ -54,11 +54,11 @@ std::vector<er::TextureDescriptor> addAirflowTextures(
     er::Helper::addOneTexture(
         descriptor_writes,
         SRC_TEMP_MOISTURE_TEX_INDEX,
-        nullptr,
+        texture_sampler,
         src_temp_moisture_tex.view,
         description_set,
-        er::DescriptorType::STORAGE_IMAGE,
-        er::ImageLayout::GENERAL);
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
@@ -172,7 +172,7 @@ static std::shared_ptr<er::DescriptorSetLayout> createAirflowUpdateDescSetLayout
         er::helper::getTextureSamplerDescriptionSetLayoutBinding(
             SRC_TEMP_MOISTURE_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-            er::DescriptorType::STORAGE_IMAGE);
+            er::DescriptorType::COMBINED_IMAGE_SAMPLER);
 
     bindings[2] =
         er::helper::getTextureSamplerDescriptionSetLayoutBinding(
@@ -532,13 +532,14 @@ void WeatherSystem::initTemperatureBuffer(
 void WeatherSystem::updateAirflowBuffer(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const glsl::WeatherControl& weather_controls,
+    const float global_flow_angle,
+    const float global_flow_speed,
     int dbuf_idx,
     float current_time) {
 
     renderer::helper::transitMapTextureToStoreImage(
         cmd_buf,
         { temp_moisture_volume_[dbuf_idx].image,
-          temp_moisture_volume_[1-dbuf_idx].image,
           airflow_volume_.image});
 
     auto w = static_cast<uint32_t>(kAirflowBufferWidth);
@@ -553,6 +554,8 @@ void WeatherSystem::updateAirflowBuffer(
     airflow_params.size = glm::ivec3(w, w, h);
     airflow_params.controls = weather_controls;
     airflow_params.current_time = current_time;
+    airflow_params.global_flow_angle = global_flow_angle;
+    airflow_params.global_flow_scale = global_flow_speed / kCloudMapSize * w;
 
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
@@ -573,7 +576,6 @@ void WeatherSystem::updateAirflowBuffer(
     renderer::helper::transitMapTextureFromStoreImage(
         cmd_buf,
         { temp_moisture_volume_[dbuf_idx].image,
-          temp_moisture_volume_[1-dbuf_idx].image,
           airflow_volume_.image });
 }
 

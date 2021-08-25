@@ -1085,6 +1085,8 @@ void RealWorldApplication::drawScene(
             weather_system_->updateAirflowBuffer(
                 cmd_buf,
                 menu_->getWeatherControls(),
+                menu_->getGloalFlowDir(),
+                menu_->getGlobalFlowSpeed(),
                 s_dbuf_idx,
                 current_time);
         }

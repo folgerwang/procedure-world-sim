@@ -69,12 +69,12 @@ void main()
         vec3 uvw = worldPositionToUvw(sample_pos);
 
         vec2 temp_moisture = texture(src_temp_moist, uvw).xy;
-        float moist = denormalizeMoisture(temp_moisture.y);
+        float extinct = thickness * denormalizeMoisture(temp_moisture.y) * params.view_ext_factor;
         float cloud_shadow = texture(src_cloud_shadow, uvw).x;
 
-        vec3 cloud_lighting = (vec3(0.5) * phase + vec3(1.0)) * cloud_shadow;
+        vec3 cloud_lighting = (vec3(0.8) * phase + vec3(1.2)) * cloud_shadow;
 
-        float cur_alpha = exp2(-thickness * moist * params.view_ext_factor);
+        float cur_alpha = exp2(-pow(extinct, 2.0f));
         fg_color = mix(cloud_lighting, fg_color, cur_alpha);
         final_alpha *= cur_alpha;
 

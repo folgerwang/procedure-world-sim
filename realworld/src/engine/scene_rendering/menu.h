@@ -15,8 +15,10 @@ class Menu {
     uint32_t debug_draw_type_ = 0;
     float air_flow_strength_ = 50.0f;
     float water_flow_strength_ = 1.0f;
-    float light_ext_factor_ = 0.464f;
-    float view_ext_factor_ = 1.16f;
+    float light_ext_factor_ = 0.52f;
+    float view_ext_factor_ = 0.773f;
+    float global_flow_dir_ = 0.0f;
+    float global_flow_speed_ = 0.0f;
 
     glsl::WeatherControl weather_controls_;
 
@@ -72,6 +74,14 @@ public:
 
     inline float getWaterFlowStrength() {
         return water_flow_strength_;
+    }
+
+    inline float getGloalFlowDir() {
+        return glm::radians(global_flow_dir_);
+    }
+
+    inline float getGlobalFlowSpeed() {
+        return global_flow_speed_;
     }
 
     void init(

@@ -10,7 +10,7 @@ layout(push_constant) uniform AirflowUniformBufferObject {
 };
 
 layout(set = 0, binding = DST_TEMP_MOISTURE_TEX_INDEX, rg16) uniform writeonly image3D dst_temp_moisture;
-layout(set = 0, binding = SRC_TEMP_MOISTURE_TEX_INDEX, rg16) uniform readonly image3D src_temp_moisture;
+layout(set = 0, binding = SRC_TEMP_MOISTURE_TEX_INDEX) uniform sampler3D src_temp_moisture;
 layout(set = 0, binding = DST_AIRFLOW_TEX_INDEX, rgba8) uniform image3D dst_airflow;
 layout(set = 0, binding = ROCK_LAYER_BUFFER_INDEX) uniform sampler2D rock_layer;
 layout(set = 0, binding = SOIL_WATER_LAYER_BUFFER_INDEX) uniform sampler2D soil_water_layer;
@@ -59,14 +59,20 @@ uint packTempMoistDiff(float temp, float moist, uint tag) {
     return temp_moist_diff;
 }
 
+vec3 getGlobalAirflowVector(float noise) {
+    float angle = params.global_flow_angle + (noise * 2.0f - 1.0f) * 0.526f;
+    return vec3(cos(angle), sin(angle), 0.0f) * params.global_flow_scale;
+}
+
 uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
     ivec3 src_coords = clamp(slc + block_coords - 2,
                              ivec3(0),
                              params.size - 1);
 
     vec4 noise_values = hash44(vec4(vec3(src_coords), params.current_time));
+    vec3 uvw = ((src_coords + 0.5f) + getGlobalAirflowVector(noise_values.x)) * params.inv_size;
 
-    vec2 src_temp_moist = imageLoad(src_temp_moisture, src_coords).xy;
+    vec2 src_temp_moist = texture(src_temp_moisture, uvw).xy;
     float src_temp = denormalizeTemperature(src_temp_moist.x);
     float src_moist = denormalizeMoisture(src_temp_moist.y);
 
@@ -92,8 +98,8 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
         temp_adjust += params.controls.moist_temp_convert * src_moist;
     }
 
-    temp_adjust *= (noise_values.x + noise_values.y);
-    moist_adjust *= (noise_values.z + noise_values.w);
+    temp_adjust *= 1.0f + (noise_values.x + noise_values.y);
+    moist_adjust *= 1.0f + (noise_values.z + noise_values.w);
 
     // make sure color different here is positive.
     return packTempMoist(src_temp + temp_adjust - target_stable_temp,
@@ -112,15 +118,15 @@ void updateTempMoistureBuffer(int pixel_index, ivec3 block_coords) {
     s_temp_moisture_grid[slc.z][slc.y][slc.x] = temp_moist;
 }
 
-float getFrozenTransferRate(int pixel_height, float noise) {
+float getFrozenTransferRate(int pixel_height, float noise, float temp_adj) {
     float uvw_w = (pixel_height + 0.5) * params.inv_size.z;
     float sample_h = getSampleToHeight(uvw_w);
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
-    float frozen_rate = (target_stable_temp - 15.0f) / 7.0f * 0.5f + 0.5f;
-    float frozen_transfer_rate = clamp(frozen_rate + 0.05f * noise, 0.0f, 1.0f);
+    float frozen_rate = (target_stable_temp + temp_adj - 15.0f) / 10.0f * 0.5f + 0.5f;
+    float frozen_transfer_rate = clamp(frozen_rate, 0.0f, 1.0f);
 
-    return pow(frozen_transfer_rate, 2.0f);
+    return pow(frozen_transfer_rate, noise + 2.0f);
 }
 
 uint packTempDiff(uint u_min_temp, uint u_max_moist, uint u_center, ivec3 pixel_coords) {
@@ -128,17 +134,18 @@ uint packTempDiff(uint u_min_temp, uint u_max_moist, uint u_center, ivec3 pixel_
     vec2 max_tm = unpackTempMoist(u_max_moist);
     vec2 center_tm = unpackTempMoist(u_center);
 
-    vec4 noise_values = hash44(vec4(vec3(pixel_coords), params.current_time)) * 2.0f - 1.0f;
+    vec4 hash_values = hash44(vec4(vec3(pixel_coords), params.current_time));
+    vec2 noise_values = hash_values.xy * 2.0f - 1.0f;
 
     float temp_transfer = params.controls.heat_transfer_ratio * (1.0f + noise_values.x * params.controls.heat_transfer_noise_weight);
     float moist_transfer = params.controls.moist_transfer_ratio * (1.0f + noise_values.y * params.controls.moist_transfer_noise_weight);
 
-    float frozen_transfer_rate = getFrozenTransferRate(pixel_coords.z, noise_values.z);
+    float frozen_transfer_rate = getFrozenTransferRate(pixel_coords.z, hash_values.z, center_tm.x);
     float center_weight = (1.0f - frozen_transfer_rate) * center_tm.y;
 
     uint max_moist_loc = u_max_moist & 0x07;
     int height_adj = max_moist_loc == kNodeAbove ? 1 : (max_moist_loc == kNodeBelow ? -1 : 0);
-    float max_frozen_transfer_rate = getFrozenTransferRate(pixel_coords.z + height_adj, noise_values.w);
+    float max_frozen_transfer_rate = getFrozenTransferRate(pixel_coords.z + height_adj, hash_values.w, max_tm.x);
     float max_weight = (1.0f - max_frozen_transfer_rate) * max_tm.y;
 
     bool absorb = center_weight > max_weight && center_tm.y > max_tm.y;
@@ -203,7 +210,7 @@ void createTempMoistureFlowBuffer(int pixel_index, ivec3 block_coords) {
     below = swapMoistTemp(below);
     above = swapMoistTemp(above);
 
-    uint max_moist = max(max(max(left, right), max(back, front)), max(below, above));
+    uint max_moist = min(min(min(left, right), min(back, front)), min(below, above));
 
     s_flow_grid[dlc.z][dlc.y][dlc.x] =
         packTempDiff(min_temp, reswapMoistTemp(max_moist), center, pixel_coords);
@@ -326,7 +333,10 @@ void main()
     ivec3 slc = local_coords + 2;
     vec2 temp_moist = unpackTempMoist(s_temp_moisture_grid[slc.z][slc.y][slc.x]);
 
-    vec2 src_temp_moist = imageLoad(src_temp_moisture, pixel_coords).xy;
+    vec4 noise_values = hash44(vec4(vec3(pixel_coords), params.current_time));
+    vec3 uvw = ((pixel_coords + 0.5f) + getGlobalAirflowVector(noise_values.x)) * params.inv_size;
+
+    vec2 src_temp_moist = texture(src_temp_moisture, uvw).xy;
     float src_temp = denormalizeTemperature(src_temp_moist.x);
     float src_moist = denormalizeMoisture(src_temp_moist.y);
 
