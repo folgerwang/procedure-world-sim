@@ -114,7 +114,12 @@ bool Menu::draw(
         screen_size,
         clear_values);
 
+//    ImGuiWindowFlags_NoBackground
+//    ImGuiWindow* window = ImGui::FindWindowByName("RenderConsole");
+
     static bool s_select_load_gltf = false;
+    static bool s_show_skydome = false;
+    static bool s_show_weather = false;
     if (ImGui::BeginMainMenuBar())
     {
         if (ImGui::BeginMenu("Game Objects"))
@@ -127,20 +132,48 @@ bool Menu::draw(
         }
 
         if (ImGui::BeginMenu("Skydome")) {
-            ImGui::SliderFloat("phase func g", &skydome->getG(), -1.0f, 2.0f);
-            ImGui::SliderFloat("rayleigh scale height", &skydome->getRayleighScaleHeight(), 0.0f, 16000.0f);
-            ImGui::SliderFloat("mei scale height", &skydome->getMieScaleHeight(), 0.0f, 2400.0f);
+            s_show_skydome = true;
             ImGui::EndMenu();
         }
 
         if (ImGui::BeginMenu("Weather System")) {
-            if (ImGui::MenuItem("Turn off volume moist", NULL, turn_off_volume_moist_)) {
+            s_show_weather = true;
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Tools"))
+        {
+            if (ImGui::MenuItem("Turn off water pass", NULL, turn_off_water_pass_)) {
+                turn_off_water_pass_ = !turn_off_water_pass_;
+            }
+
+            ImGui::EndMenu();
+        }
+        ImGui::EndMainMenuBar();
+    }
+
+    bool in_focus =
+        ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow) ||
+        ImGui::IsWindowFocused(ImGuiHoveredFlags_AnyWindow);
+
+    if (s_show_skydome) {
+        if (ImGui::Begin("Skydome", &s_show_skydome)) {
+            ImGui::SliderFloat("phase func g", &skydome->getG(), -1.0f, 2.0f);
+            ImGui::SliderFloat("rayleigh scale height", &skydome->getRayleighScaleHeight(), 0.0f, 16000.0f);
+            ImGui::SliderFloat("mei scale height", &skydome->getMieScaleHeight(), 0.0f, 2400.0f);
+        }
+        ImGui::End();
+    }
+
+    if (s_show_weather) {
+        if (ImGui::Begin("Weather", &s_show_weather, ImGuiWindowFlags_NoScrollbar)) {
+/*            if (ImGui::MenuItem("Turn off volume moist", NULL, turn_off_volume_moist_)) {
                 turn_off_volume_moist_ = !turn_off_volume_moist_;
             }
 
             if (ImGui::MenuItem("Turn on air flow effect", NULL, turn_on_airflow_)) {
                 turn_on_airflow_ = !turn_on_airflow_;
-            }
+            }*/
 
             ImGui::Separator();
 
@@ -184,24 +217,9 @@ bool Menu::draw(
                 }
                 ImGui::EndCombo();
             }
-
-            ImGui::EndMenu();
         }
-
-        if (ImGui::BeginMenu("Tools"))
-        {
-            if (ImGui::MenuItem("Turn off water pass", NULL, turn_off_water_pass_)) {
-                turn_off_water_pass_ = !turn_off_water_pass_;
-            }
-
-            ImGui::EndMenu();
-        }
-        ImGui::EndMainMenuBar();
+        ImGui::End();
     }
-
-    bool in_focus =
-        ImGui::IsWindowFocused(ImGuiFocusedFlags_AnyWindow) ||
-        ImGui::IsWindowFocused(ImGuiHoveredFlags_AnyWindow);
 
     if (s_select_load_gltf) {
         ImGui::OpenPopup("select gltf object");
