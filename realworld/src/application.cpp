@@ -435,6 +435,7 @@ void RealWorldApplication::initVulkan() {
     engine::helper::createTextureImage(device_info_, "assets/lut_ggx.png", format, ggx_lut_tex_);
     engine::helper::createTextureImage(device_info_, "assets/lut_charlie.png", format, charlie_lut_tex_);
     engine::helper::createTextureImage(device_info_, "assets/lut_thin_film.png", format, thin_film_lut_tex_);
+    engine::helper::createTextureImage(device_info_, "assets/map.png", er::Format::R16_UNORM, heightmap_tex_);
     createTextureSampler();
     createUniformBuffers();
     descriptor_pool_ = device_->createDescriptorPool();
@@ -521,7 +522,8 @@ void RealWorldApplication::initVulkan() {
         texture_sampler_,
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
-        weather_system_->getTempMoistureTexes());
+        weather_system_->getTempMoistureTexes(),
+        heightmap_tex_);
 
     volume_cloud_ = std::make_shared<es::VolumeCloud>(
         device_info_,
@@ -642,7 +644,8 @@ void RealWorldApplication::recreateSwapChain() {
     ego::TileObject::generateAllDescriptorSets(
         device_,
         descriptor_pool_,
-        texture_sampler_);
+        texture_sampler_,
+        heightmap_tex_);
 
     ego::DebugDrawObject::generateAllDescriptorSets(
         device_,
@@ -668,7 +671,8 @@ void RealWorldApplication::recreateSwapChain() {
         texture_sampler_,
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
-        weather_system_->getTempMoistureTexes());
+        weather_system_->getTempMoistureTexes(),
+        heightmap_tex_);
 
     ego::DebugDrawObject::updateStaticDescriptorSet(
         device_,

@@ -145,8 +145,8 @@
 #define kRayleighScaleHeight                8e3
 #define kMieScaleHeight                     1.2e3
 
-#define kWorldMapSize 16384.0f     // meters
-#define kCloudMapSize 32768.0f     // meters
+#define kWorldMapSize 8192.0f //16384.0f     // meters
+#define kCloudMapSize 16384.0f //32768.0f     // meters
 
 #ifdef __cplusplus
 #pragma once

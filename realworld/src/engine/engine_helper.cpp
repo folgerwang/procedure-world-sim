@@ -38,9 +38,17 @@ void createTextureImage(
     renderer::Format format,
     renderer::TextureInfo& texture) {
     int tex_width, tex_height, tex_channels;
-    stbi_uc* pixels = stbi_load(file_name.c_str(), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
+    void* void_pixels = nullptr;
+    if (format == engine::renderer::Format::R16_UNORM) {
+        stbi_us* pixels = stbi_load_16(file_name.c_str(), &tex_width, &tex_height, &tex_channels, STBI_grey);
+        void_pixels = pixels;
+    }
+    else {
+        stbi_uc* pixels = stbi_load(file_name.c_str(), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
+        void_pixels = pixels;
+    }
 
-    if (!pixels) {
+    if (!void_pixels) {
         throw std::runtime_error("failed to load texture image!");
     }
     renderer::Helper::create2DTextureImage(
@@ -49,11 +57,11 @@ void createTextureImage(
         tex_width,
         tex_height,
         tex_channels,
-        pixels,
+        void_pixels,
         texture.image,
         texture.memory);
 
-    stbi_image_free(pixels);
+    stbi_image_free(void_pixels);
 
     texture.view = device_info.device->createImageView(
         texture.image,

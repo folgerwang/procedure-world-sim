@@ -268,7 +268,7 @@ void Helper::create2DTextureImage(
     std::shared_ptr<DeviceMemory>& texture_image_memory) {
 
     const auto& device = device_info.device;
-    VkDeviceSize image_size = static_cast<VkDeviceSize>(tex_width * tex_height * 4);
+    VkDeviceSize image_size = static_cast<VkDeviceSize>(tex_width * tex_height * (format == Format::R16_UNORM ? 2 : 4));
 
     std::shared_ptr<Buffer> staging_buffer;
     std::shared_ptr<DeviceMemory> staging_buffer_memory;

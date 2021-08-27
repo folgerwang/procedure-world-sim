@@ -109,6 +109,7 @@ private:
     er::TextureInfo brdf_lut_tex_;
     er::TextureInfo charlie_lut_tex_;
     er::TextureInfo thin_film_lut_tex_;
+    er::TextureInfo heightmap_tex_;
     std::vector<uint32_t> binding_list_;
     std::shared_ptr<er::Sampler> texture_sampler_;
     std::shared_ptr<er::Sampler> mirror_repeat_sampler_;

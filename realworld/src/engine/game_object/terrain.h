@@ -120,17 +120,20 @@ public:
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
         const std::shared_ptr<renderer::ImageView>& src_texture,
         const std::shared_ptr<renderer::ImageView>& src_depth,
-        const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_tex);
+        const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_tex,
+        const renderer::TextureInfo& heightmap_tex);
 
     static void generateStaticDescriptorSet(
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
-        const std::shared_ptr<renderer::Sampler>& texture_sampler);
+        const std::shared_ptr<renderer::Sampler>& texture_sampler,
+        const renderer::TextureInfo& heightmap_tex);
 
     static void generateAllDescriptorSets(
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
-        const std::shared_ptr<renderer::Sampler>& texture_sampler);
+        const std::shared_ptr<renderer::Sampler>& texture_sampler,
+        const renderer::TextureInfo& heightmap_tex);
 
     static void generateTileBuffers(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
