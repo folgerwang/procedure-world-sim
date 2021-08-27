@@ -28,6 +28,7 @@ vec3  kSunDir = vec3(-0.624695f, 0.468521f, -0.624695f);
 
 layout(set = TILE_PARAMS_SET, binding = SRC_COLOR_TEX_INDEX) uniform sampler2D src_tex;
 layout(set = TILE_PARAMS_SET, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
+layout(set = TILE_PARAMS_SET, binding = SRC_MAP_MASK_INDEX) uniform sampler2D src_map_mask;
 layout(set = TILE_PARAMS_SET, binding = SRC_TEMP_MOISTURE_INDEX) uniform sampler3D src_temp_moisture;
 
 struct MaterialInfo
@@ -91,6 +92,8 @@ void main() {
     // turn off right now, will fix flickering later.
     //albedo = mix(albedo, vec3(1.0, 1.0, 1.0), cold_index);
 
+    albedo = texture(src_map_mask, in_data.world_map_uv).rgb;
+
     MaterialInfo material_info;
     material_info.baseColor = albedo;
 
@@ -122,8 +125,8 @@ void main() {
     float ior = 1.5;
     float f0_ior = 0.04;
 
-    material_info.metallic = 0.6;//0.3f;//material.metallic_factor;
-    material_info.perceptualRoughness = 0.4;//0.8f;//material.roughness_factor;
+    material_info.metallic = 0.3f;//material.metallic_factor;
+    material_info.perceptualRoughness = 0.8f;//material.roughness_factor;
 
     // Achromatic f0 based on IOR.
     vec3 f0 = vec3(f0_ior);

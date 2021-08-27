@@ -45,7 +45,20 @@ uint adjustLayersHeight(ivec2 src_coords, ivec2 global_src_coords) {
     float soil_height = layer_thickness.x + layer_thickness.y;
     float water_height = layer_thickness.z + soil_height;
     vec2 center_h = vec2(soil_height, water_height);
-    vec2 min_h = min(min(left_h, right_h), min(up_h, down_h));
+
+    vec2 min_h = vec2(10000.0f);
+    if (global_src_coords.x > 0) {
+        min_h = min(min_h, left_h);
+    }
+    if (global_src_coords.x < tile_params.width_pixel_count-1) {
+        min_h = min(min_h, right_h);
+    }
+    if (global_src_coords.y > 0) {
+        min_h = min(min_h, up_h);
+    }
+    if (global_src_coords.y < tile_params.width_pixel_count-1) {
+        min_h = min(min_h, down_h);
+    }
 
     vec2 h_diff;
     h_diff.x = center_h.x > min_h.x ? (center_h.x - min_h.x) : 0;

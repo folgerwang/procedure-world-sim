@@ -1501,7 +1501,7 @@ namespace {
 std::vector<renderer::TextureDescriptor> addTileCreatorBuffers(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
-    const renderer::TextureInfo& heightmap_tex,
+    const std::shared_ptr<renderer::ImageView>& heightmap_tex,
     const renderer::TextureInfo& rock_layer,
     const renderer::TextureInfo& soil_water_layer,
     const renderer::TextureInfo& grass_snow_layer) {
@@ -1512,7 +1512,7 @@ std::vector<renderer::TextureDescriptor> addTileCreatorBuffers(
         descriptor_writes,
         SRC_DEPTH_TEX_INDEX,
         texture_sampler,
-        heightmap_tex.view,
+        heightmap_tex,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -1645,9 +1645,10 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     const std::shared_ptr<renderer::ImageView>& grass_snow_layer,
     const std::shared_ptr<renderer::ImageView>& water_normal,
     const std::shared_ptr<renderer::ImageView>& water_flow,
-    const std::shared_ptr<renderer::ImageView>& temp_moisture_tex) {
+    const std::shared_ptr<renderer::ImageView>& temp_moisture_tex,
+    const std::shared_ptr<renderer::ImageView>& map_mask_tex) {
     std::vector<renderer::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(8);
+    descriptor_writes.reserve(9);
 
     // src color.
     renderer::Helper::addOneTexture(
@@ -1723,6 +1724,15 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_MAP_MASK_INDEX,
+        texture_sampler,
+        map_mask_tex,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
     return descriptor_writes;
 }
 
@@ -1791,7 +1801,7 @@ static std::shared_ptr<renderer::DescriptorSetLayout> createTileCreateDescriptor
     bindings[0] = renderer::helper::getBufferDescriptionSetLayoutBinding(
         SRC_DEPTH_TEX_INDEX,
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-        renderer::DescriptorType::STORAGE_IMAGE);
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER);
     bindings[1] = renderer::helper::getBufferDescriptionSetLayoutBinding(
         ROCK_LAYER_BUFFER_INDEX,
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
@@ -1850,7 +1860,7 @@ static std::shared_ptr<renderer::DescriptorSetLayout> createTileFlowUpdateDescri
 
 static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescriptorSetLayout(
     const std::shared_ptr<renderer::Device>& device) {
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings(8);
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings(9);
     bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
         SRC_COLOR_TEX_INDEX);
     bindings[1] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
@@ -1872,6 +1882,9 @@ static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescript
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     bindings[7] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
         SRC_TEMP_MOISTURE_INDEX,
+        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
+    bindings[8] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        SRC_MAP_MASK_INDEX,
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     return device->createDescriptorSetLayout(bindings);
 }
@@ -2424,7 +2437,7 @@ void TileObject::generateStaticDescriptorSet(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
-    const renderer::TextureInfo& heightmap_tex) {
+    const std::shared_ptr<renderer::ImageView>& heightmap_tex) {
     // tile creator buffer set.
     creator_buffer_desc_set_ = device->createDescriptorSets(
         descriptor_pool, tile_creator_desc_set_layout_, 1)[0];
@@ -2480,7 +2493,8 @@ void TileObject::updateStaticDescriptorSet(
     const std::shared_ptr<renderer::ImageView>& src_texture,
     const std::shared_ptr<renderer::ImageView>& src_depth,
     const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_tex,
-    const renderer::TextureInfo& heightmap_tex) {
+    const std::shared_ptr<renderer::ImageView>& heightmap_tex,
+    const std::shared_ptr<renderer::ImageView>& map_mask_tex) {
 
     if (tile_res_desc_set_[0] == nullptr) {
         generateStaticDescriptorSet(
@@ -2502,7 +2516,8 @@ void TileObject::updateStaticDescriptorSet(
             grass_snow_layer_.view,
             water_normal_.view,
             water_flow_.view,
-            temp_moisture_tex[dbuf_idx]);
+            temp_moisture_tex[dbuf_idx],
+            map_mask_tex);
         device->updateDescriptorSets(tile_res_descs, {});
     }
 }
@@ -2687,7 +2702,7 @@ void TileObject::generateAllDescriptorSets(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
-    const renderer::TextureInfo& heightmap_tex) {
+    const std::shared_ptr<renderer::ImageView>& heightmap_tex) {
     generateStaticDescriptorSet(
         device,
         descriptor_pool,
@@ -2738,13 +2753,15 @@ void TileObject::updateAllTiles(
     std::vector<size_t> to_delete_tiles;
     // remove all the tiles outside of cache zone.
     for (auto& tile : tile_meshes_) {
-        bool inside = tile.second->validTileBySize(
-            min_cache_tile_idx,
-            max_cache_tile_idx,
-            tile_size);
+        if (tile.second) {
+            bool inside = tile.second->validTileBySize(
+                min_cache_tile_idx,
+                max_cache_tile_idx,
+                tile_size);
 
-        if (!inside) {
-            to_delete_tiles.push_back(tile.second->getHash());
+            if (!inside) {
+                to_delete_tiles.push_back(tile.second->getHash());
+            }
         }
     }
 
@@ -2776,18 +2793,23 @@ void TileObject::updateAllTiles(
                 x == max_cache_tile_idx.x ? -1 : (blocks[i + 1] ? blocks[i + 1]->block_idx_ : -1),
                 y == min_cache_tile_idx.y ? -1 : (blocks[i - row_size] ? blocks[i - row_size]->block_idx_ : -1),
                 y == max_cache_tile_idx.y ? -1 : (blocks[i + row_size] ? blocks[i + row_size]->block_idx_ : -1));
-            blocks[i++]->setNeighbors(neighbors);
+            if (blocks[i]) {
+                blocks[i]->setNeighbors(neighbors);
+            }
+            i++;
         }
     }
 
     for (auto& tile : tile_meshes_) {
-        bool inside = tile.second->validTileBySize(
-            min_visi_tile_idx,
-            max_visi_tile_idx,
-            tile_size);
+        if (tile.second) {
+            bool inside = tile.second->validTileBySize(
+                min_visi_tile_idx,
+                max_visi_tile_idx,
+                tile_size);
 
-        if (inside) {
-            visible_tiles_.push_back(tile.second);
+            if (inside) {
+                visible_tiles_.push_back(tile.second);
+            }
         }
     }
 }
