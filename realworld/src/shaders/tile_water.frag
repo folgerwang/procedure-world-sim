@@ -98,7 +98,7 @@ void main() {
     vec2 water_flow = texture(water_flow_tex, in_data.world_map_uv).xy;
     water_normal.y = sqrt(1.0f - dot(water_normal.xz, water_normal.xz));
     water_normal.xz += water_flow * 0.5;
-    water_normal.y += water_noise * 0.35;
+    //water_normal.y += water_noise * 0.35;
     water_normal = normalize(water_normal);
     vec2 screen_uv = gl_FragCoord.xy * tile_params.inv_screen_size;
     float dist_scale = length(vec3((screen_uv * 2.0f - 1.0f) * view_params.depth_params.zw, 1.0f));

@@ -2633,7 +2633,7 @@ void TileObject::updateTileFlowBuffers(
     tile_params.width_pixel_count = dispatch_count;
     tile_params.inv_width_pixel_count = 1.0f / dispatch_count;
     tile_params.range_per_pixel = tile_params.world_range * tile_params.inv_width_pixel_count;
-    tile_params.flow_speed_factor = 1.0f / (1024.0f * tile_params.range_per_pixel);
+    tile_params.flow_speed_factor = glm::vec2(2.0f);
     tile_params.current_time = current_time;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),

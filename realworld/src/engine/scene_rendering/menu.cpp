@@ -167,16 +167,6 @@ bool Menu::draw(
 
     if (s_show_weather) {
         if (ImGui::Begin("Weather", &s_show_weather, ImGuiWindowFlags_NoScrollbar)) {
-/*            if (ImGui::MenuItem("Turn off volume moist", NULL, turn_off_volume_moist_)) {
-                turn_off_volume_moist_ = !turn_off_volume_moist_;
-            }
-
-            if (ImGui::MenuItem("Turn on air flow effect", NULL, turn_on_airflow_)) {
-                turn_on_airflow_ = !turn_on_airflow_;
-            }*/
-
-            ImGui::Separator();
-
             ImGui::SliderFloat("Light Extinct Rate", &light_ext_factor_, 0.0f, 2.0f);
             ImGui::SliderFloat("View Extinct Rate", &view_ext_factor_, 0.0f, 10.0f);
             ImGui::SliderFloat("water flow strength", &water_flow_strength_, 0.0f, 10.0f);
@@ -217,6 +207,11 @@ bool Menu::draw(
                 }
                 ImGui::EndCombo();
             }
+
+            ImGui::Separator();
+
+            ImGui::Checkbox("Turn off volume moist", &turn_off_volume_moist_);
+            ImGui::Checkbox("Turn on airflow effect", &turn_on_airflow_);
         }
         ImGui::End();
     }
