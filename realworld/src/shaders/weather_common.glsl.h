@@ -140,7 +140,19 @@ float rsi_n(vec3 r0, vec3 rd_n, float sr) {
     float result = 0.0f;
     float delta = b * b - c;
     if (delta >= 0) {
-        result = -b + sqrt(delta);
+        float t0 = -b - sqrt(delta);
+        float t1 = -b + sqrt(delta);
+
+        if (t0 < 0.0f) {
+            t0 = t1;
+        }
+
+        if (t1 < 0.0f) {
+            t1 = t0;
+        }
+
+        float t = min(t0, t1);
+        result = max(t, 0.0f);
     }
 
     return result;

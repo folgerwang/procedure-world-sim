@@ -17,8 +17,8 @@ class Menu {
     float water_flow_strength_ = 1.0f;
     float light_ext_factor_ = 0.375f;
     float view_ext_factor_ = 0.773f;
-    float global_flow_dir_ = 0.0f;
-    float global_flow_speed_ = 0.01f;
+    float global_flow_dir_ = 90.0f;
+    float global_flow_speed_ = 0.87f;
 
     glsl::WeatherControl weather_controls_;
 
