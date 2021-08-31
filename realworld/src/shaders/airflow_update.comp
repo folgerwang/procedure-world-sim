@@ -118,16 +118,16 @@ void updateTempMoistureBuffer(int pixel_index, ivec3 block_coords) {
     s_temp_moisture_grid[slc.z][slc.y][slc.x] = temp_moist;
 }
 
-float getFrozenTransferRate(int pixel_height, vec2 noise, float temp_adj) {
+float getFrozenTransferRate(int pixel_height, vec2 noise, vec2 temp_moist_adj) {
     noise = vec2(0);
     float uvw_w = (pixel_height + 0.5) * params.inv_size.z;
     float sample_h = getSampleToHeight(uvw_w);
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
-    float frozen_rate = (target_stable_temp + temp_adj + noise.x * 2.0f - 15.0f) / (8.0f + noise.y * 2.0f) * 0.5f + 0.5f;
-    float frozen_transfer_rate = clamp(frozen_rate, 0.0f, 1.0f);
+    float frozen_rate = (target_stable_temp + temp_moist_adj.x + noise.x * 2.0f - 15.0f) / (8.0f + noise.y * 2.0f) * 0.5f + 0.5f;
+    float frozen_transfer_rate = pow(clamp(frozen_rate, 0.0f, 1.0f), mix((noise.x + noise.y) * 0.5f, 1.0f, 0.8f));
 
-    return pow(frozen_transfer_rate, (noise.x + noise.y) * 0.5f + 2.0f);
+    return exp(-temp_moist_adj.y * (1.0f - frozen_transfer_rate));
 }
 
 uint packTempDiff(uint u_min_temp, uint u_max_moist, uint u_center, ivec3 pixel_coords) {
@@ -141,15 +141,15 @@ uint packTempDiff(uint u_min_temp, uint u_max_moist, uint u_center, ivec3 pixel_
     float temp_transfer = params.controls.heat_transfer_ratio * (1.0f + noise_values.x * params.controls.heat_transfer_noise_weight);
     float moist_transfer = params.controls.moist_transfer_ratio * (1.0f + noise_values.y * params.controls.moist_transfer_noise_weight);
 
-    float frozen_transfer_rate = getFrozenTransferRate(pixel_coords.z, hash_values.xy, center_tm.x);
-    float center_weight = (1.0f - frozen_transfer_rate) * center_tm.y;
+    float center_frozen_transfer_rate =
+        getFrozenTransferRate(pixel_coords.z, hash_values.xy, center_tm);
 
     uint max_moist_loc = u_max_moist & 0x07;
     int height_adj = max_moist_loc == kNodeAbove ? 1 : (max_moist_loc == kNodeBelow ? -1 : 0);
-    float max_frozen_transfer_rate = getFrozenTransferRate(pixel_coords.z + height_adj, hash_values.zw, max_tm.x);
-    float max_weight = (1.0f - max_frozen_transfer_rate) * max_tm.y;
+    float max_frozen_transfer_rate =
+        getFrozenTransferRate(pixel_coords.z + height_adj, hash_values.zw, max_tm);
 
-    bool absorb = center_weight > max_weight && center_tm.y > max_tm.y;
+    bool absorb = center_frozen_transfer_rate > max_frozen_transfer_rate && center_tm.y > max_tm.y;
     uint target_flag = absorb ? u_max_moist : u_min_temp;
     vec2 target_tm = absorb ? max_tm : min_tm;
     float moist_trans = center_tm.y;
@@ -161,7 +161,7 @@ uint packTempDiff(uint u_min_temp, uint u_max_moist, uint u_center, ivec3 pixel_
     if (absorb || center_tm.x > min_tm.x) {
         float temp_diff = center_tm.x - target_tm.x;
         float temp_diff_adj = temp_diff * temp_transfer;
-        float moist_adj = moist_trans * moist_transfer * frozen_transfer_rate;
+        float moist_adj = moist_trans * moist_transfer * center_frozen_transfer_rate;
         packed_temp_moist_diff = packTempMoistDiff(temp_diff_adj, moist_adj, target_flag);
     }
 

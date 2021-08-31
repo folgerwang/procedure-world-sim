@@ -62,7 +62,7 @@ Menu::Menu(
     weather_controls_.water_temp_adj = 0.052f;
     weather_controls_.moist_temp_convert = 0.0000f;
     weather_controls_.soil_moist_adj = 0.024f;
-    weather_controls_.water_moist_adj = 0.175f;
+    weather_controls_.water_moist_adj = 0.105f;
     weather_controls_.heat_transfer_ratio = 0.253f;
     weather_controls_.moist_transfer_ratio = 0.189f;
     weather_controls_.heat_transfer_noise_weight = 0.1f;
