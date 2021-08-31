@@ -43,6 +43,13 @@ void main()
     if (t > 0.0f) {
         cast_dist = t;
     }
+
+    t = rsi_n(view_params.camera_pos.xyz, view_dir, kAirflowLowHeight);
+
+    if (t > 0.0f && t < cast_dist) {
+        cast_dist = t;
+    }
+
     cast_dist = min(cast_dist, bg_view_dist);
         
     vec2 noise = hash23(view_dir * 1334.0f);
@@ -54,9 +61,8 @@ void main()
 
     const float cast_dist_per_sample = cast_dist * inv_num_samples;
 
-    float cos_theta = dot(view_dir, -normalize(params.sun_pos));
+    float cos_theta = dot(view_dir, normalize(params.sun_pos));
     float phase = henyeyGreensteinPhaseFunc(params.g, cos_theta);
-
 
     vec3 fg_color = vec3(0);
     float final_alpha = 1.0f;

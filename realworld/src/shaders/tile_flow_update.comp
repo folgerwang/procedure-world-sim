@@ -166,7 +166,7 @@ vec2 updateSoilWaterLayers(uint packed_layers, uint from_neighbor, uint to_neigh
         adj_height *
         vec2(1.0f / SOIL_WATER_LAYER_MAX_THICKNESS);
 
-    return mix(soil_water_layers, new_soil_water_layers, 0.8f);
+    return mix(soil_water_layers, new_soil_water_layers, 1.0f);
 }
 
 layout(local_size_x = 16, local_size_y = 16) in;

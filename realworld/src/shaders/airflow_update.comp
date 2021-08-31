@@ -119,6 +119,7 @@ void updateTempMoistureBuffer(int pixel_index, ivec3 block_coords) {
 }
 
 float getFrozenTransferRate(int pixel_height, vec2 noise, float temp_adj) {
+    noise = vec2(0);
     float uvw_w = (pixel_height + 0.5) * params.inv_size.z;
     float sample_h = getSampleToHeight(uvw_w);
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
@@ -194,9 +195,9 @@ void createTempMoistureFlowBuffer(int pixel_index, ivec3 block_coords) {
     // temprature on the top of 16bits, moist on the lower 16bits.
     uint center = s_temp_moisture_grid[slc.z][slc.y][slc.x];
 
-    uint left = s_temp_moisture_grid[slc.z][slc.y][slc.x-1] | kNodeLeft;
+    uint left  = s_temp_moisture_grid[slc.z][slc.y][slc.x-1] | kNodeLeft;
     uint right = s_temp_moisture_grid[slc.z][slc.y][slc.x+1] | kNodeRight;
-    uint back = s_temp_moisture_grid[slc.z][slc.y-1][slc.x] | kNodeBack;
+    uint back  = s_temp_moisture_grid[slc.z][slc.y-1][slc.x] | kNodeBack;
     uint front = s_temp_moisture_grid[slc.z][slc.y+1][slc.x] | kNodeFront;
     uint below = s_temp_moisture_grid[slc.z-1][slc.y][slc.x] | kNodeBelow;
     uint above = s_temp_moisture_grid[slc.z+1][slc.y][slc.x] | kNodeAbove;
@@ -220,9 +221,9 @@ vec2 gatherTempMoistSamples(ivec3 dlc, out vec3 airflow_dir, float above_ratio, 
     ivec3 slc = dlc + 1;
     uint center = s_flow_grid[slc.z][slc.y][slc.x];
 
-    uint left = s_flow_grid[slc.z][slc.y][slc.x-1];
+    uint left  = s_flow_grid[slc.z][slc.y][slc.x-1];
     uint right = s_flow_grid[slc.z][slc.y][slc.x+1];
-    uint back = s_flow_grid[slc.z][slc.y-1][slc.x];
+    uint back  = s_flow_grid[slc.z][slc.y-1][slc.x];
     uint front = s_flow_grid[slc.z][slc.y+1][slc.x];
     uint below = s_flow_grid[slc.z-1][slc.y][slc.x];
     uint above = s_flow_grid[slc.z+1][slc.y][slc.x];
@@ -264,9 +265,9 @@ vec2 gatherTempMoistSamples(ivec3 dlc, out vec3 airflow_dir, float above_ratio, 
     vec2 tm = unpackSnorm2x16(center & 0xfffffff8);
     temp_moist_adj -= tm;
 
-    airflow_vec += vec3(flow_tag == kNodeLeft ? -tm.y : (flow_tag == kNodeRight ? tm.y : 0),
+    airflow_vec += vec3(flow_tag == kNodeLeft  ? -tm.y : (flow_tag == kNodeRight ? tm.y : 0),
                         flow_tag == kNodeBelow ? -tm.y : (flow_tag == kNodeAbove ? tm.y : 0),
-                        flow_tag == kNodeBack ? -tm.y : (flow_tag == kNodeFront ? tm.y : 0));
+                        flow_tag == kNodeBack  ? -tm.y : (flow_tag == kNodeFront ? tm.y : 0));
 
     airflow_dir = airflow_vec * kMaxTempMoistDiff;
     return temp_moist_adj.yx * kMaxTempMoistDiff;
@@ -338,7 +339,7 @@ void main()
     float cur_moist = temp_moist.y + temp_moist_adj.y;
 
     cur_temp = mix(cur_temp, src_temp, 0.0f);
-    cur_moist = mix(cur_moist, src_moist, 0.8f);
+    cur_moist = mix(cur_moist, src_moist, 0.5f);
     imageStore(dst_temp_moisture,
                pixel_coords,
                vec4(normalizeTemperature(cur_temp), normalizeMoisture(cur_moist), 0, 0));
