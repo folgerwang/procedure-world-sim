@@ -286,7 +286,8 @@ void main()
         ivec2 src_coords = clamp(slc + block_coords.xy - 2,
                                  ivec2(0),
                                  params.size.xy - 1);
-        vec2 uv = (src_coords + 0.5) * params.inv_size.xy;
+        vec2 noise_values = hash23(vec3(src_coords, params.current_time));
+        vec2 uv = (src_coords + noise_values) * params.inv_size.xy;
         s_ground_info[slc.y][slc.x] =
             getPackedLayers((uv - 0.5f) * 2.0f + 0.5f);
     }
