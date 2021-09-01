@@ -98,7 +98,7 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
         temp_adjust += params.controls.moist_temp_convert * src_moist;
     }
 
-    float ratio = 0.5f + (noise_values.z + noise_values.w);
+    float ratio = mix((noise_values.z + noise_values.w) * 0.5f, 1.0f, 0.8f);
     temp_adjust *= ratio;
     moist_adjust *= ratio;
 
