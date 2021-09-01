@@ -98,8 +98,9 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
         temp_adjust += params.controls.moist_temp_convert * src_moist;
     }
 
-    temp_adjust *= 1.0f + (noise_values.x + noise_values.y);
-    moist_adjust *= 1.0f + (noise_values.z + noise_values.w);
+    float ratio = 0.5f + (noise_values.z + noise_values.w);
+    temp_adjust *= ratio;
+    moist_adjust *= ratio;
 
     // make sure color different here is positive.
     return packTempMoist(src_temp + temp_adjust - target_stable_temp,
@@ -125,9 +126,9 @@ float getFrozenTransferRate(int pixel_height, vec2 noise, vec2 temp_moist_adj) {
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
     float frozen_rate = (target_stable_temp + temp_moist_adj.x + noise.x * 2.0f - 15.0f) / (8.0f + noise.y * 2.0f) * 0.5f + 0.5f;
-    float frozen_transfer_rate = pow(clamp(frozen_rate, 0.0f, 1.0f), mix((noise.x + noise.y) * 0.5f, 1.0f, 0.8f));
+    float frozen_transfer_rate = pow(clamp(frozen_rate, 0.0f, 1.0f), mix((noise.x + noise.y) * 0.5f, 1.0f, 0.8f) * 2.0f);
 
-    return exp(-temp_moist_adj.y * (1.0f - frozen_transfer_rate));
+    return exp(-temp_moist_adj.y * 5.0f * (1.0f - frozen_transfer_rate));
 }
 
 uint packTempDiff(uint u_min_temp, uint u_max_moist, uint u_center, ivec3 pixel_coords) {
@@ -150,6 +151,7 @@ uint packTempDiff(uint u_min_temp, uint u_max_moist, uint u_center, ivec3 pixel_
         getFrozenTransferRate(pixel_coords.z + height_adj, hash_values.zw, max_tm);
 
     bool absorb = center_frozen_transfer_rate > max_frozen_transfer_rate && center_tm.y > max_tm.y;
+    absorb = (absorb && center_tm.x > min_tm.x && hash_values.x > 0.8f) ? false : absorb;
     uint target_flag = absorb ? u_max_moist : u_min_temp;
     vec2 target_tm = absorb ? max_tm : min_tm;
     float moist_trans = center_tm.y;

@@ -21,6 +21,10 @@ namespace {
         if (err < 0)
             abort();
     }
+
+    static void compileShaders() {
+        int hit = 1;
+    }
 }
 
 namespace engine {
@@ -60,8 +64,8 @@ Menu::Menu(
     weather_controls_.sea_level_temperature = 30.0f;
     weather_controls_.soil_temp_adj = 0.010f;
     weather_controls_.water_temp_adj = 0.052f;
-    weather_controls_.moist_temp_convert = 0.0000f;
-    weather_controls_.soil_moist_adj = 0.105f;
+    weather_controls_.moist_temp_convert = -0.0001f;
+    weather_controls_.soil_moist_adj = 0.04f;
     weather_controls_.water_moist_adj = 0.205f;
     weather_controls_.heat_transfer_ratio = 0.253f;
     weather_controls_.moist_transfer_ratio = 0.189f;
@@ -120,6 +124,7 @@ bool Menu::draw(
     static bool s_select_load_gltf = false;
     static bool s_show_skydome = false;
     static bool s_show_weather = false;
+    bool compile_shaders = false;
     if (ImGui::BeginMainMenuBar())
     {
         if (ImGui::BeginMenu("Game Objects"))
@@ -145,6 +150,10 @@ bool Menu::draw(
         {
             if (ImGui::MenuItem("Turn off water pass", NULL, turn_off_water_pass_)) {
                 turn_off_water_pass_ = !turn_off_water_pass_;
+            }
+
+            if (ImGui::MenuItem("Compile Shaders", NULL)) {
+                compile_shaders = true;
             }
 
             ImGui::EndMenu();
@@ -243,6 +252,10 @@ bool Menu::draw(
         if (!s_select_load_gltf) {
             ImGui::CloseCurrentPopup();
         }
+    }
+
+    if (compile_shaders) {
+        compileShaders();
     }
 
     renderer::Helper::addImGuiToCommandBuffer(command_buffer);
