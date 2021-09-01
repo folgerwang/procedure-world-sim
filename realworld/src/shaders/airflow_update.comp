@@ -150,14 +150,11 @@ uint packTempDiff(uint u_min_temp, uint u_max_moist, uint u_center, ivec3 pixel_
     float max_frozen_transfer_rate =
         getFrozenTransferRate(pixel_coords.z + height_adj, hash_values.zw, max_tm);
 
-    bool absorb = center_frozen_transfer_rate > max_frozen_transfer_rate && center_tm.y > max_tm.y;
-    absorb = (absorb && center_tm.x > min_tm.x && hash_values.x > 0.8f) ? false : absorb;
+    bool absorb = center_frozen_transfer_rate < max_frozen_transfer_rate;
+    absorb = (absorb && center_tm.x > min_tm.x && hash_values.x > 0.7f) ? false : absorb;
     uint target_flag = absorb ? u_max_moist : u_min_temp;
     vec2 target_tm = absorb ? max_tm : min_tm;
     float moist_trans = center_tm.y;
-    if (absorb) {
-        moist_trans = center_tm.y - max_tm.y;
-    }
 
     uint packed_temp_moist_diff = 0;
     if (absorb || center_tm.x > min_tm.x) {
@@ -213,7 +210,7 @@ void createTempMoistureFlowBuffer(int pixel_index, ivec3 block_coords) {
     below = swapMoistTemp(below);
     above = swapMoistTemp(above);
 
-    uint max_moist = min(min(min(left, right), min(back, front)), min(below, above));
+    uint max_moist = max(max(max(left, right), max(back, front)), max(below, above));
 
     s_flow_grid[dlc.z][dlc.y][dlc.x] =
         packTempDiff(min_temp, reswapMoistTemp(max_moist), center, pixel_coords);

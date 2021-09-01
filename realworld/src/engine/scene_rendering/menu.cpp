@@ -64,11 +64,11 @@ Menu::Menu(
     weather_controls_.sea_level_temperature = 30.0f;
     weather_controls_.soil_temp_adj = 0.010f;
     weather_controls_.water_temp_adj = 0.052f;
-    weather_controls_.moist_temp_convert = -0.0001f;
-    weather_controls_.soil_moist_adj = 0.04f;
-    weather_controls_.water_moist_adj = 0.205f;
-    weather_controls_.heat_transfer_ratio = 0.253f;
-    weather_controls_.moist_transfer_ratio = 0.189f;
+    weather_controls_.moist_temp_convert = -0.001f;
+    weather_controls_.soil_moist_adj = 0.13f;
+    weather_controls_.water_moist_adj = 0.505f;
+    weather_controls_.heat_transfer_ratio = 0.153f;
+    weather_controls_.moist_transfer_ratio = 0.089f;
     weather_controls_.heat_transfer_noise_weight = 0.1f;
     weather_controls_.moist_transfer_noise_weight = 0.37f;
 }
