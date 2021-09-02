@@ -125,6 +125,15 @@ bool Menu::draw(
     bool compile_shaders = false;
     if (ImGui::BeginMainMenuBar())
     {
+        if (ImGui::BeginMenu("Terrain"))
+        {
+            if (ImGui::MenuItem("Turn off water pass", NULL, turn_off_water_pass_)) {
+                turn_off_water_pass_ = !turn_off_water_pass_;
+            }
+
+            ImGui::EndMenu();
+        }
+
         if (ImGui::BeginMenu("Game Objects"))
         {
             if (ImGui::MenuItem("Load gltf", NULL)) {
@@ -146,10 +155,6 @@ bool Menu::draw(
 
         if (ImGui::BeginMenu("Tools"))
         {
-            if (ImGui::MenuItem("Turn off water pass", NULL, turn_off_water_pass_)) {
-                turn_off_water_pass_ = !turn_off_water_pass_;
-            }
-
             if (ImGui::MenuItem("Compile Shaders", NULL)) {
                 compile_shaders = true;
             }
