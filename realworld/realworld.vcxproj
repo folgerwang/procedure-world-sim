@@ -113,62 +113,8 @@
       <AdditionalDependencies>glfw3.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>mkdir $(ProjectDir)lib\shaders
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -o $(ProjectDir)lib\shaders\base_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -o $(ProjectDir)lib\shaders\base_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -o $(ProjectDir)lib\shaders\base_vert_TEX.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -o $(ProjectDir)lib\shaders\base_frag_TEX.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_vert_N.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_frag_N.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_vert_TN.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_frag_TN.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_vert_TEX_N.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_frag_TEX_N.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_vert_TEX_TN.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_frag_TEX_TN.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_NORMALS=1 -DHAS_SKIN_SET_0=1 -o $(ProjectDir)lib\shaders\base_vert_N_SKIN.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_NORMALS=1 -DHAS_SKIN_SET_0=1 -o $(ProjectDir)lib\shaders\base_frag_N_SKIN.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.vert -o $(ProjectDir)lib\shaders\tile_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.vert -DSOIL_PASS=1 -o $(ProjectDir)lib\shaders\tile_soil_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.vert -DGRASS_LAYER=1 -o $(ProjectDir)lib\shaders\tile_grass_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.vert -DSNOW_PASS=1 -o $(ProjectDir)lib\shaders\tile_snow_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.vert -DWATER_PASS=1 -o $(ProjectDir)lib\shaders\tile_water_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -o $(ProjectDir)lib\shaders\tile_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -DSOIL_PASS=1 -o $(ProjectDir)lib\shaders\tile_soil_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -DGRASS_PASS=1 -o $(ProjectDir)lib\shaders\tile_grass_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -DSNOW_PASS=1 -o $(ProjectDir)lib\shaders\tile_snow_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_water.frag -o $(ProjectDir)lib\shaders\tile_water_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\skybox.vert -o $(ProjectDir)lib\shaders\skybox_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\skybox.frag -o $(ProjectDir)lib\shaders\skybox_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\full_screen.vert -o $(ProjectDir)lib\shaders\full_screen_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DPANORAMA_TO_CUBEMAP=1 -DNUM_SAMPLES=1 -o $(ProjectDir)lib\shaders\panorama_to_cubemap_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DLAMBERTIAN_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_labertian_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DGGX_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_ggx_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DCHARLIE_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_charlie_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_skybox.frag -o $(ProjectDir)lib\shaders\cube_skybox.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\ibl_smooth.comp -o $(ProjectDir)lib\shaders\ibl_smooth_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.vert -o $(ProjectDir)lib\shaders\grass_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.geom -o $(ProjectDir)lib\shaders\grass_geom.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.frag -o $(ProjectDir)lib\shaders\grass_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.comp -o $(ProjectDir)lib\shaders\grass_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_creator.comp -o $(ProjectDir)lib\shaders\tile_creator_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_update.comp -o $(ProjectDir)lib\shaders\tile_update_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_flow_update.comp -o $(ProjectDir)lib\shaders\tile_flow_update_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_gltf_indirect_draw.comp -o $(ProjectDir)lib\shaders\update_gltf_indirect_draw_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_game_objects.comp -o $(ProjectDir)lib\shaders\update_game_objects_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_instance_buffer.comp -o $(ProjectDir)lib\shaders\update_instance_buffer_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\airflow_update.comp -o $(ProjectDir)lib\shaders\airflow_update_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cloud_shadow_init.comp -o $(ProjectDir)lib\shaders\cloud_shadow_init_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cloud_shadow_merge.comp -o $(ProjectDir)lib\shaders\cloud_shadow_merge_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\temperature_init.comp -o $(ProjectDir)lib\shaders\temperature_init_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\blur_image_x.comp -o $(ProjectDir)lib\shaders\blur_image_x_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\blur_image_y_merge.comp -o $(ProjectDir)lib\shaders\blur_image_y_merge_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\render_volume_cloud.comp -o $(ProjectDir)lib\shaders\render_volume_cloud_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\sky_scattering_lut_first_pass.comp -o $(ProjectDir)lib\shaders\sky_scattering_lut_first_pass_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\sky_scattering_lut_sum_pass.comp -o $(ProjectDir)lib\shaders\sky_scattering_lut_sum_pass_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\sky_scattering_lut_final_pass.comp -o $(ProjectDir)lib\shaders\sky_scattering_lut_final_pass_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug_draw.vert -o $(ProjectDir)lib\shaders\debug_draw_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug_draw.frag -o $(ProjectDir)lib\shaders\debug_draw_frag.spv</Command>
+      <Command>
+      </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -209,62 +155,8 @@ $(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug
       <AdditionalDependencies>glfw3.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>mkdir $(ProjectDir)lib\shaders
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -o $(ProjectDir)lib\shaders\base_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -o $(ProjectDir)lib\shaders\base_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -o $(ProjectDir)lib\shaders\base_vert_TEX.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -o $(ProjectDir)lib\shaders\base_frag_TEX.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_vert_N.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_frag_N.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_vert_TN.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_frag_TN.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_vert_TEX_N.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -DHAS_NORMALS=1 -o  $(ProjectDir)lib\shaders\base_frag_TEX_N.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_UV_SET0=1 -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_vert_TEX_TN.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_UV_SET0=1 -DHAS_TANGENT=1 -o $(ProjectDir)lib\shaders\base_frag_TEX_TN.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.vert -DHAS_NORMALS=1 -DHAS_SKIN_SET_0=1 -o $(ProjectDir)lib\shaders\base_vert_N_SKIN.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\base.frag -DHAS_NORMALS=1 -DHAS_SKIN_SET_0=1 -o $(ProjectDir)lib\shaders\base_frag_N_SKIN.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.vert -o $(ProjectDir)lib\shaders\tile_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.vert -DSOIL_PASS=1 -o $(ProjectDir)lib\shaders\tile_soil_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.vert -DGRASS_LAYER=1 -o $(ProjectDir)lib\shaders\tile_grass_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.vert -DSNOW_PASS=1 -o $(ProjectDir)lib\shaders\tile_snow_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.vert -DWATER_PASS=1 -o $(ProjectDir)lib\shaders\tile_water_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -o $(ProjectDir)lib\shaders\tile_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -DSOIL_PASS=1 -o $(ProjectDir)lib\shaders\tile_soil_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -DGRASS_PASS=1 -o $(ProjectDir)lib\shaders\tile_grass_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile.frag -DSNOW_PASS=1 -o $(ProjectDir)lib\shaders\tile_snow_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_water.frag -o $(ProjectDir)lib\shaders\tile_water_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\skybox.vert -o $(ProjectDir)lib\shaders\skybox_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\skybox.frag -o $(ProjectDir)lib\shaders\skybox_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\full_screen.vert -o $(ProjectDir)lib\shaders\full_screen_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DPANORAMA_TO_CUBEMAP=1 -DNUM_SAMPLES=1 -o $(ProjectDir)lib\shaders\panorama_to_cubemap_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DLAMBERTIAN_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_labertian_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DGGX_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_ggx_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_ibl.frag -DCHARLIE_FILTER=1 -DNUM_SAMPLES=32 -o $(ProjectDir)lib\shaders\ibl_charlie_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cube_skybox.frag -o $(ProjectDir)lib\shaders\cube_skybox.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\ibl_smooth.comp -o $(ProjectDir)lib\shaders\ibl_smooth_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.vert -o $(ProjectDir)lib\shaders\grass_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.geom -o $(ProjectDir)lib\shaders\grass_geom.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.frag -o $(ProjectDir)lib\shaders\grass_frag.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\grass.comp -o $(ProjectDir)lib\shaders\grass_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_creator.comp -o $(ProjectDir)lib\shaders\tile_creator_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_update.comp -o $(ProjectDir)lib\shaders\tile_update_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\tile_flow_update.comp -o $(ProjectDir)lib\shaders\tile_flow_update_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_gltf_indirect_draw.comp -o $(ProjectDir)lib\shaders\update_gltf_indirect_draw_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_game_objects.comp -o $(ProjectDir)lib\shaders\update_game_objects_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\update_instance_buffer.comp -o $(ProjectDir)lib\shaders\update_instance_buffer_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\airflow_update.comp -o $(ProjectDir)lib\shaders\airflow_update_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cloud_shadow_init.comp -o $(ProjectDir)lib\shaders\cloud_shadow_init_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\cloud_shadow_merge.comp -o $(ProjectDir)lib\shaders\cloud_shadow_merge_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\temperature_init.comp -o $(ProjectDir)lib\shaders\temperature_init_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\blur_image_x.comp -o $(ProjectDir)lib\shaders\blur_image_x_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\blur_image_y_merge.comp -o $(ProjectDir)lib\shaders\blur_image_y_merge_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\render_volume_cloud.comp -o $(ProjectDir)lib\shaders\render_volume_cloud_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\sky_scattering_lut_first_pass.comp -o $(ProjectDir)lib\shaders\sky_scattering_lut_first_pass_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\sky_scattering_lut_sum_pass.comp -o $(ProjectDir)lib\shaders\sky_scattering_lut_sum_pass_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\sky_scattering_lut_final_pass.comp -o $(ProjectDir)lib\shaders\sky_scattering_lut_final_pass_comp.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug_draw.vert -o $(ProjectDir)lib\shaders\debug_draw_vert.spv
-$(ProjectDir)src\third_party\vulkan_lib\glslc.exe $(ProjectDir)src\shaders\debug_draw.frag -o $(ProjectDir)lib\shaders\debug_draw_frag.spv</Command>
+      <Command>
+      </Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

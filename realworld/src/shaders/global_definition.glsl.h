@@ -237,6 +237,10 @@ struct WeatherControl {
     float           moist_transfer_ratio;
     float           heat_transfer_noise_weight;
     float           moist_transfer_noise_weight;
+    float           cloud_forming_ratio;
+    float           frozen_ext_factor;
+    float           frozen_noise_ratio;
+    float           frozen_pow_curve;
 };
 
 struct AirflowUpdateParams {

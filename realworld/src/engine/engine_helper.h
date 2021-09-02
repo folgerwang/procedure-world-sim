@@ -21,5 +21,11 @@ void loadMtx2Texture(
     const std::string& input_filename,
     renderer::TextureInfo& texture);
 
+std::pair<std::string, int> exec(const char* cmd);
+
+void compileGlobalShaders();
+
+void initCompileGlobalShaders();
+
 } // namespace helper
 } // namespace engine

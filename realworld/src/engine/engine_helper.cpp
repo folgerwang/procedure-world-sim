@@ -1,4 +1,10 @@
 #include <fstream>
+#include <filesystem>
+#include <sstream>
+#include <iostream>
+#include <cstdio>
+#include <array>
+#include <memory>
 #include <vector>
 #include <string>
 
@@ -143,6 +149,154 @@ void loadMtx2Texture(
         texture,
         buffer_size,
         mtx2_data.data());
+}
+
+std::pair<std::string, int> exec(const char* cmd) {
+    std::array<char, 128> buffer;
+    std::string result;
+    int return_code = -1;
+    auto pclose_wrapper = [&return_code](FILE* cmd) { return_code = _pclose(cmd); };
+    { // scope is important, have to make sure the ptr goes out of scope first
+        const std::unique_ptr<FILE, decltype(pclose_wrapper)> pipe(_popen(cmd, "rt"), pclose_wrapper);
+        if (pipe) {
+            while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe.get()) != nullptr) {
+                result += buffer.data();
+            }
+        }
+    }
+    return make_pair(result, return_code);
+}
+
+static void analyzeCommandLine(
+    const std::string& line,
+    std::string& input_name,
+    std::string& output_name,
+    std::string& params_str) {
+
+    auto o0 = line.rfind(' ');
+    auto o1 = line.rfind('\t');
+    if (o1 != std::string::npos) {
+        if (o0 != std::string::npos) {
+            o0 = std::max(o0, o1);
+        }
+    }
+    auto e0 = line.rfind('\r');
+    auto e1 = line.rfind('\n');
+    if (e1 != std::string::npos) {
+        if (e0 != std::string::npos) {
+            e0 = std::max(e0, e1);
+        }
+    }
+
+    output_name = "\\" + line.substr(o0 + 1, e0 - (o0 + 1));
+
+    auto i0 = line.find(' ');
+    auto i1 = line.find('\t');
+    if (i0 != std::string::npos && i1 != std::string::npos) {
+        i0 = std::max(i0, i1);
+    }
+    input_name = "\\" + line.substr(0, i0);
+
+    params_str = line.substr(i0, o0 - i0);
+}
+
+void compileGlobalShaders() {
+    const std::string input_path = "src\\shaders";
+    const std::string output_path = "lib\\shaders";
+    auto input_folder_exist = std::filesystem::exists(input_path);
+    auto output_folder_exist = std::filesystem::exists(output_path);
+    if (input_folder_exist) {
+        if (!output_folder_exist) {
+            output_folder_exist = std::filesystem::create_directory(output_path);
+        }
+        if (output_folder_exist) {
+            std::fstream fs;
+            fs.open("src\\shaders\\shaders-compile.cfg", std::ios::in | std::ios::binary | std::ios::ate);
+
+            std::string buffer;
+            if (fs.is_open()) {
+                fs.seekg(0, fs.end);
+                auto size = fs.tellg();
+                fs.seekg(0, fs.beg);
+                buffer.resize(size);
+                fs.read(buffer.data(), size);
+            }
+            fs.close();
+
+            std::istringstream buf_str(buffer);
+            for (std::string line; std::getline(buf_str, line); ) {
+                std::string input_name, output_name, params_str;
+                analyzeCommandLine(line, input_name, output_name, params_str);
+                input_name = input_path + input_name;
+                output_name = output_path + output_name;
+
+                struct stat input_attrib, output_attrib;
+                stat(input_name.c_str(), &input_attrib);
+                stat(output_name.c_str(), &output_attrib);
+
+                if (input_attrib.st_mtime > output_attrib.st_mtime) {
+                    auto cmd_str = "src\\third_party\\vulkan_lib\\glslc.exe " + input_name + " " + params_str + " " + output_name;
+
+                    auto result = exec((cmd_str + " 2>&1").c_str());
+
+                    if (result.second != 0) {
+                        std::cout << cmd_str << std::endl;
+                        std::cout << result.first << std::endl;
+                    }
+                }
+            }
+        }
+    }
+}
+
+void initCompileGlobalShaders() {
+    const std::string input_path = "src\\shaders";
+    const std::string output_path = "lib\\shaders";
+    auto input_folder_exist = std::filesystem::exists(input_path);
+    auto output_folder_exist = std::filesystem::exists(output_path);
+    if (input_folder_exist) {
+        if (!output_folder_exist) {
+            output_folder_exist = std::filesystem::create_directory(output_path);
+        }
+        if (output_folder_exist) {
+            std::fstream fs;
+            fs.open("src\\shaders\\shaders-compile.cfg", std::ios::in | std::ios::binary | std::ios::ate);
+
+            std::string buffer;
+            if (fs.is_open()) {
+                fs.seekg(0, fs.end);
+                auto size = fs.tellg();
+                fs.seekg(0, fs.beg);
+                buffer.resize(size);
+                fs.read(buffer.data(), size);
+            }
+            fs.close();
+
+            std::istringstream buf_str(buffer);
+            for (std::string line; std::getline(buf_str, line); ) {
+                std::string input_name, output_name, params_str;
+                analyzeCommandLine(line, input_name, output_name, params_str);
+                input_name = input_path + input_name;
+                output_name = output_path + output_name;
+
+                struct stat input_attrib, output_attrib;
+                stat(input_name.c_str(), &input_attrib);
+                auto exist = stat(output_name.c_str(), &output_attrib);
+
+                // only rebuild shader if output file didn't exist.
+                if (exist != 0) {
+                    auto cmd_str = "src\\third_party\\vulkan_lib\\glslc.exe " + input_name + " " + params_str + " " + output_name;
+
+                    auto result = exec((cmd_str + " 2>&1").c_str());
+
+                    if (result.second != 0) {
+                        std::cout << cmd_str << std::endl;
+                        std::cout << result.first << std::endl;
+                    }
+                }
+            }
+        }
+    }
 }
 
 } // namespace helper

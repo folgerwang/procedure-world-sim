@@ -131,6 +131,7 @@ namespace work {
 namespace app {
 
 void RealWorldApplication::run() {
+    engine::helper::initCompileGlobalShaders();
     initWindow();
     initVulkan();
     mainLoop();

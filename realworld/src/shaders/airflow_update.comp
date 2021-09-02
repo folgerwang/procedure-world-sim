@@ -126,9 +126,10 @@ float getFrozenTransferRate(int pixel_height, vec2 noise, vec2 temp_moist_adj) {
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
     float frozen_rate = (target_stable_temp + temp_moist_adj.x + noise.x * 2.0f - 15.0f) / (8.0f + noise.y * 2.0f) * 0.5f + 0.5f;
-    float frozen_transfer_rate = pow(clamp(frozen_rate, 0.0f, 1.0f), mix((noise.x + noise.y) * 0.5f, 1.0f, 0.8f) * 2.0f);
+    float exponent_curve = mix((noise.x + noise.y) * 0.5f, 1.0f, params.controls.frozen_noise_ratio) * params.controls.frozen_pow_curve;
+    float frozen_transfer_rate = pow(clamp(frozen_rate, 0.0f, 1.0f), exponent_curve);
 
-    return exp(-temp_moist_adj.y * 5.0f * (1.0f - frozen_transfer_rate));
+    return exp(-temp_moist_adj.y * params.controls.frozen_ext_factor * (1.0f - frozen_transfer_rate));
 }
 
 uint packTempDiff(uint u_min_temp, uint u_max_moist, uint u_center, ivec3 pixel_coords) {
@@ -150,14 +151,17 @@ uint packTempDiff(uint u_min_temp, uint u_max_moist, uint u_center, ivec3 pixel_
     float max_frozen_transfer_rate =
         getFrozenTransferRate(pixel_coords.z + height_adj, hash_values.zw, max_tm);
 
-    bool absorb = center_frozen_transfer_rate < max_frozen_transfer_rate;
-    absorb = (absorb && center_tm.x > min_tm.x && hash_values.x > 0.7f) ? false : absorb;
-    uint target_flag = absorb ? u_max_moist : u_min_temp;
-    vec2 target_tm = absorb ? max_tm : min_tm;
+    bool cloud_forming = center_frozen_transfer_rate < max_frozen_transfer_rate;
+    bool heat_transfer = center_tm.x > min_tm.x;
+    if (cloud_forming && heat_transfer && hash_values.x > params.controls.cloud_forming_ratio) {
+        cloud_forming = false;
+    }
+    uint target_flag = cloud_forming ? u_max_moist : u_min_temp;
+    vec2 target_tm = cloud_forming ? max_tm : min_tm;
     float moist_trans = center_tm.y;
 
     uint packed_temp_moist_diff = 0;
-    if (absorb || center_tm.x > min_tm.x) {
+    if (cloud_forming || heat_transfer) {
         float temp_diff = center_tm.x - target_tm.x;
         float temp_diff_adj = temp_diff * temp_transfer;
         float moist_adj = moist_trans * moist_transfer * center_frozen_transfer_rate;

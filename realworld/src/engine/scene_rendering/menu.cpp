@@ -7,6 +7,7 @@
 
 #include "engine/renderer/renderer.h"
 #include "engine/renderer/renderer_helper.h"
+#include "engine/engine_helper.h"
 
 #include "menu.h"
 
@@ -20,10 +21,6 @@ namespace {
         fprintf(stderr, "[vulkan] Error: VkResult = %d\n", err);
         if (err < 0)
             abort();
-    }
-
-    static void compileShaders() {
-        int hit = 1;
     }
 }
 
@@ -65,12 +62,16 @@ Menu::Menu(
     weather_controls_.soil_temp_adj = 0.010f;
     weather_controls_.water_temp_adj = 0.052f;
     weather_controls_.moist_temp_convert = -0.001f;
-    weather_controls_.soil_moist_adj = 0.13f;
-    weather_controls_.water_moist_adj = 0.505f;
+    weather_controls_.soil_moist_adj = 0.43f;
+    weather_controls_.water_moist_adj = 2.05f;
     weather_controls_.heat_transfer_ratio = 0.153f;
     weather_controls_.moist_transfer_ratio = 0.089f;
     weather_controls_.heat_transfer_noise_weight = 0.1f;
     weather_controls_.moist_transfer_noise_weight = 0.37f;
+    weather_controls_.cloud_forming_ratio = 0.7f;
+    weather_controls_.frozen_ext_factor = 5.0f;
+    weather_controls_.frozen_noise_ratio = 0.8f;
+    weather_controls_.frozen_pow_curve = 2.0f;
 }
 
 void Menu::init(
@@ -117,9 +118,6 @@ bool Menu::draw(
         swap_chain_info.framebuffers[image_index],
         screen_size,
         clear_values);
-
-//    ImGuiWindowFlags_NoBackground
-//    ImGuiWindow* window = ImGui::FindWindowByName("RenderConsole");
 
     static bool s_select_load_gltf = false;
     static bool s_show_skydome = false;
@@ -176,6 +174,28 @@ bool Menu::draw(
 
     if (s_show_weather) {
         if (ImGui::Begin("Weather", &s_show_weather, ImGuiWindowFlags_NoScrollbar)) {
+            ImGui::Checkbox("Turn off volume moist", &turn_off_volume_moist_);
+            ImGui::Checkbox("Turn on airflow effect", &turn_on_airflow_);
+
+            ImGui::Separator();
+
+            const char* items[] = { "no debug draw", "debug temperature", "debug moisture" };
+            if (ImGui::BeginCombo("##debugmode", items[debug_draw_type_])) // The second parameter is the label previewed before opening the combo.
+            {
+                for (int n = 0; n < IM_ARRAYSIZE(items); n++)
+                {
+                    bool is_selected = (items[debug_draw_type_] == items[n]); // You can store your selection however you want, outside or inside your objects
+                    if (ImGui::Selectable(items[n], is_selected)) {
+                        debug_draw_type_ = n;
+                        if (is_selected)
+                            ImGui::SetItemDefaultFocus();   // You may set the initial focus when opening the combo (scrolling + for keyboard navigation support)
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            ImGui::Separator();
+
             ImGui::SliderFloat("Light Extinct Rate", &light_ext_factor_, 0.0f, 2.0f);
             ImGui::SliderFloat("View Extinct Rate", &view_ext_factor_, 0.0f, 10.0f);
             ImGui::SliderFloat("water flow strength", &water_flow_strength_, 0.0f, 10.0f);
@@ -202,25 +222,10 @@ bool Menu::draw(
 
             ImGui::Separator();
 
-            const char* items[] = { "no debug draw", "debug temperature", "debug moisture" };
-            if (ImGui::BeginCombo("##debugmode", items[debug_draw_type_])) // The second parameter is the label previewed before opening the combo.
-            {
-                for (int n = 0; n < IM_ARRAYSIZE(items); n++)
-                {
-                    bool is_selected = (items[debug_draw_type_] == items[n]); // You can store your selection however you want, outside or inside your objects
-                    if (ImGui::Selectable(items[n], is_selected)) {
-                        debug_draw_type_ = n;
-                        if (is_selected)
-                            ImGui::SetItemDefaultFocus();   // You may set the initial focus when opening the combo (scrolling + for keyboard navigation support)
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            ImGui::Separator();
-
-            ImGui::Checkbox("Turn off volume moist", &turn_off_volume_moist_);
-            ImGui::Checkbox("Turn on airflow effect", &turn_on_airflow_);
+            ImGui::SliderFloat("cloud forming ratio", &weather_controls_.cloud_forming_ratio, 0.0f, 1.0f);
+            ImGui::SliderFloat("frozen noise ratio", &weather_controls_.frozen_noise_ratio, 0.0f, 1.0f);
+            ImGui::SliderFloat("frozen ext factor", &weather_controls_.frozen_ext_factor, 0.0f, 10.0f);
+            ImGui::SliderFloat("frozen power curve", &weather_controls_.frozen_pow_curve, 0.0f, 10.0f);
         }
         ImGui::End();
     }
@@ -255,7 +260,7 @@ bool Menu::draw(
     }
 
     if (compile_shaders) {
-        compileShaders();
+        engine::helper::compileGlobalShaders();
     }
 
     renderer::Helper::addImGuiToCommandBuffer(command_buffer);
