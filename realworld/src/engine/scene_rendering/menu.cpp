@@ -122,6 +122,8 @@ bool Menu::draw(
     static bool s_select_load_gltf = false;
     static bool s_show_skydome = false;
     static bool s_show_weather = false;
+    static bool s_show_shader_error_message = false;
+    static std::string s_shader_error_message;
     bool compile_shaders = false;
     if (ImGui::BeginMainMenuBar())
     {
@@ -265,7 +267,18 @@ bool Menu::draw(
     }
 
     if (compile_shaders) {
-        engine::helper::compileGlobalShaders();
+        auto error_strings = engine::helper::compileGlobalShaders();
+        s_shader_error_message = error_strings;
+        if (error_strings.length() > 0) {
+            s_show_shader_error_message = true;
+        }
+    }
+
+    if (s_show_shader_error_message) {
+        if (ImGui::Begin("Shader Compile Error", &s_show_shader_error_message, ImGuiWindowFlags_NoScrollbar)) {
+            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "%s", s_shader_error_message.c_str());
+        }
+        ImGui::End();
     }
 
     renderer::Helper::addImGuiToCommandBuffer(command_buffer);

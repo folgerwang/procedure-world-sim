@@ -4,6 +4,7 @@
 #include <limits>
 #include <chrono>
 #include <filesystem>
+#include "Windows.h"
 
 #include "engine/renderer/renderer.h"
 #include "engine/renderer/renderer_helper.h"
@@ -131,7 +132,10 @@ namespace work {
 namespace app {
 
 void RealWorldApplication::run() {
-    engine::helper::initCompileGlobalShaders();
+    auto error_strings = engine::helper::initCompileGlobalShaders();
+    if (error_strings.length() > 0) {
+        MessageBoxA(NULL, error_strings.c_str(), "Shader Error!", MB_OK);
+    }
     initWindow();
     initVulkan();
     mainLoop();

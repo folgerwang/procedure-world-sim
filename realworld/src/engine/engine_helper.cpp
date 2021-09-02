@@ -200,7 +200,8 @@ static void analyzeCommandLine(
     params_str = line.substr(i0, o0 - i0);
 }
 
-void compileGlobalShaders() {
+std::string compileGlobalShaders() {
+    std::string error_strings;
     const std::string input_path = "src\\shaders";
     const std::string output_path = "lib\\shaders";
     auto input_folder_exist = std::filesystem::exists(input_path);
@@ -240,16 +241,18 @@ void compileGlobalShaders() {
                     auto result = exec((cmd_str + " 2>&1").c_str());
 
                     if (result.second != 0) {
-                        std::cout << cmd_str << std::endl;
-                        std::cout << result.first << std::endl;
+                        error_strings += cmd_str + "\n" + result.first + "\n";
                     }
                 }
             }
         }
     }
+
+    return error_strings;
 }
 
-void initCompileGlobalShaders() {
+std::string  initCompileGlobalShaders() {
+    std::string error_strings;
     const std::string input_path = "src\\shaders";
     const std::string output_path = "lib\\shaders";
     auto input_folder_exist = std::filesystem::exists(input_path);
@@ -290,13 +293,14 @@ void initCompileGlobalShaders() {
                     auto result = exec((cmd_str + " 2>&1").c_str());
 
                     if (result.second != 0) {
-                        std::cout << cmd_str << std::endl;
-                        std::cout << result.first << std::endl;
+                        error_strings += cmd_str + "\n" + result.first + "\n";
                     }
                 }
             }
         }
     }
+
+    return error_strings;
 }
 
 } // namespace helper
