@@ -17,6 +17,7 @@ class Menu {
     float water_flow_strength_ = 1.0f;
     float light_ext_factor_ = 0.375f;
     float view_ext_factor_ = 1.03f;
+    float view_ext_exponent_ = 2.0f;
     float global_flow_dir_ = 90.0f;
     float global_flow_speed_ = 0.2f;
 
@@ -66,6 +67,10 @@ public:
 
     inline const float getViewExtFactor() const {
         return view_ext_factor_ / 1000.0f;
+    }
+
+    inline const float getViewExtExponent() const {
+        return view_ext_exponent_;
     }
 
     inline float getAirFlowStrength() {

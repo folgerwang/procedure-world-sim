@@ -430,6 +430,7 @@ void VolumeCloud::renderVolumeCloud(
     const std::shared_ptr<renderer::Image>& hdr_color,
     const std::shared_ptr<scene_rendering::Skydome>& skydome,
     const float& view_ext_factor,
+    const float& view_ext_exponent,
     const glm::uvec2& display_size,
     int dbuf_idx,
     float current_time) {
@@ -453,6 +454,7 @@ void VolumeCloud::renderVolumeCloud(
         params.inv_mie_scale_height = 1.0f / skydome->getMieScaleHeight();
         params.sun_pos = skydome->getSunDir();
         params.view_ext_factor = view_ext_factor;
+        params.view_ext_exponent = view_ext_exponent;
 
         cmd_buf->pushConstants(
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),

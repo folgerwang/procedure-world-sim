@@ -37,13 +37,6 @@
 
 #define USE_LINEAR_HEIGHT_SAMPLE          1
 
-#define kNodeLeft                         0x00      // -x
-#define kNodeRight                        0x01      // +x
-#define kNodeBack                         0x02      // -y
-#define kNodeFront                        0x03      // +y
-#define kNodeBelow                        0x04      // -z
-#define kNodeAbove                        0x05      // +z
-
 float calculateAirflowSampleToHeight(float uvw_w) {
     float sample_h = (kAirflowHeightFactorB + kAirflowHeightFactorA * uvw_w) * uvw_w;
     return sample_h;

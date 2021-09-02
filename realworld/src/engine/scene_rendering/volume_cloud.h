@@ -51,6 +51,7 @@ public:
         const std::shared_ptr<renderer::Image>& hdr_color,
         const std::shared_ptr<scene_rendering::Skydome>& skydome,
         const float& view_ext_factor,
+        const float& view_ext_exponent,
         const glm::uvec2& display_size,
         int dbuf_idx,
         float current_time);

@@ -205,6 +205,7 @@ bool Menu::draw(
 
             ImGui::SliderFloat("Light Extinct Rate", &light_ext_factor_, 0.0f, 2.0f);
             ImGui::SliderFloat("View Extinct Rate", &view_ext_factor_, 0.0f, 10.0f);
+            ImGui::SliderFloat("View Extinct Exponent", &view_ext_exponent_, 0.0f, 10.0f);
             ImGui::SliderFloat("water flow strength", &water_flow_strength_, 0.0f, 10.0f);
             ImGui::SliderFloat("air flow strength", &air_flow_strength_, 0.0f, 100.0f);
 

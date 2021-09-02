@@ -127,27 +127,34 @@
 
 #define INDIRECT_DRAW_BUF_OFS                   4
 
-#define SOIL_WATER_LAYER_MAX_THICKNESS      (512.0f - 1.0f / 32.0f)
-#define SNOW_LAYER_MAX_THICKNESS            (8.0f - 1.0f / 32.0f)
+#define SOIL_WATER_LAYER_MAX_THICKNESS          128.0f
+#define SNOW_LAYER_MAX_THICKNESS                8.0f
 
-#define NO_DEBUG_DRAW                       0
-#define DEBUG_DRAW_TEMPRETURE               1
-#define DEBUG_DRAW_MOISTURE                 2
+#define NO_DEBUG_DRAW                           0
+#define DEBUG_DRAW_TEMPRETURE                   1
+#define DEBUG_DRAW_MOISTURE                     2
 
-#define kAirflowBufferWidth                 256
-#define kAirflowBufferHeight                128
-#define kAirflowBufferCount                 7
+#define kAirflowBufferWidth                     256
+#define kAirflowBufferHeight                    128
+#define kAirflowBufferCount                     7
 
-#define kAtmosphereScatteringLutGroupSize   64
-#define kAtmosphereScatteringLutWidth       512
-#define kAtmosphereScatteringLutHeight      512
-#define kPlanetRadius                       6371e3
-#define kAtmosphereRadius                   6471e3
-#define kRayleighScaleHeight                8e3
-#define kMieScaleHeight                     1.2e3
+#define kAtmosphereScatteringLutGroupSize       64
+#define kAtmosphereScatteringLutWidth           512
+#define kAtmosphereScatteringLutHeight          512
+#define kPlanetRadius                           6371e3
+#define kAtmosphereRadius                       6471e3
+#define kRayleighScaleHeight                    8e3
+#define kMieScaleHeight                         1.2e3
 
-#define kWorldMapSize 8192.0f //16384.0f     // meters
-#define kCloudMapSize 16384.0f //32768.0f     // meters
+#define kWorldMapSize 8192.0f //16384.0f        // meters
+#define kCloudMapSize 16384.0f //32768.0f       // meters
+
+#define kNodeLeft                               0x00      // -x
+#define kNodeRight                              0x01      // +x
+#define kNodeBack                               0x02      // -y
+#define kNodeFront                              0x03      // +y
+#define kNodeBelow                              0x04      // -z
+#define kNodeAbove                              0x05      // +z
 
 #ifdef __cplusplus
 #pragma once
@@ -326,6 +333,8 @@ struct VolumeMoistrueParams {
     float           g;
     float           inv_rayleigh_scale_height;
     float           inv_mie_scale_height;
+    vec3            pad;
+    float           view_ext_exponent;
 };
 
 struct BlurImageParams {

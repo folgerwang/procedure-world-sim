@@ -1262,6 +1262,7 @@ void RealWorldApplication::drawScene(
                     hdr_color_buffer_.image,
                     skydome_,
                     menu_->getViewExtFactor(),
+                    menu_->getViewExtExponent(),
                     screen_size,
                     s_dbuf_idx,
                     current_time);
