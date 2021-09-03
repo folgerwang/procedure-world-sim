@@ -19,7 +19,7 @@ class Menu {
     float view_ext_factor_ = 1.03f;
     float view_ext_exponent_ = 2.0f;
     float global_flow_dir_ = 90.0f;
-    float global_flow_speed_ = 0.2f;
+    float global_flow_speed_ = 0.5f;
 
     glsl::WeatherControl weather_controls_;
 

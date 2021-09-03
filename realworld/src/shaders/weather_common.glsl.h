@@ -21,7 +21,6 @@
 #define kAirflowStrengthNormalizeScale    (1.0f / kMaxAirflowStrength)
 
 #define kMaxTempMoistDiff                 4.0f
-#define kTempMoistDiffToFloat             (kMaxTempMoistDiff / 65536.0f)
 
 #define kMinSampleHeight                  8.0f
 #define kAirflowHeightMinMaxRatio         (kAirflowHeightRange / (kAirflowBufferHeight / 2 * kMinSampleHeight) - 1.0f)
