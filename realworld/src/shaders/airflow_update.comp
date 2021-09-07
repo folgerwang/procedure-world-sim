@@ -9,8 +9,10 @@ layout(push_constant) uniform AirflowUniformBufferObject {
   AirflowUpdateParams params;
 };
 
-layout(set = 0, binding = DST_TEMP_MOISTURE_TEX_INDEX, rg16) uniform writeonly image3D dst_temp_moisture;
-layout(set = 0, binding = SRC_TEMP_MOISTURE_TEX_INDEX) uniform sampler3D src_temp_moisture;
+layout(set = 0, binding = DST_TEMP_TEX_INDEX, r16) uniform writeonly image3D dst_temp;
+layout(set = 0, binding = DST_MOISTURE_TEX_INDEX, r16) uniform writeonly image3D dst_moisture;
+layout(set = 0, binding = SRC_TEMP_TEX_INDEX) uniform sampler3D src_temp;
+layout(set = 0, binding = SRC_MOISTURE_TEX_INDEX) uniform sampler3D src_moisture;
 layout(set = 0, binding = DST_AIRFLOW_TEX_INDEX, rgba8) uniform image3D dst_airflow;
 layout(set = 0, binding = ROCK_LAYER_BUFFER_INDEX) uniform sampler2D rock_layer;
 layout(set = 0, binding = SOIL_WATER_LAYER_BUFFER_INDEX) uniform sampler2D soil_water_layer;
@@ -72,9 +74,10 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
     vec4 noise_values = hash44(vec4(vec3(src_coords), params.current_time));
     vec3 uvw = ((src_coords + 0.5f) + getGlobalAirflowVector(noise_values.x)) * params.inv_size;
 
-    vec2 src_temp_moist = texture(src_temp_moisture, uvw).xy;
-    float src_temp = denormalizeTemperature(src_temp_moist.x);
-    float src_moist = denormalizeMoisture(src_temp_moist.y);
+    float temp = texture(src_temp, uvw).x;
+    float moist = texture(src_moisture, uvw).x;
+    float src_temp = denormalizeTemperature(temp);
+    float src_moist = denormalizeMoisture(moist);
 
     float uvw_w = (src_coords.z + 0.5f) * params.inv_size.z;
     float sample_h = getSampleToHeight(uvw_w);
@@ -335,7 +338,7 @@ void main()
     vec4 noise_values = hash44(vec4(vec3(pixel_coords), params.current_time));
     vec3 uvw = ((pixel_coords + 0.5f) + getGlobalAirflowVector(noise_values.x)) * params.inv_size;
 
-    vec2 src_temp_moist = texture(src_temp_moisture, uvw).xy;
+    vec2 src_temp_moist = vec2(texture(src_temp, uvw).x, texture(src_moisture, uvw).x);
     float src_temp = denormalizeTemperature(src_temp_moist.x);
     float src_moist = denormalizeMoisture(src_temp_moist.y);
 
@@ -344,9 +347,12 @@ void main()
 
     cur_temp = mix(cur_temp, src_temp, 0.0f);
     cur_moist = mix(cur_moist, src_moist, 0.5f);
-    imageStore(dst_temp_moisture,
+    imageStore(dst_temp,
                pixel_coords,
-               vec4(normalizeTemperature(cur_temp), normalizeMoisture(cur_moist), 0, 0));
+               vec4(normalizeTemperature(cur_temp)));
+    imageStore(dst_moisture,
+               pixel_coords,
+               vec4(normalizeMoisture(cur_moist)));
 
     vec4 src_airflow = imageLoad(dst_airflow, pixel_coords);
     vec3 src_airflow_dir = src_airflow.xyz * 2.0f - 1.0f;

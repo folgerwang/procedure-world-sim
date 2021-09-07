@@ -100,7 +100,7 @@ std::vector<er::TextureDescriptor> addCloudFogTextures(
     // envmap texture.
     er::Helper::addOneTexture(
         descriptor_writes,
-        SRC_TEMP_MOISTURE_INDEX,
+        SRC_MOISTURE_TEX_INDEX,
         texture_sampler,
         volume_moist_tex,
         description_set,
@@ -263,7 +263,7 @@ VolumeCloud::VolumeCloud(
     render_cloud_fog_desc_set_layout_ =
         device->createDescriptorSetLayout(
             { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
-                SRC_TEMP_MOISTURE_INDEX,
+                SRC_MOISTURE_TEX_INDEX,
                 SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
                 er::DescriptorType::COMBINED_IMAGE_SAMPLER),
               renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(

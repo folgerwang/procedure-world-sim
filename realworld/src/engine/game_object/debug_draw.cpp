@@ -34,15 +34,25 @@ std::vector<renderer::TextureDescriptor> addDebugDrawBuffers(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
     const std::shared_ptr<renderer::Sampler>&texture_sampler,
     const std::shared_ptr<renderer::ImageView>& temp_volume_tex,
+    const std::shared_ptr<renderer::ImageView>& moisture_volume_tex,
     const std::shared_ptr<renderer::ImageView>& airflow_tex) {
     std::vector<renderer::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(2);
+    descriptor_writes.reserve(3);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
-        SRC_TEMP_MOISTURE_INDEX,
+        SRC_TEMP_TEX_INDEX,
         texture_sampler,
         temp_volume_tex,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_MOISTURE_TEX_INDEX,
+        texture_sampler,
+        moisture_volume_tex,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -74,13 +84,17 @@ static renderer::ShaderModuleList getDebugDrawShaderModules(
 
 static std::shared_ptr<renderer::DescriptorSetLayout> CreateDebugDrawDescriptorSetLayout(
     const std::shared_ptr<renderer::Device>& device) {
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings(2);
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings(3);
 
     bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
-        SRC_TEMP_MOISTURE_INDEX,
+        SRC_TEMP_TEX_INDEX,
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, VERTEX_BIT));
 
     bindings[1] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        SRC_MOISTURE_TEX_INDEX,
+        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, VERTEX_BIT));
+
+    bindings[2] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
         SRC_AIRFLOW_INDEX,
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, VERTEX_BIT));
     
@@ -243,6 +257,7 @@ void DebugDrawObject::generateStaticDescriptorSet(
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& temp_volume_tex,
+    const std::shared_ptr<renderer::ImageView>& moisture_volume_tex,
     const std::shared_ptr<renderer::ImageView>& airflow_tex) {
     // tile creator buffer set.
     debug_draw_desc_set_ = device->createDescriptorSets(
@@ -254,6 +269,7 @@ void DebugDrawObject::generateStaticDescriptorSet(
         debug_draw_desc_set_,
         texture_sampler,
         temp_volume_tex,
+        moisture_volume_tex,
         airflow_tex);
     device->updateDescriptorSets(texture_descs, {});
 }
@@ -263,6 +279,7 @@ void DebugDrawObject::updateStaticDescriptorSet(
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& temp_volume_tex,
+    const std::shared_ptr<renderer::ImageView>& moisture_volume_tex,
     const std::shared_ptr<renderer::ImageView>& airflow_tex) {
 
     if (debug_draw_desc_set_ == nullptr) {
@@ -271,6 +288,7 @@ void DebugDrawObject::updateStaticDescriptorSet(
             descriptor_pool,
             texture_sampler,
             temp_volume_tex,
+            moisture_volume_tex,
             airflow_tex);
     }
 }
@@ -316,12 +334,14 @@ void DebugDrawObject::generateAllDescriptorSets(
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& temp_volume_tex,
+    const std::shared_ptr<renderer::ImageView>& moisture_volume_tex,
     const std::shared_ptr<renderer::ImageView>& airflow_tex) {
     generateStaticDescriptorSet(
         device,
         descriptor_pool,
         texture_sampler,
         temp_volume_tex,
+        moisture_volume_tex,
         airflow_tex);
 }
 

@@ -58,6 +58,7 @@ public:
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
         const std::shared_ptr<renderer::ImageView>& temp_volume_tex,
+        const std::shared_ptr<renderer::ImageView>& moisture_volume_tex,
         const std::shared_ptr<renderer::ImageView>& airflow_tex);
 
     static void generateStaticDescriptorSet(
@@ -65,6 +66,7 @@ public:
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
         const std::shared_ptr<renderer::ImageView>& temp_volume_tex,
+        const std::shared_ptr<renderer::ImageView>& moisture_volume_tex,
         const std::shared_ptr<renderer::ImageView>& airflow_tex);
 
     static void generateAllDescriptorSets(
@@ -72,6 +74,7 @@ public:
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
         const std::shared_ptr<renderer::ImageView>& temp_volume_tex,
+        const std::shared_ptr<renderer::ImageView>& moisture_volume_tex,
         const std::shared_ptr<renderer::ImageView>& airflow_tex);
 
     static void draw(

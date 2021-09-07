@@ -15,7 +15,8 @@ layout(location = 0) out VsPsData {
     vec4 debug_info;
 } out_data;
 
-layout(set = TILE_PARAMS_SET, binding = SRC_TEMP_MOISTURE_INDEX) uniform sampler3D src_volume;
+layout(set = TILE_PARAMS_SET, binding = SRC_TEMP_TEX_INDEX) uniform sampler3D src_temp_volume;
+layout(set = TILE_PARAMS_SET, binding = SRC_MOISTURE_TEX_INDEX) uniform sampler3D src_moisture_volume;
 layout(set = TILE_PARAMS_SET, binding = SRC_AIRFLOW_INDEX) uniform sampler3D src_airflow;
 
 void main() {
@@ -38,9 +39,10 @@ void main() {
             log2(kAirflowMaxHeight - kAirflowLowHeight + 1.0f);
 
     uvw.xy = (sample_pos.xz - params.world_min) * params.inv_world_range;
-    vec2 temp_moisture = texture(src_volume, uvw).xy;
-    out_data.debug_info.x = denormalizeTemperature(temp_moisture.x);
-    out_data.debug_info.y = denormalizeMoisture(temp_moisture.y);
+    float temp = texture(src_temp_volume, uvw).x;
+    float moisture = texture(src_moisture_volume, uvw).x;
+    out_data.debug_info.x = denormalizeTemperature(temp);
+    out_data.debug_info.y = denormalizeMoisture(moisture);
 
     vec4 airflow_info = texture(src_airflow, uvw);
     vec3 arrow_dir = airflow_info.xyz * 2.0f - 1.0f;

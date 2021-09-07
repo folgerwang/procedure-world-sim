@@ -528,7 +528,7 @@ void RealWorldApplication::initVulkan() {
         texture_sampler_,
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
-        weather_system_->getTempMoistureTexes(),
+        weather_system_->getTempTexes(),
         heightmap_tex_.view,
         map_mask_tex_.view);
 
@@ -539,7 +539,7 @@ void RealWorldApplication::initVulkan() {
         mirror_repeat_sampler_,
         depth_buffer_copy_.view,
         hdr_color_buffer_.view,
-        weather_system_->getTempMoistureTexes(),
+        weather_system_->getMoistureTexes(),
         weather_system_->getCloudLightingTex(),
         skydome_->getScatteringLutTex(),
         swap_chain_info_.extent);
@@ -548,7 +548,8 @@ void RealWorldApplication::initVulkan() {
         device_,
         descriptor_pool_,
         texture_sampler_,
-        weather_system_->getTempMoistureTex(0),
+        weather_system_->getTempTex(0),
+        weather_system_->getMoistureTex(0),
         weather_system_->getAirflowTex());
 
     menu_ = std::make_shared<es::Menu>(
@@ -658,7 +659,8 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         texture_sampler_,
-        weather_system_->getTempMoistureTex(0),
+        weather_system_->getTempTex(0),
+        weather_system_->getMoistureTex(0),
         weather_system_->getAirflowTex());
 
     ego::GltfObject::generateDescriptorSet(
@@ -678,7 +680,7 @@ void RealWorldApplication::recreateSwapChain() {
         texture_sampler_,
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
-        weather_system_->getTempMoistureTexes(),
+        weather_system_->getTempTexes(),
         heightmap_tex_.view,
         map_mask_tex_.view);
 
@@ -686,7 +688,8 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         texture_sampler_,
-        weather_system_->getTempMoistureTex(0),
+        weather_system_->getTempTex(0),
+        weather_system_->getMoistureTex(0),
         weather_system_->getAirflowTex());
 
     volume_cloud_->recreate(
@@ -696,7 +699,7 @@ void RealWorldApplication::recreateSwapChain() {
         mirror_repeat_sampler_,
         depth_buffer_copy_.view,
         hdr_color_buffer_.view,
-        weather_system_->getTempMoistureTexes(),
+        weather_system_->getMoistureTexes(),
         weather_system_->getCloudLightingTex(),
         skydome_->getScatteringLutTex(),
         swap_chain_info_.extent);

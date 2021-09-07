@@ -1645,7 +1645,7 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     const std::shared_ptr<renderer::ImageView>& grass_snow_layer,
     const std::shared_ptr<renderer::ImageView>& water_normal,
     const std::shared_ptr<renderer::ImageView>& water_flow,
-    const std::shared_ptr<renderer::ImageView>& temp_moisture_tex,
+    const std::shared_ptr<renderer::ImageView>& temp_tex,
     const std::shared_ptr<renderer::ImageView>& map_mask_tex) {
     std::vector<renderer::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(9);
@@ -1717,9 +1717,9 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
-        SRC_TEMP_MOISTURE_INDEX,
+        SRC_TEMP_TEX_INDEX,
         texture_sampler,
-        temp_moisture_tex,
+        temp_tex,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -1881,7 +1881,7 @@ static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescript
         WATER_FLOW_BUFFER_INDEX,
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     bindings[7] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
-        SRC_TEMP_MOISTURE_INDEX,
+        SRC_TEMP_TEX_INDEX,
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     bindings[8] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
         SRC_MAP_MASK_INDEX,
@@ -2492,7 +2492,7 @@ void TileObject::updateStaticDescriptorSet(
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& src_texture,
     const std::shared_ptr<renderer::ImageView>& src_depth,
-    const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_tex,
+    const std::vector<std::shared_ptr<renderer::ImageView>>& temp_tex,
     const std::shared_ptr<renderer::ImageView>& heightmap_tex,
     const std::shared_ptr<renderer::ImageView>& map_mask_tex) {
 
@@ -2516,7 +2516,7 @@ void TileObject::updateStaticDescriptorSet(
             grass_snow_layer_.view,
             water_normal_.view,
             water_flow_.view,
-            temp_moisture_tex[dbuf_idx],
+            temp_tex[dbuf_idx],
             map_mask_tex);
         device->updateDescriptorSets(tile_res_descs, {});
     }

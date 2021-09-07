@@ -120,7 +120,7 @@ public:
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
         const std::shared_ptr<renderer::ImageView>& src_texture,
         const std::shared_ptr<renderer::ImageView>& src_depth,
-        const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_tex,
+        const std::vector<std::shared_ptr<renderer::ImageView>>& temp_tex,
         const std::shared_ptr<renderer::ImageView>& heightmap_tex,
         const std::shared_ptr<renderer::ImageView>& map_mask_tex);
 

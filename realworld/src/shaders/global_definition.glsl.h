@@ -67,23 +67,24 @@
 #define ORTHER_INFO_LAYER_BUFFER_INDEX      13
 #define WATER_NORMAL_BUFFER_INDEX           14
 #define WATER_FLOW_BUFFER_INDEX             15
-#define SRC_TEMP_MOISTURE_INDEX             16
 #define SRC_AIRFLOW_INDEX                   17
 #define SRC_MAP_MASK_INDEX                  18
 
 // Airflow texture.
-#define DST_TEMP_MOISTURE_TEX_INDEX         19
-#define DST_AIRFLOW_TEX_INDEX               20
-#define DST_CLOUD_LIGHTING_TEX_INDEX        21
-#define DST_CLOUD_SHADOW_TEX_INDEX          22
-#define SRC_TEMP_MOISTURE_TEX_INDEX         23
-#define SRC_CLOUD_LIGHTING_TEX_INDEX        24
-#define SRC_CLOUD_SHADOW_TEX_INDEX          25
-#define DST_FOG_CLOUD_INDEX                 26
-#define DST_SCATTERING_LUT_INDEX            27
-#define DST_SCATTERING_LUT_SUM_INDEX        27
-#define SRC_SCATTERING_LUT_INDEX            28
-#define SRC_SCATTERING_LUT_SUM_INDEX        28
+#define DST_TEMP_TEX_INDEX                  19
+#define DST_MOISTURE_TEX_INDEX              20
+#define DST_AIRFLOW_TEX_INDEX               21
+#define DST_CLOUD_LIGHTING_TEX_INDEX        22
+#define DST_CLOUD_SHADOW_TEX_INDEX          23
+#define SRC_TEMP_TEX_INDEX                  24
+#define SRC_MOISTURE_TEX_INDEX              25
+#define SRC_CLOUD_LIGHTING_TEX_INDEX        26
+#define SRC_CLOUD_SHADOW_TEX_INDEX          27
+#define DST_FOG_CLOUD_INDEX                 28
+#define DST_SCATTERING_LUT_INDEX            29
+#define DST_SCATTERING_LUT_SUM_INDEX        29
+#define SRC_SCATTERING_LUT_INDEX            30
+#define SRC_SCATTERING_LUT_SUM_INDEX        30
 
 // IBL texure index
 #define PANORAMA_TEX_INDEX          0

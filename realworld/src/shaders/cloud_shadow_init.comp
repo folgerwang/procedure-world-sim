@@ -12,7 +12,7 @@ layout(push_constant) uniform CloudLightingUniformBufferObject {
   CloudShadowParams params;
 };
 
-layout(set = 0, binding = SRC_TEMP_MOISTURE_TEX_INDEX) uniform sampler3D src_temp_moisture;
+layout(set = 0, binding = SRC_MOISTURE_TEX_INDEX) uniform sampler3D src_moisture;
 layout(set = 0, binding = DST_CLOUD_SHADOW_TEX_INDEX, r16f) uniform writeonly image3D dst_cloud_shadow;
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
@@ -22,7 +22,7 @@ void main()
     vec3 uvw = (pixel_coords + 0.5f) * params.inv_size;
 
     float layer_height = getSampleToDeltaHeight(uvw.z);
-    float light_pass = exp(-layer_height * texture(src_temp_moisture, uvw).y * params.light_ext_factor);
+    float light_pass = exp(-layer_height * texture(src_moisture, uvw).x * params.light_ext_factor);
 
     imageStore(dst_cloud_shadow, pixel_coords, vec4(light_pass));
 }

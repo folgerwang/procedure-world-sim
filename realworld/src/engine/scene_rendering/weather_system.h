@@ -7,7 +7,8 @@ namespace engine {
 namespace scene_rendering {
 
 class WeatherSystem {
-    renderer::TextureInfo temp_moisture_volume_[2];
+    renderer::TextureInfo temp_volume_[2];
+    renderer::TextureInfo moisture_volume_[2];
     renderer::TextureInfo airflow_volume_;
     renderer::TextureInfo cloud_shadow_volume_;
     renderer::TextureInfo ground_airflow_info_;
@@ -39,12 +40,20 @@ public:
         const std::shared_ptr<renderer::ImageView>& rock_layer_tex,
         const std::vector<std::shared_ptr<renderer::ImageView>>& soil_water_layer_tex);
 
-    inline std::shared_ptr<renderer::ImageView> getTempMoistureTex(int idx) {
-        return temp_moisture_volume_[idx].view;
+    inline std::shared_ptr<renderer::ImageView> getTempTex(int idx) {
+        return temp_volume_[idx].view;
     }
 
-    inline std::vector<std::shared_ptr<renderer::ImageView>> getTempMoistureTexes() {
-        return { temp_moisture_volume_[0].view, temp_moisture_volume_[1].view };
+    inline std::shared_ptr<renderer::ImageView> getMoistureTex(int idx) {
+        return moisture_volume_[idx].view;
+    }
+
+    inline std::vector<std::shared_ptr<renderer::ImageView>> getTempTexes() {
+        return { temp_volume_[0].view, temp_volume_[1].view };
+    }
+
+    inline std::vector<std::shared_ptr<renderer::ImageView>> getMoistureTexes() {
+        return { moisture_volume_[0].view, moisture_volume_[1].view };
     }
 
     inline std::shared_ptr<renderer::ImageView> getAirflowTex() {

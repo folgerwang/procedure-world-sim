@@ -18,7 +18,7 @@ layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniform
     ViewParams view_params;
 };
 
-layout(set = 0, binding = SRC_TEMP_MOISTURE_INDEX) uniform sampler3D src_temp_moist;
+layout(set = 0, binding = SRC_MOISTURE_TEX_INDEX) uniform sampler3D src_moist;
 layout(set = 0, binding = SRC_CLOUD_LIGHTING_TEX_INDEX) uniform sampler3D src_cloud_shadow;
 layout(set = 0, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
 layout(set = 0, binding = DST_FOG_CLOUD_INDEX, rgba16f) uniform writeonly image2D dst_fog_cloud;
@@ -74,8 +74,8 @@ void main()
         vec3 sample_pos = view_params.camera_pos.xyz + cur_dist * view_dir;
         vec3 uvw = worldPositionToUvw(sample_pos);
 
-        vec2 temp_moisture = texture(src_temp_moist, uvw).xy;
-        float extinct = thickness * denormalizeMoisture(temp_moisture.y) * params.view_ext_factor;
+        float temp_moisture = texture(src_moist, uvw).x;
+        float extinct = thickness * denormalizeMoisture(temp_moisture) * params.view_ext_factor;
         float cloud_shadow = texture(src_cloud_shadow, uvw).x;
 
         vec3 cloud_lighting = (vec3(0.7) * phase + vec3(1.0)) * cloud_shadow;

@@ -24,15 +24,25 @@ er::ShaderModuleList getComputeShaderModules(
 
 std::vector<er::TextureDescriptor> addTemperatureInitTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
-    const er::TextureInfo& temp_moisture_tex) {
+    const er::TextureInfo& temp_tex,
+    const er::TextureInfo& moisture_tex) {
     std::vector<er::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(1);
+    descriptor_writes.reserve(2);
 
     er::Helper::addOneTexture(
         descriptor_writes,
-        DST_TEMP_MOISTURE_TEX_INDEX,
+        DST_TEMP_TEX_INDEX,
         nullptr,
-        temp_moisture_tex.view,
+        temp_tex.view,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
+        er::ImageLayout::GENERAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        DST_MOISTURE_TEX_INDEX,
+        nullptr,
+        moisture_tex.view,
         description_set,
         er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
@@ -43,28 +53,48 @@ std::vector<er::TextureDescriptor> addTemperatureInitTextures(
 std::vector<er::TextureDescriptor> addAirflowTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
-    const er::TextureInfo& src_temp_moisture_tex,
-    const er::TextureInfo& dst_temp_moisture_tex,
+    const er::TextureInfo& src_temp_tex,
+    const er::TextureInfo& src_moisture_tex,
+    const er::TextureInfo& dst_temp_tex,
+    const er::TextureInfo& dst_moisture_tex,
     const er::TextureInfo& dst_airflow_tex,
     const std::shared_ptr<er::ImageView>& rock_layer_tex,
     const std::shared_ptr<er::ImageView>& soil_water_layer_tex) {
     std::vector<er::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(5);
+    descriptor_writes.reserve(7);
 
     er::Helper::addOneTexture(
         descriptor_writes,
-        SRC_TEMP_MOISTURE_TEX_INDEX,
+        SRC_TEMP_TEX_INDEX,
         texture_sampler,
-        src_temp_moisture_tex.view,
+        src_temp_tex.view,
         description_set,
         er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
-        DST_TEMP_MOISTURE_TEX_INDEX,
+        SRC_MOISTURE_TEX_INDEX,
+        texture_sampler,
+        src_moisture_tex.view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        DST_TEMP_TEX_INDEX,
         nullptr,
-        dst_temp_moisture_tex.view,
+        dst_temp_tex.view,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
+        er::ImageLayout::GENERAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        DST_MOISTURE_TEX_INDEX,
+        nullptr,
+        dst_moisture_tex.view,
         description_set,
         er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
@@ -102,16 +132,16 @@ std::vector<er::TextureDescriptor> addAirflowTextures(
 std::vector<er::TextureDescriptor> addCloudShadowTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
-    const er::TextureInfo& src_temp_moisture_tex,
+    const er::TextureInfo& src_moisture_tex,
     const er::TextureInfo& dst_cloud_shadow_tex) {
     std::vector<er::TextureDescriptor> descriptor_writes;
     descriptor_writes.reserve(2);
 
     er::Helper::addOneTexture(
         descriptor_writes,
-        SRC_TEMP_MOISTURE_TEX_INDEX,
+        SRC_MOISTURE_TEX_INDEX,
         texture_sampler,
-        src_temp_moisture_tex.view,
+        src_moisture_tex.view,
         description_set,
         er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -149,10 +179,16 @@ std::vector<er::TextureDescriptor> addCloudShadowMergeTextures(
 
 static std::shared_ptr<er::DescriptorSetLayout> createTemperatureInitDescSetLayout(
     const std::shared_ptr<er::Device>& device) {
-    std::vector<er::DescriptorSetLayoutBinding> bindings(1);
+    std::vector<er::DescriptorSetLayoutBinding> bindings(2);
     bindings[0] =
         er::helper::getTextureSamplerDescriptionSetLayoutBinding(
-            DST_TEMP_MOISTURE_TEX_INDEX,
+            DST_TEMP_TEX_INDEX,
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::STORAGE_IMAGE);
+
+    bindings[1] =
+        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            DST_MOISTURE_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
 
@@ -161,32 +197,44 @@ static std::shared_ptr<er::DescriptorSetLayout> createTemperatureInitDescSetLayo
 
 static std::shared_ptr<er::DescriptorSetLayout> createAirflowUpdateDescSetLayout(
     const std::shared_ptr<er::Device>& device) {
-    std::vector<er::DescriptorSetLayoutBinding> bindings(5);
+    std::vector<er::DescriptorSetLayoutBinding> bindings(7);
     bindings[0] =
         er::helper::getTextureSamplerDescriptionSetLayoutBinding(
-            DST_TEMP_MOISTURE_TEX_INDEX,
+            DST_TEMP_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
 
     bindings[1] =
         er::helper::getTextureSamplerDescriptionSetLayoutBinding(
-            SRC_TEMP_MOISTURE_TEX_INDEX,
+            DST_MOISTURE_TEX_INDEX,
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::STORAGE_IMAGE);
+
+    bindings[2] =
+        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            SRC_TEMP_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::COMBINED_IMAGE_SAMPLER);
 
-    bindings[2] =
+    bindings[3] =
+        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            SRC_MOISTURE_TEX_INDEX,
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::COMBINED_IMAGE_SAMPLER);
+
+    bindings[4] =
         er::helper::getTextureSamplerDescriptionSetLayoutBinding(
             DST_AIRFLOW_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
 
-    bindings[3] =
+    bindings[5] =
         er::helper::getTextureSamplerDescriptionSetLayoutBinding(
             ROCK_LAYER_BUFFER_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::COMBINED_IMAGE_SAMPLER);
 
-    bindings[4] =
+    bindings[6] =
         er::helper::getTextureSamplerDescriptionSetLayoutBinding(
             SOIL_WATER_LAYER_BUFFER_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
@@ -200,7 +248,7 @@ static std::shared_ptr<er::DescriptorSetLayout> createCloudShadowUpdateDescSetLa
     std::vector<er::DescriptorSetLayoutBinding> bindings(2);
     bindings[0] =
         er::helper::getTextureSamplerDescriptionSetLayoutBinding(
-            SRC_TEMP_MOISTURE_TEX_INDEX,
+            SRC_MOISTURE_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::COMBINED_IMAGE_SAMPLER);
 
@@ -293,12 +341,23 @@ WeatherSystem::WeatherSystem(
     for (int i = 0; i < 2; i++) {
         renderer::Helper::create3DTextureImage(
             device_info,
-            renderer::Format::R16G16_UNORM,
+            renderer::Format::R16_UNORM,
             glm::uvec3(
                 kAirflowBufferWidth,
                 kAirflowBufferWidth,
                 kAirflowBufferHeight),
-            temp_moisture_volume_[i],
+            temp_volume_[i],
+            SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+            SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+            renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        renderer::Helper::create3DTextureImage(
+            device_info,
+            renderer::Format::R16_UNORM,
+            glm::uvec3(
+                kAirflowBufferWidth,
+                kAirflowBufferWidth,
+                kAirflowBufferHeight),
+            moisture_volume_[i],
             SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
             SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
             renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -391,7 +450,8 @@ void WeatherSystem::recreate(
     // create a global ibl texture descriptor set.
     auto temperature_init_texture_descs = addTemperatureInitTextures(
         temperature_init_tex_desc_set_,
-        temp_moisture_volume_[0]);
+        temp_volume_[0],
+        moisture_volume_[0]);
     device->updateDescriptorSets(temperature_init_texture_descs, {});
 
     for (int dbuf_idx = 0; dbuf_idx < 2; dbuf_idx++) {
@@ -405,8 +465,10 @@ void WeatherSystem::recreate(
         auto airflow_texture_descs = addAirflowTextures(
             airflow_tex_desc_set_[dbuf_idx],
             texture_sampler,
-            temp_moisture_volume_[1-dbuf_idx],
-            temp_moisture_volume_[dbuf_idx],
+            temp_volume_[1-dbuf_idx],
+            moisture_volume_[1 - dbuf_idx],
+            temp_volume_[dbuf_idx],
+            moisture_volume_[dbuf_idx],
             airflow_volume_,
             rock_layer_tex,
             soil_water_layer_tex[dbuf_idx]);
@@ -422,7 +484,7 @@ void WeatherSystem::recreate(
         auto cloud_shadow_texture_descs = addCloudShadowTextures(
             cloud_shadow_tex_desc_set_[dbuf_idx],
             texture_sampler,
-            temp_moisture_volume_[dbuf_idx],
+            moisture_volume_[dbuf_idx],
             cloud_shadow_volume_);
         device->updateDescriptorSets(cloud_shadow_texture_descs, {});
     }
@@ -491,7 +553,8 @@ void WeatherSystem::initTemperatureBuffer(
 
     renderer::helper::transitMapTextureToStoreImage(
         cmd_buf,
-        { temp_moisture_volume_[0].image });
+        { temp_volume_[0].image,
+          moisture_volume_[0].image });
 
     auto w = static_cast<uint32_t>(kAirflowBufferWidth);
     auto h = static_cast<uint32_t>(kAirflowBufferHeight);
@@ -525,7 +588,8 @@ void WeatherSystem::initTemperatureBuffer(
 
     renderer::helper::transitMapTextureFromStoreImage(
         cmd_buf,
-        { temp_moisture_volume_[0].image });
+        { temp_volume_[0].image,
+          moisture_volume_[0].image });
 }
 
 // update air flow buffer.
@@ -539,7 +603,8 @@ void WeatherSystem::updateAirflowBuffer(
 
     renderer::helper::transitMapTextureToStoreImage(
         cmd_buf,
-        { temp_moisture_volume_[dbuf_idx].image,
+        { temp_volume_[dbuf_idx].image,
+          moisture_volume_[dbuf_idx].image,
           airflow_volume_.image});
 
     auto w = static_cast<uint32_t>(kAirflowBufferWidth);
@@ -575,7 +640,8 @@ void WeatherSystem::updateAirflowBuffer(
 
     renderer::helper::transitMapTextureFromStoreImage(
         cmd_buf,
-        { temp_moisture_volume_[dbuf_idx].image,
+        { temp_volume_[dbuf_idx].image,
+          moisture_volume_[dbuf_idx].image,
           airflow_volume_.image });
 }
 
@@ -673,7 +739,8 @@ void WeatherSystem::updateCloudShadow(
 void WeatherSystem::destroy(
     const std::shared_ptr<renderer::Device>& device) {
     for (int i = 0; i < 2; i++) {
-        temp_moisture_volume_[i].destroy(device);
+        temp_volume_[i].destroy(device);
+        moisture_volume_[i].destroy(device);
     }
     airflow_volume_.destroy(device);
     cloud_shadow_volume_.destroy(device);

@@ -8,7 +8,8 @@ layout(push_constant) uniform AirflowUniformBufferObject {
   AirflowUpdateParams params;
 };
 
-layout(set = 0, binding = DST_TEMP_MOISTURE_TEX_INDEX, rg16) uniform writeonly image3D dst_temp_moisture;
+layout(set = 0, binding = DST_TEMP_TEX_INDEX, r16) uniform writeonly image3D dst_temp;
+layout(set = 0, binding = DST_MOISTURE_TEX_INDEX, r16) uniform writeonly image3D dst_moisture;
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
 void main()
@@ -21,5 +22,6 @@ void main()
 	position_ws.z = getSampleToHeight(uvw.z);
 
 	float temperature = getReferenceDegree(params.controls.sea_level_temperature, position_ws.z);
-	imageStore(dst_temp_moisture, pixel_coords, vec4(normalizeTemperature(temperature), 0, 0, 0));
+	imageStore(dst_temp, pixel_coords, vec4(normalizeTemperature(temperature)));
+	imageStore(dst_moisture, pixel_coords, vec4(0));
 }
