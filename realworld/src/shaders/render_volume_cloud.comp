@@ -56,7 +56,7 @@ void main()
     vec3 noise_dir = hash33(view_dir * 1434.0f) * 2.0f - 1.0f;
     view_dir = normalize(view_dir + noise_dir * 0.0173f);
 
-    const uint num_samples = 32;
+    const uint num_samples = 16;
     const float inv_num_samples = 1.0f / num_samples;
 
     const float cast_dist_per_sample = cast_dist * inv_num_samples;
@@ -78,7 +78,7 @@ void main()
         float extinct = thickness * denormalizeMoisture(temp_moisture) * params.view_ext_factor;
         float cloud_shadow = texture(src_cloud_shadow, uvw).x;
 
-        vec3 cloud_lighting = (vec3(0.7) * phase + vec3(1.0)) * cloud_shadow;
+        vec3 cloud_lighting = (vec3(0.5) * phase + vec3(1.2)) * cloud_shadow;
 
         float cur_alpha = exp2(-pow(extinct, params.view_ext_exponent));
         fg_color = mix(cloud_lighting, fg_color, cur_alpha);
