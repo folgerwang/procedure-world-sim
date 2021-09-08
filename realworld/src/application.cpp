@@ -1266,6 +1266,8 @@ void RealWorldApplication::drawScene(
                     skydome_,
                     menu_->getViewExtFactor(),
                     menu_->getViewExtExponent(),
+                    menu_->getCloudAmbientIntensity(),
+                    menu_->getCloudPhaseIntensity(),
                     screen_size,
                     s_dbuf_idx,
                     current_time);

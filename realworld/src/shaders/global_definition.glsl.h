@@ -334,8 +334,10 @@ struct VolumeMoistrueParams {
     float           g;
     float           inv_rayleigh_scale_height;
     float           inv_mie_scale_height;
-    vec3            pad;
     float           view_ext_exponent;
+    float           ambient_intensity;
+    float           phase_intensity;
+    float           pad;
 };
 
 struct BlurImageParams {
