@@ -51,10 +51,12 @@ void main()
     }
 
     cast_dist = min(cast_dist, bg_view_dist);
+    const float normal_scale = 734.0f;
+    view_dir = ivec3(view_dir * normal_scale) / normal_scale;
         
-    vec2 noise = hash23(view_dir * 1334.0f);
-    vec3 noise_dir = hash33(view_dir * 1434.0f) * 2.0f - 1.0f;
-    view_dir = normalize(view_dir + noise_dir * 0.0173f);
+    vec2 noise = hash23(view_dir * normal_scale);
+/*    vec3 noise_dir = hash33(view_dir * 1434.0f) * 2.0f - 1.0f;
+    view_dir = normalize(view_dir + noise_dir * 0.000173f);*/
 
     const uint num_samples = 32;
     const float inv_num_samples = 1.0f / num_samples;

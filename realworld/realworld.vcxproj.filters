@@ -265,9 +265,6 @@
     <None Include="src\shaders\base.vert">
       <Filter>Resource Files\shaders</Filter>
     </None>
-    <None Include="src\shaders\glsl_compile.bat">
-      <Filter>Resource Files\shaders</Filter>
-    </None>
     <None Include="src\shaders\cube_skybox.frag">
       <Filter>Resource Files\shaders</Filter>
     </None>

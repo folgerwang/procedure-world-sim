@@ -40,19 +40,19 @@ vec2 getPackedLayers(vec2 uv) {
 
 uint packTempMoist(float temp, float moist, uint tag) {
     temp /= kMaxTemperatureAdjustRange;
-    moist /= kMaxMoistureIntensity;
+    float moist_normalized = normalizeMoisture(moist);
     uint packed_moist_temp = 
         packUnorm2x16(vec2(
-            moist,
-            temp * 0.5f + 0.5f));
+            temp * 0.5f + 0.5f,
+            moist_normalized));
     packed_moist_temp = (packed_moist_temp & 0xfffffff8) | (tag & 0x07);
     return packed_moist_temp;
 }
 
 vec2 unpackTempMoist(uint packed_temp_moist) {
     vec2 snorm_moist_temp = unpackUnorm2x16(packed_temp_moist & 0xfffffff8);
-    return vec2((snorm_moist_temp.y * 2.0f - 1.0f) * kMaxTemperatureAdjustRange,
-                snorm_moist_temp.x * kMaxMoistureIntensity);
+    return vec2((snorm_moist_temp.x * 2.0f - 1.0f) * kMaxTemperatureAdjustRange,
+                denormalizeMoisture(snorm_moist_temp.y));
 }
 
 uint packTempMoistDiff(float temp, float moist, uint tag) {
@@ -101,10 +101,6 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
         temp_adjust += params.controls.moist_temp_convert * src_moist;
     }
 
-    float ratio = mix((noise_values.z + noise_values.w) * 0.5f, 1.0f, 0.8f);
-    temp_adjust *= ratio;
-    moist_adjust *= ratio;
-
     // make sure color different here is positive.
     return packTempMoist(src_temp + temp_adjust - target_stable_temp,
                          src_moist + moist_adjust,
@@ -123,16 +119,15 @@ void updateTempMoistureBuffer(int pixel_index, ivec3 block_coords) {
 }
 
 float getFrozenTransferRate(int pixel_height, vec2 noise, vec2 temp_moist_adj) {
-    noise = vec2(0);
     float uvw_w = (pixel_height + 0.5) * params.inv_size.z;
     float sample_h = getSampleToHeight(uvw_w);
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
-    float frozen_rate = (target_stable_temp + temp_moist_adj.x + noise.x * 2.0f - 15.0f) / (8.0f + noise.y * 2.0f) * 0.5f + 0.5f;
+    float frozen_rate = (target_stable_temp + temp_moist_adj.x + noise.x * 2.0f - 15.0f) / (14.0f + noise.y * 2.0f) * 0.5f + 0.5f;
     float exponent_curve = mix((noise.x + noise.y) * 0.5f, 1.0f, params.controls.frozen_noise_ratio) * params.controls.frozen_pow_curve;
     float frozen_transfer_rate = pow(clamp(frozen_rate, 0.0f, 1.0f), exponent_curve);
 
-    return exp(-temp_moist_adj.y * params.controls.frozen_ext_factor * (1.0f - frozen_transfer_rate));
+    return exp2(-temp_moist_adj.y * params.controls.frozen_ext_factor * (1.0f - frozen_transfer_rate));
 }
 
 uint packTempDiff(uint u_min_temp, uint u_max_moist, uint u_center, ivec3 pixel_coords) {
@@ -166,7 +161,7 @@ uint packTempDiff(uint u_min_temp, uint u_max_moist, uint u_center, ivec3 pixel_
     uint packed_temp_moist_diff = 0;
     if (cloud_forming || heat_transfer) {
         float temp_diff = center_tm.x - target_tm.x;
-        float temp_diff_adj = temp_diff * temp_transfer;
+        float temp_diff_adj = temp_diff * temp_transfer * center_frozen_transfer_rate;
         float moist_adj = moist_trans * moist_transfer * center_frozen_transfer_rate;
         packed_temp_moist_diff = packTempMoistDiff(temp_diff_adj, moist_adj, target_flag);
     }
@@ -208,7 +203,7 @@ void createTempMoistureFlowBuffer(int pixel_index, ivec3 block_coords) {
     uint below = s_temp_moisture_grid[slc.z-1][slc.y][slc.x] | kNodeBelow;
     uint above = s_temp_moisture_grid[slc.z+1][slc.y][slc.x] | kNodeAbove;
 
-    uint min_temp = min(min(min(left, right), min(back, front)), min(below, above));
+    uint max_moist = max(max(max(left, right), max(back, front)), max(below, above));
 
     left = swapMoistTemp(left);
     right = swapMoistTemp(right);
@@ -217,10 +212,10 @@ void createTempMoistureFlowBuffer(int pixel_index, ivec3 block_coords) {
     below = swapMoistTemp(below);
     above = swapMoistTemp(above);
 
-    uint max_moist = max(max(max(left, right), max(back, front)), max(below, above));
+    uint min_temp = min(min(min(left, right), min(back, front)), min(below, above));
 
     s_flow_grid[dlc.z][dlc.y][dlc.x] =
-        packTempDiff(min_temp, reswapMoistTemp(max_moist), center, pixel_coords);
+        packTempDiff(reswapMoistTemp(min_temp), max_moist, center, pixel_coords);
 }
 
 vec2 gatherTempMoistSamples(ivec3 dlc, out vec3 airflow_dir, float above_ratio, float below_ratio) {

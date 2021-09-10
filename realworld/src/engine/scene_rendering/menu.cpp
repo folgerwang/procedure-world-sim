@@ -59,13 +59,16 @@ Menu::Menu(
 
     weather_controls_.mix_rate = 0.92f;
     weather_controls_.sea_level_temperature = 30.0f;
+    // temperature changes by energy from sun minus energy vapored from land surface.
     weather_controls_.soil_temp_adj = 0.010f;
-    weather_controls_.water_temp_adj = 0.052f;
-    weather_controls_.moist_temp_convert = -0.001f;
-    weather_controls_.soil_moist_adj = 0.43f;
-    weather_controls_.water_moist_adj = 2.05f;
-    weather_controls_.heat_transfer_ratio = 0.153f;
-    weather_controls_.moist_transfer_ratio = 0.089f;
+    // temperature changes by energy from sun minus energy vapored from water surface.
+    weather_controls_.water_temp_adj = -0.0052f;
+    // temperature changes by energy from sun minus energy vapored from water droplet.
+    weather_controls_.moist_temp_convert = 0.0001f;
+    weather_controls_.soil_moist_adj = 0.013f;
+    weather_controls_.water_moist_adj = 0.065f;
+    weather_controls_.heat_transfer_ratio = 0.0353f;
+    weather_controls_.moist_transfer_ratio = 0.0289f;
     weather_controls_.heat_transfer_noise_weight = 0.1f;
     weather_controls_.moist_transfer_noise_weight = 0.37f;
     weather_controls_.cloud_forming_ratio = 0.7f;
@@ -204,8 +207,8 @@ bool Menu::draw(
             ImGui::Separator();
 
             ImGui::SliderFloat("Light Extinct Rate", &light_ext_factor_, 0.0f, 2.0f);
-            ImGui::SliderFloat("View Extinct Rate", &view_ext_factor_, 0.0f, 10.0f);
-            ImGui::SliderFloat("View Extinct Exponent", &view_ext_exponent_, 0.0f, 10.0f);
+            ImGui::SliderFloat("View Extinct Rate", &view_ext_factor_, 0.0f, 2.0f);
+            ImGui::SliderFloat("View Extinct Exponent", &view_ext_exponent_, 0.0f, 2.0f);
             ImGui::SliderFloat("Cloud Ambient Intensity", &cloud_ambient_intensity_, 0.0f, 2.0f);
             ImGui::SliderFloat("Cloud Phase Intensity", &cloud_phase_intensity_, 0.0f, 2.0f);
 

@@ -135,7 +135,7 @@
 #define DEBUG_DRAW_TEMPRETURE                   1
 #define DEBUG_DRAW_MOISTURE                     2
 
-#define kAirflowBufferWidth                     256
+#define kAirflowBufferWidth                     512
 #define kAirflowBufferHeight                    64
 #define kAirflowBufferCount                     6
 

@@ -4,7 +4,7 @@
 #define kDegreeDecreasePerKm              (6.5f / 1000.0f)
 
 #define kAirflowMaxHeight                 (kRealWorldAirflowMaxHeight / kDegreeDecreasePerKm / 1000.0f * 6.5f)
-#define kAirflowLowHeight                 -10.0f
+#define kAirflowLowHeight                 -1.0f
 #define kAirflowHeightRange               (kAirflowMaxHeight - kAirflowLowHeight)
 
 #define kTemperaturePositiveOffset        78.0f
@@ -15,8 +15,7 @@
 #define kMoistureNormalizerExpRange       (kMoistureNormalizerExpMax - kMoistureNormalizerExpMin)
 #define kMoistureNormalizerMin            exp2(kMoistureNormalizerExpMin)
 
-#define kMaxTemperatureAdjustRange        8.0f
-#define kMaxMoistureIntensity             2.0f
+#define kMaxTemperatureAdjustRange        4.0f
 #define kMaxAirflowStrength               1.0f
 #define kAirflowStrengthNormalizeScale    (1.0f / kMaxAirflowStrength)
 
@@ -102,11 +101,13 @@ vec2 denormalizeTemperature(vec2 normalized_temp) {
 }
 
 float normalizeMoisture(float moist) {
-    return (log2(max(moist, kMoistureNormalizerMin)) - kMoistureNormalizerExpMin) / kMoistureNormalizerExpRange;
+    //return (log2(max(moist, kMoistureNormalizerMin)) - kMoistureNormalizerExpMin) / kMoistureNormalizerExpRange;
+    return log2(1.0f + moist) / 10.0f;
 }
 
 float denormalizeMoisture(float normalized_moist) {
-    return exp2(normalized_moist * kMoistureNormalizerExpRange + kMoistureNormalizerExpMin);
+    //return exp2(normalized_moist * kMoistureNormalizerExpRange + kMoistureNormalizerExpMin);
+    return exp2(normalized_moist * 10.0f) - 1.0f;
 }
 
 float getNormalizedVectorLength(vec3 dir_vec) {
