@@ -101,6 +101,9 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
         temp_adjust += params.controls.moist_temp_convert * src_moist;
     }
 
+    temp_adjust *= mix(noise_values.x, 1.0f, 0.5f);
+    moist_adjust *= mix(noise_values.x, 1.0f, 0.5f);
+
     // make sure color different here is positive.
     return packTempMoist(src_temp + temp_adjust - target_stable_temp,
                          src_moist + moist_adjust,
