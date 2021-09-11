@@ -126,11 +126,10 @@ float getFrozenTransferRate(int pixel_height, vec2 noise, vec2 temp_moist_adj) {
     float sample_h = getSampleToHeight(uvw_w);
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
-    float frozen_rate = (target_stable_temp + temp_moist_adj.x + noise.x * 2.0f - 15.0f) / (14.0f + noise.y * 2.0f) * 0.5f + 0.5f;
-    float exponent_curve = mix((noise.x + noise.y) * 0.5f, 1.0f, params.controls.frozen_noise_ratio) * params.controls.frozen_pow_curve;
-    float frozen_transfer_rate = pow(clamp(frozen_rate, 0.0f, 1.0f), exponent_curve);
+    float frozen_rate = (target_stable_temp + temp_moist_adj.x + noise.x * 2.0f - 15.0f) / (14.0f + noise.y * 2.0f);
+    float frozen_transfer_rate = pow(clamp(abs(frozen_rate), 0.0f, 1.0f), params.controls.frozen_pow_curve);
 
-    return exp2(-temp_moist_adj.y * params.controls.frozen_ext_factor * (1.0f - frozen_transfer_rate));
+    return frozen_transfer_rate * exp2(-temp_moist_adj.y * params.controls.frozen_ext_factor);
 }
 
 uint packTempDiff(uint u_min_temp, uint u_max_moist, uint u_center, ivec3 pixel_coords) {

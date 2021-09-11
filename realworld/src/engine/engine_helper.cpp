@@ -287,7 +287,7 @@ std::string  initCompileGlobalShaders() {
                 auto exist = stat(output_name.c_str(), &output_attrib);
 
                 // only rebuild shader if output file didn't exist.
-                if (exist != 0) {
+                /*if (exist != 0)*/ {
                     auto cmd_str = "src\\third_party\\vulkan_lib\\glslc.exe " + input_name + " " + params_str + " " + output_name;
 
                     auto result = exec((cmd_str + " 2>&1").c_str());
