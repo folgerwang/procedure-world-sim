@@ -5,6 +5,10 @@
 #include "tile_common.glsl.h"
 #include "noise.glsl.h"
 
+#define MAX_UINT_VALUE    0xffffffff
+#define INVALIDATE_VALUE  0xffffffff
+#define MIN_UINT_VALUE    0x00000000
+
 layout(push_constant) uniform AirflowUniformBufferObject {
   AirflowUpdateParams params;
 };
@@ -71,43 +75,48 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
                              ivec3(0),
                              params.size - 1);
 
-    vec4 noise_values = hash44(vec4(vec3(src_coords), params.current_time));
-    vec3 uvw = ((src_coords + 0.5f) + getGlobalAirflowVector(noise_values.x)) * params.inv_size;
+    float noise_value = hash13(vec3(vec2(src_coords.xy), params.current_time));
+    vec3 uvw = ((src_coords + 0.5f) + getGlobalAirflowVector(noise_value)) * params.inv_size;
 
-    float temp = texture(src_temp, uvw).x;
-    float moist = texture(src_moisture, uvw).x;
-    float src_temp = denormalizeTemperature(temp);
-    float src_moist = denormalizeMoisture(moist);
+    float src_temp = denormalizeTemperature(texture(src_temp, uvw).x);
+    float src_moist = denormalizeMoisture(texture(src_moisture, uvw).x);
 
     float uvw_w = (src_coords.z + 0.5f) * params.inv_size.z;
     float sample_h = getSampleToHeight(uvw_w);
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
     // add some noise for contact detection.
-    float low_uvw_w = uvw_w + (noise_values.x - 1.0f) * params.inv_size.z;
-    float min_h = getSampleToHeight(low_uvw_w);
+    float low_uvw_w = uvw_w + (noise_value - 1.0f) * params.inv_size.z;
+    float cell_min_h = getSampleToHeight(low_uvw_w);
+    float high_uvw_w = low_uvw_w + params.inv_size.z;
+    float cell_max_h = getSampleToHeight(high_uvw_w);
 
-    float water_depth = ground_info.y - ground_info.x;
-    bool cell_touch_ground = (ground_info.y >= min_h - 0.01f);
-    bool cell_above_ground = ground_info.y < min_h;
-    float temp_adjust = 0.0f;
-    float moist_adjust = 0.0f;
-    if (cell_touch_ground) {
-        float water_level = clamp((water_depth - 0.01f) * 10.0f, 0.0f, 1.0f);
-        temp_adjust += mix(params.controls.soil_temp_adj, params.controls.water_temp_adj, water_level);
-        moist_adjust += mix(params.controls.soil_moist_adj, params.controls.water_moist_adj, water_level);
+    bool cell_touch_ground = ground_info.y >= cell_min_h && ground_info.y <= cell_max_h;
+    bool cell_above_ground = ground_info.y < cell_min_h;
+    uint packed_temp_moist = INVALIDATE_VALUE;
+    if (cell_touch_ground || cell_above_ground) {
+        float temp_adjust = 0.0f;
+        float moist_adjust = 0.0f;
+        if (cell_touch_ground) {
+            float water_depth = ground_info.y - ground_info.x;
+            float water_level = clamp((water_depth - 0.01f) * 10.0f, 0.0f, 1.0f);
+            temp_adjust += mix(params.controls.soil_temp_adj, params.controls.water_temp_adj, water_level);
+            moist_adjust += mix(params.controls.soil_moist_adj, params.controls.water_moist_adj, water_level);
+        }
+        else if (cell_above_ground) {
+            temp_adjust += params.controls.moist_temp_convert * src_moist;
+        }
+
+        temp_adjust *= mix(noise_value, 1.0f, 0.5f);
+        moist_adjust *= mix(noise_value, 1.0f, 0.5f);
+
+        // make sure color different here is positive.
+        packed_temp_moist = packTempMoist(src_temp + temp_adjust - target_stable_temp,
+                             src_moist + moist_adjust,
+                             0);
     }
-    else if (cell_above_ground) {
-        temp_adjust += params.controls.moist_temp_convert * src_moist;
-    }
 
-    temp_adjust *= mix(noise_values.x, 1.0f, 0.5f);
-    moist_adjust *= mix(noise_values.x, 1.0f, 0.5f);
-
-    // make sure color different here is positive.
-    return packTempMoist(src_temp + temp_adjust - target_stable_temp,
-                         src_moist + moist_adjust,
-                         0);
+    return packed_temp_moist;
 }
 
 void updateTempMoistureBuffer(int pixel_index, ivec3 block_coords) {
@@ -133,56 +142,58 @@ float getFrozenTransferRate(int pixel_height, vec2 noise, vec2 temp_moist_adj) {
 }
 
 uint packTempDiff(uint u_min_temp, uint u_max_moist, uint u_center, ivec3 pixel_coords) {
-    vec2 min_tm = unpackTempMoist(u_min_temp);
-    vec2 max_tm = unpackTempMoist(u_max_moist);
-    vec2 center_tm = unpackTempMoist(u_center);
-
-    vec4 hash_values = hash44(vec4(vec3(pixel_coords), params.current_time));
-    vec2 noise_values = hash_values.xy * 2.0f - 1.0f;
-
-    float temp_transfer = params.controls.heat_transfer_ratio * (1.0f + noise_values.x * params.controls.heat_transfer_noise_weight);
-    float moist_transfer = params.controls.moist_transfer_ratio * (1.0f + noise_values.y * params.controls.moist_transfer_noise_weight);
-
-    float center_frozen_transfer_rate =
-        getFrozenTransferRate(pixel_coords.z, hash_values.xy, center_tm);
-
-    uint max_moist_loc = u_max_moist & 0x07;
-    int height_adj = max_moist_loc == kNodeAbove ? 1 : (max_moist_loc == kNodeBelow ? -1 : 0);
-    float max_frozen_transfer_rate =
-        getFrozenTransferRate(pixel_coords.z + height_adj, hash_values.zw, max_tm);
-
-    bool cloud_forming = center_frozen_transfer_rate < max_frozen_transfer_rate;
-    bool heat_transfer = center_tm.x > min_tm.x;
-    if (cloud_forming && heat_transfer && hash_values.x > params.controls.cloud_forming_ratio) {
-        cloud_forming = false;
-    }
-    uint target_flag = cloud_forming ? u_max_moist : u_min_temp;
-    vec2 target_tm = cloud_forming ? max_tm : min_tm;
-    float moist_trans = center_tm.y;
-
     uint packed_temp_moist_diff = 0;
-    if (cloud_forming || heat_transfer) {
-        float temp_diff = center_tm.x - target_tm.x;
-        float temp_diff_adj = temp_diff * temp_transfer * center_frozen_transfer_rate;
-        float moist_adj = moist_trans * moist_transfer * center_frozen_transfer_rate;
-        packed_temp_moist_diff = packTempMoistDiff(temp_diff_adj, moist_adj, target_flag);
+    if (u_center != INVALIDATE_VALUE && u_min_temp != MAX_UINT_VALUE && u_max_moist != MIN_UINT_VALUE) {
+        vec2 min_tm = unpackTempMoist(u_min_temp);
+        vec2 max_tm = unpackTempMoist(u_max_moist);
+        vec2 center_tm = unpackTempMoist(u_center);
+
+        vec4 hash_values = hash44(vec4(vec3(pixel_coords), params.current_time));
+        vec2 noise_values = hash_values.xy * 2.0f - 1.0f;
+
+        float temp_transfer = params.controls.heat_transfer_ratio * (1.0f + noise_values.x * params.controls.heat_transfer_noise_weight);
+        float moist_transfer = params.controls.moist_transfer_ratio * (1.0f + noise_values.y * params.controls.moist_transfer_noise_weight);
+
+        float center_frozen_transfer_rate =
+            getFrozenTransferRate(pixel_coords.z, hash_values.xy, center_tm);
+
+        uint max_moist_loc = u_max_moist & 0x07;
+        int height_adj = max_moist_loc == kNodeAbove ? 1 : (max_moist_loc == kNodeBelow ? -1 : 0);
+        float max_frozen_transfer_rate =
+            getFrozenTransferRate(pixel_coords.z + height_adj, hash_values.zw, max_tm);
+
+        bool cloud_forming = center_frozen_transfer_rate < max_frozen_transfer_rate;
+        bool heat_transfer = center_tm.x > min_tm.x;
+        if (cloud_forming && heat_transfer && hash_values.x > params.controls.cloud_forming_ratio) {
+            cloud_forming = false;
+        }
+        uint target_flag = cloud_forming ? u_max_moist : u_min_temp;
+        vec2 target_tm = cloud_forming ? max_tm : min_tm;
+        float moist_trans = center_tm.y;
+
+        if (cloud_forming || heat_transfer) {
+            float temp_diff = center_tm.x - target_tm.x;
+            float temp_diff_adj = temp_diff * temp_transfer * center_frozen_transfer_rate;
+            float moist_adj = moist_trans * moist_transfer * center_frozen_transfer_rate;
+            packed_temp_moist_diff = packTempMoistDiff(temp_diff_adj, moist_adj, target_flag);
+        }
     }
 
     return packed_temp_moist_diff;
 }
 
 uint swapMoistTemp(uint input_data) {
-    uint temp = input_data >> 16;
-    uint moist = input_data & 0xfff8;
+    uint moist = input_data >> 16;
+    uint temp = input_data & 0xfff8;
 
-    return (moist << 16) | (temp << 3) | (input_data & 0x07);
+    return (temp << 16) | (moist << 3) | (input_data & 0x07);
 }
 
 uint reswapMoistTemp(uint input_data) {
-    uint temp = input_data & 0x7fff8;
-    uint moist = input_data >> 19;
+    uint moist = input_data & 0x7fff8;
+    uint temp = input_data >> 19;
 
-    return (temp << 13) | (moist << 3) | (input_data & 0x07);
+    return (moist << 13) | (temp << 3) | (input_data & 0x07);
 }
 
 void createTempMoistureFlowBuffer(int pixel_index, ivec3 block_coords) {
@@ -198,23 +209,51 @@ void createTempMoistureFlowBuffer(int pixel_index, ivec3 block_coords) {
     // temprature on the top of 16bits, moist on the lower 16bits.
     uint center = s_temp_moisture_grid[slc.z][slc.y][slc.x];
 
-    uint left  = s_temp_moisture_grid[slc.z][slc.y][slc.x-1] | kNodeLeft;
-    uint right = s_temp_moisture_grid[slc.z][slc.y][slc.x+1] | kNodeRight;
-    uint back  = s_temp_moisture_grid[slc.z][slc.y-1][slc.x] | kNodeBack;
-    uint front = s_temp_moisture_grid[slc.z][slc.y+1][slc.x] | kNodeFront;
-    uint below = s_temp_moisture_grid[slc.z-1][slc.y][slc.x] | kNodeBelow;
-    uint above = s_temp_moisture_grid[slc.z+1][slc.y][slc.x] | kNodeAbove;
+    uint max_moist = MIN_UINT_VALUE;
+    uint min_temp = MAX_UINT_VALUE;
 
-    uint max_moist = max(max(max(left, right), max(back, front)), max(below, above));
+    uint left  = s_temp_moisture_grid[slc.z][slc.y][slc.x-1];
+    uint right = s_temp_moisture_grid[slc.z][slc.y][slc.x+1];
+    uint back  = s_temp_moisture_grid[slc.z][slc.y-1][slc.x];
+    uint front = s_temp_moisture_grid[slc.z][slc.y+1][slc.x];
+    uint below = s_temp_moisture_grid[slc.z-1][slc.y][slc.x];
+    uint above = s_temp_moisture_grid[slc.z+1][slc.y][slc.x];
 
-    left = swapMoistTemp(left);
-    right = swapMoistTemp(right);
-    back = swapMoistTemp(back);
-    front = swapMoistTemp(front);
-    below = swapMoistTemp(below);
-    above = swapMoistTemp(above);
+    if (left != INVALIDATE_VALUE) {
+        left |= kNodeLeft;
+        max_moist = max(max_moist, left);
+        min_temp = min(min_temp, swapMoistTemp(left));
+    }
 
-    uint min_temp = min(min(min(left, right), min(back, front)), min(below, above));
+    if (right != INVALIDATE_VALUE) {
+        right |= kNodeRight;
+        max_moist = max(max_moist, right);
+        min_temp = min(min_temp, swapMoistTemp(right));
+    }
+
+    if (back != INVALIDATE_VALUE) {
+        back |= kNodeBack;
+        max_moist = max(max_moist, back);
+        min_temp = min(min_temp, swapMoistTemp(back));
+    }
+
+    if (front != INVALIDATE_VALUE) {
+        front |= kNodeFront;
+        max_moist = max(max_moist, front);
+        min_temp = min(min_temp, swapMoistTemp(front));
+    }
+
+    if (below != INVALIDATE_VALUE) {
+        below |= kNodeBelow;
+        max_moist = max(max_moist, below);
+        min_temp = min(min_temp, swapMoistTemp(below));
+    }
+
+    if (above != INVALIDATE_VALUE) {
+        above |= kNodeAbove;
+        max_moist = max(max_moist, above);
+        min_temp = min(min_temp, swapMoistTemp(above));
+    }
 
     s_flow_grid[dlc.z][dlc.y][dlc.x] =
         packTempDiff(reswapMoistTemp(min_temp), max_moist, center, pixel_coords);
@@ -330,7 +369,10 @@ void main()
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
     ivec3 slc = local_coords + 2;
-    vec2 temp_moist = unpackTempMoist(s_temp_moisture_grid[slc.z][slc.y][slc.x]);
+    vec2 temp_moist = vec2(0);
+    if (s_temp_moisture_grid[slc.z][slc.y][slc.x] != INVALIDATE_VALUE) {
+        temp_moist = unpackTempMoist(s_temp_moisture_grid[slc.z][slc.y][slc.x]);
+    }
 
     vec4 noise_values = hash44(vec4(vec3(pixel_coords), params.current_time));
     vec3 uvw = ((pixel_coords + 0.5f) + getGlobalAirflowVector(noise_values.x)) * params.inv_size;

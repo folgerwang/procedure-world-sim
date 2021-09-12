@@ -61,7 +61,7 @@ void main() {
     }
 
     if (params.debug_type == DEBUG_DRAW_TEMPRETURE) {
-        sample_pos += offset * position_ss.w * getPackedVectorLength(airflow_info.w) * 0.0005f;
+        sample_pos += offset * position_ss.w * /*getPackedVectorLength(airflow_info.w) * */0.0005f;
     }
     else {
         sample_pos += offset * position_ss.w * /*out_data.debug_info.y * */0.0005f;
