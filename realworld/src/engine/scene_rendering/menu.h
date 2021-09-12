@@ -21,7 +21,7 @@ class Menu {
     float cloud_ambient_intensity_ = 1.0f;
     float cloud_phase_intensity_ = 0.5f;
     float global_flow_dir_ = 85.0f;
-    float global_flow_speed_ = 0.05f;
+    float global_flow_speed_ = 0.2f;
 
     glsl::WeatherControl weather_controls_;
 

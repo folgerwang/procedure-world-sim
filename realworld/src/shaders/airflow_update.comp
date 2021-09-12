@@ -26,18 +26,14 @@ shared uint s_temp_moisture_grid[20][12][12];
 shared uint s_flow_grid[18][10][10];
 
 vec2 getPackedLayers(vec2 uv) {
-    vec2 layer_height = vec2(-10.0f, 0.0f);
+    float rock_height = texture(rock_layer, clamp(uv, 0.0f, 1.0f)).x;
+    vec2 soil_water_thickness = 
+        texture(soil_water_layer, uv).xy * SOIL_WATER_LAYER_MAX_THICKNESS;
 
-    if (uv.x >= 0.0f && uv.x <= 1.0f && uv.y >= 0.0f && uv.y <= 1.0f) {
-        float rock_height = texture(rock_layer, uv).x;
-        vec2 soil_water_thickness = 
-            texture(soil_water_layer, uv).xy * SOIL_WATER_LAYER_MAX_THICKNESS;
-
-        float soil_layer_height = rock_height + soil_water_thickness.x;
-        float water_layer_height = soil_layer_height + soil_water_thickness.y;
+    float soil_layer_height = rock_height + soil_water_thickness.x;
+    float water_layer_height = soil_layer_height + soil_water_thickness.y;
     
-        layer_height = vec2(soil_layer_height, water_layer_height);
-    }
+    vec2 layer_height = vec2(soil_layer_height, water_layer_height);
 
     return layer_height;
 }
@@ -135,7 +131,7 @@ float getFrozenTransferRate(int pixel_height, vec2 noise, vec2 temp_moist_adj) {
     float sample_h = getSampleToHeight(uvw_w);
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
-    float frozen_rate = (target_stable_temp + temp_moist_adj.x + noise.x * 2.0f - 15.0f) / (14.0f + noise.y * 2.0f);
+    float frozen_rate = (target_stable_temp + temp_moist_adj.x + noise.x * 2.0f - 15.0f) / (8.0f + noise.y * 2.0f) * 0.5 + 0.5f;
     float frozen_transfer_rate = pow(clamp(abs(frozen_rate), 0.0f, 1.0f), params.controls.frozen_pow_curve);
 
     return frozen_transfer_rate * exp2(-temp_moist_adj.y * params.controls.frozen_ext_factor);
@@ -170,6 +166,8 @@ uint packTempDiff(uint u_min_temp, uint u_max_moist, uint u_center, ivec3 pixel_
         uint target_flag = cloud_forming ? u_max_moist : u_min_temp;
         vec2 target_tm = cloud_forming ? max_tm : min_tm;
         float moist_trans = center_tm.y;
+
+        center_frozen_transfer_rate *= exp2(-max_tm.y / 8.0f);
 
         if (cloud_forming || heat_transfer) {
             float temp_diff = center_tm.x - target_tm.x;
@@ -331,7 +329,7 @@ void main()
         vec2 noise_values = hash23(vec3(src_coords, params.current_time));
         vec2 uv = (src_coords + noise_values) * params.inv_size.xy;
         s_ground_info[slc.y][slc.x] =
-            getPackedLayers((uv - 0.5f) * 2.0f + 0.5f);
+            getPackedLayers((uv - 0.5f) * (kCloudMapSize / kWorldMapSize) + 0.5f);
     }
 
     barrier();
