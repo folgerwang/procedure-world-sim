@@ -60,21 +60,21 @@ Menu::Menu(
     weather_controls_.mix_rate = 0.92f;
     weather_controls_.sea_level_temperature = 30.0f;
     // temperature changes by energy from sun minus energy vapored from land surface.
-    weather_controls_.soil_temp_adj = 0.0010f;
+    weather_controls_.soil_temp_adj = 0.002f;
     // temperature changes by energy from sun minus energy vapored from water surface.
-    weather_controls_.water_temp_adj = -0.00052f;
+    weather_controls_.water_temp_adj = -0.0052f;
     // temperature changes by energy from sun minus energy vapored from water droplet.
-    weather_controls_.moist_temp_convert = 0.000001f;
+    weather_controls_.moist_temp_convert = 0.00001f;
     weather_controls_.soil_moist_adj = 0.0653f;
     weather_controls_.water_moist_adj = 0.31f;
-    weather_controls_.heat_transfer_ratio = 0.2753f;
-    weather_controls_.moist_transfer_ratio = 0.2689f;
+    weather_controls_.heat_transfer_ratio = 0.1753f;
+    weather_controls_.moist_transfer_ratio = 0.1689f;
     weather_controls_.heat_transfer_noise_weight = 0.1f;
     weather_controls_.moist_transfer_noise_weight = 0.37f;
-    weather_controls_.cloud_forming_ratio = 0.5f;
-    weather_controls_.frozen_ext_factor = 1.0f;
+    weather_controls_.cloud_forming_ratio = 0.8f;
+    weather_controls_.frozen_ext_factor = 2.0f;
     weather_controls_.frozen_noise_ratio = 0.8f;
-    weather_controls_.frozen_pow_curve = 4.0f;
+    weather_controls_.frozen_pow_curve = 0.25f;
 }
 
 void Menu::init(

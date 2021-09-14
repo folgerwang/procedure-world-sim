@@ -2,7 +2,7 @@
 #extension GL_ARB_separate_shader_objects : enable
 #include "global_definition.glsl.h"
 
-#define BLUR_RADIUS				20
+#define BLUR_RADIUS				12
 #define SHARED_BUFFER_SIZE		(64 + BLUR_RADIUS * 2)
 
 layout(push_constant) uniform BlurImageUniformBufferObject {

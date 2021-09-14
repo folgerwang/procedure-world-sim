@@ -82,7 +82,7 @@ uint getUpdatedTemperature(ivec3 slc, ivec3 block_coords, vec2 ground_info) {
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
 
     // add some noise for contact detection.
-    float low_uvw_w = uvw_w + (noise_value - 1.0f) * params.inv_size.z;
+    float low_uvw_w = uvw_w + (noise_value - 1.5f) * params.inv_size.z;
     float cell_min_h = getSampleToHeight(low_uvw_w);
     float high_uvw_w = low_uvw_w + params.inv_size.z;
     float cell_max_h = getSampleToHeight(high_uvw_w);
@@ -130,11 +130,12 @@ float getFrozenTransferRate(int pixel_height, vec2 noise, vec2 temp_moist_adj) {
     float uvw_w = (pixel_height + 0.5) * params.inv_size.z;
     float sample_h = getSampleToHeight(uvw_w);
     float target_stable_temp = getReferenceDegree(params.controls.sea_level_temperature, sample_h);
+    float current_temp = target_stable_temp + temp_moist_adj.x + noise.x * 2.0f;
 
-    float frozen_rate = (target_stable_temp + temp_moist_adj.x + noise.x * 2.0f - 15.0f) / (8.0f + noise.y * 2.0f) * 0.5 + 0.5f;
+    float frozen_rate = (current_temp - 12.0f) / (14.0f + noise.y * 2.0f);
     float frozen_transfer_rate = pow(clamp(abs(frozen_rate), 0.0f, 1.0f), params.controls.frozen_pow_curve);
 
-    return frozen_transfer_rate * exp2(-temp_moist_adj.y * params.controls.frozen_ext_factor);
+    return frozen_transfer_rate * exp2(-temp_moist_adj.y * params.controls.frozen_ext_factor/* * exp2(-max(current_temp - 12.0f, 0.0f) * 0.25f)*/);
 }
 
 uint packTempDiff(uint u_min_temp, uint u_max_moist, uint u_center, ivec3 pixel_coords) {
@@ -375,9 +376,18 @@ void main()
     vec4 noise_values = hash44(vec4(vec3(pixel_coords), params.current_time));
     vec3 uvw = ((pixel_coords + 0.5f) + getGlobalAirflowVector(noise_values.x)) * params.inv_size;
 
-    vec2 src_temp_moist = vec2(texture(src_temp, uvw).x, texture(src_moisture, uvw).x);
-    float src_temp = denormalizeTemperature(src_temp_moist.x);
-    float src_moist = denormalizeMoisture(src_temp_moist.y);
+    float scale = pixel_coords.z * params.inv_size.z * 1.0f;
+    vec2 uv_offset = params.inv_size.xy * scale;
+    vec3 uvw_00 = uvw + vec3(-uv_offset.x, -uv_offset.y, 0.0f);
+    vec3 uvw_10 = uvw + vec3(uv_offset.x, -uv_offset.y, 0.0f);
+    vec3 uvw_01 = uvw + vec3(-uv_offset.x, uv_offset.y, 0.0f);
+    vec3 uvw_11 = uvw + vec3(uv_offset.x, uv_offset.y, 0.0f);
+
+    float temp = (texture(src_temp, uvw_00).x + texture(src_temp, uvw_10).x + texture(src_temp, uvw_01).x + texture(src_temp, uvw_11).x) * 0.25f;
+    float moist = (texture(src_moisture, uvw_00).x + texture(src_moisture, uvw_10).x + texture(src_moisture, uvw_01).x + texture(src_moisture, uvw_11).x) * 0.25f;
+
+    float src_temp = denormalizeTemperature(temp);
+    float src_moist = denormalizeMoisture(moist);
 
     float cur_temp = target_stable_temp + temp_moist.x + temp_moist_adj.x;
     float cur_moist = temp_moist.y + temp_moist_adj.y;
