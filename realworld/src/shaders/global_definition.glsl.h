@@ -241,13 +241,10 @@ struct WeatherControl {
     float           moist_temp_convert;
     float           water_moist_adj;
     float           soil_moist_adj;
-    float           heat_transfer_ratio;
-    float           moist_transfer_ratio;
-    float           heat_transfer_noise_weight;
-    float           moist_transfer_noise_weight;
+    float           transfer_ratio;
+    float           transfer_noise_weight;
     float           cloud_forming_ratio;
     float           frozen_ext_factor;
-    float           frozen_noise_ratio;
     float           frozen_pow_curve;
 };
 

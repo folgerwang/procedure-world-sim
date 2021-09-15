@@ -1,7 +1,7 @@
 //#define kRealWorldAirflowMaxHeight        12000.0f
-//Reduce atmosphere height from 12000.0f to 6500.0f
+//Reduce atmosphere height from 12000.0f to 8500.0f
 #define kRealWorldAirflowMaxHeight        6500.0f
-#define kDegreeDecreasePerKm              (6.5f / 1000.0f)
+#define kDegreeDecreasePerKm              (10.5f / 1000.0f)
 
 #define kAirflowMaxHeight                 (kRealWorldAirflowMaxHeight / kDegreeDecreasePerKm / 1000.0f * 6.5f)
 #define kAirflowLowHeight                 -1.0f
@@ -19,7 +19,7 @@
 #define kMaxAirflowStrength               1.0f
 #define kAirflowStrengthNormalizeScale    (1.0f / kMaxAirflowStrength)
 
-#define kMaxTempMoistDiff                 4.0f
+#define kMaxTempMoistDiff                 2.0f
 
 #define kMinSampleHeight                  32.0f
 #define kAirflowHeightMinMaxRatio         (kAirflowHeightRange / (kAirflowBufferHeight / 2 * kMinSampleHeight) - 1.0f)
@@ -109,6 +109,15 @@ float denormalizeMoisture(float normalized_moist) {
     //return exp2(normalized_moist * kMoistureNormalizerExpRange + kMoistureNormalizerExpMin);
     return exp2(normalized_moist * 10.0f) - 1.0f;
 }
+
+float normalizeMoistureDiff(float moist) {
+    return log2(1.0f + max(moist + 8.0f, 0.0f)) / 4.0f;
+}
+
+float denormalizeMoistureDiff(float normalized_moist) {
+    return exp2(normalized_moist * 4.0f) - 1.0f - 8.0f;
+}
+
 
 float getNormalizedVectorLength(vec3 dir_vec) {
     return length(dir_vec) * kAirflowStrengthNormalizeScale;
