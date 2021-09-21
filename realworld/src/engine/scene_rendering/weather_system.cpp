@@ -686,7 +686,7 @@ void WeatherSystem::updateAirflowBuffer(
     airflow_params.current_time = current_time;
     airflow_params.global_flow_angle = global_flow_angle;
     airflow_params.global_flow_scale = global_flow_speed / kCloudMapSize * w;
-    airflow_params.moist_to_pressure_ratio = 0.01f;
+    airflow_params.moist_to_pressure_ratio = 0.001f;
 
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),

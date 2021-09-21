@@ -67,7 +67,7 @@ Menu::Menu(
     weather_controls_.moist_temp_convert = 0.00001f;
     weather_controls_.soil_moist_adj = 0.05673f;
     weather_controls_.water_moist_adj = 0.1062f;
-    weather_controls_.transfer_ratio = 0.1753f;
+    weather_controls_.transfer_ratio = 0.9f;
     weather_controls_.transfer_noise_weight = 0.1f;
     weather_controls_.cloud_forming_ratio = 0.5f;
     weather_controls_.frozen_ext_factor = 1.0f;
