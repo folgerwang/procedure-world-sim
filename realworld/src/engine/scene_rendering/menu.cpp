@@ -60,9 +60,9 @@ Menu::Menu(
     weather_controls_.mix_rate = 0.92f;
     weather_controls_.sea_level_temperature = 30.0f;
     // temperature changes by energy from sun minus energy vapored from land surface.
-    weather_controls_.soil_temp_adj = 0.019f;
+    weather_controls_.soil_temp_adj = 0.029f;
     // temperature changes by energy from sun minus energy vapored from water surface.
-    weather_controls_.water_temp_adj = -0.0152f;
+    weather_controls_.water_temp_adj = 0.0052f;
     // temperature changes by energy from sun minus energy vapored from water droplet.
     weather_controls_.moist_temp_convert = 0.00001f;
     weather_controls_.soil_moist_adj = 0.05673f;

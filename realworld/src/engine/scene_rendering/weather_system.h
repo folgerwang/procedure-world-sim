@@ -9,6 +9,7 @@ namespace scene_rendering {
 class WeatherSystem {
     renderer::TextureInfo temp_volume_[2];
     renderer::TextureInfo moisture_volume_[2];
+    renderer::TextureInfo pressure_volume_[2];
     renderer::TextureInfo airflow_volume_;
     renderer::TextureInfo cloud_shadow_volume_;
     renderer::TextureInfo ground_airflow_info_;

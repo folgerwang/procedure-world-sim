@@ -73,18 +73,20 @@
 // Airflow texture.
 #define DST_TEMP_TEX_INDEX                  19
 #define DST_MOISTURE_TEX_INDEX              20
-#define DST_AIRFLOW_TEX_INDEX               21
-#define DST_CLOUD_LIGHTING_TEX_INDEX        22
-#define DST_CLOUD_SHADOW_TEX_INDEX          23
-#define SRC_TEMP_TEX_INDEX                  24
-#define SRC_MOISTURE_TEX_INDEX              25
-#define SRC_CLOUD_LIGHTING_TEX_INDEX        26
-#define SRC_CLOUD_SHADOW_TEX_INDEX          27
-#define DST_FOG_CLOUD_INDEX                 28
-#define DST_SCATTERING_LUT_INDEX            29
-#define DST_SCATTERING_LUT_SUM_INDEX        29
-#define SRC_SCATTERING_LUT_INDEX            30
-#define SRC_SCATTERING_LUT_SUM_INDEX        30
+#define DST_PRESSURE_TEX_INDEX              21
+#define DST_AIRFLOW_TEX_INDEX               22
+#define DST_CLOUD_LIGHTING_TEX_INDEX        23
+#define DST_CLOUD_SHADOW_TEX_INDEX          24
+#define SRC_TEMP_TEX_INDEX                  25
+#define SRC_MOISTURE_TEX_INDEX              26
+#define SRC_PRESSURE_TEX_INDEX              27
+#define SRC_CLOUD_LIGHTING_TEX_INDEX        28
+#define SRC_CLOUD_SHADOW_TEX_INDEX          29
+#define DST_FOG_CLOUD_INDEX                 30
+#define DST_SCATTERING_LUT_INDEX            31
+#define DST_SCATTERING_LUT_SUM_INDEX        31
+#define SRC_SCATTERING_LUT_INDEX            32
+#define SRC_SCATTERING_LUT_SUM_INDEX        32
 
 // IBL texure index
 #define PANORAMA_TEX_INDEX          0
@@ -256,7 +258,7 @@ struct AirflowUpdateParams {
     vec3            inv_size;
     float           global_flow_scale;
     ivec3           size;
-    float           pad2;
+    float           moist_to_pressure_ratio;
 
     WeatherControl  controls;
 };
