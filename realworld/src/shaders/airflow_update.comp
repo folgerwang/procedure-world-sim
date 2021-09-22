@@ -335,7 +335,7 @@ void main()
 
     float random_angle = noise_values.z * 2.0f * 3.1415926f;
 
-    float scale = pixel_coords.z * params.inv_size.z * 0.125f;
+    float scale = pixel_coords.z * params.inv_size.z * 0.0625f;
     vec2 uv_offset = params.inv_size.xy * scale * vec2(cos(random_angle), sin(random_angle));
     uvw.xy += uv_offset;
 
@@ -358,9 +358,9 @@ void main()
     cur_temp += temp_moist_pressure_adj.x;
     cur_moist += temp_moist_pressure_adj.y;
 
-    cur_vapor_pressure = mix(cur_vapor_pressure, source_vapor_pressure, 0.3f);
-    cur_temp = mix(cur_temp, source_temp, 0.3f);
-    cur_moist = mix(cur_moist, source_moist, 0.3f);
+    cur_vapor_pressure = mix(cur_vapor_pressure, source_vapor_pressure, 0.0f);
+    cur_temp = mix(cur_temp, source_temp, 0.0f);
+    cur_moist = mix(cur_moist, source_moist, 0.0f);
 
     imageStore(dst_temp,
                pixel_coords,

@@ -16,12 +16,12 @@ class Menu {
     float air_flow_strength_ = 50.0f;
     float water_flow_strength_ = 1.0f;
     float light_ext_factor_ = 0.975f;
-    float view_ext_factor_ = 0.820f;
+    float view_ext_factor_ = 0.10f;
     float view_ext_exponent_ = 1.0f;
     float cloud_ambient_intensity_ = 1.0f;
     float cloud_phase_intensity_ = 0.5f;
     float global_flow_dir_ = 85.0f;
-    float global_flow_speed_ = 0.001f;
+    float global_flow_speed_ = 0.00f;
 
     glsl::WeatherControl weather_controls_;
 
