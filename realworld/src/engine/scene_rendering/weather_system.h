@@ -49,6 +49,10 @@ public:
         return moisture_volume_[idx].view;
     }
 
+    inline std::shared_ptr<renderer::ImageView> getPressureTex(int idx) {
+        return pressure_volume_[idx].view;
+    }
+
     inline std::vector<std::shared_ptr<renderer::ImageView>> getTempTexes() {
         return { temp_volume_[0].view, temp_volume_[1].view };
     }
