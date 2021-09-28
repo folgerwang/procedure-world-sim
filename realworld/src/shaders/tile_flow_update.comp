@@ -73,16 +73,16 @@ uint adjustLayersHeight(ivec2 src_coords, ivec2 global_src_coords) {
 
     uint packed_adj_height = 0;
     if (h_diff.x > 0) { // adjust soil height.
-        uint idx = min_h.x == left_h.x ? kNodeLeft :
-                   (min_h.x == right_h.x ? kNodeRight :
-                   (min_h.x == back_h.x ? kNodeBack : kNodeFront));
+        uint idx = min_h.x == left_h.x ? kNodeWaterLeft :
+                   (min_h.x == right_h.x ? kNodeWaterRight :
+                   (min_h.x == back_h.x ? kNodeWaterBack : kNodeWaterFront));
         packed_adj_height = (uint(h_diff.x * 512.0f) & 0x3fff) | (idx << 14);
     }
 
     if (h_diff.y > 0) { // adjust water height.
-        uint idx = min_h.y == left_h.y ? kNodeLeft :
-                   (min_h.y == right_h.y ? kNodeRight :
-                   (min_h.y == back_h.y ? kNodeBack : kNodeFront));
+        uint idx = min_h.y == left_h.y ? kNodeWaterLeft :
+                   (min_h.y == right_h.y ? kNodeWaterRight :
+                   (min_h.y == back_h.y ? kNodeWaterBack : kNodeWaterFront));
         packed_adj_height |= ((uint(h_diff.y * 512.0f) & 0x3fff) | (idx << 14)) << 16;
     }
 
@@ -99,16 +99,16 @@ vec4 accumulateLayerLevelFromNeighbor(ivec2 src_local_coords) {
 
     // adjust soil layer.
     uint soil_height_adj = 0;
-    if (((left_adj >> 14) & 0x03) == kNodeRight) {
+    if (((left_adj >> 14) & 0x03) == kNodeWaterRight) {
         soil_height_adj += (left_adj & 0x3fff);
     }
-    if (((right_adj >> 14) & 0x03) == kNodeLeft) {
+    if (((right_adj >> 14) & 0x03) == kNodeWaterLeft) {
         soil_height_adj += (right_adj & 0x3fff);
     }
-    if (((back_adj >> 14) & 0x03) == kNodeFront) {
+    if (((back_adj >> 14) & 0x03) == kNodeWaterFront) {
         soil_height_adj += (back_adj & 0x3fff);
     }
-    if (((front_adj >> 14) & 0x03) == kNodeBack) {
+    if (((front_adj >> 14) & 0x03) == kNodeWaterBack) {
         soil_height_adj += (front_adj & 0x3fff);
     }
 
@@ -117,22 +117,22 @@ vec4 accumulateLayerLevelFromNeighbor(ivec2 src_local_coords) {
     // adjust water layer.
     ivec2 move_vector_xz = ivec2(0);
     int water_height_adj = 0;
-    if ((left_adj >> 30) == kNodeRight) {
+    if ((left_adj >> 30) == kNodeWaterRight) {
         int height_adj = int((left_adj >> 16) & 0x3fff);
         water_height_adj += height_adj;
         move_vector_xz += ivec2(height_adj, 0);
     }
-    if ((right_adj >> 30) == kNodeLeft) {
+    if ((right_adj >> 30) == kNodeWaterLeft) {
         int height_adj = int((right_adj >> 16) & 0x3fff);
         water_height_adj += height_adj;
         move_vector_xz += ivec2(-height_adj, 0);
     }
-    if ((back_adj >> 30) == kNodeFront) {
+    if ((back_adj >> 30) == kNodeWaterFront) {
         int height_adj = int((back_adj >> 16) & 0x3fff);
         water_height_adj += height_adj;
         move_vector_xz += ivec2(0, height_adj);
     }
-    if ((front_adj >> 30) == kNodeBack) {
+    if ((front_adj >> 30) == kNodeWaterBack) {
         int height_adj = int((front_adj >> 16) & 0x3fff);
         water_height_adj += height_adj;
         move_vector_xz += ivec2(0, -height_adj);
@@ -142,8 +142,8 @@ vec4 accumulateLayerLevelFromNeighbor(ivec2 src_local_coords) {
     int center_height_adj = int((center_adj >> 16) & 0x3fff);
     int adj_water_height = water_height_adj - center_height_adj;
     move_vector_xz += 
-        ivec2(flow_tag == 0 ? -center_height_adj : (flow_tag == 1 ? center_height_adj : 0),
-             flow_tag == 2 ? -center_height_adj : (flow_tag == 3 ? center_height_adj : 0));
+        ivec2(flow_tag == kNodeWaterLeft ? -center_height_adj : (flow_tag == kNodeWaterRight ? center_height_adj : 0),
+             flow_tag == kNodeWaterBack ? -center_height_adj : (flow_tag == kNodeWaterFront ? center_height_adj : 0));
 
     return vec4(adj_soil_height, adj_water_height, move_vector_xz * tile_params.flow_speed_factor) / 512.0f;
 }

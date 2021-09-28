@@ -660,8 +660,9 @@ void WeatherSystem::initTemperatureBuffer(
 void WeatherSystem::updateAirflowBuffer(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const glsl::WeatherControl& weather_controls,
-    const float global_flow_angle,
-    const float global_flow_speed,
+    const float& global_flow_angle,
+    const float& global_flow_speed,
+    const float& moist_to_pressure_ratio,
     int dbuf_idx,
     float current_time) {
 
@@ -686,7 +687,7 @@ void WeatherSystem::updateAirflowBuffer(
     airflow_params.current_time = current_time;
     airflow_params.global_flow_angle = global_flow_angle;
     airflow_params.global_flow_scale = global_flow_speed / kCloudMapSize * w;
-    airflow_params.moist_to_pressure_ratio = 0.001f;
+    airflow_params.moist_to_pressure_ratio = moist_to_pressure_ratio;
 
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),

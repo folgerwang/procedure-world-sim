@@ -160,6 +160,13 @@ float rsi_n(vec3 r0, vec3 rd_n, float sr) {
     return result;
 }
 
+float getBuckSaturatedVaporPressure(float temp) {
+    float pressure_kpa =
+        0.61121f * exp((18.678f - (temp / 234.5f)) * (temp / (257.14f + temp)));
+
+    return pressure_kpa;
+}
+
 #ifndef __cplusplus
 vec3 worldPositionToUvw(vec3 pos_ws) {
     float pos_ws_y_org = pos_ws.y + kPlanetRadius;

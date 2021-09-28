@@ -159,6 +159,11 @@
 #define kNodeBelow                              0x04      // -z
 #define kNodeAbove                              0x05      // +z
 
+#define kNodeWaterLeft                          0x00      // -x
+#define kNodeWaterRight                         0x01      // +x
+#define kNodeWaterBack                          0x02      // -y
+#define kNodeWaterFront                         0x03      // +y
+
 #ifdef __cplusplus
 #pragma once
 #include "glm/glm.hpp"
@@ -336,7 +341,7 @@ struct VolumeMoistrueParams {
     float           view_ext_exponent;
     float           ambient_intensity;
     float           phase_intensity;
-    float           pad;
+    float           pressure_to_moist_ratio;
 };
 
 struct BlurImageParams {

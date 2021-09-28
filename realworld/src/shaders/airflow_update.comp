@@ -76,13 +76,6 @@ vec3 getGlobalAirflowVector(vec2 noise) {
     return vec3(cos(angle), sin(angle), 0.0f) * params.global_flow_scale * (1.0f + noise.y * 0.5f);
 }
 
-float getBuckSaturatedVaporPressure(float temp) {
-    float pressure_kpa =
-        0.61121f * exp((18.678f - (temp / 234.5f)) * (temp / (257.14f + temp)));
-
-    return pressure_kpa;
-}
-
 vec3 getUpdatedWeatherInfo(ivec2 src_coords, vec2 ground_info) {
 
     vec2 noise_value = hash23(vec3(src_coords, params.current_time));
@@ -123,10 +116,10 @@ void getMaxVaporPressureSpace(vec3 uvw, ivec3 slc, ivec3 pixel_coords, ivec3 off
         float saturated_vapor_pressure =
             getBuckSaturatedVaporPressure(cur_temp);
 
-//        float pressure_space = max(saturated_vapor_pressure - current_vapor_pressure, 0.0f);
-        uint u_pressure_space = (floatBitsToUint(current_vapor_pressure) & 0xfffffff8) | node_tag; 
+        float pressure_space = max(saturated_vapor_pressure - current_vapor_pressure, 0.0f);
+        uint u_pressure_space = (floatBitsToUint(pressure_space) & 0xfffffff8) | node_tag; 
 
-        max_space = min(max_space, u_pressure_space);
+        max_space = max(max_space, u_pressure_space);
     }
 }
 

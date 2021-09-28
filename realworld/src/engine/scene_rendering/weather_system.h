@@ -83,8 +83,9 @@ public:
     void updateAirflowBuffer(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const glsl::WeatherControl& weather_controls,
-        const float global_flow_angle,
-        const float global_flow_speed,
+        const float& global_flow_angle,
+        const float& global_flow_speed,
+        const float& moist_to_pressure_ratio,
         int dbuf_idx,
         float current_time);
 

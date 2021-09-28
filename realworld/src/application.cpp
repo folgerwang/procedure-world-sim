@@ -540,6 +540,7 @@ void RealWorldApplication::initVulkan() {
         depth_buffer_copy_.view,
         hdr_color_buffer_.view,
         weather_system_->getMoistureTexes(),
+        weather_system_->getTempTexes(),
         weather_system_->getCloudLightingTex(),
         skydome_->getScatteringLutTex(),
         swap_chain_info_.extent);
@@ -700,6 +701,7 @@ void RealWorldApplication::recreateSwapChain() {
         depth_buffer_copy_.view,
         hdr_color_buffer_.view,
         weather_system_->getMoistureTexes(),
+        weather_system_->getTempTexes(),
         weather_system_->getCloudLightingTex(),
         skydome_->getScatteringLutTex(),
         swap_chain_info_.extent);
@@ -1102,6 +1104,7 @@ void RealWorldApplication::drawScene(
                 menu_->getWeatherControls(),
                 menu_->getGloalFlowDir(),
                 menu_->getGlobalFlowSpeed(),
+                menu_->getCloudMoistToPressureRatio(),
                 s_dbuf_idx,
                 current_time);
         }
@@ -1268,6 +1271,7 @@ void RealWorldApplication::drawScene(
                     menu_->getViewExtExponent(),
                     menu_->getCloudAmbientIntensity(),
                     menu_->getCloudPhaseIntensity(),
+                    menu_->getCloudMoistToPressureRatio(),
                     screen_size,
                     s_dbuf_idx,
                     current_time);

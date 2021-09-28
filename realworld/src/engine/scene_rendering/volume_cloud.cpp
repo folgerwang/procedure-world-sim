@@ -92,10 +92,11 @@ std::vector<er::TextureDescriptor> addCloudFogTextures(
     const std::shared_ptr<er::ImageView>& src_depth,
     const std::shared_ptr<er::ImageView>& cloud_fog_tex,
     const std::shared_ptr<er::ImageView>& volume_moist_tex,
+    const std::shared_ptr<er::ImageView>& volume_temp_tex,
     const std::shared_ptr<er::ImageView>& cloud_lighting_tex,
     const std::shared_ptr<er::ImageView>& scattering_lut_tex) {
     std::vector<er::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(5);
+    descriptor_writes.reserve(6);
 
     // envmap texture.
     er::Helper::addOneTexture(
@@ -103,6 +104,15 @@ std::vector<er::TextureDescriptor> addCloudFogTextures(
         SRC_MOISTURE_TEX_INDEX,
         texture_sampler,
         volume_moist_tex,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        SRC_TEMP_TEX_INDEX,
+        texture_sampler,
+        volume_temp_tex,
         description_set,
         er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -238,7 +248,8 @@ VolumeCloud::VolumeCloud(
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& src_depth,
     const std::shared_ptr<renderer::ImageView>& hdr_color,
-    const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_texes,
+    const std::vector<std::shared_ptr<renderer::ImageView>>& moisture_texes,
+    const std::vector<std::shared_ptr<renderer::ImageView>>& temp_texes,
     const std::shared_ptr<renderer::ImageView>& cloud_lighting_tex,
     const std::shared_ptr<renderer::ImageView>& scattering_lut_tex,
     const glm::uvec2& display_size) {
@@ -267,6 +278,10 @@ VolumeCloud::VolumeCloud(
                 SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
                 er::DescriptorType::COMBINED_IMAGE_SAMPLER),
               renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                SRC_TEMP_TEX_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
                 SRC_DEPTH_TEX_INDEX,
                 SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
                 er::DescriptorType::COMBINED_IMAGE_SAMPLER),
@@ -290,7 +305,8 @@ VolumeCloud::VolumeCloud(
         texture_sampler,
         src_depth,
         hdr_color,
-        temp_moisture_texes,
+        moisture_texes,
+        temp_texes,
         cloud_lighting_tex,
         scattering_lut_tex,
         display_size);
@@ -303,7 +319,8 @@ void VolumeCloud::recreate(
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& src_depth,
     const std::shared_ptr<renderer::ImageView>& hdr_color,
-    const std::vector<std::shared_ptr<renderer::ImageView>>& temp_moisture_texes,
+    const std::vector<std::shared_ptr<renderer::ImageView>>& moisture_texes,
+    const std::vector<std::shared_ptr<renderer::ImageView>>& temp_texes,
     const std::shared_ptr<renderer::ImageView>& cloud_lighting_tex,
     const std::shared_ptr<renderer::ImageView>& scattering_lut_tex,
     const glm::uvec2& display_size) {
@@ -406,7 +423,8 @@ void VolumeCloud::recreate(
             texture_sampler,
             src_depth,
             fog_cloud_tex_.view,
-            temp_moisture_texes[dbuf_idx],
+            moisture_texes[dbuf_idx],
+            temp_texes[dbuf_idx],
             cloud_lighting_tex,
             scattering_lut_tex);
         device->updateDescriptorSets(render_cloud_fog_texture_descs, {});
@@ -433,6 +451,7 @@ void VolumeCloud::renderVolumeCloud(
     const float& view_ext_exponent,
     const float& ambient_intensity,
     const float& phase_intensity,
+    const float& moist_to_pressure_ratio,
     const glm::uvec2& display_size,
     int dbuf_idx,
     float current_time) {
@@ -459,6 +478,7 @@ void VolumeCloud::renderVolumeCloud(
         params.view_ext_exponent = view_ext_exponent;
         params.ambient_intensity = ambient_intensity;
         params.phase_intensity = phase_intensity;
+        params.pressure_to_moist_ratio = 1.0f / moist_to_pressure_ratio;
 
         cmd_buf->pushConstants(
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
