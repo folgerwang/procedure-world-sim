@@ -389,7 +389,7 @@ WeatherSystem::WeatherSystem(
     for (int i = 0; i < 2; i++) {
         renderer::Helper::create3DTextureImage(
             device_info,
-            renderer::Format::R16_UNORM,
+            renderer::Format::R16_SFLOAT,
             glm::uvec3(
                 kAirflowBufferWidth,
                 kAirflowBufferWidth,
@@ -400,7 +400,7 @@ WeatherSystem::WeatherSystem(
             renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         renderer::Helper::create3DTextureImage(
             device_info,
-            renderer::Format::R16_UNORM,
+            renderer::Format::R16_SFLOAT,
             glm::uvec3(
                 kAirflowBufferWidth,
                 kAirflowBufferWidth,

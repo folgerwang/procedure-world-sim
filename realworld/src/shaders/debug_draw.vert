@@ -41,8 +41,8 @@ void main() {
     uvw.xy = (sample_pos.xz - params.world_min) * params.inv_world_range;
     float temp = texture(src_temp_volume, uvw).x;
     float moisture = texture(src_moisture_volume, uvw).x;
-    out_data.debug_info.x = denormalizeTemperature(temp);
-    out_data.debug_info.y = denormalizeMoisture(moisture);
+    out_data.debug_info.x = temp;
+    out_data.debug_info.y = moisture;
 
     vec4 airflow_info = texture(src_airflow, uvw);
     vec3 arrow_dir = airflow_info.xyz * 2.0f - 1.0f;

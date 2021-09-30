@@ -1,7 +1,7 @@
 //#define kRealWorldAirflowMaxHeight        12000.0f
 //Reduce atmosphere height from 12000.0f to 8500.0f
-#define kRealWorldAirflowMaxHeight        6500.0f
-#define kDegreeDecreasePerKm              (10.5f / 1000.0f)
+#define kRealWorldAirflowMaxHeight        8500.0f
+#define kDegreeDecreasePerKm              (9.17f / 1000.0f)
 
 #define kAirflowMaxHeight                 (kRealWorldAirflowMaxHeight / kDegreeDecreasePerKm / 1000.0f * 6.5f)
 #define kAirflowLowHeight                 -1.0f
@@ -88,36 +88,6 @@ vec2 getPositionWSXy(vec2 uvw_xy, vec2 world_min, vec2 world_range) {
     return uvw_xy * world_range + world_min;
 }
 
-float normalizeTemperature(float temp) {
-    return (temp + kTemperaturePositiveOffset) * kTemperatureNormalizer;
-}
-
-float denormalizeTemperature(float normalized_temp) {
-    return normalized_temp * kTemperatureDenormalizer - kTemperaturePositiveOffset;
-}
-
-vec2 denormalizeTemperature(vec2 normalized_temp) {
-    return normalized_temp * kTemperatureDenormalizer - kTemperaturePositiveOffset;
-}
-
-float normalizeMoisture(float moist) {
-    //return (log2(max(moist, kMoistureNormalizerMin)) - kMoistureNormalizerExpMin) / kMoistureNormalizerExpRange;
-    return log2(1.0f + moist) / 10.0f;
-}
-
-float denormalizeMoisture(float normalized_moist) {
-    //return exp2(normalized_moist * kMoistureNormalizerExpRange + kMoistureNormalizerExpMin);
-    return exp2(normalized_moist * 10.0f) - 1.0f;
-}
-
-float normalizeMoistureDiff(float moist) {
-    return log2(1.0f + max(moist + 8.0f, 0.0f)) / 4.0f;
-}
-
-float denormalizeMoistureDiff(float normalized_moist) {
-    return exp2(normalized_moist * 4.0f) - 1.0f - 8.0f;
-}
-
 
 float getNormalizedVectorLength(vec3 dir_vec) {
     return length(dir_vec) * kAirflowStrengthNormalizeScale;
@@ -165,6 +135,14 @@ float getBuckSaturatedVaporPressure(float temp) {
         0.61121f * exp((18.678f - (temp / 234.5f)) * (temp / (257.14f + temp)));
 
     return pressure_kpa;
+}
+
+float getAirPressure(float temp, float height) {
+    float pb = 101.325f;
+    float g0 = 9.80665f;
+    float m = 0.0289644f;
+    float r = 8.3144598f;
+    return pb * exp(-g0 * m * height / (r * (temp + 273.15f)));
 }
 
 #ifndef __cplusplus

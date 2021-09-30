@@ -82,8 +82,7 @@ void main() {
     vec3 normal = normalize(tnor + 0.8f*(1.0f - abs(tnor.y))*0.8f*vec3(tt.y, tt.z, tt.w));
 
     float uvw_y = getHeightToSample(pos.y);
-    float c_temp = denormalizeTemperature(
-                        texture(src_temp, vec3(in_data.world_map_uv, uvw_y)).x);
+    float c_temp = texture(src_temp, vec3(in_data.world_map_uv, uvw_y)).x;
 
     vec3 albedo = vec3(0.18, 0.11, 0.10)*.75f;
     albedo = 1.0f* mix(albedo, vec3(0.1, 0.1, 0.0)*0.2f, smoothstep(0.7f, 0.9f, normal.y));

@@ -77,8 +77,8 @@ void main()
         vec3 sample_pos = view_params.camera_pos.xyz + cur_dist * view_dir;
         vec3 uvw = worldPositionToUvw(sample_pos);
 
-        float cur_moisture = denormalizeMoisture(texture(src_moisture, uvw).x);
-        float cur_temp = denormalizeTemperature(texture(src_temperature, uvw).x);
+        float cur_moisture = texture(src_moisture, uvw).x;
+        float cur_temp = texture(src_temperature, uvw).x;
         float saturate_vapor_moisture = getBuckSaturatedVaporPressure(cur_temp) * params.pressure_to_moist_ratio;
         float extinct = thickness * max(cur_moisture - saturate_vapor_moisture, 0.0f) * params.view_ext_factor;
         float cloud_shadow = texture(src_cloud_shadow, uvw).x;

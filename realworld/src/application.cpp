@@ -155,7 +155,7 @@ static bool s_mouse_right_button_pressed = false;
 static glm::vec2 s_last_mouse_pos;
 static float s_yaw = 0.0f;
 static float s_pitch = 0.0f;
-const float s_camera_speed = 1.0f;
+const float s_camera_speed = 10.0f;
 static glm::vec3 s_camera_pos = glm::vec3(0, 500.0f, 0);
 static glm::vec3 s_camera_dir = glm::normalize(glm::vec3(1.0f, 0.0f, 0.0f));
 static glm::vec3 s_camera_up = glm::vec3(0, 1, 0);

@@ -15,14 +15,14 @@ class Menu {
     uint32_t debug_draw_type_ = 0;
     float air_flow_strength_ = 50.0f;
     float water_flow_strength_ = 1.0f;
-    float light_ext_factor_ = 0.975f;
+    float light_ext_factor_ = 0.025f;
     float view_ext_factor_ = 0.10f;
     float view_ext_exponent_ = 1.0f;
     float cloud_ambient_intensity_ = 1.0f;
     float cloud_phase_intensity_ = 0.5f;
-    float cloud_moist_to_pressure_ratio_ = 0.01f;
+    float cloud_moist_to_pressure_ratio_ = 0.2f;
     float global_flow_dir_ = 85.0f;
-    float global_flow_speed_ = 0.00f;
+    float global_flow_speed_ = 1.00f;
 
     glsl::WeatherControl weather_controls_;
 
