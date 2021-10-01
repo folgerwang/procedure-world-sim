@@ -1,7 +1,7 @@
 //#define kRealWorldAirflowMaxHeight        12000.0f
 //Reduce atmosphere height from 12000.0f to 8500.0f
-#define kRealWorldAirflowMaxHeight        8500.0f
-#define kDegreeDecreasePerKm              (9.17f / 1000.0f)
+#define kRealWorldAirflowMaxHeight        12000.0f
+#define kDegreeDecreasePerKm              (6.5f / 1000.0f)
 
 #define kAirflowMaxHeight                 (kRealWorldAirflowMaxHeight / kDegreeDecreasePerKm / 1000.0f * 6.5f)
 #define kAirflowLowHeight                 -1.0f
@@ -21,7 +21,7 @@
 
 #define kMaxTempMoistDiff                 2.0f
 
-#define kMinSampleHeight                  32.0f
+#define kMinSampleHeight                  64.0f
 #define kAirflowHeightMinMaxRatio         (kAirflowHeightRange / (kAirflowBufferHeight / 2 * kMinSampleHeight) - 1.0f)
 #define kAirflowHeightFactorA             ((kAirflowHeightMinMaxRatio - 1.0f) * kAirflowBufferHeight * kMinSampleHeight / 2)
 #define kAirflowHeightFactorB             (kMinSampleHeight * kAirflowBufferHeight)

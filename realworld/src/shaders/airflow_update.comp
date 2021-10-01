@@ -125,8 +125,14 @@ uvec2 packTempDiff(uint u_min_pressure, vec3 uvw, ivec3 slc, ivec3 pixel_coords)
         vec4 hash_values = hash44(vec4(vec3(pixel_coords), params.current_time));
         vec2 noise_values = hash_values.xy * 2.0f - 1.0f;
 
-        float frozen_rate = (center_temp - 12.0f + noise_values.y * 2.0f) / 10.0f * 0.5f + 0.5f;
-        float frozen_transfer_rate = pow(clamp(frozen_rate, 0.0f, 1.0f), params.controls.frozen_pow_curve);
+        float center_height = getSampleToHeight(uvw.z);
+        float center_air_pressure = getAirPressure(params.controls.sea_level_temperature, center_height);
+        float min_air_pressure = getAirPressure(params.controls.sea_level_temperature, getSampleToHeight(min_uvw.z));
+
+        //float frozen_rate = (center_temp - 12.0f + noise_values.y * 2.0f) / 12.0f * 0.5f + 0.5f;
+        //float frozen_transfer_rate = pow(clamp(frozen_rate, 0.0f, 1.0f), params.controls.frozen_pow_curve);
+    	float temperature = getReferenceDegree(params.controls.sea_level_temperature, center_height);
+        float frozen_transfer_rate = 1.0f - exp(-getBuckSaturatedVaporPressure(temperature) * params.controls.frozen_pow_curve);
 
         if (center_vapor_pressure > min_vapor_pressure) {
             float transfer_ratio = params.controls.transfer_ratio * (1.0f + hash_values.x * params.controls.transfer_noise_weight);
@@ -134,7 +140,7 @@ uvec2 packTempDiff(uint u_min_pressure, vec3 uvw, ivec3 slc, ivec3 pixel_coords)
             
             float temp_diff_adj = (center_temp - min_temp) * transfer_ratio;
             float moist_diff_adj = (center_moist - min_moist) * transfer_ratio;
-            float pressure_diff_adj = (center_vapor_pressure - min_vapor_pressure) * transfer_ratio;
+            float pressure_diff_adj = (center_vapor_pressure + center_air_pressure - (min_vapor_pressure + min_air_pressure)) * transfer_ratio;
             packed_temp_moist_diff.x = packHalf2x16(vec2(temp_diff_adj, moist_diff_adj));
             packed_temp_moist_diff.y = (floatBitsToUint(pressure_diff_adj) & 0xfffffff8) | min_tag;
         }
@@ -317,8 +323,8 @@ void main()
     cur_temp += temp_moist_pressure_adj.x;
     cur_moist += temp_moist_pressure_adj.y;
 
-    cur_temp = mix(cur_temp, source_temp, 0.0f);
-    cur_moist = mix(cur_moist, source_moist, 0.0f);
+    cur_temp = mix(cur_temp, source_temp, 0.01f);
+    cur_moist = mix(cur_moist, source_moist, 0.01f);
 
     imageStore(dst_temperature,
                pixel_coords,

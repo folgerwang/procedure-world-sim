@@ -67,11 +67,11 @@ Menu::Menu(
     weather_controls_.moist_temp_convert = 0.00001f;
     weather_controls_.soil_moist_adj = 0.01124f;
     weather_controls_.water_moist_adj = 0.03173f;
-    weather_controls_.transfer_ratio = 1.0f;
-    weather_controls_.transfer_noise_weight = 0.0f;
+    weather_controls_.transfer_ratio = 0.8f;
+    weather_controls_.transfer_noise_weight = 0.2f;
     weather_controls_.cloud_forming_ratio = 0.5f;
     weather_controls_.frozen_ext_factor = 1.0f;
-    weather_controls_.frozen_pow_curve = 1.0f / 1.0f;
+    weather_controls_.frozen_pow_curve = 1.0f / 2.0f;
 }
 
 void Menu::init(

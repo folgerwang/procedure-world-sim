@@ -307,8 +307,8 @@ void DebugDrawObject::draw(
     debug_params.world_min = glm::vec2(-kWorldMapSize / 2.0f);
     debug_params.inv_world_range = 1.0f / (glm::vec2(kWorldMapSize / 2.0f) - debug_params.world_min);
     debug_params.debug_min = aligned_camera_pos - glm::vec3(4096.0f, 2048.0f, 4096.0f);
-    debug_params.debug_range = glm::vec3(8192.0f, 4096.0f, 8192.0f);
-    debug_params.size = glm::uvec3(64, 32, 64);
+    debug_params.debug_range = glm::vec3(8192.0f, 8192.0f, 8192.0f);
+    debug_params.size = glm::uvec3(32, 32, 32);
     debug_params.inv_size = 1.0f / glm::vec3(debug_params.size);
     debug_params.debug_type = debug_type;
     cmd_buf->pushConstants(

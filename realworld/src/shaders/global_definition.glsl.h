@@ -137,7 +137,7 @@
 #define DEBUG_DRAW_TEMPRETURE                   1
 #define DEBUG_DRAW_MOISTURE                     2
 
-#define kAirflowBufferWidth                     256
+#define kAirflowBufferWidth                     512
 #define kAirflowBufferHeight                    64
 #define kAirflowBufferCount                     6
 
@@ -150,7 +150,7 @@
 #define kMieScaleHeight                         1.2e3
 
 #define kWorldMapSize 8192.0f //16384.0f        // meters
-#define kCloudMapSize 16384.0f //32768.0f       // meters
+#define kCloudMapSize 65536.0f
 
 #define kNodeLeft                               0x00      // -x
 #define kNodeRight                              0x01      // +x
