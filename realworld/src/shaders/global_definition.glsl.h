@@ -88,18 +88,21 @@
 #define SRC_SCATTERING_LUT_INDEX            32
 #define SRC_SCATTERING_LUT_SUM_INDEX        32
 
+// Noise Texture.
+#define DST_PERLIN_NOISE_TEX_INDEX          0
+
 // IBL texure index
-#define PANORAMA_TEX_INDEX          0
-#define ENVMAP_TEX_INDEX            0
-#define SRC_TEX_INDEX               0
-#define DST_TEX_INDEX               1
+#define PANORAMA_TEX_INDEX                  0
+#define ENVMAP_TEX_INDEX                    0
+#define SRC_TEX_INDEX                       0
+#define DST_TEX_INDEX                       1
 
-#define VERTEX_BUFFER_INDEX         0
-#define INDEX_BUFFER_INDEX          1
+#define VERTEX_BUFFER_INDEX                 0
+#define INDEX_BUFFER_INDEX                  1
 
-#define INDIRECT_DRAW_BUFFER_INDEX  0
-#define GAME_OBJECTS_BUFFER_INDEX   0
-#define INSTANCE_BUFFER_INDEX       1
+#define INDIRECT_DRAW_BUFFER_INDEX          0
+#define GAME_OBJECTS_BUFFER_INDEX           0
+#define INSTANCE_BUFFER_INDEX               1
 
 #define FEATURE_MATERIAL_SPECULARGLOSSINESS     0x00000001
 #define FEATURE_MATERIAL_METALLICROUGHNESS      0x00000002
@@ -151,6 +154,8 @@
 
 #define kWorldMapSize 8192.0f //16384.0f        // meters
 #define kCloudMapSize 65536.0f
+
+#define kNoiseTextureSize                       128
 
 #define kNodeLeft                               0x00      // -x
 #define kNodeRight                              0x01      // +x
@@ -390,6 +395,10 @@ struct GameObjectsUpdateParams {
 
 struct InstanceBufferUpdateParams {
     uint num_instances;
+};
+
+struct PerlinNoiseInitParams {
+    uint pad;
 };
 
 struct PbrMaterialParams {

@@ -2,6 +2,7 @@
 
 #include "renderer.h"
 #include "renderer_helper.h"
+#include "../engine_helper.h"
 
 namespace engine {
 namespace renderer {
@@ -213,6 +214,69 @@ void transitMapTextureFromStoreImage(
         SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT),
         SET_FLAG_BIT(PipelineStage, VERTEX_SHADER_BIT) |
         SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT));
+}
+
+std::shared_ptr<renderer::PipelineLayout> createComputePipelineLayout(
+    const std::shared_ptr<renderer::Device>& device,
+    const renderer::DescriptorSetLayoutList& desc_set_layouts,
+    const uint32_t& push_const_range_size) {
+    renderer::PushConstantRange push_const_range{};
+    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
+    push_const_range.offset = 0;
+    push_const_range.size = push_const_range_size;
+
+    return device->createPipelineLayout(desc_set_layouts, { push_const_range });
+}
+
+renderer::ShaderModuleList getComputeShaderModules(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::string& compute_shader_name) {
+    uint64_t compute_code_size;
+    renderer::ShaderModuleList shader_modules;
+    shader_modules.reserve(1);
+    std::string file_name = std::string("lib/shaders/") + compute_shader_name + "_comp.spv";
+    auto compute_shader_code = engine::helper::readFile(file_name.c_str(), compute_code_size);
+    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
+
+    return shader_modules;
+}
+
+std::shared_ptr<renderer::Pipeline> createComputePipeline(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout,
+    const std::string& compute_shader_name) {
+
+    auto compute_shader_modules =
+        getComputeShaderModules(device, compute_shader_name);
+    assert(compute_shader_modules.size() == 1);
+
+    auto pipeline = device->createPipeline(
+        pipeline_layout,
+        compute_shader_modules[0]);
+
+    for (auto& shader_module : compute_shader_modules) {
+        device->destroyShaderModule(shader_module);
+    }
+
+    return pipeline;
+}
+
+void releasePipelineLayout(
+    const std::shared_ptr<renderer::Device>& device,
+    std::shared_ptr<renderer::PipelineLayout>& pipeline_layout) {
+    if (pipeline_layout != nullptr) {
+        device->destroyPipelineLayout(pipeline_layout);
+        pipeline_layout = nullptr;
+    }
+}
+
+void releasePipeline(
+    const std::shared_ptr<renderer::Device>& device,
+    std::shared_ptr<renderer::Pipeline>& pipeline) {
+    if (pipeline != nullptr) {
+        device->destroyPipeline(pipeline);
+        pipeline = nullptr;
+    }
 }
 
 } // namespace helper

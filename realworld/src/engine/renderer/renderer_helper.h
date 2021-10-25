@@ -81,6 +81,28 @@ void transitMapTextureFromStoreImage(
     const std::vector<std::shared_ptr<renderer::Image>>& images,
     const renderer::ImageLayout& new_layout = renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
+renderer::ShaderModuleList getComputeShaderModules(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::string& compute_shader_name);
+
+std::shared_ptr<renderer::PipelineLayout> createComputePipelineLayout(
+    const std::shared_ptr<renderer::Device>& device,
+    const renderer::DescriptorSetLayoutList& desc_set_layouts,
+    const uint32_t& push_const_range_size);
+
+std::shared_ptr<renderer::Pipeline> createComputePipeline(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout,
+    const std::string& compute_shader_name);
+
+void releasePipelineLayout(
+    const std::shared_ptr<renderer::Device>& device,
+    std::shared_ptr<renderer::PipelineLayout>& pipeline_layout);
+
+void releasePipeline(
+    const std::shared_ptr<renderer::Device>& device,
+    std::shared_ptr<renderer::Pipeline>& pipeline);
+
 } // namespace helper
 } // namespace renderer
 } // namespace engine

@@ -337,5 +337,8 @@
     <None Include="src\shaders\cloud_shadow_merge.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
+    <None Include="src\shaders\perlin_noise_init.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

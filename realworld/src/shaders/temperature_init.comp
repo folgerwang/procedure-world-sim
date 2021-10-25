@@ -12,7 +12,7 @@ layout(set = 0, binding = DST_TEMP_TEX_INDEX, r16f) uniform writeonly image3D ds
 layout(set = 0, binding = DST_MOISTURE_TEX_INDEX, r16f) uniform writeonly image3D dst_moisture;
 layout(set = 0, binding = DST_PRESSURE_TEX_INDEX, r16f) uniform writeonly image3D dst_pressure;
 
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 void main()
 {
 	// skip 2 lines on border.

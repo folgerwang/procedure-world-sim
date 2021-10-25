@@ -241,6 +241,7 @@
     <None Include="src\shaders\grass.geom" />
     <None Include="src\shaders\grass.vert" />
     <None Include="src\shaders\ibl_smooth.comp" />
+    <None Include="src\shaders\perlin_noise_init.comp" />
     <None Include="src\shaders\render_volume_cloud.comp" />
     <None Include="src\shaders\skybox.frag" />
     <None Include="src\shaders\skybox.vert" />

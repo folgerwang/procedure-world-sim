@@ -7,6 +7,9 @@
 
 namespace {
 namespace er = engine::renderer;
+namespace erh = er::helper;
+
+#if 0
 struct CloudVertex {
     glm::vec3 pos;
 
@@ -93,7 +96,27 @@ er::BufferInfo createIndexBuffer(
 
     return buffer;
 }
+#endif
 
+std::vector<er::TextureDescriptor> addPerlinNoiseInitTextures(
+    const std::shared_ptr<er::DescriptorSet>& description_set,
+    const er::TextureInfo& perlin_noise_tex) {
+    std::vector<er::TextureDescriptor> descriptor_writes;
+    descriptor_writes.reserve(1);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        DST_PERLIN_NOISE_TEX_INDEX,
+        nullptr,
+        perlin_noise_tex.view,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
+        er::ImageLayout::GENERAL);
+
+    return descriptor_writes;
+}
+
+#if 0
 std::vector<er::TextureDescriptor> addCloudTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler) {
@@ -167,6 +190,7 @@ std::shared_ptr<er::Pipeline> createGraphicsPipeline(
 
     return cloud_pipeline;
 }
+#endif
 
 } // namespace
 
@@ -184,15 +208,50 @@ VolumeNoise::VolumeNoise(
     const glm::uvec2& display_size) {
 
     const auto& device = device_info.device;
-
+#if 0
     vertex_buffer_ = createVertexBuffer(device_info);
     index_buffer_ = createIndexBuffer(device_info);
+#endif
+    renderer::Helper::create3DTextureImage(
+        device_info,
+        renderer::Format::R8_UNORM,
+        glm::uvec3(
+            kNoiseTextureSize,
+            kNoiseTextureSize,
+            kNoiseTextureSize),
+        perlin_noise_tex_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings(1);
-    bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX);
+    renderer::Helper::create3DTextureImage(
+        device_info,
+        renderer::Format::R8_UNORM,
+        glm::uvec3(
+            kNoiseTextureSize,
+            kNoiseTextureSize,
+            kNoiseTextureSize),
+        worley_noise_tex_,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
-    cloud_desc_set_layout_ =
-        device->createDescriptorSetLayout(bindings);
+    perlin_noise_init_desc_set_layout_ =
+        device->createDescriptorSetLayout(
+            { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                DST_PERLIN_NOISE_TEX_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::STORAGE_IMAGE) });
+
+#if 0
+    {
+        std::vector<renderer::DescriptorSetLayoutBinding> bindings(1);
+        bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(BASE_COLOR_TEX_INDEX);
+
+        cloud_desc_set_layout_ =
+            device->createDescriptorSetLayout(bindings);
+    }
+#endif
 
     recreate(
         device,
@@ -213,24 +272,35 @@ void VolumeNoise::recreate(
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const glm::uvec2& display_size) {
 
-    if (cloud_pipeline_layout_ != nullptr) {
-        device->destroyPipelineLayout(cloud_pipeline_layout_);
-        cloud_pipeline_layout_ = nullptr;
-    }
-    
-    if (cloud_pipeline_ != nullptr) {
-        device->destroyPipeline(cloud_pipeline_);
-        cloud_pipeline_ = nullptr;
-    }
+    erh::releasePipelineLayout(device, perlin_noise_init_pipeline_layout_);
+    erh::releasePipeline(device, perlin_noise_init_pipeline_);
 
-    cloud_tex_desc_set_ = nullptr;
-
-    // skybox
-    cloud_tex_desc_set_ =
+    // perlin noise texture init.
+    perlin_noise_init_tex_desc_set_ =
         device->createDescriptorSets(
             descriptor_pool,
-            cloud_desc_set_layout_, 1)[0];
+            perlin_noise_init_desc_set_layout_, 1)[0];
 
+    // create a global ibl texture descriptor set.
+    auto perlin_noise_init_texture_descs =
+        addPerlinNoiseInitTextures(
+            perlin_noise_init_tex_desc_set_,
+            perlin_noise_tex_);
+    device->updateDescriptorSets(perlin_noise_init_texture_descs, {});
+
+    perlin_noise_init_pipeline_layout_ =
+        erh::createComputePipelineLayout(
+            device,
+            { perlin_noise_init_desc_set_layout_ },
+            sizeof(glsl::PerlinNoiseInitParams));
+
+    perlin_noise_init_pipeline_ =
+        erh::createComputePipeline(
+            device,
+            perlin_noise_init_pipeline_layout_,
+            "perlin_noise_init");
+
+#if 0
     // create a global ibl texture descriptor set.
     auto cloud_texture_descs = addCloudTextures(
         cloud_tex_desc_set_,
@@ -250,12 +320,45 @@ void VolumeNoise::recreate(
         cloud_pipeline_layout_,
         graphic_pipeline_info,
         display_size);
+#endif
+}
+
+void VolumeNoise::initPerlinNoiseTexture(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
+    erh::transitMapTextureToStoreImage(
+        cmd_buf,
+        { perlin_noise_tex_.image });
+
+    auto w = static_cast<uint32_t>(kNoiseTextureSize);
+    cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, perlin_noise_init_pipeline_);
+    glsl::PerlinNoiseInitParams perlin_noise_init_params = {};
+
+    cmd_buf->pushConstants(
+        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+        perlin_noise_init_pipeline_layout_,
+        &perlin_noise_init_params,
+        sizeof(perlin_noise_init_params));
+
+    cmd_buf->bindDescriptorSets(
+        renderer::PipelineBindPoint::COMPUTE,
+        perlin_noise_init_pipeline_layout_,
+        { perlin_noise_init_tex_desc_set_ });
+
+    cmd_buf->dispatch(
+        (w + 3) / 4,
+        (w + 3) / 4,
+        (w + 3) / 4);
+
+    erh::transitMapTextureFromStoreImage(
+        cmd_buf,
+        { perlin_noise_tex_.image });
 }
 
 // render skybox.
 void VolumeNoise::draw(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
     const std::shared_ptr<renderer::DescriptorSet>& frame_desc_set) {
+#if 0
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, cloud_pipeline_);
     std::vector<std::shared_ptr<renderer::Buffer>> buffers(1);
     std::vector<uint64_t> offsets(1);
@@ -282,6 +385,7 @@ void VolumeNoise::draw(
         desc_sets);
 
     cmd_buf->drawIndexed(36);
+#endif
 }
 
 void VolumeNoise::update() {
@@ -289,11 +393,16 @@ void VolumeNoise::update() {
 
 void VolumeNoise::destroy(
     const std::shared_ptr<renderer::Device>& device) {
+#if 0
     vertex_buffer_.destroy(device);
     index_buffer_.destroy(device);
     device->destroyDescriptorSetLayout(cloud_desc_set_layout_);
     device->destroyPipelineLayout(cloud_pipeline_layout_);
     device->destroyPipeline(cloud_pipeline_);
+#endif
+    device->destroyDescriptorSetLayout(perlin_noise_init_desc_set_layout_);
+    device->destroyPipelineLayout(perlin_noise_init_pipeline_layout_);
+    device->destroyPipeline(perlin_noise_init_pipeline_);
 }
 
 }//namespace scene_rendering

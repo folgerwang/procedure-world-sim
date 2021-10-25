@@ -9,6 +9,7 @@
 #include "engine/scene_rendering/ibl_creator.h"
 #include "engine/scene_rendering/menu.h"
 #include "engine/scene_rendering/volume_cloud.h"
+#include "engine/scene_rendering/volume_noise.h"
 
 namespace er = engine::renderer;
 namespace ego = engine::game_object;
@@ -125,6 +126,7 @@ private:
     std::shared_ptr<es::Skydome> skydome_;
     std::shared_ptr<es::WeatherSystem> weather_system_;
     std::shared_ptr<es::VolumeCloud> volume_cloud_;
+    std::shared_ptr<es::VolumeNoise> volume_noise_;
     std::shared_ptr<es::IblCreator> ibl_creator_;
     std::shared_ptr<es::Menu> menu_;
 

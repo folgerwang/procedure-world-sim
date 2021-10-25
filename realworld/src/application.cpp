@@ -532,6 +532,16 @@ void RealWorldApplication::initVulkan() {
         heightmap_tex_.view,
         map_mask_tex_.view);
 
+    volume_noise_ = std::make_shared<es::VolumeNoise>(
+        device_info_,
+        descriptor_pool_,
+        hdr_render_pass_,
+        view_desc_set_layout_,
+        global_tex_desc_set_layout_,
+        graphic_pipeline_info_,
+        texture_sampler_,
+        swap_chain_info_.extent);
+
     volume_cloud_ = std::make_shared<es::VolumeCloud>(
         device_info_,
         descriptor_pool_,
@@ -692,6 +702,15 @@ void RealWorldApplication::recreateSwapChain() {
         weather_system_->getTempTex(0),
         weather_system_->getMoistureTex(0),
         weather_system_->getAirflowTex());
+
+    volume_noise_->recreate(
+        device_,
+        descriptor_pool_,
+        hdr_render_pass_,
+        view_desc_set_layout_,
+        graphic_pipeline_info_,
+        texture_sampler_,
+        swap_chain_info_.extent);
 
     volume_cloud_->recreate(
         device_info_,
@@ -1094,6 +1113,7 @@ void RealWorldApplication::drawScene(
         if (!s_tile_buffer_inited) {
             ego::TileObject::generateTileBuffers(cmd_buf);
             weather_system_->initTemperatureBuffer(cmd_buf);
+            volume_noise_->initPerlinNoiseTexture(cmd_buf);
             s_tile_buffer_inited = true;
         }
         else {

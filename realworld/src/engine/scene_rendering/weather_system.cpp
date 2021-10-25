@@ -8,6 +8,7 @@
 
 namespace {
 namespace er = engine::renderer;
+namespace erh = er::helper;
 
 er::ShaderModuleList getComputeShaderModules(
     const std::shared_ptr<er::Device>& device,
@@ -211,19 +212,19 @@ static std::shared_ptr<er::DescriptorSetLayout> createTemperatureInitDescSetLayo
     const std::shared_ptr<er::Device>& device) {
     std::vector<er::DescriptorSetLayoutBinding> bindings(3);
     bindings[0] =
-        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        erh::getTextureSamplerDescriptionSetLayoutBinding(
             DST_TEMP_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
 
     bindings[1] =
-        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        erh::getTextureSamplerDescriptionSetLayoutBinding(
             DST_MOISTURE_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
 
     bindings[2] =
-        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        erh::getTextureSamplerDescriptionSetLayoutBinding(
             DST_PRESSURE_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
@@ -235,55 +236,55 @@ static std::shared_ptr<er::DescriptorSetLayout> createAirflowUpdateDescSetLayout
     const std::shared_ptr<er::Device>& device) {
     std::vector<er::DescriptorSetLayoutBinding> bindings(9);
     bindings[0] =
-        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        erh::getTextureSamplerDescriptionSetLayoutBinding(
             DST_TEMP_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
 
     bindings[1] =
-        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        erh::getTextureSamplerDescriptionSetLayoutBinding(
             DST_MOISTURE_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
 
     bindings[2] =
-        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        erh::getTextureSamplerDescriptionSetLayoutBinding(
             DST_PRESSURE_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
 
     bindings[3] =
-        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        erh::getTextureSamplerDescriptionSetLayoutBinding(
             SRC_TEMP_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::COMBINED_IMAGE_SAMPLER);
 
     bindings[4] =
-        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        erh::getTextureSamplerDescriptionSetLayoutBinding(
             SRC_MOISTURE_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::COMBINED_IMAGE_SAMPLER);
 
     bindings[5] =
-        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        erh::getTextureSamplerDescriptionSetLayoutBinding(
             SRC_PRESSURE_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::COMBINED_IMAGE_SAMPLER);
 
     bindings[6] =
-        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        erh::getTextureSamplerDescriptionSetLayoutBinding(
             DST_AIRFLOW_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
 
     bindings[7] =
-        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        erh::getTextureSamplerDescriptionSetLayoutBinding(
             ROCK_LAYER_BUFFER_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::COMBINED_IMAGE_SAMPLER);
 
     bindings[8] =
-        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        erh::getTextureSamplerDescriptionSetLayoutBinding(
             SOIL_WATER_LAYER_BUFFER_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::COMBINED_IMAGE_SAMPLER);
@@ -295,13 +296,13 @@ static std::shared_ptr<er::DescriptorSetLayout> createCloudShadowUpdateDescSetLa
     const std::shared_ptr<er::Device>& device) {
     std::vector<er::DescriptorSetLayoutBinding> bindings(2);
     bindings[0] =
-        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        erh::getTextureSamplerDescriptionSetLayoutBinding(
             SRC_MOISTURE_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::COMBINED_IMAGE_SAMPLER);
 
     bindings[1] =
-        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        erh::getTextureSamplerDescriptionSetLayoutBinding(
             DST_CLOUD_SHADOW_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
@@ -313,62 +314,12 @@ static std::shared_ptr<er::DescriptorSetLayout> createCloudShadowMergeDescSetLay
     const std::shared_ptr<er::Device>& device) {
     std::vector<er::DescriptorSetLayoutBinding> bindings(1);
     bindings[0] =
-        er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        erh::getTextureSamplerDescriptionSetLayoutBinding(
             DST_CLOUD_SHADOW_TEX_INDEX,
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::STORAGE_IMAGE);
 
     return device->createDescriptorSetLayout(bindings);
-}
-
-static std::shared_ptr<er::PipelineLayout> createComputePipelineLayout(
-    const std::shared_ptr<er::Device>& device,
-    const er::DescriptorSetLayoutList& desc_set_layouts,
-    const uint32_t& push_const_range_size) {
-    er::PushConstantRange push_const_range{};
-    push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
-    push_const_range.offset = 0;
-    push_const_range.size = push_const_range_size;
-
-    return device->createPipelineLayout(desc_set_layouts, { push_const_range });
-}
-
-static std::shared_ptr<er::Pipeline> createComputePipeline(
-    const std::shared_ptr<er::Device>& device,
-    const std::shared_ptr<er::PipelineLayout>& pipeline_layout,
-    const std::string& compute_shader_name) {
-
-    auto compute_shader_modules =
-        getComputeShaderModules(device, compute_shader_name);
-    assert(compute_shader_modules.size() == 1);
-
-    auto pipeline = device->createPipeline(
-        pipeline_layout,
-        compute_shader_modules[0]);
-
-    for (auto& shader_module : compute_shader_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
-    return pipeline;
-}
-
-static void releasePipelineLayout(
-    const std::shared_ptr<er::Device>& device,
-    std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
-    if (pipeline_layout != nullptr) {
-        device->destroyPipelineLayout(pipeline_layout);
-        pipeline_layout = nullptr;
-    }
-}
-
-static void releasePipeline(
-    const std::shared_ptr<er::Device>& device,
-    std::shared_ptr<er::Pipeline>& pipeline) {
-    if (pipeline != nullptr) {
-        device->destroyPipeline(pipeline);
-        pipeline = nullptr;
-    }
 }
 
 } // namespace
@@ -491,14 +442,14 @@ void WeatherSystem::recreate(
     const std::shared_ptr<renderer::ImageView>& rock_layer_tex,
     const std::vector<std::shared_ptr<renderer::ImageView>>& soil_water_layer_tex) {
 
-    releasePipelineLayout(device, temperature_init_pipeline_layout_);
-    releasePipeline(device, temperature_init_pipeline_);
-    releasePipelineLayout(device, airflow_pipeline_layout_);
-    releasePipeline(device, airflow_pipeline_);
-    releasePipelineLayout(device, cloud_shadow_pipeline_layout_);
-    releasePipeline(device, cloud_shadow_init_pipeline_);
-    releasePipelineLayout(device, cloud_shadow_merge_pipeline_layout_);
-    releasePipeline(device, cloud_shadow_merge_pipeline_);
+    erh::releasePipelineLayout(device, temperature_init_pipeline_layout_);
+    erh::releasePipeline(device, temperature_init_pipeline_);
+    erh::releasePipelineLayout(device, airflow_pipeline_layout_);
+    erh::releasePipeline(device, airflow_pipeline_);
+    erh::releasePipelineLayout(device, cloud_shadow_pipeline_layout_);
+    erh::releasePipeline(device, cloud_shadow_init_pipeline_);
+    erh::releasePipelineLayout(device, cloud_shadow_merge_pipeline_layout_);
+    erh::releasePipeline(device, cloud_shadow_merge_pipeline_);
 
     temperature_init_tex_desc_set_ = nullptr;
     temperature_init_tex_desc_set_ =
@@ -565,45 +516,45 @@ void WeatherSystem::recreate(
     device->updateDescriptorSets(cloud_shadow_merge_tex_descs, {});
 
     temperature_init_pipeline_layout_ =
-        createComputePipelineLayout(
+        erh::createComputePipelineLayout(
             device,
             { temperature_init_desc_set_layout_ },
             sizeof(glsl::AirflowUpdateParams));
 
-    temperature_init_pipeline_ = createComputePipeline(
+    temperature_init_pipeline_ = erh::createComputePipeline(
         device,
         temperature_init_pipeline_layout_,
         "temperature_init");
 
     airflow_pipeline_layout_ =
-        createComputePipelineLayout(
+        erh::createComputePipelineLayout(
             device,
             { airflow_desc_set_layout_ },
             sizeof(glsl::AirflowUpdateParams));
 
-    airflow_pipeline_ = createComputePipeline(
+    airflow_pipeline_ = erh::createComputePipeline(
         device,
         airflow_pipeline_layout_,
         "airflow_update");
 
     cloud_shadow_pipeline_layout_ =
-        createComputePipelineLayout(
+        erh::createComputePipelineLayout(
             device,
             { cloud_shadow_desc_set_layout_ },
             sizeof(glsl::CloudShadowParams));
 
-    cloud_shadow_init_pipeline_ = createComputePipeline(
+    cloud_shadow_init_pipeline_ = erh::createComputePipeline(
         device,
         cloud_shadow_pipeline_layout_,
         "cloud_shadow_init");
 
     cloud_shadow_merge_pipeline_layout_ =
-        createComputePipelineLayout(
+        erh::createComputePipelineLayout(
             device,
             { cloud_shadow_merge_desc_set_layout_ },
             sizeof(glsl::CloudShadowParams));
 
-    cloud_shadow_merge_pipeline_ = createComputePipeline(
+    cloud_shadow_merge_pipeline_ = erh::createComputePipeline(
         device,
         cloud_shadow_merge_pipeline_layout_,
         "cloud_shadow_merge");
@@ -613,7 +564,7 @@ void WeatherSystem::recreate(
 void WeatherSystem::initTemperatureBuffer(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
 
-    renderer::helper::transitMapTextureToStoreImage(
+    erh::transitMapTextureToStoreImage(
         cmd_buf,
         { temp_volume_[0].image,
           moisture_volume_[0].image,
@@ -649,7 +600,7 @@ void WeatherSystem::initTemperatureBuffer(
         (w + 7) / 8,
         h);
 
-    renderer::helper::transitMapTextureFromStoreImage(
+    erh::transitMapTextureFromStoreImage(
         cmd_buf,
         { temp_volume_[0].image,
           moisture_volume_[0].image,
@@ -666,7 +617,7 @@ void WeatherSystem::updateAirflowBuffer(
     int dbuf_idx,
     float current_time) {
 
-    renderer::helper::transitMapTextureToStoreImage(
+    erh::transitMapTextureToStoreImage(
         cmd_buf,
         { temp_volume_[dbuf_idx].image,
           moisture_volume_[dbuf_idx].image,
@@ -705,7 +656,7 @@ void WeatherSystem::updateAirflowBuffer(
         (w + 7) / 8,
         (h + 15) / 16);
 
-    renderer::helper::transitMapTextureFromStoreImage(
+    erh::transitMapTextureFromStoreImage(
         cmd_buf,
         { temp_volume_[dbuf_idx].image,
           moisture_volume_[dbuf_idx].image,
@@ -724,7 +675,7 @@ void WeatherSystem::updateCloudShadow(
     auto h = static_cast<uint32_t>(kAirflowBufferHeight);
     // create light passing each layer.
     {
-        renderer::helper::transitMapTextureToStoreImage(
+        erh::transitMapTextureToStoreImage(
             cmd_buf,
             { cloud_shadow_volume_.image });
 
@@ -757,7 +708,7 @@ void WeatherSystem::updateCloudShadow(
             (w + 7) / 8,
             h);
 
-        renderer::helper::transitMapTextureFromStoreImage(
+        erh::transitMapTextureFromStoreImage(
             cmd_buf,
             { cloud_shadow_volume_.image });
     }
@@ -765,7 +716,7 @@ void WeatherSystem::updateCloudShadow(
     // merge two layers to one combined layer.
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, cloud_shadow_merge_pipeline_);
     for (uint32_t i_layer = 0; i_layer < kAirflowBufferCount-1; i_layer++) {
-        renderer::helper::transitMapTextureToStoreImage(
+        erh::transitMapTextureToStoreImage(
             cmd_buf,
             { cloud_shadow_volume_.image });
 
@@ -798,7 +749,7 @@ void WeatherSystem::updateCloudShadow(
             (w + 7) / 8,
             h >> 1);
 
-        renderer::helper::transitMapTextureFromStoreImage(
+        erh::transitMapTextureFromStoreImage(
             cmd_buf,
             { cloud_shadow_volume_.image });
     }
