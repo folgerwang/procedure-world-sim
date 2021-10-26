@@ -88,6 +88,8 @@
 #define SRC_SCATTERING_LUT_INDEX            32
 #define SRC_SCATTERING_LUT_SUM_INDEX        32
 
+#define NOISE_TEXTURE_INDEX                 33
+
 // Noise Texture.
 #define DST_PERLIN_NOISE_TEX_INDEX          0
 

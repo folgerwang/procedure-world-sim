@@ -522,16 +522,6 @@ void RealWorldApplication::initVulkan() {
         desc_set_layouts,
         swap_chain_info_.extent);
 
-    ego::TileObject::updateStaticDescriptorSet(
-        device_,
-        descriptor_pool_,
-        texture_sampler_,
-        hdr_color_buffer_copy_.view,
-        depth_buffer_copy_.view,
-        weather_system_->getTempTexes(),
-        heightmap_tex_.view,
-        map_mask_tex_.view);
-
     volume_noise_ = std::make_shared<es::VolumeNoise>(
         device_info_,
         descriptor_pool_,
@@ -541,6 +531,17 @@ void RealWorldApplication::initVulkan() {
         graphic_pipeline_info_,
         texture_sampler_,
         swap_chain_info_.extent);
+
+    ego::TileObject::updateStaticDescriptorSet(
+        device_,
+        descriptor_pool_,
+        texture_sampler_,
+        hdr_color_buffer_copy_.view,
+        depth_buffer_copy_.view,
+        weather_system_->getTempTexes(),
+        heightmap_tex_.view,
+        map_mask_tex_.view,
+        volume_noise_->getPerlinNoiseTexture().view);
 
     volume_cloud_ = std::make_shared<es::VolumeCloud>(
         device_info_,
@@ -693,7 +694,8 @@ void RealWorldApplication::recreateSwapChain() {
         depth_buffer_copy_.view,
         weather_system_->getTempTexes(),
         heightmap_tex_.view,
-        map_mask_tex_.view);
+        map_mask_tex_.view,
+        volume_noise_->getPerlinNoiseTexture().view);
 
     ego::DebugDrawObject::updateStaticDescriptorSet(
         device_,

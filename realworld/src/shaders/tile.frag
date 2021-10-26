@@ -30,6 +30,7 @@ layout(set = TILE_PARAMS_SET, binding = SRC_COLOR_TEX_INDEX) uniform sampler2D s
 layout(set = TILE_PARAMS_SET, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
 layout(set = TILE_PARAMS_SET, binding = SRC_MAP_MASK_INDEX) uniform sampler2D src_map_mask;
 layout(set = TILE_PARAMS_SET, binding = SRC_TEMP_TEX_INDEX) uniform sampler3D src_temp;
+layout(set = TILE_PARAMS_SET, binding = NOISE_TEXTURE_INDEX) uniform sampler3D src_noise_tex;
 
 struct MaterialInfo
 {
@@ -83,6 +84,8 @@ void main() {
 
     float uvw_y = getHeightToSample(pos.y);
     float c_temp = texture(src_temp, vec3(in_data.world_map_uv, uvw_y)).x;
+
+    float noise_value = texture(src_noise_tex, vec3(in_data.world_map_uv, uvw_y)).x;
 
     vec3 albedo = vec3(0.18, 0.11, 0.10)*.75f;
     albedo = 1.0f* mix(albedo, vec3(0.1, 0.1, 0.0)*0.2f, smoothstep(0.7f, 0.9f, normal.y));
@@ -139,7 +142,7 @@ void main() {
     f_diffuse += getIBLRadianceLambertian(normal, material_info.albedoColor);
     #endif
 
-    vec3 color = f_diffuse + f_specular;
+    vec3 color = vec3(noise_value);//f_diffuse + f_specular;
 
     float alpha = 1.0f;
     outColor = vec4(linearTosRGB(color), alpha);

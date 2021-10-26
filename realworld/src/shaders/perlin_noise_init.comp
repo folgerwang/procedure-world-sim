@@ -13,5 +13,5 @@ void main()
 {
 	// skip 2 lines on border.
 	ivec3 pixel_coords = ivec3(gl_GlobalInvocationID.xyz);
-	imageStore(dst_perlin_noise, pixel_coords, vec4(0));
+	imageStore(dst_perlin_noise, pixel_coords, vec4(pixel_coords.xyz / 256.0f, 0.0f));
 }
