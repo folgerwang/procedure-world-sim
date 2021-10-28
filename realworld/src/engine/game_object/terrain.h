@@ -117,7 +117,8 @@ public:
     static void updateStaticDescriptorSet(
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
-        const std::shared_ptr<renderer::Sampler>& texture_sampler,
+        const std::shared_ptr<renderer::Sampler>& clamp_texture_sampler,
+        const std::shared_ptr<renderer::Sampler>& repeat_texture_sampler,
         const std::shared_ptr<renderer::ImageView>& src_texture,
         const std::shared_ptr<renderer::ImageView>& src_depth,
         const std::vector<std::shared_ptr<renderer::ImageView>>& temp_tex,

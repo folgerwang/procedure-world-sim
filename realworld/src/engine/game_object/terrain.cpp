@@ -1637,7 +1637,8 @@ std::vector<renderer::TextureDescriptor> addTileFlowUpdateBuffers(
 
 std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
-    const std::shared_ptr<renderer::Sampler>& texture_sampler,
+    const std::shared_ptr<renderer::Sampler>& clamp_texture_sampler,
+    const std::shared_ptr<renderer::Sampler>& repeat_texture_sampler,
     const std::shared_ptr<renderer::ImageView>& src_texture,
     const std::shared_ptr<renderer::ImageView>& src_depth,
     const std::shared_ptr<renderer::ImageView>& rock_layer,
@@ -1655,7 +1656,7 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     renderer::Helper::addOneTexture(
         descriptor_writes,
         SRC_COLOR_TEX_INDEX,
-        texture_sampler,
+        clamp_texture_sampler,
         src_texture,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
@@ -1665,7 +1666,7 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     renderer::Helper::addOneTexture(
         descriptor_writes,
         SRC_DEPTH_TEX_INDEX,
-        texture_sampler,
+        clamp_texture_sampler,
         src_depth,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
@@ -1674,7 +1675,7 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     renderer::Helper::addOneTexture(
         descriptor_writes,
         ROCK_LAYER_BUFFER_INDEX,
-        texture_sampler,
+        clamp_texture_sampler,
         rock_layer,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
@@ -1683,7 +1684,7 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     renderer::Helper::addOneTexture(
         descriptor_writes,
         SOIL_WATER_LAYER_BUFFER_INDEX,
-        texture_sampler,
+        clamp_texture_sampler,
         soil_water_layer,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
@@ -1692,7 +1693,7 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     renderer::Helper::addOneTexture(
         descriptor_writes,
         ORTHER_INFO_LAYER_BUFFER_INDEX,
-        texture_sampler,
+        clamp_texture_sampler,
         grass_snow_layer,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
@@ -1701,7 +1702,7 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     renderer::Helper::addOneTexture(
         descriptor_writes,
         WATER_NORMAL_BUFFER_INDEX,
-        texture_sampler,
+        clamp_texture_sampler,
         water_normal,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
@@ -1710,7 +1711,7 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     renderer::Helper::addOneTexture(
         descriptor_writes,
         WATER_FLOW_BUFFER_INDEX,
-        texture_sampler,
+        clamp_texture_sampler,
         water_flow,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
@@ -1719,7 +1720,7 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     renderer::Helper::addOneTexture(
         descriptor_writes,
         SRC_TEMP_TEX_INDEX,
-        texture_sampler,
+        clamp_texture_sampler,
         temp_tex,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
@@ -1728,7 +1729,7 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     renderer::Helper::addOneTexture(
         descriptor_writes,
         SRC_MAP_MASK_INDEX,
-        texture_sampler,
+        clamp_texture_sampler,
         map_mask_tex,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
@@ -1737,7 +1738,7 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     renderer::Helper::addOneTexture(
         descriptor_writes,
         NOISE_TEXTURE_INDEX,
-        texture_sampler,
+        repeat_texture_sampler,
         volume_noise_tex,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
@@ -2502,7 +2503,8 @@ void TileObject::generateStaticDescriptorSet(
 void TileObject::updateStaticDescriptorSet(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
-    const std::shared_ptr<renderer::Sampler>& texture_sampler,
+    const std::shared_ptr<renderer::Sampler>& clamp_texture_sampler,
+    const std::shared_ptr<renderer::Sampler>& repeat_texture_sampler,
     const std::shared_ptr<renderer::ImageView>& src_texture,
     const std::shared_ptr<renderer::ImageView>& src_depth,
     const std::vector<std::shared_ptr<renderer::ImageView>>& temp_tex,
@@ -2514,7 +2516,7 @@ void TileObject::updateStaticDescriptorSet(
         generateStaticDescriptorSet(
             device,
             descriptor_pool,
-            texture_sampler,
+            clamp_texture_sampler,
             heightmap_tex);
     }
 
@@ -2522,7 +2524,8 @@ void TileObject::updateStaticDescriptorSet(
         // create a global ibl texture descriptor set.
         auto tile_res_descs = addTileResourceTextures(
             tile_res_desc_set_[dbuf_idx],
-            texture_sampler,
+            clamp_texture_sampler,
+            repeat_texture_sampler,
             src_texture,
             src_depth,
             rock_layer_.view,

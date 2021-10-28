@@ -536,6 +536,7 @@ void RealWorldApplication::initVulkan() {
         device_,
         descriptor_pool_,
         texture_sampler_,
+        repeat_texture_sampler_,
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
         weather_system_->getTempTexes(),
@@ -690,6 +691,7 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         texture_sampler_,
+        repeat_texture_sampler_,
         hdr_color_buffer_copy_.view,
         depth_buffer_copy_.view,
         weather_system_->getTempTexes(),
@@ -1038,6 +1040,11 @@ void RealWorldApplication::createTextureSampler() {
     texture_sampler_ = device_->createSampler(
         er::Filter::LINEAR,
         er::SamplerAddressMode::CLAMP_TO_EDGE,
+        er::SamplerMipmapMode::LINEAR, 16.0f);
+
+    repeat_texture_sampler_ = device_->createSampler(
+        er::Filter::LINEAR,
+        er::SamplerAddressMode::REPEAT,
         er::SamplerMipmapMode::LINEAR, 16.0f);
 
     mirror_repeat_sampler_ = device_->createSampler(
