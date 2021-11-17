@@ -212,6 +212,7 @@
     <ClInclude Include="src\shaders\functions.glsl.h" />
     <ClInclude Include="src\shaders\global_definition.glsl.h" />
     <ClInclude Include="src\shaders\ibl.glsl.h" />
+    <ClInclude Include="src\shaders\inoise.glsl.h" />
     <ClInclude Include="src\shaders\noise.glsl.h" />
     <ClInclude Include="src\shaders\punctual.glsl.h" />
     <ClInclude Include="src\shaders\sky_scattering_lut_common.glsl.h" />

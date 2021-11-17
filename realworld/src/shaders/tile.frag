@@ -142,7 +142,7 @@ void main() {
     f_diffuse += getIBLRadianceLambertian(normal, material_info.albedoColor);
     #endif
 
-    vec3 color = vec3(noise_value);//f_diffuse + f_specular;
+    vec3 color = f_diffuse + f_specular;//vec3(noise_value);
 
     float alpha = 1.0f;
     outColor = vec4(linearTosRGB(color), alpha);

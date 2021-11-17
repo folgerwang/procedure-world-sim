@@ -116,6 +116,7 @@ private:
     std::shared_ptr<er::Sampler> texture_sampler_;
     std::shared_ptr<er::Sampler> repeat_texture_sampler_;
     std::shared_ptr<er::Sampler> mirror_repeat_sampler_;
+    std::shared_ptr<er::Sampler> texture_point_sampler_;
     std::vector<er::BufferInfo> view_const_buffers_;
     std::vector<std::shared_ptr<er::CommandBuffer>> command_buffers_;
     std::vector<std::shared_ptr<er::Semaphore>> image_available_semaphores_;

@@ -89,6 +89,12 @@
 #define SRC_SCATTERING_LUT_SUM_INDEX        32
 
 #define NOISE_TEXTURE_INDEX                 33
+#define PERMUTATION_TEXTURE_INDEX           34
+#define PERMUTATION_2D_TEXTURE_INDEX        35
+#define GRAD_TEXTURE_INDEX                  36
+#define PERM_GRAD_TEXTURE_INDEX             37
+#define PERM_GRAD_4D_TEXTURE_INDEX          38
+#define GRAD_4D_TEXTURE_INDEX               39
 
 // Noise Texture.
 #define DST_PERLIN_NOISE_TEX_INDEX          0
@@ -142,8 +148,8 @@
 #define DEBUG_DRAW_TEMPRETURE                   1
 #define DEBUG_DRAW_MOISTURE                     2
 
-#define kAirflowBufferWidth                     512
-#define kAirflowBufferHeight                    64
+#define kAirflowBufferWidth                     256
+#define kAirflowBufferHeight                    32
 #define kAirflowBufferCount                     6
 
 #define kAtmosphereScatteringLutGroupSize       64
@@ -154,10 +160,10 @@
 #define kRayleighScaleHeight                    8e3
 #define kMieScaleHeight                         1.2e3
 
-#define kWorldMapSize 8192.0f //16384.0f        // meters
-#define kCloudMapSize 65536.0f
+#define kWorldMapSize 16384.0f                  // meters
+#define kCloudMapSize 131072.0f
 
-#define kNoiseTextureSize                       128
+#define kNoiseTextureSize                       256
 
 #define kNodeLeft                               0x00      // -x
 #define kNodeRight                              0x01      // +x

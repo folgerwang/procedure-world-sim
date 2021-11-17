@@ -65,8 +65,8 @@ Menu::Menu(
     weather_controls_.water_temp_adj = 0.0237f;
     // temperature changes by energy from sun minus energy vapored from water droplet.
     weather_controls_.moist_temp_convert = 0.00001f;
-    weather_controls_.soil_moist_adj = 0.01124f;
-    weather_controls_.water_moist_adj = 0.03173f;
+    weather_controls_.soil_moist_adj = 0.1124f;
+    weather_controls_.water_moist_adj = 0.3173f;
     weather_controls_.transfer_ratio = 0.8f;
     weather_controls_.transfer_noise_weight = 0.2f;
     weather_controls_.cloud_forming_ratio = 0.5f;
@@ -203,7 +203,7 @@ bool Menu::draw(
 
             ImGui::Separator();
 
-            ImGui::SliderFloat("Light Extinct Rate", &light_ext_factor_, 0.0f, 2.0f);
+            ImGui::SliderFloat("Light Extinct Rate", &light_ext_factor_, 0.0f, 0.2f);
             ImGui::SliderFloat("View Extinct Rate", &view_ext_factor_, 0.0f, 2.0f);
             ImGui::SliderFloat("View Extinct Exponent", &view_ext_exponent_, 0.0f, 2.0f);
             ImGui::SliderFloat("Cloud Ambient Intensity", &cloud_ambient_intensity_, 0.0f, 2.0f);

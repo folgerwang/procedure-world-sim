@@ -530,6 +530,7 @@ void RealWorldApplication::initVulkan() {
         global_tex_desc_set_layout_,
         graphic_pipeline_info_,
         texture_sampler_,
+        texture_point_sampler_,
         swap_chain_info_.extent);
 
     ego::TileObject::updateStaticDescriptorSet(
@@ -549,12 +550,14 @@ void RealWorldApplication::initVulkan() {
         descriptor_pool_,
         view_desc_set_layout_,
         mirror_repeat_sampler_,
+        texture_point_sampler_,
         depth_buffer_copy_.view,
         hdr_color_buffer_.view,
         weather_system_->getMoistureTexes(),
         weather_system_->getTempTexes(),
         weather_system_->getCloudLightingTex(),
         skydome_->getScatteringLutTex(),
+        volume_noise_->getPerlinNoiseTexture().view,
         swap_chain_info_.extent);
 
     ego::DebugDrawObject::updateStaticDescriptorSet(
@@ -714,6 +717,7 @@ void RealWorldApplication::recreateSwapChain() {
         view_desc_set_layout_,
         graphic_pipeline_info_,
         texture_sampler_,
+        texture_point_sampler_,
         swap_chain_info_.extent);
 
     volume_cloud_->recreate(
@@ -721,12 +725,14 @@ void RealWorldApplication::recreateSwapChain() {
         descriptor_pool_,
         view_desc_set_layout_,
         mirror_repeat_sampler_,
+        texture_point_sampler_,
         depth_buffer_copy_.view,
         hdr_color_buffer_.view,
         weather_system_->getMoistureTexes(),
         weather_system_->getTempTexes(),
         weather_system_->getCloudLightingTex(),
         skydome_->getScatteringLutTex(),
+        volume_noise_->getPerlinNoiseTexture().view,
         swap_chain_info_.extent);
 
     menu_->init(
@@ -1040,6 +1046,11 @@ void RealWorldApplication::createTextureSampler() {
     texture_sampler_ = device_->createSampler(
         er::Filter::LINEAR,
         er::SamplerAddressMode::CLAMP_TO_EDGE,
+        er::SamplerMipmapMode::LINEAR, 16.0f);
+
+    texture_point_sampler_ = device_->createSampler(
+        er::Filter::NEAREST,
+        er::SamplerAddressMode::REPEAT,
         er::SamplerMipmapMode::LINEAR, 16.0f);
 
     repeat_texture_sampler_ = device_->createSampler(

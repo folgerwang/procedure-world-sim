@@ -60,10 +60,22 @@ ImageResourceInfo Helper::image_as_store_;
 ImageResourceInfo Helper::image_as_shader_sampler_;
 TextureInfo Helper::white_tex_;
 TextureInfo Helper::black_tex_;
+TextureInfo Helper::permutation_tex_;
+TextureInfo Helper::permutation_2d_tex_;
+TextureInfo Helper::grad_tex_;
+TextureInfo Helper::perm_grad_tex_;
+TextureInfo Helper::perm_grad_4d_tex_;
+TextureInfo Helper::grad_4d_tex_;
 
 void Helper::init(const DeviceInfo& device_info) {
     vk::helper::create2x2Texture(device_info, 0xffffffff, white_tex_);
     vk::helper::create2x2Texture(device_info, 0xff000000, black_tex_);
+    vk::helper::createPermutationTexture(device_info, permutation_tex_);
+    vk::helper::createPermutation2DTexture(device_info, permutation_2d_tex_);
+    vk::helper::createGradTexture(device_info, grad_tex_);
+    vk::helper::createPermGradTexture(device_info, perm_grad_tex_);
+    vk::helper::createPermGrad4DTexture(device_info, perm_grad_4d_tex_);
+    vk::helper::createGrad4DTexture(device_info, grad_4d_tex_);
 
     image_source_info_ = {
         ImageLayout::UNDEFINED,

@@ -452,10 +452,34 @@ public:
 
     static TextureInfo& getBlackTexture() { return black_tex_; }
     static TextureInfo& getWhiteTexture() { return white_tex_; }
+    static TextureInfo& getPermutationTexture() {
+        return permutation_tex_;
+    }
+    static TextureInfo& getPermutation2DTexture() {
+        return permutation_2d_tex_;
+    }
+    static TextureInfo& getGradTexture() {
+        return grad_tex_;
+    }
+    static TextureInfo& getPermGradTexture() {
+        return perm_grad_tex_;
+    }
+    static TextureInfo& getPermGrad4DTexture() {
+        return perm_grad_4d_tex_;
+    }
+    static TextureInfo& getGrad4DTexture() {
+        return grad_4d_tex_;
+    }
 
 public:
     static TextureInfo black_tex_;
     static TextureInfo white_tex_;
+    static TextureInfo permutation_tex_;
+    static TextureInfo permutation_2d_tex_;
+    static TextureInfo grad_tex_;
+    static TextureInfo perm_grad_tex_;
+    static TextureInfo perm_grad_4d_tex_;
+    static TextureInfo grad_4d_tex_;
     static ImageResourceInfo image_source_info_;
     static ImageResourceInfo image_as_color_attachement_;
     static ImageResourceInfo image_as_store_;

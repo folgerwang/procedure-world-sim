@@ -192,6 +192,30 @@ void create2x2Texture(
     uint32_t color,
     renderer::TextureInfo& texture);
 
+void createPermutationTexture(
+    const renderer::DeviceInfo& device_info,
+    renderer::TextureInfo& texture);
+
+void createPermutation2DTexture(
+    const renderer::DeviceInfo& device_info,
+    renderer::TextureInfo& texture);
+
+void createGradTexture(
+    const renderer::DeviceInfo& device_info,
+    renderer::TextureInfo& texture);
+
+void createPermGradTexture(
+    const renderer::DeviceInfo& device_info,
+    renderer::TextureInfo& texture);
+
+void createPermGrad4DTexture(
+    const renderer::DeviceInfo& device_info,
+    renderer::TextureInfo& texture);
+
+void createGrad4DTexture(
+    const renderer::DeviceInfo& device_info,
+    renderer::TextureInfo& texture);
+
 std::vector<VkPipelineShaderStageCreateInfo> getComputeShaderStages(
     const std::vector<std::shared_ptr<renderer::ShaderModule>>& shader_modules);
 

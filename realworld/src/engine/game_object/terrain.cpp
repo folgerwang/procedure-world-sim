@@ -1650,7 +1650,7 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     const std::shared_ptr<renderer::ImageView>& map_mask_tex,
     const std::shared_ptr<renderer::ImageView>& volume_noise_tex) {
     std::vector<renderer::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(10);
+    descriptor_writes.reserve(16);
 
     // src color.
     renderer::Helper::addOneTexture(

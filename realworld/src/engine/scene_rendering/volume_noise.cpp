@@ -100,9 +100,10 @@ er::BufferInfo createIndexBuffer(
 
 std::vector<er::TextureDescriptor> addPerlinNoiseInitTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
+    const std::shared_ptr<er::Sampler>& point_clamp_texture_sampler,
     const er::TextureInfo& perlin_noise_tex) {
     std::vector<er::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(1);
+    descriptor_writes.reserve(7);
 
     er::Helper::addOneTexture(
         descriptor_writes,
@@ -112,6 +113,60 @@ std::vector<er::TextureDescriptor> addPerlinNoiseInitTextures(
         description_set,
         er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        PERMUTATION_TEXTURE_INDEX,
+        point_clamp_texture_sampler,
+        er::Helper::getPermutationTexture().view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        PERMUTATION_2D_TEXTURE_INDEX,
+        point_clamp_texture_sampler,
+        er::Helper::getPermutation2DTexture().view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        GRAD_TEXTURE_INDEX,
+        point_clamp_texture_sampler,
+        er::Helper::getGradTexture().view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        PERM_GRAD_TEXTURE_INDEX,
+        point_clamp_texture_sampler,
+        er::Helper::getPermGradTexture().view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        PERM_GRAD_4D_TEXTURE_INDEX,
+        point_clamp_texture_sampler,
+        er::Helper::getPermGrad4DTexture().view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        GRAD_4D_TEXTURE_INDEX,
+        point_clamp_texture_sampler,
+        er::Helper::getGrad4DTexture().view,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
 }
@@ -205,6 +260,7 @@ VolumeNoise::VolumeNoise(
     const std::shared_ptr<renderer::DescriptorSetLayout>& ibl_desc_set_layout,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
+    const std::shared_ptr<renderer::Sampler>& point_clamp_texture_sampler,
     const glm::uvec2& display_size) {
 
     const auto& device = device_info.device;
@@ -214,7 +270,7 @@ VolumeNoise::VolumeNoise(
 #endif
     renderer::Helper::create3DTextureImage(
         device_info,
-        renderer::Format::R8_UNORM,
+        renderer::Format::R8G8B8A8_UNORM,
         glm::uvec3(
             kNoiseTextureSize,
             kNoiseTextureSize,
@@ -239,6 +295,30 @@ VolumeNoise::VolumeNoise(
     perlin_noise_init_desc_set_layout_ =
         device->createDescriptorSetLayout(
             { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                PERMUTATION_TEXTURE_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                PERMUTATION_2D_TEXTURE_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                GRAD_TEXTURE_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                PERM_GRAD_TEXTURE_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                PERM_GRAD_4D_TEXTURE_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                GRAD_4D_TEXTURE_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
                 DST_PERLIN_NOISE_TEX_INDEX,
                 SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
                 er::DescriptorType::STORAGE_IMAGE) });
@@ -260,6 +340,7 @@ VolumeNoise::VolumeNoise(
         view_desc_set_layout,
         graphic_pipeline_info,
         texture_sampler,
+        point_clamp_texture_sampler,
         display_size);
 }
 
@@ -270,6 +351,7 @@ void VolumeNoise::recreate(
     const std::shared_ptr<renderer::DescriptorSetLayout>& view_desc_set_layout,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
+    const std::shared_ptr<renderer::Sampler>& point_clamp_texture_sampler,
     const glm::uvec2& display_size) {
 
     erh::releasePipelineLayout(device, perlin_noise_init_pipeline_layout_);
@@ -285,6 +367,7 @@ void VolumeNoise::recreate(
     auto perlin_noise_init_texture_descs =
         addPerlinNoiseInitTextures(
             perlin_noise_init_tex_desc_set_,
+            point_clamp_texture_sampler,
             perlin_noise_tex_);
     device->updateDescriptorSets(perlin_noise_init_texture_descs, {});
 

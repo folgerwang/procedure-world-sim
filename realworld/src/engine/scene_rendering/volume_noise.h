@@ -34,6 +34,7 @@ public:
         const std::shared_ptr<renderer::DescriptorSetLayout>& ibl_desc_set_layout,
         const renderer::GraphicPipelineInfo& graphic_pipeline_info,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
+        const std::shared_ptr<renderer::Sampler>& point_clamp_texture_sampler,
         const glm::uvec2& display_size);
 
     void recreate(
@@ -43,6 +44,7 @@ public:
         const std::shared_ptr<renderer::DescriptorSetLayout>& view_desc_set_layout,
         const renderer::GraphicPipelineInfo& graphic_pipeline_info,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
+        const std::shared_ptr<renderer::Sampler>& point_clamp_texture_sampler,
         const glm::uvec2& display_size);
 
     void initPerlinNoiseTexture(

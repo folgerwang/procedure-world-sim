@@ -2212,6 +2212,269 @@ void create2x2Texture(
         SET_FLAG_BIT(ImageAspect, COLOR_BIT));
 }
 
+/*
+    FX implementation of Ken Perlin's "Improved Noise"
+    sgg 6/26/04
+    http://mrl.nyu.edu/~perlin/noise/
+*/
+// permutation table
+static uint8_t s_permutation[] = { 151,160,137,91,90,15,
+    131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,8,99,37,240,21,10,23,
+    190, 6,148,247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,57,177,33,
+    88,237,149,56,87,174,20,125,136,171,168, 68,175,74,165,71,134,139,48,27,166,
+    77,146,158,231,83,111,229,122,60,211,133,230,220,105,92,41,55,46,245,40,244,
+    102,143,54, 65,25,63,161, 1,216,80,73,209,76,132,187,208, 89,18,169,200,196,
+    135,130,116,188,159,86,164,100,109,198,173,186, 3,64,52,217,226,250,124,123,
+    5,202,38,147,118,126,255,82,85,212,207,206,59,227,47,16,58,17,182,189,28,42,
+    223,183,170,213,119,248,152, 2,44,154,163, 70,221,153,101,155,167, 43,172,9,
+    129,22,39,253, 19,98,108,110,79,113,224,232,178,185, 112,104,218,246,97,228,
+    251,34,242,193,238,210,144,12,191,179,162,241, 81,51,145,235,249,14,239,107,
+    49,192,214, 31,181,199,106,157,184, 84,204,176,115,121,50,45,127, 4,150,254,
+    138,236,205,93,222,114,67,29,24,72,243,141,128,195,78,66,215,61,156,180 };
+
+// gradients for 3d noise
+static glm::vec3 s_g[] = {
+    {1,1,0},
+    {-1,1,0},
+    {1,-1,0},
+    {-1,-1,0},
+    {1,0,1},
+    {-1,0,1},
+    {1,0,-1},
+    {-1,0,-1},
+    {0,1,1},
+    {0,-1,1},
+    {0,1,-1},
+    {0,-1,-1},
+    {1,1,0},
+    {0,-1,1},
+    {-1,1,0},
+    {0,-1,-1},
+};
+
+// gradients for 4D noise
+static glm::vec4 s_g4[] = {
+    {0, -1, -1, -1},
+    {0, -1, -1, 1},
+    {0, -1, 1, -1},
+    {0, -1, 1, 1},
+    {0, 1, -1, -1},
+    {0, 1, -1, 1},
+    {0, 1, 1, -1},
+    {0, 1, 1, 1},
+    {-1, -1, 0, -1},
+    {-1, 1, 0, -1},
+    {1, -1, 0, -1},
+    {1, 1, 0, -1},
+    {-1, -1, 0, 1},
+    {-1, 1, 0, 1},
+    {1, -1, 0, 1},
+    {1, 1, 0, 1},
+
+    {-1, 0, -1, -1},
+    {1, 0, -1, -1},
+    {-1, 0, -1, 1},
+    {1, 0, -1, 1},
+    {-1, 0, 1, -1},
+    {1, 0, 1, -1},
+    {-1, 0, 1, 1},
+    {1, 0, 1, 1},
+    {0, -1, -1, 0},
+    {0, -1, -1, 0},
+    {0, -1, 1, 0},
+    {0, -1, 1, 0},
+    {0, 1, -1, 0},
+    {0, 1, -1, 0},
+    {0, 1, 1, 0},
+    {0, 1, 1, 0},
+};
+
+void createPermutationTexture(
+    const renderer::DeviceInfo& device_info,
+    renderer::TextureInfo& texture) {
+    auto format = renderer::Format::R8_UNORM;
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        format,
+        sizeof(s_permutation) / sizeof(int8_t),
+        1,
+        1,
+        s_permutation,
+        texture.image,
+        texture.memory);
+
+    texture.view = device_info.device->createImageView(
+        texture.image,
+        renderer::ImageViewType::VIEW_2D,
+        format,
+        SET_FLAG_BIT(ImageAspect, COLOR_BIT));
+}
+
+// 2d permutation texture for optimized version
+uint8_t perm(int i)
+{
+    return s_permutation[i % 256];
+}
+
+void createPermutation2DTexture(
+    const renderer::DeviceInfo& device_info,
+    renderer::TextureInfo& texture) {
+    auto format = renderer::Format::R8G8B8A8_UNORM;
+    auto n = sizeof(s_permutation) / sizeof(int8_t);
+    std::vector<uint32_t> permutation_2d;
+    permutation_2d.resize(n * n);
+    for (auto y = 0; y < n; y++) {
+        for (auto x = 0; x < n; x++) {
+            auto idx = y * n + x;
+            uint32_t A = perm(x) + y;
+            uint32_t AA = perm(A);
+            uint32_t AB = perm(A + 1);
+            uint32_t B = perm(x + 1) + y;
+            uint32_t BA = perm(B);
+            uint32_t BB = perm(B + 1);
+
+            permutation_2d[idx] = (BB << 24) | (BA << 16) | (AB << 8) | AA;
+        }
+    }
+
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        format,
+        static_cast<int>(n),
+        static_cast<int>(n),
+        4,
+        permutation_2d.data(),
+        texture.image,
+        texture.memory);
+
+    texture.view = device_info.device->createImageView(
+        texture.image,
+        renderer::ImageViewType::VIEW_2D,
+        format,
+        SET_FLAG_BIT(ImageAspect, COLOR_BIT));
+}
+
+uint8_t safeConvert(float x) {
+    auto r = x == 1.0f ? 128 : (x == -1.0f ? 255 : 0);
+    return r;
+}
+
+uint32_t packInitRgba8(const glm::vec3& data) {
+    return safeConvert(data.x) | (safeConvert(data.y) << 8) | (safeConvert(data.z) << 16);
+}
+
+uint32_t packInitRgba8(const glm::vec4& data) {
+    return safeConvert(data.x) | (safeConvert(data.y) << 8) | (safeConvert(data.z) << 16) | (safeConvert(data.w) << 16);
+}
+
+void createGradTexture(
+    const renderer::DeviceInfo& device_info,
+    renderer::TextureInfo& texture) {
+    auto format = renderer::Format::R8G8B8A8_SNORM;
+    auto n = sizeof(s_g) / sizeof(glm::vec3);
+    std::vector<uint32_t> grad;
+    grad.resize(n);
+    for (auto i = 0; i < n; i++) {
+        grad[i] = packInitRgba8(s_g[i]);
+    }
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        format,
+        n,
+        1,
+        4,
+        grad.data(),
+        texture.image,
+        texture.memory);
+
+    texture.view = device_info.device->createImageView(
+        texture.image,
+        renderer::ImageViewType::VIEW_2D,
+        format,
+        SET_FLAG_BIT(ImageAspect, COLOR_BIT));
+}
+
+void createPermGradTexture(
+    const renderer::DeviceInfo& device_info,
+    renderer::TextureInfo& texture) {
+    auto format = renderer::Format::R8G8B8A8_SNORM;
+    auto n = 256;
+    std::vector<uint32_t> grad;
+    grad.resize(n);
+    for (auto i = 0; i < n; i++) {
+        grad[i] = packInitRgba8(s_g[s_permutation[i] % 16]);
+    }
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        format,
+        n,
+        1,
+        4,
+        grad.data(),
+        texture.image,
+        texture.memory);
+
+    texture.view = device_info.device->createImageView(
+        texture.image,
+        renderer::ImageViewType::VIEW_2D,
+        format,
+        SET_FLAG_BIT(ImageAspect, COLOR_BIT));
+}
+
+void createPermGrad4DTexture(
+    const renderer::DeviceInfo& device_info,
+    renderer::TextureInfo& texture) {
+    auto format = renderer::Format::R8G8B8A8_SNORM;
+    auto n = 256;
+    std::vector<uint32_t> grad;
+    grad.resize(n);
+    for (auto i = 0; i < n; i++) {
+        grad[i] = packInitRgba8(s_g4[s_permutation[i] % 32]);
+    }
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        format,
+        n,
+        1,
+        4,
+        grad.data(),
+        texture.image,
+        texture.memory);
+
+    texture.view = device_info.device->createImageView(
+        texture.image,
+        renderer::ImageViewType::VIEW_2D,
+        format,
+        SET_FLAG_BIT(ImageAspect, COLOR_BIT));
+}
+
+void createGrad4DTexture(
+    const renderer::DeviceInfo& device_info,
+    renderer::TextureInfo& texture) {
+    auto format = renderer::Format::R8G8B8A8_SNORM;
+    auto n = 32;
+    std::vector<uint32_t> grad;
+    grad.resize(n);
+    for (auto i = 0; i < n; i++) {
+        grad[i] = packInitRgba8(s_g4[i]);
+    }
+    renderer::Helper::create2DTextureImage(
+        device_info,
+        format,
+        n,
+        1,
+        4,
+        grad.data(),
+        texture.image,
+        texture.memory);
+
+    texture.view = device_info.device->createImageView(
+        texture.image,
+        renderer::ImageViewType::VIEW_2D,
+        format,
+        SET_FLAG_BIT(ImageAspect, COLOR_BIT));
+}
+
 std::vector<VkPipelineShaderStageCreateInfo> getComputeShaderStages(
     const std::vector<std::shared_ptr<renderer::ShaderModule>>& shader_modules) {
     std::vector<VkPipelineShaderStageCreateInfo> shader_stages(shader_modules.size());
