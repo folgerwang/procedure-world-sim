@@ -197,15 +197,9 @@ float turbulence(vec3 p, int octaves, float lacunarity/* = 2.0*/, float gain/* =
     return sum;
 }
 
-float turbulence(vec4 n0, vec4 n1, float lacunarity/* = 2.0*/, float gain/* = 0.5*/)
+float turbulence(vec4 n0, vec4 n1)
 {
-    float sum = 0;
-    float amp = 1.0;
-    for (int i = 0; i < 4; i++) {
-        sum += abs(n0[i]) * amp;
-        amp *= gain;
-    }
-
+    float sum = dot(n0, vec4(0.5f, 0.25f, 0.125f, 0.0625f));
     return sum;
 }
 
@@ -232,4 +226,47 @@ float ridgedmf(vec3 p, int octaves, float lacunarity/* = 2.0*/, float gain/* = 0
         amp *= gain;
     }
     return sum;
+}
+
+vec3 random3(vec3 p) {
+    return fract(sin(vec3(dot(p, vec3(127.1, 311.7, 187.3)), dot(p, vec3(269.5, 183.3, 173.4)), dot(p, vec3(169.5, 83.3, 265.4)))) * 43758.5453);
+}
+
+float getWorleyNoise(vec3 uvw, float cell_count) {
+    vec3 st = uvw;
+    // Scale
+    st *= cell_count;
+
+    // Tile the space
+    vec3 i_st = floor(st);
+    vec3 f_st = fract(st);
+
+    float m_dist = 1.;  // minimum distance
+
+    for (int z = -1; z <= 1; z++) {
+        for (int y = -1; y <= 1; y++) {
+            for (int x = -1; x <= 1; x++) {
+                // Neighbor place in the grid
+                vec3 neighbor = vec3(float(x), float(y), float(z));
+
+                // Random position from current + neighbor place in the grid
+                vec3 point = random3(mod(i_st + neighbor, 12.0));
+
+                // Animate the point
+                //point = 0.5 + 0.5*sin(6.2831*point);
+
+                // Vector between the pixel and the point
+                vec3 diff = neighbor + point - f_st;
+
+                // Distance to the point
+                float dist = length(diff);
+
+                // Keep the closer distance
+                m_dist = min(m_dist, dist);
+            }
+        }
+    }
+
+    // Draw the min distance (distance field)
+    return m_dist;
 }

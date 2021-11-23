@@ -203,7 +203,7 @@ bool Menu::draw(
 
             ImGui::Separator();
 
-            ImGui::SliderFloat("Light Extinct Rate", &light_ext_factor_, 0.0f, 0.2f);
+            ImGui::SliderFloat("Light Extinct Rate", &light_ext_factor_, 0.0f, 0.1f);
             ImGui::SliderFloat("View Extinct Rate", &view_ext_factor_, 0.0f, 2.0f);
             ImGui::SliderFloat("View Extinct Exponent", &view_ext_exponent_, 0.0f, 2.0f);
             ImGui::SliderFloat("Cloud Ambient Intensity", &cloud_ambient_intensity_, 0.0f, 2.0f);

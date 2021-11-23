@@ -2355,7 +2355,7 @@ void createPermutation2DTexture(
 }
 
 uint8_t safeConvert(float x) {
-    auto r = x == 1.0f ? 128 : (x == -1.0f ? 255 : 0);
+    auto r = x == 1.0f ? 127 : (x == -1.0f ? 129 : 0);
     return r;
 }
 
@@ -2364,7 +2364,7 @@ uint32_t packInitRgba8(const glm::vec3& data) {
 }
 
 uint32_t packInitRgba8(const glm::vec4& data) {
-    return safeConvert(data.x) | (safeConvert(data.y) << 8) | (safeConvert(data.z) << 16) | (safeConvert(data.w) << 16);
+    return safeConvert(data.x) | (safeConvert(data.y) << 8) | (safeConvert(data.z) << 16) | (safeConvert(data.w) << 24);
 }
 
 void createGradTexture(

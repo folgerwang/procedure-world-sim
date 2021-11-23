@@ -270,7 +270,7 @@ VolumeNoise::VolumeNoise(
 #endif
     renderer::Helper::create3DTextureImage(
         device_info,
-        renderer::Format::R8G8B8A8_UNORM,
+        renderer::Format::R16G16B16A16_SFLOAT,
         glm::uvec3(
             kNoiseTextureSize,
             kNoiseTextureSize,
@@ -282,7 +282,7 @@ VolumeNoise::VolumeNoise(
 
     renderer::Helper::create3DTextureImage(
         device_info,
-        renderer::Format::R8_UNORM,
+        renderer::Format::R16G16B16A16_SFLOAT,
         glm::uvec3(
             kNoiseTextureSize,
             kNoiseTextureSize,
