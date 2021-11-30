@@ -125,6 +125,7 @@ bool Menu::draw(
     static bool s_show_shader_error_message = false;
     static std::string s_shader_error_message;
     bool compile_shaders = false;
+    bool dump_noise_texture = false;
     if (ImGui::BeginMainMenuBar())
     {
         if (ImGui::BeginMenu("Terrain"))
@@ -159,6 +160,10 @@ bool Menu::draw(
         {
             if (ImGui::MenuItem("Compile Shaders", NULL)) {
                 compile_shaders = true;
+            }
+
+            if (ImGui::MenuItem("Dump noise volumetric texture", NULL)) {
+                dump_noise_texture = true;
             }
 
             ImGui::EndMenu();
@@ -282,6 +287,10 @@ bool Menu::draw(
             ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "%s", s_shader_error_message.c_str());
         }
         ImGui::End();
+    }
+
+    if (dump_noise_texture) {
+        int hit = 1;
     }
 
     renderer::Helper::addImGuiToCommandBuffer(command_buffer);

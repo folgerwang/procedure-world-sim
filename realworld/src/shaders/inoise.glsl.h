@@ -270,3 +270,50 @@ float getWorleyNoise(vec3 uvw, float cell_count) {
     // Draw the min distance (distance field)
     return m_dist;
 }
+
+
+float random(vec3 p3, float mod_val) {
+    p3 = mod(p3, vec3(mod_val));
+    return fract(sin(dot(p3.xyz,
+        vec3(12.9898, 78.233, 31.2134))) *
+        43758.5453123);
+}
+
+// Based on Morgan McGuire @morgan3d
+// https://www.shadertoy.com/view/4dS3Wd
+float noise(vec3 st, float mod_val) {
+    vec3 i = floor(st);
+    vec3 f = fract(st);
+
+    // Four corners in 2D of a tile
+    float a000 = random(i + vec3(0.0, 0.0, 0.0), mod_val);
+    float a001 = random(i + vec3(1.0, 0.0, 0.0), mod_val);
+    float a010 = random(i + vec3(0.0, 1.0, 0.0), mod_val);
+    float a011 = random(i + vec3(1.0, 1.0, 0.0), mod_val);
+    float a100 = random(i + vec3(0.0, 0.0, 1.0), mod_val);
+    float a101 = random(i + vec3(1.0, 0.0, 1.0), mod_val);
+    float a110 = random(i + vec3(0.0, 1.0, 1.0), mod_val);
+    float a111 = random(i + vec3(1.0, 1.0, 1.0), mod_val);
+
+    vec3 f2 = f * f;
+    vec3 u = f2 * f * (f2 * 6.0 - f * 15.0 + 10.0);
+
+    return mix(mix(mix(a000, a001, u.x), mix(a010, a011, u.x), u.y), mix(mix(a100, a101, u.x), mix(a110, a111, u.x), u.y), u.z);
+}
+
+#define OCTAVES 6
+float fbm(vec3 st, float mod_val) {
+    // Initial values
+    float value = 0.0;
+    float amplitude = .5;
+    float frequency = 0.;
+    //
+    // Loop of octaves
+    for (int i = 0; i < OCTAVES; i++) {
+        value += amplitude * noise(st, mod_val);
+        st *= 2.;
+        mod_val *= 2;
+        amplitude *= .5;
+    }
+    return value;
+}
