@@ -621,6 +621,19 @@ void VulkanDevice::updateBufferMemory(
     }
 }
 
+void VulkanDevice::dumpBufferMemory(
+    const std::shared_ptr<DeviceMemory>& memory,
+    uint64_t size,
+    void* dst_data,
+    uint64_t offset/* = 0*/) {
+    if (memory) {
+        void* src_data = mapMemory(memory, size, offset);
+        assert(src_data);
+        memcpy(dst_data, src_data, size);
+        unmapMemory(memory);
+    }
+}
+
 std::vector<std::shared_ptr<Image>> VulkanDevice::getSwapchainImages(std::shared_ptr<Swapchain> swap_chain) {
     auto vk_swap_chain = RENDER_TYPE_CAST(Swapchain, swap_chain);
     uint32_t image_count;

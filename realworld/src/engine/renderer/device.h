@@ -56,6 +56,11 @@ public:
         uint64_t size,
         const void* src_data,
         uint64_t offset = 0) = 0;
+    virtual void dumpBufferMemory(
+        const std::shared_ptr<DeviceMemory>& memory,
+        uint64_t size,
+        void* dst_data,
+        uint64_t offset = 0) = 0;
     virtual std::vector<std::shared_ptr<renderer::Image>> getSwapchainImages(std::shared_ptr<Swapchain> swap_chain) = 0;
     virtual std::shared_ptr<CommandPool> createCommandPool(uint32_t queue_family_index, CommandPoolCreateFlags flags) = 0;
     virtual std::shared_ptr<Queue> getDeviceQueue(uint32_t queue_family_index, uint32_t queue_index = 0) = 0;

@@ -357,7 +357,17 @@ public:
         const glm::uvec2& size,
         TextureInfo& texture_info,
         const renderer::ImageUsageFlags& usage,
-        const renderer::ImageLayout& image_layout);
+        const renderer::ImageLayout& image_layout,
+        const renderer::ImageTiling image_tiling = renderer::ImageTiling::OPTIMAL,
+        const uint32_t memory_property = SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT));
+
+    static void dumpTextureImage(
+        const DeviceInfo& device_info,
+        const std::shared_ptr<Image>& src_texture_image,
+        Format depth_format,
+        const glm::uvec3& buffer_size,
+        const uint32_t& bytes_per_pixel,
+        void* pixels);
 
     static void create3DTextureImage(
         const DeviceInfo& device_info,
@@ -365,7 +375,9 @@ public:
         const glm::uvec3& size,
         TextureInfo& texture_info,
         const renderer::ImageUsageFlags& usage,
-        const renderer::ImageLayout& image_layout);
+        const renderer::ImageLayout& image_layout,
+        const renderer::ImageTiling image_tiling = renderer::ImageTiling::OPTIMAL,
+        const uint32_t memory_property = SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT));
 
     static void createDepthResources(
         const DeviceInfo& device_info,

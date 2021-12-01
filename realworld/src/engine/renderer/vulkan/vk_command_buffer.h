@@ -41,7 +41,12 @@ public:
         std::shared_ptr<Buffer> src_buf,
         std::shared_ptr<Image> dst_image,
         std::vector<BufferImageCopyInfo> copy_regions,
-        renderer::ImageLayout layout) final;
+        ImageLayout layout) final;
+    virtual void copyImageToBuffer(
+        std::shared_ptr<Image> src_image,
+        std::shared_ptr<Buffer> dst_buf,
+        std::vector<BufferImageCopyInfo> copy_regions,
+        ImageLayout layout) final;
     virtual void bindPipeline(PipelineBindPoint bind, std::shared_ptr< Pipeline> pipeline) final;
     virtual void bindVertexBuffers(uint32_t first_bind, const std::vector<std::shared_ptr<renderer::Buffer>>& vertex_buffers, std::vector<uint64_t> offsets) final;
     virtual void bindIndexBuffer(std::shared_ptr<Buffer> index_buffer, uint64_t offset, IndexType index_type) final;

@@ -10,7 +10,7 @@ layout(push_constant) uniform PerlinNoiseUniformBufferObject {
   PerlinNoiseInitParams params;
 };
 
-layout(set = 0, binding = DST_PERLIN_NOISE_TEX_INDEX, rgba16f) uniform writeonly image3D dst_perlin_noise;
+layout(set = 0, binding = DST_PERLIN_NOISE_TEX_INDEX, rgba8) uniform writeonly image3D dst_perlin_noise;
 
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 void main()

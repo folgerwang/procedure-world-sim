@@ -1387,6 +1387,20 @@ void RealWorldApplication::drawFrame() {
         1024,
         glm::vec2(s_camera_pos.x, s_camera_pos.z));
 
+    if (dump_volume_noise_) {
+        uint32_t pixel_count = kNoiseTextureSize * kNoiseTextureSize * kNoiseTextureSize;
+        std::vector<uint32_t> temp_buffer;
+        temp_buffer.resize(pixel_count);
+        er::Helper::dumpTextureImage(
+            device_info_,
+            volume_noise_->getPerlinNoiseTexture().image,
+            er::Format::R8G8B8A8_UNORM,
+            glm::uvec3(kNoiseTextureSize, kNoiseTextureSize, kNoiseTextureSize),
+            4,
+            temp_buffer.data());
+        dump_volume_noise_ = false;
+    }
+
     auto command_buffer = command_buffers_[image_index];
     std::vector<std::shared_ptr<er::CommandBuffer>>command_buffers(1, command_buffer);
 
@@ -1435,7 +1449,8 @@ void RealWorldApplication::drawFrame() {
         swap_chain_info_,
         swap_chain_info_.extent,
         skydome_,
-        image_index);
+        image_index,
+        dump_volume_noise_);
 
     command_buffer->endCommandBuffer();
 

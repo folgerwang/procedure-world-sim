@@ -141,6 +141,7 @@ private:
 
     // menu
     bool show_gltf_selection_ = false;
+    bool dump_volume_noise_ = false;
 
     uint64_t current_frame_ = 0;
     bool framebuffer_resized_ = false;

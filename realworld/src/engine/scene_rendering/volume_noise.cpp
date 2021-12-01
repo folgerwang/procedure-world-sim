@@ -268,9 +268,10 @@ VolumeNoise::VolumeNoise(
     vertex_buffer_ = createVertexBuffer(device_info);
     index_buffer_ = createIndexBuffer(device_info);
 #endif
+
     renderer::Helper::create3DTextureImage(
         device_info,
-        renderer::Format::R16G16B16A16_SFLOAT,
+        renderer::Format::R8G8B8A8_UNORM,
         glm::uvec3(
             kNoiseTextureSize,
             kNoiseTextureSize,
@@ -282,7 +283,7 @@ VolumeNoise::VolumeNoise(
 
     renderer::Helper::create3DTextureImage(
         device_info,
-        renderer::Format::R16G16B16A16_SFLOAT,
+        renderer::Format::R8G8B8A8_UNORM,
         glm::uvec3(
             kNoiseTextureSize,
             kNoiseTextureSize,

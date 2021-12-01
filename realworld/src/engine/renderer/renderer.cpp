@@ -306,7 +306,7 @@ void Helper::create2DTextureImage(
         texture_image_memory);
 
     vk::helper::transitionImageLayout(device_info, texture_image, format, ImageLayout::UNDEFINED, ImageLayout::TRANSFER_DST_OPTIMAL);
-    vk::helper::copyBufferToImage(device_info, staging_buffer, texture_image, glm::uvec2(tex_width, tex_height));
+    vk::helper::copyBufferToImage(device_info, staging_buffer, texture_image, glm::uvec3(tex_width, tex_height, 1));
     vk::helper::transitionImageLayout(device_info, texture_image, format, ImageLayout::TRANSFER_DST_OPTIMAL, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     device->destroyBuffer(staging_buffer);
@@ -319,16 +319,18 @@ void Helper::create2DTextureImage(
     const glm::uvec2& size,
     TextureInfo& texture_2d,
     const renderer::ImageUsageFlags& usage,
-    const renderer::ImageLayout& image_layout) {
+    const renderer::ImageLayout& image_layout,
+    const renderer::ImageTiling image_tiling,
+    const uint32_t memory_property) {
     const auto& device = device_info.device;
     auto is_depth = vk::helper::isDepthFormat(format);
     vk::helper::createTextureImage(
         device,
         glm::uvec3(size, 1),
         format,
-        ImageTiling::OPTIMAL,
+        image_tiling,
         usage,
-        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        memory_property,
         texture_2d.image,
         texture_2d.memory);
 
@@ -349,22 +351,56 @@ void Helper::create2DTextureImage(
         image_layout);
 }
 
+void Helper::dumpTextureImage(
+    const DeviceInfo& device_info,
+    const std::shared_ptr<Image>& src_texture_image,
+    Format format,
+    const glm::uvec3& image_size,
+    const uint32_t& bytes_per_pixel,
+    void* pixels) {
+
+    const auto& device = device_info.device;
+    VkDeviceSize buffer_size = static_cast<VkDeviceSize>(
+        image_size.x * image_size.y * image_size.z * bytes_per_pixel);
+
+    std::shared_ptr<Buffer> staging_buffer;
+    std::shared_ptr<DeviceMemory> staging_buffer_memory;
+    device->createBuffer(
+        buffer_size,
+        SET_FLAG_BIT(BufferUsage, TRANSFER_DST_BIT),
+        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        staging_buffer,
+        staging_buffer_memory);
+
+    vk::helper::transitionImageLayout(device_info, src_texture_image, format, ImageLayout::UNDEFINED, ImageLayout::TRANSFER_SRC_OPTIMAL);
+    vk::helper::copyImageToBuffer(device_info, src_texture_image, staging_buffer, image_size);
+    vk::helper::transitionImageLayout(device_info, src_texture_image, format, ImageLayout::TRANSFER_SRC_OPTIMAL, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    device->dumpBufferMemory(staging_buffer_memory, buffer_size, pixels);
+
+    device->destroyBuffer(staging_buffer);
+    device->freeMemory(staging_buffer_memory);
+}
+
 void Helper::create3DTextureImage(
     const DeviceInfo& device_info,
     Format format,
     const glm::uvec3& size,
     TextureInfo& texture_3d,
     const renderer::ImageUsageFlags& usage,
-    const renderer::ImageLayout& image_layout) {
+    const renderer::ImageLayout& image_layout,
+    const renderer::ImageTiling image_tiling,
+    const uint32_t memory_property) {
     const auto& device = device_info.device;
     auto is_depth = vk::helper::isDepthFormat(format);
     vk::helper::createTextureImage(
         device,
         size,
         format,
-        ImageTiling::OPTIMAL,
+        image_tiling,
         usage,
-        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        memory_property,
         texture_3d.image,
         texture_3d.memory);
 

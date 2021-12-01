@@ -125,6 +125,20 @@ void VulkanCommandBuffer::copyBufferToImage(
     vkCmdCopyBufferToImage(cmd_buf_, vk_src_buf->get(), vk_dst_image->get(), helper::toVkImageLayout(layout), static_cast<uint32_t>(vk_copy_regions.size()), vk_copy_regions.data());
 }
 
+void VulkanCommandBuffer::copyImageToBuffer(
+    std::shared_ptr<Image> src_image,
+    std::shared_ptr<Buffer> dst_buf,
+    std::vector<BufferImageCopyInfo> copy_regions,
+    ImageLayout layout) {
+    std::vector<VkBufferImageCopy> vk_copy_regions(copy_regions.size());
+    for (uint32_t i = 0; i < copy_regions.size(); i++) {
+        vk_copy_regions[i] = helper::toVkBufferImageCopy(copy_regions[i]);
+    }
+    auto vk_src_image = RENDER_TYPE_CAST(Image, src_image);
+    auto vk_dst_buf = RENDER_TYPE_CAST(Buffer, dst_buf);
+    vkCmdCopyImageToBuffer(cmd_buf_, vk_src_image->get(), helper::toVkImageLayout(layout), vk_dst_buf->get(), static_cast<uint32_t>(vk_copy_regions.size()), vk_copy_regions.data());
+}
+
 void VulkanCommandBuffer::bindPipeline(
     PipelineBindPoint bind,
     std::shared_ptr< Pipeline> pipeline) {

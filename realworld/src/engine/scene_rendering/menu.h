@@ -121,7 +121,8 @@ public:
         const renderer::SwapChainInfo& swap_chain_info,
         const glm::uvec2& screen_size,
         const std::shared_ptr<scene_rendering::Skydome>& skydome,
-        uint32_t image_index);
+        uint32_t image_index,
+        bool& dump_volume_noise);
 
     void destroy();
 };

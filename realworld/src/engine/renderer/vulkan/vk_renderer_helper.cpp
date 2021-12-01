@@ -1986,9 +1986,25 @@ void transitionImageLayout(
                 source_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
                 destination_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
             }
+            else if (old_layout == renderer::ImageLayout::UNDEFINED &&
+                new_layout == renderer::ImageLayout::TRANSFER_SRC_OPTIMAL) {
+                barrier.srcAccessMask = 0;
+                barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+                source_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+                destination_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            }
             else if (old_layout == renderer::ImageLayout::TRANSFER_DST_OPTIMAL &&
                 new_layout == renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL) {
                 barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+                source_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+                destination_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            }
+            else if (old_layout == renderer::ImageLayout::TRANSFER_SRC_OPTIMAL &&
+                new_layout == renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL) {
+                barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
                 barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
                 source_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
@@ -2083,11 +2099,35 @@ void copyBufferToImageWithMips(
     }
 }
 
+void copyImageToBufferWithMips(
+    const renderer::DeviceInfo& device_info,
+    const std::shared_ptr<renderer::Image>& image,
+    const std::shared_ptr<renderer::Buffer>& buffer,
+    const std::vector<renderer::BufferImageCopyInfo>& copy_regions) {
+    const auto& device = device_info.device;
+    const auto& cmd_queue = device_info.cmd_queue;
+    const auto& cmd_pool = device_info.cmd_pool;
+
+    auto command_buffers = device->allocateCommandBuffers(cmd_pool, 1);
+    if (command_buffers.size() > 0) {
+        auto& cmd_buf = command_buffers[0];
+        if (cmd_buf) {
+            cmd_buf->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
+            cmd_buf->copyImageToBuffer(image, buffer, copy_regions, renderer::ImageLayout::TRANSFER_SRC_OPTIMAL);
+            cmd_buf->endCommandBuffer();
+        }
+
+        cmd_queue->submit(command_buffers);
+        cmd_queue->waitIdle();
+        device->freeCommandBuffers(cmd_pool, command_buffers);
+    }
+}
+
 void copyBufferToImage(
     const renderer::DeviceInfo& device_info,
     const std::shared_ptr<renderer::Buffer>& buffer,
     const std::shared_ptr<renderer::Image>& image,
-    const glm::uvec2& tex_size) {
+    const glm::uvec3& tex_size) {
     std::vector<renderer::BufferImageCopyInfo> copy_regions(1);
     auto& region = copy_regions[0];
     region.buffer_offset = 0;
@@ -2100,10 +2140,33 @@ void copyBufferToImage(
     region.image_subresource.layer_count = 1;
 
     region.image_offset = glm::ivec3(0, 0, 0);
-    region.image_extent = glm::uvec3(tex_size, 1);
+    region.image_extent = tex_size;
 
     copyBufferToImageWithMips(device_info, buffer, image, copy_regions);
 }
+
+void copyImageToBuffer(
+    const renderer::DeviceInfo& device_info,
+    const std::shared_ptr<renderer::Image>& image,
+    const std::shared_ptr<renderer::Buffer>& buffer,
+    const glm::uvec3& tex_size) {
+    std::vector<renderer::BufferImageCopyInfo> copy_regions(1);
+    auto& region = copy_regions[0];
+    region.buffer_offset = 0;
+    region.buffer_row_length = 0;
+    region.buffer_image_height = 0;
+
+    region.image_subresource.aspect_mask = SET_FLAG_BIT(ImageAspect, COLOR_BIT);
+    region.image_subresource.mip_level = 0;
+    region.image_subresource.base_array_layer = 0;
+    region.image_subresource.layer_count = 1;
+
+    region.image_offset = glm::ivec3(0, 0, 0);
+    region.image_extent = tex_size;
+
+    copyImageToBufferWithMips(device_info, image, buffer, copy_regions);
+}
+
 
 void generateMipmapLevels(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,

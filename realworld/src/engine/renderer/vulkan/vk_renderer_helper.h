@@ -177,7 +177,13 @@ void copyBufferToImage(
     const renderer::DeviceInfo& device_info,
     const std::shared_ptr<renderer::Buffer>& buffer,
     const std::shared_ptr<renderer::Image>& image,
-    const glm::uvec2& tex_size);
+    const glm::uvec3& tex_size);
+
+void copyImageToBuffer(
+    const renderer::DeviceInfo& device_info,
+    const std::shared_ptr<renderer::Image>& image,
+    const std::shared_ptr<renderer::Buffer>& buffer,
+    const glm::uvec3& tex_size);
 
 void generateMipmapLevels(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,

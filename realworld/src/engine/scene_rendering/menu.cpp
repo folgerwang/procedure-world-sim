@@ -103,7 +103,8 @@ bool Menu::draw(
     const er::SwapChainInfo& swap_chain_info,
     const glm::uvec2& screen_size,
     const std::shared_ptr<scene_rendering::Skydome>& skydome,
-    uint32_t image_index) {
+    uint32_t image_index,
+    bool& dump_volume_noise) {
 
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
@@ -125,7 +126,7 @@ bool Menu::draw(
     static bool s_show_shader_error_message = false;
     static std::string s_shader_error_message;
     bool compile_shaders = false;
-    bool dump_noise_texture = false;
+
     if (ImGui::BeginMainMenuBar())
     {
         if (ImGui::BeginMenu("Terrain"))
@@ -163,7 +164,7 @@ bool Menu::draw(
             }
 
             if (ImGui::MenuItem("Dump noise volumetric texture", NULL)) {
-                dump_noise_texture = true;
+                dump_volume_noise = true;
             }
 
             ImGui::EndMenu();
@@ -287,10 +288,6 @@ bool Menu::draw(
             ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "%s", s_shader_error_message.c_str());
         }
         ImGui::End();
-    }
-
-    if (dump_noise_texture) {
-        int hit = 1;
     }
 
     renderer::Helper::addImGuiToCommandBuffer(command_buffer);
