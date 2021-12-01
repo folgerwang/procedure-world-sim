@@ -21,10 +21,13 @@ void main()
 	vec3 pixel_position = vec3(pixel_coords);
 	vec3 uvw = (pixel_position + 0.5f) / 256.0f;
 
-	//float r = fBm((pixel_position + 0.5f) / 256.0f, 8, 2.0, 0.5);
-	float mod_val = 8.0f;
-	float r = fbm(uvw * mod_val, mod_val);
-	//r *= 1.0f - getWorleyNoise(uvw, 8.0f);
+	float fbm_mod_val = 8.0f;
+	float fbm_perlin_noise = fbm(uvw * fbm_mod_val, fbm_mod_val);
+	float worley_mod_val = 12.0f;
+	float r = fbm_perlin_noise * (1.0f - getWorleyNoise(uvw, worley_mod_val));
+	float g = 1.0f - getWorleyNoise(fract(uvw * 2.0f), worley_mod_val);
+	float b = 1.0f - getWorleyNoise(fract(uvw * 4.0f), worley_mod_val);
+	float a = 1.0f - getWorleyNoise(fract(uvw * 8.0f), worley_mod_val);
 
-	imageStore(dst_perlin_noise, pixel_coords, vec4(r));
+	imageStore(dst_perlin_noise, pixel_coords, vec4(r, g, b, a));
 }

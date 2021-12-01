@@ -250,7 +250,7 @@ float getWorleyNoise(vec3 uvw, float cell_count) {
                 vec3 neighbor = vec3(float(x), float(y), float(z));
 
                 // Random position from current + neighbor place in the grid
-                vec3 point = random3(mod(i_st + neighbor, 12.0));
+                vec3 point = random3(mod(i_st + neighbor, cell_count));
 
                 // Animate the point
                 //point = 0.5 + 0.5*sin(6.2831*point);

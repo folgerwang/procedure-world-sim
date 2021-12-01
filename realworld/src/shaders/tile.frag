@@ -85,10 +85,12 @@ void main() {
     float uvw_y = getHeightToSample(pos.y);
     float c_temp = texture(src_temp, vec3(in_data.world_map_uv, uvw_y)).x;
 
+#if 0
     vec3 uvw = vec3(in_data.world_map_uv, uvw_y) * 16.0f;
     ivec3 i_uvw = ivec3(uvw);
     bool show_cell = ((i_uvw.x + i_uvw.y + i_uvw.z) % 2) == 0;
-    float noise_value = /*(show_cell ? 1.0f : 0.0f) * */texture(src_noise_tex, uvw).x;
+    vec4 noise_value = /*(show_cell ? 1.0f : 0.0f) * */texture(src_noise_tex, uvw);
+#endif
 
     vec3 albedo = vec3(0.18, 0.11, 0.10)*.75f;
     albedo = 1.0f* mix(albedo, vec3(0.1, 0.1, 0.0)*0.2f, smoothstep(0.7f, 0.9f, normal.y));
@@ -145,7 +147,7 @@ void main() {
     f_diffuse += getIBLRadianceLambertian(normal, material_info.albedoColor);
     #endif
 
-    vec3 color = /*f_diffuse + f_specular;//*/vec3(noise_value);
+    vec3 color = f_diffuse + f_specular;
 
     float alpha = 1.0f;
     outColor = vec4(linearTosRGB(color), alpha);
