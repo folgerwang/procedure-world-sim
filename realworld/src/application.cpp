@@ -1398,6 +1398,12 @@ void RealWorldApplication::drawFrame() {
             glm::uvec3(kNoiseTextureSize, kNoiseTextureSize, kNoiseTextureSize),
             4,
             temp_buffer.data());
+        
+        engine::helper::saveDdsTexture(
+            glm::uvec3(kNoiseTextureSize, kNoiseTextureSize, kNoiseTextureSize),
+            temp_buffer.data(),
+            "volume_noise.dds");
+
         dump_volume_noise_ = false;
     }
 

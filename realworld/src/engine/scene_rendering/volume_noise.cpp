@@ -278,9 +278,10 @@ VolumeNoise::VolumeNoise(
             kNoiseTextureSize),
         perlin_noise_tex_,
         SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, TRANSFER_SRC_BIT) |
         SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-
+    
     renderer::Helper::create3DTextureImage(
         device_info,
         renderer::Format::R8G8B8A8_UNORM,

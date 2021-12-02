@@ -38,6 +38,25 @@ std::vector<uint64_t> readFile(const std::string& file_name, uint64_t& file_size
     return buffer;
 }
 
+void writeImageFile(
+    const std::string& file_name,
+    const uint32_t& header_size,
+    const void* header_data,
+    const uint32_t& image_size,
+    const void* image_data) {
+    std::ofstream file(file_name, std::ios::ate | std::ios::binary);
+
+    if (!file.is_open()) {
+        std::string error_message = std::string("failed to open file! :") + file_name;
+        throw std::runtime_error(error_message);
+    }
+
+    file.write(reinterpret_cast<const char*>(header_data), header_size);
+    file.write(reinterpret_cast<const char*>(image_data), image_size);
+
+    file.close();
+}
+
 void createTextureImage(
     const renderer::DeviceInfo& device_info,
     const std::string& file_name,
@@ -149,6 +168,68 @@ void loadMtx2Texture(
         texture,
         buffer_size,
         mtx2_data.data());
+}
+
+void saveDdsTexture(
+    const glm::uvec3& size,
+    const void* image_data,
+    const std::string& input_filename) {
+
+    struct DDS_PIXELFORMAT {
+        uint32_t dwSize;
+        uint32_t dwFlags;
+        uint32_t dwFourCC;
+        uint32_t dwRGBBitCount;
+        uint32_t dwRBitMask;
+        uint32_t dwGBitMask;
+        uint32_t dwBBitMask;
+        uint32_t dwABitMask;
+    };
+
+    struct DDS_HEADER {
+        uint32_t           dwNameTag;
+        uint32_t           dwSize;
+        uint32_t           dwFlags;
+        uint32_t           dwHeight;
+        uint32_t           dwWidth;
+        uint32_t           dwPitchOrLinearSize;
+        uint32_t           dwDepth;
+        uint32_t           dwMipMapCount;
+        uint32_t           dwReserved1[11];
+        DDS_PIXELFORMAT ddspf;
+        uint32_t           dwCaps;
+        uint32_t           dwCaps2;
+        uint32_t           dwCaps3;
+        uint32_t           dwCaps4;
+        uint32_t           dwReserved2;
+    };
+
+    DDS_HEADER dds_header;
+    dds_header.ddspf.dwSize = sizeof(DDS_PIXELFORMAT);
+    dds_header.ddspf.dwFlags = 0x41;
+    dds_header.ddspf.dwFourCC = 0;
+    dds_header.ddspf.dwRGBBitCount = 32;
+    dds_header.ddspf.dwRBitMask = 0x000000ff;
+    dds_header.ddspf.dwGBitMask = 0x0000ff00;
+    dds_header.ddspf.dwBBitMask = 0x00ff0000;
+    dds_header.ddspf.dwABitMask = 0xff000000;
+    dds_header.dwNameTag = 0x20534444;
+    dds_header.dwSize = 124;
+    dds_header.dwFlags = 0x80100f;
+    dds_header.dwHeight = size.y;
+    dds_header.dwWidth = size.x;
+    dds_header.dwPitchOrLinearSize = size.x * 4;
+    dds_header.dwDepth = size.z;
+    dds_header.dwMipMapCount = 1;
+    dds_header.dwCaps = 0x1000; // texture.
+    dds_header.dwCaps2 = 0x200000; // volume texture.
+
+    writeImageFile(
+        input_filename,
+        sizeof(DDS_HEADER),
+        &dds_header,
+        dds_header.dwPitchOrLinearSize* size.y* size.z,
+        image_data);
 }
 
 std::pair<std::string, int> exec(const char* cmd) {
