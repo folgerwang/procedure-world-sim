@@ -215,14 +215,14 @@ void saveDdsTexture(
     dds_header.ddspf.dwABitMask = 0xff000000;
     dds_header.dwNameTag = 0x20534444;
     dds_header.dwSize = 124;
-    dds_header.dwFlags = 0x80100f;
+    dds_header.dwFlags = 0x100f | (size.z > 1 ? 0x800000 : 0x00);
     dds_header.dwHeight = size.y;
     dds_header.dwWidth = size.x;
     dds_header.dwPitchOrLinearSize = size.x * 4;
     dds_header.dwDepth = size.z;
     dds_header.dwMipMapCount = 1;
     dds_header.dwCaps = 0x1000; // texture.
-    dds_header.dwCaps2 = 0x200000; // volume texture.
+    dds_header.dwCaps2 = size.z > 1 ? 0x200000 : 0x00; // volume texture.
 
     writeImageFile(
         input_filename,

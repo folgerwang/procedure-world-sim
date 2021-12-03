@@ -19,7 +19,7 @@ void main()
 	ivec3 pixel_coords = ivec3(gl_GlobalInvocationID.xyz);
 	vec4 noise_value = hash43(vec3(pixel_coords));
 	vec3 pixel_position = vec3(pixel_coords);
-	vec3 uvw = (pixel_position + 0.5f) / 256.0f;
+	vec3 uvw = (pixel_position + 0.5f) / kNoiseTextureSize;
 
 	float fbm_mod_val = 8.0f;
 	float fbm_perlin_noise = fbm(uvw * fbm_mod_val, fbm_mod_val);

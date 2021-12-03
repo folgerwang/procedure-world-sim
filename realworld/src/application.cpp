@@ -1388,6 +1388,7 @@ void RealWorldApplication::drawFrame() {
         glm::vec2(s_camera_pos.x, s_camera_pos.z));
 
     if (dump_volume_noise_) {
+#if 0
         uint32_t pixel_count = kNoiseTextureSize * kNoiseTextureSize * kNoiseTextureSize;
         std::vector<uint32_t> temp_buffer;
         temp_buffer.resize(pixel_count);
@@ -1403,7 +1404,39 @@ void RealWorldApplication::drawFrame() {
             glm::uvec3(kNoiseTextureSize, kNoiseTextureSize, kNoiseTextureSize),
             temp_buffer.data(),
             "volume_noise.dds");
+#else
+        uint32_t pixel_count = kNoiseTextureSize * kNoiseTextureSize * kNoiseTextureSize;
+        std::vector<uint32_t> temp_buffer;
+        temp_buffer.resize(pixel_count);
+        er::Helper::dumpTextureImage(
+            device_info_,
+            volume_noise_->getPerlinNoiseTexture().image,
+            er::Format::R8G8B8A8_UNORM,
+            glm::uvec3(kNoiseTextureSize, kNoiseTextureSize, kNoiseTextureSize),
+            4,
+            temp_buffer.data());
 
+        // flatten 3d texture to 2d texture.
+        uint32_t h = 1 << (31 - engine::helper::clz(static_cast<uint32_t>(std::sqrt(kNoiseTextureSize))));
+        uint32_t w = kNoiseTextureSize / h;
+        std::vector<uint32_t> flattened_buffer;
+        flattened_buffer.resize(pixel_count);
+        for (uint32_t y = 0; y < h * kNoiseTextureSize; y++) {
+            for (uint32_t x = 0; x < w * kNoiseTextureSize; x++) {
+                uint32_t tile_y = y / kNoiseTextureSize;
+                uint32_t tile_x = x / kNoiseTextureSize;
+                uint32_t depth = tile_y * w + tile_x;
+                uint32_t dst_idx = y * (w * kNoiseTextureSize) + x;
+                uint32_t src_idx = depth * kNoiseTextureSize * kNoiseTextureSize +
+                    (y % kNoiseTextureSize) * kNoiseTextureSize + (x % kNoiseTextureSize);
+                flattened_buffer[dst_idx] = temp_buffer[src_idx];
+            }
+        }
+        engine::helper::saveDdsTexture(
+            glm::uvec3(w * kNoiseTextureSize, h * kNoiseTextureSize, 1),
+            flattened_buffer.data(),
+            "volume_noise.dds");
+#endif
         dump_volume_noise_ = false;
     }
 
