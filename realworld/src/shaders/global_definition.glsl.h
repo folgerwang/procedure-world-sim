@@ -150,7 +150,7 @@
 
 #define kAirflowBufferWidth                     256
 #define kAirflowBufferHeight                    32
-#define kAirflowBufferCount                     6
+#define kAirflowBufferCount                     5
 
 #define kAtmosphereScatteringLutGroupSize       64
 #define kAtmosphereScatteringLutWidth           512

@@ -61,7 +61,7 @@ void main()
 /*    vec3 noise_dir = hash33(view_dir * 1434.0f) * 2.0f - 1.0f;
     view_dir = normalize(view_dir + noise_dir * 0.000173f);*/
 
-    const uint num_samples = 128;
+    const uint num_samples = 16;
     const float inv_num_samples = 1.0f / num_samples;
 
     const float cast_dist_per_sample = cast_dist * inv_num_samples;
@@ -80,11 +80,11 @@ void main()
         vec3 uvw = worldPositionToUvw(sample_pos);
 
         float cur_moisture = texture(src_moisture, uvw).x;
-        vec3 noise_uvw = vec3(sample_pos.x, sample_pos.y + params.time * 10.0f, sample_pos.z) / 8192.0f;
-        vec4 perlin_noise_value_0 = texture(src_noise_tex, noise_uvw / 256.0f);
+        vec3 noise_uvw = vec3(sample_pos.x, sample_pos.y + params.time * -103.42f, sample_pos.z) / 8192.0f;
+        vec4 perlin_noise_value_0 = texture(src_noise_tex, noise_uvw);
         vec4 perlin_noise_value_1 = texture(src_noise_tex, noise_uvw / 256.0f * 16.0f);
         //float noise_value = turbulence(perlin_noise_value_0, perlin_noise_value_1);
-        float noise_value = perlin_noise_value_0.x;//turbulence(noise_uvw, 4, 3.37f, 0.5f);
+        float noise_value = dot(perlin_noise_value_0, vec4(0.25f));//turbulence(noise_uvw, 4, 3.37f, 0.5f);
         float cur_temp = texture(src_temperature, uvw).x;
         float saturate_vapor_moisture = getBuckSaturatedVaporPressure(cur_temp) * params.pressure_to_moist_ratio;
         float extinct = thickness * max(cur_moisture - saturate_vapor_moisture, 0.0f) * params.view_ext_factor * max(noise_value, 0.0f);

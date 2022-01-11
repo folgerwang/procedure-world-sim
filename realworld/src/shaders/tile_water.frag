@@ -88,7 +88,7 @@ float warpedNoise(vec2 p) {
 
 void main() {
     vec3 pos = in_data.vertex_position;
-    vec3 tnor = terrainNormal(vec2(pos.x, pos.z));
+    vec3 tnor = terrainNormal(vec2(pos.x, pos.z), 0.00025f, 2000.0f);
 
     float noise = warpedNoise(pos.xz * 0.04334f);
     float water_noise = (noise * 2.0f - 1.0f);

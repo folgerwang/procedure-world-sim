@@ -1388,7 +1388,7 @@ void RealWorldApplication::drawFrame() {
         glm::vec2(s_camera_pos.x, s_camera_pos.z));
 
     if (dump_volume_noise_) {
-#if 0
+#if 1
         uint32_t pixel_count = kNoiseTextureSize * kNoiseTextureSize * kNoiseTextureSize;
         std::vector<uint32_t> temp_buffer;
         temp_buffer.resize(pixel_count);

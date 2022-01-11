@@ -99,7 +99,7 @@ void main()
     vec2 soil_water_thickness = texture(soil_water_layer, world_map_uv).xy * SOIL_WATER_LAYER_MAX_THICKNESS;
     float ground_floor_height = rock_layer_height + soil_water_thickness.x + soil_water_thickness.y;
 
-    vec3 contact_normal = terrainNormal(info.position.xz);
+    vec3 contact_normal = terrainNormal(info.position.xz, 0.00025f, 2000.0f);
 
     if (info.status == 0 || params.frame_count == 0) {
         info.position = params.camera_pos + 

@@ -76,7 +76,7 @@ struct MaterialInfo
 
 void main() {
     vec3 pos = in_data.vertex_position;
-    vec3 tnor = terrainNormal(vec2(pos.x, pos.z));
+    vec3 tnor = terrainNormal(vec2(pos.x, pos.z), 0.00625f, 100.0f);
 
     // bump map
     vec4 tt = fbmd_8(pos * 0.3f * vec3(1.0f, 0.2f, 1.0f));
@@ -147,6 +147,7 @@ void main() {
     f_diffuse += getIBLRadianceLambertian(normal, material_info.albedoColor);
     #endif
 
+    //vec3 color = vec3(noise_value.w);
     vec3 color = f_diffuse + f_specular;
 
     float alpha = 1.0f;

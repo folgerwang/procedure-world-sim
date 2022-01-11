@@ -21,7 +21,7 @@
 
 #define kMaxTempMoistDiff                 2.0f
 
-#define kMinSampleHeight                  64.0f
+#define kMinSampleHeight                  187.0f
 #define kAirflowHeightMinMaxRatio         (kAirflowHeightRange / (kAirflowBufferHeight / 2 * kMinSampleHeight) - 1.0f)
 #define kAirflowHeightFactorA             ((kAirflowHeightMinMaxRatio - 1.0f) * kAirflowBufferHeight * kMinSampleHeight / 2)
 #define kAirflowHeightFactorB             (kMinSampleHeight * kAirflowBufferHeight)

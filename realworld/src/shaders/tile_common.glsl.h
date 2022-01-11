@@ -180,10 +180,8 @@ vec2 smoothstepd(float a, float b, float x)
 //------------------------------------------------------------------------------------------
 // terrain
 //------------------------------------------------------------------------------------------
-vec2 terrainMap(vec2 p)
+vec2 terrainMap(vec2 p, float sca/*= 0.00025f*/, float amp/*= 2000.0f*/)
 {
-    const float sca = 0.00025f;
-    const float amp = 2000.0f;
     p *= sca;
     float e = fbm_9(p + vec2(1.0f, -2.0f));
     float a = 1.0f - smoothstep(0.12f, 0.13f, abs(e + 0.12f)); // flag high-slope areas (-0.25, 0.0)
@@ -193,10 +191,8 @@ vec2 terrainMap(vec2 p)
     return vec2(e, a);
 }
 
-vec4 terrainMapD(vec2 p)
+vec4 terrainMapD(vec2 p, float sca/*= 0.00025f*/, float amp/*= 2000.0f*/)
 {
-    const float sca = 0.00025f;
-    const float amp = 2000.0f;
     p *= sca;
     vec3 e = fbmd_9(p + vec2(1.0f, -2.0f));
     vec2 c = smoothstepd(-0.08f, -0.01f, e.x);
@@ -208,10 +204,10 @@ vec4 terrainMapD(vec2 p)
     return vec4(e.x, normalize(vec3(-e_yz.x, 1.0f, -e_yz.y)));
 }
 
-vec3 terrainNormal(vec2 pos)
+vec3 terrainNormal(vec2 pos, float sca/*= 0.00025f*/, float amp/*= 2000.0f*/)
 {
 #if 1
-    vec4 map_d = terrainMapD(pos);
+    vec4 map_d = terrainMapD(pos, sca, amp);
     return vec3(map_d.y, map_d.z, map_d.w);
 #else    
     vec2 e = vec2(0.03, 0.0);
