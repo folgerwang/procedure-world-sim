@@ -30,7 +30,8 @@ layout(set = TILE_PARAMS_SET, binding = SRC_COLOR_TEX_INDEX) uniform sampler2D s
 layout(set = TILE_PARAMS_SET, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
 layout(set = TILE_PARAMS_SET, binding = SRC_MAP_MASK_INDEX) uniform sampler2D src_map_mask;
 layout(set = TILE_PARAMS_SET, binding = SRC_TEMP_TEX_INDEX) uniform sampler3D src_temp;
-layout(set = TILE_PARAMS_SET, binding = NOISE_TEXTURE_INDEX) uniform sampler3D src_noise_tex;
+layout(set = TILE_PARAMS_SET, binding = DETAIL_NOISE_TEXTURE_INDEX) uniform sampler3D src_detail_noise_tex;
+layout(set = TILE_PARAMS_SET, binding = ROUGH_NOISE_TEXTURE_INDEX) uniform sampler3D src_rough_noise_tex;
 
 struct MaterialInfo
 {
@@ -85,11 +86,11 @@ void main() {
     float uvw_y = getHeightToSample(pos.y);
     float c_temp = texture(src_temp, vec3(in_data.world_map_uv, uvw_y)).x;
 
-#if 0
+#if 1
     vec3 uvw = vec3(in_data.world_map_uv, uvw_y) * 16.0f;
     ivec3 i_uvw = ivec3(uvw);
     bool show_cell = ((i_uvw.x + i_uvw.y + i_uvw.z) % 2) == 0;
-    vec4 noise_value = /*(show_cell ? 1.0f : 0.0f) * */texture(src_noise_tex, uvw);
+    vec4 noise_value = /*(show_cell ? 1.0f : 0.0f) * */texture(src_rough_noise_tex, uvw);
 #endif
 
     vec3 albedo = vec3(0.18, 0.11, 0.10)*.75f;

@@ -7,7 +7,7 @@
 // reference : https://developer.nvidia.com/gpugems/gpugems2/part-iii-high-quality-rendering/chapter-26-implementing-improved-perlin-noise
 
 layout(push_constant) uniform PerlinNoiseUniformBufferObject {
-  PerlinNoiseInitParams params;
+  NoiseInitParams params;
 };
 
 layout(set = 0, binding = DST_PERLIN_NOISE_TEX_INDEX, rgba8) uniform writeonly image3D dst_perlin_noise;
@@ -19,7 +19,7 @@ void main()
 	ivec3 pixel_coords = ivec3(gl_GlobalInvocationID.xyz);
 	vec4 noise_value = hash43(vec3(pixel_coords));
 	vec3 pixel_position = vec3(pixel_coords);
-	vec3 uvw = (pixel_position + 0.5f) / kNoiseTextureSize;
+	vec3 uvw = (pixel_position + 0.5f) * params.inv_vol_size;
 
 	float fbm_mod_val = 8.0f;
 	float fbm_perlin_noise = fbm(uvw * fbm_mod_val, fbm_mod_val);

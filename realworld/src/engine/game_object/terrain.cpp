@@ -1648,9 +1648,10 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     const std::shared_ptr<renderer::ImageView>& water_flow,
     const std::shared_ptr<renderer::ImageView>& temp_tex,
     const std::shared_ptr<renderer::ImageView>& map_mask_tex,
-    const std::shared_ptr<renderer::ImageView>& volume_noise_tex) {
+    const std::shared_ptr<renderer::ImageView>& detail_noise_tex,
+    const std::shared_ptr<renderer::ImageView>& rough_noise_tex) {
     std::vector<renderer::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(16);
+    descriptor_writes.reserve(11);
 
     // src color.
     renderer::Helper::addOneTexture(
@@ -1737,9 +1738,18 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
-        NOISE_TEXTURE_INDEX,
+        DETAIL_NOISE_TEXTURE_INDEX,
         repeat_texture_sampler,
-        volume_noise_tex,
+        detail_noise_tex,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::addOneTexture(
+        descriptor_writes,
+        ROUGH_NOISE_TEXTURE_INDEX,
+        repeat_texture_sampler,
+        rough_noise_tex,
         description_set,
         renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -1871,7 +1881,7 @@ static std::shared_ptr<renderer::DescriptorSetLayout> createTileFlowUpdateDescri
 
 static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescriptorSetLayout(
     const std::shared_ptr<renderer::Device>& device) {
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings(10);
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings(11);
     bindings[0] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
         SRC_COLOR_TEX_INDEX);
     bindings[1] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
@@ -1898,7 +1908,10 @@ static std::shared_ptr<renderer::DescriptorSetLayout> CreateTileResourceDescript
         SRC_MAP_MASK_INDEX,
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     bindings[9] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
-        NOISE_TEXTURE_INDEX,
+        DETAIL_NOISE_TEXTURE_INDEX,
+        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
+    bindings[10] = renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        ROUGH_NOISE_TEXTURE_INDEX,
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT));
     return device->createDescriptorSetLayout(bindings);
 }
@@ -2510,7 +2523,8 @@ void TileObject::updateStaticDescriptorSet(
     const std::vector<std::shared_ptr<renderer::ImageView>>& temp_tex,
     const std::shared_ptr<renderer::ImageView>& heightmap_tex,
     const std::shared_ptr<renderer::ImageView>& map_mask_tex,
-    const std::shared_ptr<renderer::ImageView>& volume_noise_tex) {
+    const std::shared_ptr<renderer::ImageView>& detail_volume_noise_tex,
+    const std::shared_ptr<renderer::ImageView>& rough_volume_noise_tex) {
 
     if (tile_res_desc_set_[0] == nullptr) {
         generateStaticDescriptorSet(
@@ -2535,7 +2549,8 @@ void TileObject::updateStaticDescriptorSet(
             water_flow_.view,
             temp_tex[dbuf_idx],
             map_mask_tex,
-            volume_noise_tex);
+            detail_volume_noise_tex,
+            rough_volume_noise_tex);
         device->updateDescriptorSets(tile_res_descs, {});
     }
 }

@@ -92,13 +92,14 @@ std::vector<er::TextureDescriptor> addCloudFogTextures(
     const std::shared_ptr<er::Sampler>& point_clamp_texture_sampler,
     const std::shared_ptr<er::ImageView>& src_depth,
     const std::shared_ptr<er::ImageView>& cloud_fog_tex,
-    const std::shared_ptr<er::ImageView>& perlin_noise_tex,
+    const std::shared_ptr<er::ImageView>& detail_noise_tex,
+    const std::shared_ptr<er::ImageView>& rough_noise_tex,
     const std::shared_ptr<er::ImageView>& volume_moist_tex,
     const std::shared_ptr<er::ImageView>& volume_temp_tex,
     const std::shared_ptr<er::ImageView>& cloud_lighting_tex,
     const std::shared_ptr<er::ImageView>& scattering_lut_tex) {
     std::vector<er::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(13);
+    descriptor_writes.reserve(14);
 
     // envmap texture.
     er::Helper::addOneTexture(
@@ -139,9 +140,18 @@ std::vector<er::TextureDescriptor> addCloudFogTextures(
 
     er::Helper::addOneTexture(
         descriptor_writes,
-        NOISE_TEXTURE_INDEX,
+        DETAIL_NOISE_TEXTURE_INDEX,
         texture_sampler,
-        perlin_noise_tex,
+        detail_noise_tex,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        ROUGH_NOISE_TEXTURE_INDEX,
+        texture_sampler,
+        rough_noise_tex,
         description_set,
         er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -318,7 +328,8 @@ VolumeCloud::VolumeCloud(
     const std::vector<std::shared_ptr<renderer::ImageView>>& temp_texes,
     const std::shared_ptr<renderer::ImageView>& cloud_lighting_tex,
     const std::shared_ptr<renderer::ImageView>& scattering_lut_tex,
-    const std::shared_ptr<renderer::ImageView>& perlin_noise_tex,
+    const std::shared_ptr<renderer::ImageView>& detail_noise_tex,
+    const std::shared_ptr<renderer::ImageView>& rough_noise_tex,
     const glm::uvec2& display_size) {
 
     const auto& device = device_info.device;
@@ -357,7 +368,11 @@ VolumeCloud::VolumeCloud(
                 SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
                 er::DescriptorType::COMBINED_IMAGE_SAMPLER),
               renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
-                NOISE_TEXTURE_INDEX,
+                DETAIL_NOISE_TEXTURE_INDEX,
+                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER),
+              renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                ROUGH_NOISE_TEXTURE_INDEX,
                 SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
                 er::DescriptorType::COMBINED_IMAGE_SAMPLER),
               renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
@@ -405,7 +420,8 @@ VolumeCloud::VolumeCloud(
         temp_texes,
         cloud_lighting_tex,
         scattering_lut_tex,
-        perlin_noise_tex,
+        detail_noise_tex,
+        rough_noise_tex,
         display_size);
 }
 
@@ -421,7 +437,8 @@ void VolumeCloud::recreate(
     const std::vector<std::shared_ptr<renderer::ImageView>>& temp_texes,
     const std::shared_ptr<renderer::ImageView>& cloud_lighting_tex,
     const std::shared_ptr<renderer::ImageView>& scattering_lut_tex,
-    const std::shared_ptr<renderer::ImageView>& perlin_noise_tex,
+    const std::shared_ptr<renderer::ImageView>& detail_noise_tex,
+    const std::shared_ptr<renderer::ImageView>& rough_noise_tex,
     const glm::uvec2& display_size) {
 
     auto& device = device_info.device;
@@ -523,7 +540,8 @@ void VolumeCloud::recreate(
             point_clamp_texture_sampler,
             src_depth,
             fog_cloud_tex_.view,
-            perlin_noise_tex,
+            detail_noise_tex,
+            rough_noise_tex,
             moisture_texes[dbuf_idx],
             temp_texes[dbuf_idx],
             cloud_lighting_tex,

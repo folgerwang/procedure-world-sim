@@ -22,7 +22,8 @@ layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniform
 layout(set = 0, binding = SRC_MOISTURE_TEX_INDEX) uniform sampler3D src_moisture;
 layout(set = 0, binding = SRC_TEMP_TEX_INDEX) uniform sampler3D src_temperature;
 layout(set = 0, binding = SRC_CLOUD_LIGHTING_TEX_INDEX) uniform sampler3D src_cloud_shadow;
-layout(set = 0, binding = NOISE_TEXTURE_INDEX) uniform sampler3D src_noise_tex;
+layout(set = 0, binding = DETAIL_NOISE_TEXTURE_INDEX) uniform sampler3D src_detail_noise_tex;
+layout(set = 0, binding = ROUGH_NOISE_TEXTURE_INDEX) uniform sampler3D src_rough_noise_tex;
 layout(set = 0, binding = SRC_DEPTH_TEX_INDEX) uniform sampler2D src_depth;
 layout(set = 0, binding = DST_FOG_CLOUD_INDEX, rgba16f) uniform writeonly image2D dst_fog_cloud;
 
@@ -81,10 +82,11 @@ void main()
 
         float cur_moisture = texture(src_moisture, uvw).x;
         vec3 noise_uvw = vec3(sample_pos.x, sample_pos.y + params.time * -103.42f, sample_pos.z) / 8192.0f;
-        vec4 perlin_noise_value_0 = texture(src_noise_tex, noise_uvw);
-        vec4 perlin_noise_value_1 = texture(src_noise_tex, noise_uvw / 256.0f * 16.0f);
+        vec4 perlin_noise_value_0 = texture(src_detail_noise_tex, noise_uvw);
+        vec4 perlin_noise_value_1 = texture(src_rough_noise_tex, noise_uvw / 16.0f);
         //float noise_value = turbulence(perlin_noise_value_0, perlin_noise_value_1);
-        float noise_value = dot(perlin_noise_value_0, vec4(0.25f));//turbulence(noise_uvw, 4, 3.37f, 0.5f);
+        float noise_value = dot(perlin_noise_value_0, vec4(0.125f));//turbulence(noise_uvw, 4, 3.37f, 0.5f);
+        noise_value += dot(perlin_noise_value_1, vec4(0.125f));
         float cur_temp = texture(src_temperature, uvw).x;
         float saturate_vapor_moisture = getBuckSaturatedVaporPressure(cur_temp) * params.pressure_to_moist_ratio;
         float extinct = thickness * max(cur_moisture - saturate_vapor_moisture, 0.0f) * params.view_ext_factor * max(noise_value, 0.0f);

@@ -10,8 +10,8 @@ class VolumeNoise {
     renderer::BufferInfo index_buffer_;
 #endif
 
-    renderer::TextureInfo perlin_noise_tex_;
-    renderer::TextureInfo worley_noise_tex_;
+    renderer::TextureInfo detail_noise_tex_;
+    renderer::TextureInfo rough_noise_tex_;
 
 #if 0
     std::shared_ptr<renderer::DescriptorSetLayout> cloud_desc_set_layout_;
@@ -20,10 +20,11 @@ class VolumeNoise {
     std::shared_ptr<renderer::Pipeline> cloud_pipeline_;
 #endif
 
-    std::shared_ptr<renderer::DescriptorSetLayout> perlin_noise_init_desc_set_layout_;
-    std::shared_ptr<renderer::DescriptorSet> perlin_noise_init_tex_desc_set_;
-    std::shared_ptr<renderer::PipelineLayout> perlin_noise_init_pipeline_layout_;
-    std::shared_ptr<renderer::Pipeline> perlin_noise_init_pipeline_;
+    std::shared_ptr<renderer::DescriptorSetLayout> noise_init_desc_set_layout_;
+    std::shared_ptr<renderer::DescriptorSet> detail_noise_init_tex_desc_set_;
+    std::shared_ptr<renderer::DescriptorSet> rough_noise_init_tex_desc_set_;
+    std::shared_ptr<renderer::PipelineLayout> noise_init_pipeline_layout_;
+    std::shared_ptr<renderer::Pipeline> noise_init_pipeline_;
 
 public:
     VolumeNoise(
@@ -47,7 +48,7 @@ public:
         const std::shared_ptr<renderer::Sampler>& point_clamp_texture_sampler,
         const glm::uvec2& display_size);
 
-    void initPerlinNoiseTexture(
+    void initNoiseTexture(
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf);
 
     void draw(
@@ -58,8 +59,12 @@ public:
 
     void destroy(const std::shared_ptr<renderer::Device>& device);
 
-    const renderer::TextureInfo& getPerlinNoiseTexture() {
-        return perlin_noise_tex_;
+    const renderer::TextureInfo& getDetailNoiseTexture() {
+        return detail_noise_tex_;
+    }
+
+    const renderer::TextureInfo& getRoughNoiseTexture() {
+        return rough_noise_tex_;
     }
 };
 

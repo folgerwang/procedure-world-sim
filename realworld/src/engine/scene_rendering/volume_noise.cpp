@@ -273,10 +273,10 @@ VolumeNoise::VolumeNoise(
         device_info,
         renderer::Format::R8G8B8A8_UNORM,
         glm::uvec3(
-            kNoiseTextureSize,
-            kNoiseTextureSize,
-            kNoiseTextureSize),
-        perlin_noise_tex_,
+            kDetailNoiseTextureSize,
+            kDetailNoiseTextureSize,
+            kDetailNoiseTextureSize),
+        detail_noise_tex_,
         SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
         SET_FLAG_BIT(ImageUsage, TRANSFER_SRC_BIT) |
         SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
@@ -286,15 +286,15 @@ VolumeNoise::VolumeNoise(
         device_info,
         renderer::Format::R8G8B8A8_UNORM,
         glm::uvec3(
-            kNoiseTextureSize,
-            kNoiseTextureSize,
-            kNoiseTextureSize),
-        worley_noise_tex_,
+            kRoughNoiseTextureSize,
+            kRoughNoiseTextureSize,
+            kRoughNoiseTextureSize),
+        rough_noise_tex_,
         SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
         SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
-    perlin_noise_init_desc_set_layout_ =
+    noise_init_desc_set_layout_ =
         device->createDescriptorSetLayout(
             { renderer::helper::getTextureSamplerDescriptionSetLayoutBinding(
                 PERMUTATION_TEXTURE_INDEX,
@@ -356,33 +356,46 @@ void VolumeNoise::recreate(
     const std::shared_ptr<renderer::Sampler>& point_clamp_texture_sampler,
     const glm::uvec2& display_size) {
 
-    erh::releasePipelineLayout(device, perlin_noise_init_pipeline_layout_);
-    erh::releasePipeline(device, perlin_noise_init_pipeline_);
+    erh::releasePipelineLayout(device, noise_init_pipeline_layout_);
+    erh::releasePipeline(device, noise_init_pipeline_);
 
     // perlin noise texture init.
-    perlin_noise_init_tex_desc_set_ =
+    detail_noise_init_tex_desc_set_ =
         device->createDescriptorSets(
             descriptor_pool,
-            perlin_noise_init_desc_set_layout_, 1)[0];
+            noise_init_desc_set_layout_, 1)[0];
 
     // create a global ibl texture descriptor set.
-    auto perlin_noise_init_texture_descs =
+    auto detail_noise_init_texture_descs =
         addPerlinNoiseInitTextures(
-            perlin_noise_init_tex_desc_set_,
+            detail_noise_init_tex_desc_set_,
             point_clamp_texture_sampler,
-            perlin_noise_tex_);
-    device->updateDescriptorSets(perlin_noise_init_texture_descs, {});
+            detail_noise_tex_);
+    device->updateDescriptorSets(detail_noise_init_texture_descs, {});
 
-    perlin_noise_init_pipeline_layout_ =
+    rough_noise_init_tex_desc_set_ =
+        device->createDescriptorSets(
+            descriptor_pool,
+            noise_init_desc_set_layout_, 1)[0];
+
+    // create a global ibl texture descriptor set.
+    auto rough_noise_init_texture_descs =
+        addPerlinNoiseInitTextures(
+            rough_noise_init_tex_desc_set_,
+            point_clamp_texture_sampler,
+            rough_noise_tex_);
+    device->updateDescriptorSets(rough_noise_init_texture_descs, {});
+
+    noise_init_pipeline_layout_ =
         erh::createComputePipelineLayout(
             device,
-            { perlin_noise_init_desc_set_layout_ },
-            sizeof(glsl::PerlinNoiseInitParams));
+            { noise_init_desc_set_layout_ },
+            sizeof(glsl::NoiseInitParams));
 
-    perlin_noise_init_pipeline_ =
+    noise_init_pipeline_ =
         erh::createComputePipeline(
             device,
-            perlin_noise_init_pipeline_layout_,
+            noise_init_pipeline_layout_,
             "perlin_noise_init");
 
 #if 0
@@ -408,35 +421,69 @@ void VolumeNoise::recreate(
 #endif
 }
 
-void VolumeNoise::initPerlinNoiseTexture(
+void VolumeNoise::initNoiseTexture(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf) {
-    erh::transitMapTextureToStoreImage(
-        cmd_buf,
-        { perlin_noise_tex_.image });
+    {
+        erh::transitMapTextureToStoreImage(
+            cmd_buf,
+            { detail_noise_tex_.image });
 
-    auto w = static_cast<uint32_t>(kNoiseTextureSize);
-    cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, perlin_noise_init_pipeline_);
-    glsl::PerlinNoiseInitParams perlin_noise_init_params = {};
+        auto w = static_cast<uint32_t>(kDetailNoiseTextureSize);
+        cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, noise_init_pipeline_);
+        glsl::NoiseInitParams detail_noise_init_params = {};
+        detail_noise_init_params.inv_vol_size = 1.0f / w;
 
-    cmd_buf->pushConstants(
-        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
-        perlin_noise_init_pipeline_layout_,
-        &perlin_noise_init_params,
-        sizeof(perlin_noise_init_params));
+        cmd_buf->pushConstants(
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            noise_init_pipeline_layout_,
+            &detail_noise_init_params,
+            sizeof(detail_noise_init_params));
 
-    cmd_buf->bindDescriptorSets(
-        renderer::PipelineBindPoint::COMPUTE,
-        perlin_noise_init_pipeline_layout_,
-        { perlin_noise_init_tex_desc_set_ });
+        cmd_buf->bindDescriptorSets(
+            renderer::PipelineBindPoint::COMPUTE,
+            noise_init_pipeline_layout_,
+            { detail_noise_init_tex_desc_set_ });
 
-    cmd_buf->dispatch(
-        (w + 3) / 4,
-        (w + 3) / 4,
-        (w + 3) / 4);
+        cmd_buf->dispatch(
+            (w + 3) / 4,
+            (w + 3) / 4,
+            (w + 3) / 4);
 
-    erh::transitMapTextureFromStoreImage(
-        cmd_buf,
-        { perlin_noise_tex_.image });
+        erh::transitMapTextureFromStoreImage(
+            cmd_buf,
+            { detail_noise_tex_.image });
+    }
+    
+    {
+        erh::transitMapTextureToStoreImage(
+            cmd_buf,
+            { rough_noise_tex_.image });
+
+        auto w = static_cast<uint32_t>(kRoughNoiseTextureSize);
+        cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, noise_init_pipeline_);
+        glsl::NoiseInitParams rough_noise_init_params = {};
+        rough_noise_init_params.inv_vol_size = 1.0f / w;
+
+        cmd_buf->pushConstants(
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            noise_init_pipeline_layout_,
+            &rough_noise_init_params,
+            sizeof(rough_noise_init_params));
+
+        cmd_buf->bindDescriptorSets(
+            renderer::PipelineBindPoint::COMPUTE,
+            noise_init_pipeline_layout_,
+            { rough_noise_init_tex_desc_set_ });
+
+        cmd_buf->dispatch(
+            (w + 3) / 4,
+            (w + 3) / 4,
+            (w + 3) / 4);
+
+        erh::transitMapTextureFromStoreImage(
+            cmd_buf,
+            { rough_noise_tex_.image });
+    }
 }
 
 // render skybox.
@@ -485,9 +532,9 @@ void VolumeNoise::destroy(
     device->destroyPipelineLayout(cloud_pipeline_layout_);
     device->destroyPipeline(cloud_pipeline_);
 #endif
-    device->destroyDescriptorSetLayout(perlin_noise_init_desc_set_layout_);
-    device->destroyPipelineLayout(perlin_noise_init_pipeline_layout_);
-    device->destroyPipeline(perlin_noise_init_pipeline_);
+    device->destroyDescriptorSetLayout(noise_init_desc_set_layout_);
+    device->destroyPipelineLayout(noise_init_pipeline_layout_);
+    device->destroyPipeline(noise_init_pipeline_);
 }
 
 }//namespace scene_rendering

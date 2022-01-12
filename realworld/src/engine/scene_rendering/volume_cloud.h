@@ -33,7 +33,8 @@ public:
         const std::vector<std::shared_ptr<renderer::ImageView>>& temp_texes,
         const std::shared_ptr<renderer::ImageView>& cloud_lighting_tex,
         const std::shared_ptr<renderer::ImageView>& scattering_lut_tex,
-        const std::shared_ptr<renderer::ImageView>& perlin_noise_tex,
+        const std::shared_ptr<renderer::ImageView>& detail_noise_tex,
+        const std::shared_ptr<renderer::ImageView>& rough_noise_tex,
         const glm::uvec2& display_size);
 
     void recreate(
@@ -48,7 +49,8 @@ public:
         const std::vector<std::shared_ptr<renderer::ImageView>>& temp_texes,
         const std::shared_ptr<renderer::ImageView>& cloud_lighting_tex,
         const std::shared_ptr<renderer::ImageView>& scattering_lut_tex,
-        const std::shared_ptr<renderer::ImageView>& perlin_noise_tex,
+        const std::shared_ptr<renderer::ImageView>& detail_noise_tex,
+        const std::shared_ptr<renderer::ImageView>& rough_noise_tex,
         const glm::uvec2& display_size);
 
     void renderVolumeCloud(

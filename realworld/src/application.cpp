@@ -543,7 +543,8 @@ void RealWorldApplication::initVulkan() {
         weather_system_->getTempTexes(),
         heightmap_tex_.view,
         map_mask_tex_.view,
-        volume_noise_->getPerlinNoiseTexture().view);
+        volume_noise_->getDetailNoiseTexture().view,
+        volume_noise_->getRoughNoiseTexture().view);
 
     volume_cloud_ = std::make_shared<es::VolumeCloud>(
         device_info_,
@@ -557,7 +558,8 @@ void RealWorldApplication::initVulkan() {
         weather_system_->getTempTexes(),
         weather_system_->getCloudLightingTex(),
         skydome_->getScatteringLutTex(),
-        volume_noise_->getPerlinNoiseTexture().view,
+        volume_noise_->getDetailNoiseTexture().view,
+        volume_noise_->getRoughNoiseTexture().view,
         swap_chain_info_.extent);
 
     ego::DebugDrawObject::updateStaticDescriptorSet(
@@ -700,7 +702,8 @@ void RealWorldApplication::recreateSwapChain() {
         weather_system_->getTempTexes(),
         heightmap_tex_.view,
         map_mask_tex_.view,
-        volume_noise_->getPerlinNoiseTexture().view);
+        volume_noise_->getDetailNoiseTexture().view,
+        volume_noise_->getRoughNoiseTexture().view);
 
     ego::DebugDrawObject::updateStaticDescriptorSet(
         device_,
@@ -732,7 +735,8 @@ void RealWorldApplication::recreateSwapChain() {
         weather_system_->getTempTexes(),
         weather_system_->getCloudLightingTex(),
         skydome_->getScatteringLutTex(),
-        volume_noise_->getPerlinNoiseTexture().view,
+        volume_noise_->getDetailNoiseTexture().view,
+        volume_noise_->getRoughNoiseTexture().view,
         swap_chain_info_.extent);
 
     menu_->init(
@@ -1133,7 +1137,7 @@ void RealWorldApplication::drawScene(
         if (!s_tile_buffer_inited) {
             ego::TileObject::generateTileBuffers(cmd_buf);
             weather_system_->initTemperatureBuffer(cmd_buf);
-            volume_noise_->initPerlinNoiseTexture(cmd_buf);
+            volume_noise_->initNoiseTexture(cmd_buf);
             s_tile_buffer_inited = true;
         }
         else {
@@ -1388,52 +1392,53 @@ void RealWorldApplication::drawFrame() {
         glm::vec2(s_camera_pos.x, s_camera_pos.z));
 
     if (dump_volume_noise_) {
+        const auto noise_texture_size = kDetailNoiseTextureSize;
 #if 1
-        uint32_t pixel_count = kNoiseTextureSize * kNoiseTextureSize * kNoiseTextureSize;
+        uint32_t pixel_count = noise_texture_size * noise_texture_size * noise_texture_size;
         std::vector<uint32_t> temp_buffer;
         temp_buffer.resize(pixel_count);
         er::Helper::dumpTextureImage(
             device_info_,
-            volume_noise_->getPerlinNoiseTexture().image,
+            volume_noise_->getDetailNoiseTexture().image,
             er::Format::R8G8B8A8_UNORM,
-            glm::uvec3(kNoiseTextureSize, kNoiseTextureSize, kNoiseTextureSize),
+            glm::uvec3(noise_texture_size, noise_texture_size, noise_texture_size),
             4,
             temp_buffer.data());
         
         engine::helper::saveDdsTexture(
-            glm::uvec3(kNoiseTextureSize, kNoiseTextureSize, kNoiseTextureSize),
+            glm::uvec3(noise_texture_size, noise_texture_size, noise_texture_size),
             temp_buffer.data(),
             "volume_noise.dds");
 #else
-        uint32_t pixel_count = kNoiseTextureSize * kNoiseTextureSize * kNoiseTextureSize;
+        uint32_t pixel_count = noise_texture_size * noise_texture_size * noise_texture_size;
         std::vector<uint32_t> temp_buffer;
         temp_buffer.resize(pixel_count);
         er::Helper::dumpTextureImage(
             device_info_,
-            volume_noise_->getPerlinNoiseTexture().image,
+            volume_noise_->getDetailNoiseTexture().image,
             er::Format::R8G8B8A8_UNORM,
-            glm::uvec3(kNoiseTextureSize, kNoiseTextureSize, kNoiseTextureSize),
+            glm::uvec3(noise_texture_size, noise_texture_size, noise_texture_size),
             4,
             temp_buffer.data());
 
         // flatten 3d texture to 2d texture.
-        uint32_t h = 1 << (31 - engine::helper::clz(static_cast<uint32_t>(std::sqrt(kNoiseTextureSize))));
-        uint32_t w = kNoiseTextureSize / h;
+        uint32_t h = 1 << (31 - engine::helper::clz(static_cast<uint32_t>(std::sqrt(noise_texture_size))));
+        uint32_t w = noise_texture_size / h;
         std::vector<uint32_t> flattened_buffer;
         flattened_buffer.resize(pixel_count);
-        for (uint32_t y = 0; y < h * kNoiseTextureSize; y++) {
-            for (uint32_t x = 0; x < w * kNoiseTextureSize; x++) {
-                uint32_t tile_y = y / kNoiseTextureSize;
-                uint32_t tile_x = x / kNoiseTextureSize;
+        for (uint32_t y = 0; y < h * noise_texture_size; y++) {
+            for (uint32_t x = 0; x < w * noise_texture_size; x++) {
+                uint32_t tile_y = y / noise_texture_size;
+                uint32_t tile_x = x / noise_texture_size;
                 uint32_t depth = tile_y * w + tile_x;
-                uint32_t dst_idx = y * (w * kNoiseTextureSize) + x;
-                uint32_t src_idx = depth * kNoiseTextureSize * kNoiseTextureSize +
-                    (y % kNoiseTextureSize) * kNoiseTextureSize + (x % kNoiseTextureSize);
+                uint32_t dst_idx = y * (w * noise_texture_size) + x;
+                uint32_t src_idx = depth * noise_texture_size * noise_texture_size +
+                    (y % noise_texture_size) * noise_texture_size + (x % noise_texture_size);
                 flattened_buffer[dst_idx] = temp_buffer[src_idx];
             }
         }
         engine::helper::saveDdsTexture(
-            glm::uvec3(w * kNoiseTextureSize, h * kNoiseTextureSize, 1),
+            glm::uvec3(w * noise_texture_size, h * noise_texture_size, 1),
             flattened_buffer.data(),
             "volume_noise.dds");
 #endif

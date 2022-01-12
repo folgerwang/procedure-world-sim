@@ -124,7 +124,8 @@ public:
         const std::vector<std::shared_ptr<renderer::ImageView>>& temp_tex,
         const std::shared_ptr<renderer::ImageView>& heightmap_tex,
         const std::shared_ptr<renderer::ImageView>& map_mask_tex,
-        const std::shared_ptr<renderer::ImageView>& volume_noise_tex);
+        const std::shared_ptr<renderer::ImageView>& detail_volume_noise_tex,
+        const std::shared_ptr<renderer::ImageView>& rough_volume_noise_tex);
 
     static void generateStaticDescriptorSet(
         const std::shared_ptr<renderer::Device>& device,

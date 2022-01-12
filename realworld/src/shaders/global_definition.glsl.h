@@ -88,13 +88,14 @@
 #define SRC_SCATTERING_LUT_INDEX            32
 #define SRC_SCATTERING_LUT_SUM_INDEX        32
 
-#define NOISE_TEXTURE_INDEX                 33
-#define PERMUTATION_TEXTURE_INDEX           34
-#define PERMUTATION_2D_TEXTURE_INDEX        35
-#define GRAD_TEXTURE_INDEX                  36
-#define PERM_GRAD_TEXTURE_INDEX             37
-#define PERM_GRAD_4D_TEXTURE_INDEX          38
-#define GRAD_4D_TEXTURE_INDEX               39
+#define DETAIL_NOISE_TEXTURE_INDEX          33
+#define ROUGH_NOISE_TEXTURE_INDEX           34
+#define PERMUTATION_TEXTURE_INDEX           35
+#define PERMUTATION_2D_TEXTURE_INDEX        36
+#define GRAD_TEXTURE_INDEX                  37
+#define PERM_GRAD_TEXTURE_INDEX             38
+#define PERM_GRAD_4D_TEXTURE_INDEX          39
+#define GRAD_4D_TEXTURE_INDEX               40
 
 // Noise Texture.
 #define DST_PERLIN_NOISE_TEX_INDEX          0
@@ -163,7 +164,8 @@
 #define kWorldMapSize 16384.0f                  // meters
 #define kCloudMapSize 131072.0f
 
-#define kNoiseTextureSize                       256
+#define kDetailNoiseTextureSize                 256
+#define kRoughNoiseTextureSize                  32
 
 #define kNodeLeft                               0x00      // -x
 #define kNodeRight                              0x01      // +x
@@ -402,72 +404,72 @@ struct GameObjectsUpdateParams {
 };
 
 struct InstanceBufferUpdateParams {
-    uint num_instances;
+    uint            num_instances;
 };
 
-struct PerlinNoiseInitParams {
-    uint pad;
+struct NoiseInitParams {
+    float           inv_vol_size;
 };
 
 struct PbrMaterialParams {
-    vec4    base_color_factor;
+    vec4            base_color_factor;
 
-    float   glossiness_factor;
-    float   metallic_roughness_specular_factor;
-    float   metallic_factor;
-    float   roughness_factor;
+    float           glossiness_factor;
+    float           metallic_roughness_specular_factor;
+    float           metallic_factor;
+    float           roughness_factor;
 
-    vec3    specular_factor;
-    float   sheen_intensity_factor;
+    vec3            specular_factor;
+    float           sheen_intensity_factor;
 
-    vec3    sheen_color_factor;
-    float   sheen_roughness;
+    vec3            sheen_color_factor;
+    float           sheen_roughness;
 
-    float   subsurface_scale;
-    float   subsurface_distortion;
-    float   subsurface_power;
-    float   subsurface_thickness_factor;
+    float           subsurface_scale;
+    float           subsurface_distortion;
+    float           subsurface_power;
+    float           subsurface_thickness_factor;
 
-    vec3    subsurface_color_factor;
-    float   thin_film_factor;
+    vec3            subsurface_color_factor;
+    float           thin_film_factor;
 
-    float   thin_film_thickness_maximum;
-    float   clearcoat_factor;
-    float   clearcoat_roughness_factor;
-    float   transmission;
+    float           thin_film_thickness_maximum;
+    float           clearcoat_factor;
+    float           clearcoat_roughness_factor;
+    float           transmission;
 
-    float   anisotropy;
-    float   thickness;
-    float   alpha_cutoff;
-    float   exposure;
+    float           anisotropy;
+    float           thickness;
+    float           alpha_cutoff;
+    float           exposure;
 
-    vec3    absorption_color;
-    float   mip_count;
+    vec3            absorption_color;
+    float           mip_count;
 
-    vec4    ior_f0;
+    vec4            ior_f0;
 
-    uvec4   uv_set_flags;
+    uvec4           uv_set_flags;
 
-    uint    material_features;
-    uint    pad_1;
-    float   normal_scale;
-    float   occlusion_strength;
+    uint            material_features;
+    uint            pad_1;
+    float           normal_scale;
+    float           occlusion_strength;
 
-    vec3    emissive_factor;
-    uint    tonemap_type;
+    vec3            emissive_factor;
+    uint            tonemap_type;
 
-    Light   lights[LIGHT_COUNT];
+    Light           lights[LIGHT_COUNT];
 
-    mat3    base_color_uv_transform;
-    mat3    normal_uv_transform;
-    mat3    metallic_roughness_uv_transform;
+    mat3            base_color_uv_transform;
+    mat3            normal_uv_transform;
+    mat3            metallic_roughness_uv_transform;
 };
 
 struct InstanceDataInfo {
-    vec4              mat_rot_0;
-    vec4              mat_rot_1;
-    vec4              mat_rot_2;
-    vec4              mat_pos_scale;
+    vec4            mat_rot_0;
+    vec4            mat_rot_1;
+    vec4            mat_rot_2;
+    vec4            mat_pos_scale;
 };
 
 struct GameObjectInfo {
