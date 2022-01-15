@@ -23,6 +23,12 @@ class Menu {
     float cloud_moist_to_pressure_ratio_ = 0.1f;
     float global_flow_dir_ = 85.0f;
     float global_flow_speed_ = 0.5f;
+    float cloud_noise_thresold_ = 0.25f;
+    float cloud_noise_scrolling_speed_ = 10.0f;
+    float cloud_noise_scale_[2] = { 5.0f, 5.0f };
+    float cloud_noise_weight_[2][4] =
+        { {0.3f, 0.3f, 0.3f, 0.3f},
+        {0.3f, 0.3f, 0.3f, 0.3f} };
 
     glsl::WeatherControl weather_controls_;
 
@@ -102,6 +108,26 @@ public:
 
     inline float getGlobalFlowSpeed() {
         return global_flow_speed_;
+    }
+
+    inline glm::vec4 getCloudNoiseWeight(const int32_t& idx) {
+        return glm::vec4(
+            cloud_noise_weight_[idx][0],
+            cloud_noise_weight_[idx][1],
+            cloud_noise_weight_[idx][2],
+            cloud_noise_weight_[idx][3]);
+    }
+
+    inline float getCloudNoiseThresold() {
+        return cloud_noise_thresold_;
+    }
+
+    inline float getCloudNoiseScrollingSpeed() {
+        return -pow(2.0f, cloud_noise_scrolling_speed_);
+    }
+
+    inline glm::vec2 getCloudNoiseScale() {
+        return glm::vec2(pow(10.0f, -cloud_noise_scale_[0]), pow(10.0f, -cloud_noise_scale_[1]));
     }
 
     void init(

@@ -63,6 +63,11 @@ public:
         const float& ambient_intensity,
         const float& phase_intensity,
         const float& moist_to_pressure_ratio,
+        const glm::vec4& noise_weights_0,
+        const glm::vec4& noise_weights_1,
+        const float& noise_thresold,
+        const float& noise_scrolling_speed,
+        const glm::vec2& noise_scale,
         const glm::uvec2& display_size,
         int dbuf_idx,
         float current_time);

@@ -571,6 +571,11 @@ void VolumeCloud::renderVolumeCloud(
     const float& ambient_intensity,
     const float& phase_intensity,
     const float& moist_to_pressure_ratio,
+    const glm::vec4& noise_weights_0,
+    const glm::vec4& noise_weights_1,
+    const float& noise_thresold,
+    const float& noise_scrolling_speed,
+    const glm::vec2& noise_scale,
     const glm::uvec2& display_size,
     int dbuf_idx,
     float current_time) {
@@ -598,6 +603,11 @@ void VolumeCloud::renderVolumeCloud(
         params.ambient_intensity = ambient_intensity;
         params.phase_intensity = phase_intensity;
         params.pressure_to_moist_ratio = 1.0f / moist_to_pressure_ratio;
+        params.noise_weight_0 = noise_weights_0;
+        params.noise_weight_1 = noise_weights_1;
+        params.noise_thresold = noise_thresold;
+        params.noise_speed_scale = noise_scrolling_speed;
+        params.noise_scale = noise_scale;
 
         cmd_buf->pushConstants(
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),

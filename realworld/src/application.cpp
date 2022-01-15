@@ -1316,6 +1316,11 @@ void RealWorldApplication::drawScene(
                     menu_->getCloudAmbientIntensity(),
                     menu_->getCloudPhaseIntensity(),
                     menu_->getCloudMoistToPressureRatio(),
+                    menu_->getCloudNoiseWeight(0),
+                    menu_->getCloudNoiseWeight(1),
+                    menu_->getCloudNoiseThresold(),
+                    menu_->getCloudNoiseScrollingSpeed(),
+                    menu_->getCloudNoiseScale(),
                     screen_size,
                     s_dbuf_idx,
                     current_time);
