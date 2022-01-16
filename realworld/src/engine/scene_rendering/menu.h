@@ -23,12 +23,12 @@ class Menu {
     float cloud_moist_to_pressure_ratio_ = 0.1f;
     float global_flow_dir_ = 85.0f;
     float global_flow_speed_ = 0.5f;
-    float cloud_noise_thresold_ = 0.25f;
-    float cloud_noise_scrolling_speed_ = 10.0f;
-    float cloud_noise_scale_[2] = { 5.0f, 5.0f };
+    float cloud_noise_thresold_ = 0.3f;
+    float cloud_noise_scrolling_speed_ = 9.1f;
+    float cloud_noise_scale_[2] = { 5.03f, 4.97f };
     float cloud_noise_weight_[2][4] =
-        { {0.3f, 0.3f, 0.3f, 0.3f},
-        {0.3f, 0.3f, 0.3f, 0.3f} };
+        { {0.2f, 0.4f, 0.7f, 0.9f},
+        {0.2f, 0.2f, 0.2f, 0.2f} };
 
     glsl::WeatherControl weather_controls_;
 
