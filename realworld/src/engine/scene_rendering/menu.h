@@ -25,7 +25,7 @@ class Menu {
     float global_flow_speed_ = 0.5f;
     float cloud_noise_thresold_ = 0.3f;
     float cloud_noise_scrolling_speed_ = 9.1f;
-    float cloud_noise_scale_[2] = { 5.03f, 4.97f };
+    float cloud_noise_scale_[2] = { 4.45f, 4.387f };
     float cloud_noise_weight_[2][4] =
         { {0.2f, 0.4f, 0.7f, 0.9f},
         {0.2f, 0.2f, 0.2f, 0.2f} };
