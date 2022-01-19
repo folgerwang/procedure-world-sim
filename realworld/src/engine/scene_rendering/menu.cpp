@@ -262,7 +262,7 @@ bool Menu::draw(
                 listbox_items.push_back(name.c_str());
             }
             static int s_listbox_item_current = -1;
-            ImGui::ListBox("",
+            ImGui::ListBox(" ",
                 &s_listbox_item_current, listbox_items.data(),
                 static_cast<int>(listbox_items.size()),
                 static_cast<int>(listbox_items.size()));
