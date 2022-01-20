@@ -782,11 +782,13 @@ static renderer::ShaderModuleList getGltfShaderModules(
     bool has_normals,
     bool has_tangent,
     bool has_texcoord_0,
-    bool has_skin_set_0) {
+    bool has_skin_set_0,
+    bool has_material) {
     renderer::ShaderModuleList shader_modules(2);
     std::string feature_str = std::string(has_texcoord_0 ? "_TEX" : "") +
         (has_tangent ? "_TN" : (has_normals ? "_N" : "")) +
         (has_skin_set_0 ? "_SKIN" : "");
+    feature_str = has_material ? feature_str : "_NOMTL";
     uint64_t vert_code_size, frag_code_size;
     auto vert_shader_code = engine::helper::readFile("lib/shaders/base_vert" + feature_str + ".spv", vert_code_size);
     auto frag_shader_code = engine::helper::readFile("lib/shaders/base_frag" + feature_str + ".spv", frag_code_size);
@@ -809,7 +811,8 @@ static std::shared_ptr<renderer::Pipeline> createGltfPipeline(
         primitive.tag_.has_normal,
         primitive.tag_.has_tangent,
         primitive.tag_.has_texcoord_0,
-        primitive.tag_.has_skin_set_0);
+        primitive.tag_.has_skin_set_0,
+        primitive.material_idx_ >= 0);
 
     renderer::PipelineInputAssemblyStateCreateInfo topology_info;
     topology_info.restart_enable = primitive.tag_.restart_enable;
@@ -1160,6 +1163,7 @@ std::shared_ptr<renderer::BufferInfo> GltfObject::game_objects_buffer_;
 
 void PrimitiveInfo::generateHash() {
     hash_ = std::hash<uint32_t>{}(tag_.data);
+    hash_combine(hash_, material_idx_ >= 0 ? 0x0 : 0xffffffff);
     for (auto& item : binding_descs_) {
         hash_combine(hash_, item.binding);
         hash_combine(hash_, item.input_rate);

@@ -9,9 +9,11 @@ layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniform
     ViewParams view_params;
 };
 
+#ifndef NO_MTL
 layout(set = PBR_MATERIAL_PARAMS_SET, binding = PBR_CONSTANT_INDEX) uniform MaterialUniformBufferObject {
     PbrMaterialParams material;
 };
+#endif
 
 #include "ibl.glsl.h"
 
@@ -33,12 +35,14 @@ layout(location = 0) in VsPsData {
 #endif
 } in_data;
 
+#ifndef NO_MTL
 layout(set = PBR_MATERIAL_PARAMS_SET, binding = BASE_COLOR_TEX_INDEX) uniform sampler2D basic_tex;
 layout(set = PBR_MATERIAL_PARAMS_SET, binding = NORMAL_TEX_INDEX) uniform sampler2D normal_tex;
 layout(set = PBR_MATERIAL_PARAMS_SET, binding = METAL_ROUGHNESS_TEX_INDEX) uniform sampler2D metallic_roughness_tex;
 layout(set = PBR_MATERIAL_PARAMS_SET, binding = EMISSIVE_TEX_INDEX) uniform sampler2D emissive_tex;
 layout(set = PBR_MATERIAL_PARAMS_SET, binding = OCCLUSION_TEX_INDEX) uniform sampler2D occlusion_tex;
 layout(set = PBR_MATERIAL_PARAMS_SET, binding = THIN_FILM_LUT_INDEX) uniform sampler2D thin_film_lut;
+#endif
 
 layout(location = 0) out vec4 outColor;
 
@@ -101,6 +105,7 @@ vec4 getVertexColor()
 
 vec2 getBaseColorUV()
 {
+#ifndef NO_MTL
     uint base_color_uv_set = material.uv_set_flags.x & 0x0f;
     vec3 uv = vec3(base_color_uv_set < 1 ? in_data.vertex_tex_coord.xy : in_data.vertex_tex_coord.zw, 1.0);
 
@@ -109,10 +114,14 @@ vec2 getBaseColorUV()
     #endif
 
     return uv.xy;
+#else
+    return vec2(0);
+#endif
 }
 
 vec2 getNormalUV()
 {
+#ifndef NO_MTL
     uint normal_uv_set = (material.uv_set_flags.x >> 4) & 0x0f;
     vec3 uv = vec3(normal_uv_set < 1 ? in_data.vertex_tex_coord.xy : in_data.vertex_tex_coord.zw, 1.0);
 
@@ -121,10 +130,14 @@ vec2 getNormalUV()
     #endif
 
     return uv.xy;
+#else
+    return vec2(0);
+#endif
 }
 
 vec2 getMetallicRoughnessUV()
 {
+#ifndef NO_MTL
     uint metallic_roughness_uv_set = (material.uv_set_flags.x >> 8) & 0x0f;
     vec3 uv = vec3(metallic_roughness_uv_set < 1 ? in_data.vertex_tex_coord.xy : in_data.vertex_tex_coord.zw, 1.0);
 
@@ -133,10 +146,14 @@ vec2 getMetallicRoughnessUV()
     #endif
 
     return uv.xy;
+#else
+    return vec2(0);
+#endif
 }
 
 vec2 getEmissiveUV()
 {
+#ifndef NO_MTL
     uint emissive_uv_set = (material.uv_set_flags.x >> 12) & 0x0f;
     vec3 uv = vec3(emissive_uv_set < 1 ? in_data.vertex_tex_coord.xy : in_data.vertex_tex_coord.zw, 1.0);
 
@@ -145,10 +162,14 @@ vec2 getEmissiveUV()
     #endif
 
     return uv.xy;
+#else
+    return vec2(0);
+#endif
 }
 
 vec2 getOcclusionUV()
 {
+#ifndef NO_MTL
     uint occlusion_uv_set = (material.uv_set_flags.x >> 16) & 0x0f;
     vec3 uv = vec3(occlusion_uv_set < 1 ? in_data.vertex_tex_coord.xy : in_data.vertex_tex_coord.zw, 1.0);
 
@@ -157,11 +178,15 @@ vec2 getOcclusionUV()
     #endif
 
     return uv.xy;
+#else
+    return vec2(0);
+#endif
 }
 
 // Get normal, tangent and bitangent vectors.
 NormalInfo getNormalInfo(vec3 v)
 {
+#ifndef NO_MTL
     vec2 uv = getNormalUV();
     vec3 uv_dx = dFdx(vec3(uv, 0.0));
     vec3 uv_dy = dFdy(vec3(uv, 0.0));
@@ -229,12 +254,20 @@ NormalInfo getNormalInfo(vec3 v)
     info.b = b;
     info.n = n;
     return info;
+#else
+    NormalInfo info;
+    info.ng = vec3(0);
+    info.t = vec3(0);
+    info.b = vec3(0);
+    info.n = vec3(0);
+    return info;
+#endif
 }
 
 vec4 getBaseColor()
 {
     vec4 baseColor = vec4(1, 1, 1, 1);
-
+#ifndef NO_MTL
     bool enable_metallic_roughness = (material.material_features & FEATURE_MATERIAL_METALLICROUGHNESS) != 0;
     bool has_base_color_map = (material.material_features & FEATURE_HAS_BASE_COLOR_MAP) != 0;
     if (enable_metallic_roughness) {
@@ -243,12 +276,13 @@ vec4 getBaseColor()
             baseColor *= sRGBToLinear(texture(basic_tex, getBaseColorUV()));
         }
     }
-
+#endif
     return baseColor * getVertexColor();
 }
 
 MaterialInfo getSpecularGlossinessInfo(MaterialInfo info)
 {
+#ifndef NO_MTL
     info.f0 = material.specular_factor;
     info.perceptualRoughness = material.glossiness_factor;
 
@@ -260,6 +294,7 @@ MaterialInfo getSpecularGlossinessInfo(MaterialInfo info)
 
     info.perceptualRoughness = 1.0 - info.perceptualRoughness; // 1 - glossiness
     info.albedoColor = info.baseColor.rgb * (1.0 - max(max(info.f0.r, info.f0.g), info.f0.b));
+#endif
 
     return info;
 }
@@ -267,6 +302,7 @@ MaterialInfo getSpecularGlossinessInfo(MaterialInfo info)
 // KHR_extension_specular alters f0 on metallic materials based on the specular factor specified in the extention
 float getMetallicRoughnessSpecularFactor()
 {
+#ifndef NO_MTL
     //F0 = 0.08 * specularFactor * specularTexture
     float metallic_roughness_specular_factor = 0.08 * material.metallic_roughness_specular_factor;
 #ifdef HAS_METALLICROUGHNESS_SPECULAROVERRIDE_MAP
@@ -274,10 +310,14 @@ float getMetallicRoughnessSpecularFactor()
     metallic_roughness_specular_factor *= specSampler.a;
 #endif
     return metallic_roughness_specular_factor;
+#else
+    return 0;
+#endif
 }
 
 MaterialInfo getMetallicRoughnessInfo(MaterialInfo info, float f0_ior)
 {
+#ifndef NO_MTL
     info.metallic = material.metallic_factor;
     info.perceptualRoughness = material.roughness_factor;
 
@@ -300,12 +340,14 @@ MaterialInfo getMetallicRoughnessInfo(MaterialInfo info, float f0_ior)
 
     info.albedoColor = mix(info.baseColor.rgb * (vec3(1.0) - f0),  vec3(0), info.metallic);
     info.f0 = mix(f0, info.baseColor.rgb, info.metallic);
+#endif
 
     return info;
 }
 
 MaterialInfo getSheenInfo(MaterialInfo info)
 {
+#ifndef NO_MTL
     info.sheenColor = material.sheen_color_factor;
     info.sheenIntensity = material.sheen_intensity_factor;
     info.sheenRoughness = material.sheen_roughness;
@@ -315,12 +357,14 @@ MaterialInfo getSheenInfo(MaterialInfo info)
         info.sheenColor *= sheenSample.xyz;
         info.sheenIntensity *= sheenSample.w;
     #endif
+#endif
 
     return info;
 }
 
 MaterialInfo getSubsurfaceInfo(MaterialInfo info)
 {
+#ifndef NO_MTL
     info.subsurfaceScale = material.subsurface_scale;
     info.subsurfaceDistortion = material.subsurface_distortion;
     info.subsurfacePower = material.subsurface_power;
@@ -334,12 +378,14 @@ MaterialInfo getSubsurfaceInfo(MaterialInfo info)
     #ifdef HAS_SUBSURFACE_THICKNESS_MAP
         info.subsurfaceThickness *= texture(u_SubsurfaceThicknessSampler, getSubsurfaceThicknessUV()).r;
     #endif
+#endif
 
     return info;
 }
 
 MaterialInfo getThinFilmInfo(MaterialInfo info)
 {
+#ifndef NO_MTL
     info.thinFilmFactor = material.thin_film_factor;
     info.thinFilmThickness = material.thin_film_thickness_maximum / 1200.0;
 
@@ -352,12 +398,14 @@ MaterialInfo getThinFilmInfo(MaterialInfo info)
         float thickness = mix(u_ThinFilmThicknessMinimum / 1200.0, u_ThinFilmThicknessMaximum / 1200.0, thicknessSampled);
         info.thinFilmThickness = thickness;
     #endif
+#endif
 
     return info;
 }
 
 MaterialInfo getClearCoatInfo(MaterialInfo info, NormalInfo normal_info)
 {
+#ifndef NO_MTL
     info.clearcoatFactor = material.clearcoat_factor;
     info.clearcoatRoughness = material.clearcoat_roughness_factor;
     info.clearcoatF0 = vec3(0.04);
@@ -381,22 +429,27 @@ MaterialInfo getClearCoatInfo(MaterialInfo info, NormalInfo normal_info)
     #endif
 
     info.clearcoatRoughness = clamp(info.clearcoatRoughness, 0.0, 1.0);
+#endif
 
     return info;
 }
 
 MaterialInfo getTransmissionInfo(MaterialInfo info)
 {
+#ifndef NO_MTL
     info.transmission = material.transmission;
+#endif
     return info;
 }
 
 MaterialInfo getAnisotropyInfo(MaterialInfo info)
 {
+#ifndef NO_MTL
     info.anisotropy = material.anisotropy;
 
 #ifdef HAS_ANISOTROPY_MAP
     info.anisotropy *= texture(u_AnisotropySampler, getAnisotropyUV()).r * 2.0 - 1.0;
+#endif
 #endif
 
     return info;
@@ -406,6 +459,7 @@ MaterialInfo getThicknessInfo(MaterialInfo info)
 {
     info.thickness = 1.0;
 
+#ifndef NO_MTL
     if ((material.material_features & FEATURE_MATERIAL_THICKNESS) != 0) {
         info.thickness = material.thickness;
 
@@ -413,6 +467,7 @@ MaterialInfo getThicknessInfo(MaterialInfo info)
         info.thickness *= texture(u_ThicknessSampler, getThicknessUV()).r;
         #endif
     }
+#endif
 
     return info;
 }
@@ -421,14 +476,18 @@ MaterialInfo getAbsorptionInfo(MaterialInfo info)
 {
     info.absorption = vec3(0.0);
 
+#ifndef NO_MTL
     if ((material.material_features & FEATURE_MATERIAL_ABSORPTION) != 0) {
         info.absorption = material.absorption_color;
     }
+#endif
+
     return info;
 }
 
 vec3 getThinFilmF0(vec3 f0, vec3 f90, float NdotV, float thin_film_factor, float thin_film_thickness)
 {
+#ifndef NO_MTL
     if (thin_film_factor == 0.0)
     {
         // No thin film applied.
@@ -438,6 +497,9 @@ vec3 getThinFilmF0(vec3 f0, vec3 f90, float NdotV, float thin_film_factor, float
     vec3 lut_sample = texture(thin_film_lut, vec2(thin_film_thickness, NdotV)).rgb - 0.5;
     vec3 intensity = thin_film_factor * 4.0 * f0 * (1.0 - f0);
     return clamp(intensity * lut_sample, 0.0, 1.0);
+#else
+    return vec3(0);
+#endif
 }
 
 // Uncharted 2 tone map
@@ -483,6 +545,7 @@ vec3 toneMapACES(vec3 color)
 
 vec3 toneMap(vec3 color)
 {
+#ifndef NO_MTL
     color *= material.exposure;
 
     if (material.tonemap_type == TONEMAP_UNCHARTED) {
@@ -496,6 +559,7 @@ vec3 toneMap(vec3 color)
     if (material.tonemap_type == TONEMAP_ACES) {
         return toneMapACES(color);
     }
+#endif
 
     return linearTosRGB(color);
 }
@@ -503,6 +567,7 @@ vec3 toneMap(vec3 color)
 void main() {
     vec4 baseColor = getBaseColor();
 
+#ifndef NO_MTL
 #ifdef ALPHAMODE_OPAQUE
     baseColor.a = 1.0;
 #endif
@@ -757,4 +822,7 @@ void main() {
 
     // regular shading
     outColor = vec4(toneMap(color), baseColor.a);
+#else
+    outColor = baseColor;
+#endif
 }
