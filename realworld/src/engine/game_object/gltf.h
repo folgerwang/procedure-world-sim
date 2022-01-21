@@ -53,8 +53,26 @@ public:
     size_t getHash() const { return hash_; }
 };
 
+struct AnimSampleInfo {
+    uint32_t                buffer_view_idx;
+    uint64_t                offset;
+    renderer::Format        format;
+};
+
+struct AnimRotationInfo {
+    uint32_t                buffer_view_idx;
+    uint64_t                offset;
+    renderer::Format        format;
+};
+
+struct AnimationInfo {
+    std::vector<AnimSampleInfo>     samples;
+    std::vector<AnimRotationInfo>   rotation;
+};
+
 struct MeshInfo {
     std::vector<PrimitiveInfo>  primitives_;
+    std::vector<AnimationInfo>  animations_;
     glm::vec3                   bbox_min_ = glm::vec3(std::numeric_limits<float>::max());
     glm::vec3                   bbox_max_ = glm::vec3(std::numeric_limits<float>::min());
 };

@@ -362,7 +362,36 @@ static void setupMesh(
             dst_binding++;
         }
 
-        const tinygltf::Accessor& indexAccessor = model.accessors[primitive.indices];
+        // setup animation
+        for (const auto& src_anim : model.animations) {
+            ego::AnimationInfo anim;
+
+            for (const auto& src_sample : src_anim.samplers) {
+                const auto& input_accessor = model.accessors[src_sample.input];
+                const auto& output_accessor = model.accessors[src_sample.output];
+
+                assert(input_accessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT);
+                assert(input_accessor.type == TINYGLTF_TYPE_SCALAR);
+                assert(output_accessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT);
+                assert(output_accessor.type == TINYGLTF_TYPE_VEC4);
+
+                ego::AnimSampleInfo sample;
+                sample.buffer_view_idx = input_accessor.bufferView;
+                sample.offset = input_accessor.byteOffset;
+                sample.format = engine::renderer::Format::R32_SFLOAT;
+                anim.samples.push_back(sample);
+
+                ego::AnimRotationInfo rotation;
+                rotation.buffer_view_idx = output_accessor.bufferView;
+                rotation.offset = output_accessor.byteOffset;
+                rotation.format = engine::renderer::Format::R32G32B32A32_SFLOAT;
+                anim.rotation.push_back(rotation);
+            }
+
+            mesh_info.animations_.push_back(anim);
+        }
+
+        const auto& indexAccessor = model.accessors[primitive.indices];
         primitive_info.index_desc_.binding = indexAccessor.bufferView;
         primitive_info.index_desc_.offset = indexAccessor.byteOffset;
         primitive_info.index_desc_.index_type = 
