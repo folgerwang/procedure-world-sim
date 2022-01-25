@@ -364,9 +364,17 @@ static void setupMesh(
 
         // setup animation
         for (const auto& src_anim : model.animations) {
-            ego::AnimationInfo anim;
+            for (const auto& src_channel : src_anim.channels) {
+                if (src_channel.target_path == "rotation") {
+                    int hit = 1;
+                }
+                else {
+                    assert(0);
+                }
 
-            for (const auto& src_sample : src_anim.samplers) {
+                ego::AnimationInfo anim;
+
+                const auto& src_sample = src_anim.samplers[src_channel.sampler];
                 const auto& input_accessor = model.accessors[src_sample.input];
                 const auto& output_accessor = model.accessors[src_sample.output];
 
@@ -381,14 +389,30 @@ static void setupMesh(
                 sample.format = engine::renderer::Format::R32_SFLOAT;
                 anim.samples.push_back(sample);
 
+                const auto& sampler_buffer = model.buffers[model.bufferViews[input_accessor.bufferView].buffer];
+                std::vector<float> frames(input_accessor.count);
+                std::memcpy(
+                    frames.data(),
+                    sampler_buffer.data.data() + input_accessor.byteOffset,
+                    sizeof(float)* input_accessor.count);
+                const float* frame_time = (const float*)frames.data();
+
                 ego::AnimRotationInfo rotation;
                 rotation.buffer_view_idx = output_accessor.bufferView;
                 rotation.offset = output_accessor.byteOffset;
                 rotation.format = engine::renderer::Format::R32G32B32A32_SFLOAT;
                 anim.rotation.push_back(rotation);
-            }
 
-            mesh_info.animations_.push_back(anim);
+                const auto& rotation_buffer = model.buffers[model.bufferViews[output_accessor.bufferView].buffer];
+                std::vector<glm::vec4> rotations(output_accessor.count);
+                std::memcpy(
+                    rotations.data(),
+                    rotation_buffer.data.data() + output_accessor.byteOffset,
+                    sizeof(glm::vec4)* output_accessor.count);
+                const glm::vec4* frame_rotation = (const glm::vec4*)rotations.data();
+
+                mesh_info.animations_.push_back(anim);
+            }
         }
 
         const auto& indexAccessor = model.accessors[primitive.indices];
