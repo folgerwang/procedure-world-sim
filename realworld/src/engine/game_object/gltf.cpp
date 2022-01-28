@@ -63,22 +63,21 @@ static void calculateBbox(
     if (node_idx >= 0) {
         const auto& node = gltf_object->nodes_[node_idx];
         auto cur_matrix = parent_matrix;
-        if (node.matrix) {
-            cur_matrix *= *node.matrix;
-        }
-        if (node.mesh_idx >= 0) {
+        cur_matrix *= node.matrix_;
+
+        if (node.mesh_idx_ >= 0) {
             glm::vec3 bbox_min, bbox_max;
             transformBbox(
                 cur_matrix,
-                gltf_object->meshes_[node.mesh_idx].bbox_min_,
-                gltf_object->meshes_[node.mesh_idx].bbox_max_,
+                gltf_object->meshes_[node.mesh_idx_].bbox_min_,
+                gltf_object->meshes_[node.mesh_idx_].bbox_max_,
                 bbox_min,
                 bbox_max);
             output_bbox_min = min(output_bbox_min, bbox_min);
             output_bbox_max = max(output_bbox_max, bbox_max);
         }
 
-        for (auto& child_idx : node.child_idx) {
+        for (auto& child_idx : node.child_idx_) {
             calculateBbox(gltf_object, child_idx, cur_matrix, output_bbox_min, output_bbox_max);
         }
     }
@@ -221,11 +220,11 @@ static void setupMeshState(
 
 static void setupMesh(
     const tinygltf::Model& model,
-    const tinygltf::Mesh& mesh,
+    const tinygltf::Mesh& src_mesh,
     ego::MeshInfo& mesh_info) {
 
-    for (size_t i = 0; i < mesh.primitives.size(); i++) {
-        const tinygltf::Primitive& primitive = mesh.primitives[i];
+    for (size_t i = 0; i < src_mesh.primitives.size(); i++) {
+        const tinygltf::Primitive& primitive = src_mesh.primitives[i];
 
         ego::PrimitiveInfo primitive_info;
         primitive_info.tag_.restart_enable = false;
@@ -362,59 +361,6 @@ static void setupMesh(
             dst_binding++;
         }
 
-        // setup animation
-        for (const auto& src_anim : model.animations) {
-            for (const auto& src_channel : src_anim.channels) {
-                if (src_channel.target_path == "rotation") {
-                    int hit = 1;
-                }
-                else {
-                    assert(0);
-                }
-
-                ego::AnimationInfo anim;
-
-                const auto& src_sample = src_anim.samplers[src_channel.sampler];
-                const auto& input_accessor = model.accessors[src_sample.input];
-                const auto& output_accessor = model.accessors[src_sample.output];
-
-                assert(input_accessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT);
-                assert(input_accessor.type == TINYGLTF_TYPE_SCALAR);
-                assert(output_accessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT);
-                assert(output_accessor.type == TINYGLTF_TYPE_VEC4);
-
-                ego::AnimSampleInfo sample;
-                sample.buffer_view_idx = input_accessor.bufferView;
-                sample.offset = input_accessor.byteOffset;
-                sample.format = engine::renderer::Format::R32_SFLOAT;
-                anim.samples.push_back(sample);
-
-                const auto& sampler_buffer = model.buffers[model.bufferViews[input_accessor.bufferView].buffer];
-                std::vector<float> frames(input_accessor.count);
-                std::memcpy(
-                    frames.data(),
-                    sampler_buffer.data.data() + input_accessor.byteOffset,
-                    sizeof(float)* input_accessor.count);
-                const float* frame_time = (const float*)frames.data();
-
-                ego::AnimRotationInfo rotation;
-                rotation.buffer_view_idx = output_accessor.bufferView;
-                rotation.offset = output_accessor.byteOffset;
-                rotation.format = engine::renderer::Format::R32G32B32A32_SFLOAT;
-                anim.rotation.push_back(rotation);
-
-                const auto& rotation_buffer = model.buffers[model.bufferViews[output_accessor.bufferView].buffer];
-                std::vector<glm::vec4> rotations(output_accessor.count);
-                std::memcpy(
-                    rotations.data(),
-                    rotation_buffer.data.data() + output_accessor.byteOffset,
-                    sizeof(glm::vec4)* output_accessor.count);
-                const glm::vec4* frame_rotation = (const glm::vec4*)rotations.data();
-
-                mesh_info.animations_.push_back(anim);
-            }
-        }
-
         const auto& indexAccessor = model.accessors[primitive.indices];
         primitive_info.index_desc_.binding = indexAccessor.bufferView;
         primitive_info.index_desc_.offset = indexAccessor.byteOffset;
@@ -438,52 +384,191 @@ static void setupMeshes(
     }
 }
 
+static void setupAnimation(
+    const tinygltf::Model& model,
+    const tinygltf::Animation& src_anim,
+    ego::AnimationInfo& anim_info) {
+
+    // setup animation
+    for (const auto& src_channel : src_anim.channels) {
+        auto channel_info = std::make_shared<ego::AnimChannelInfo>();
+        channel_info->node_idx_ = src_channel.target_node;
+
+        const auto& src_sample = src_anim.samplers[src_channel.sampler];
+        const auto& input_accessor = model.accessors[src_sample.input];
+        const auto& output_accessor = model.accessors[src_sample.output];
+
+        assert(output_accessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT);
+        if (src_channel.target_path == "rotation") {
+            channel_info->type_ = ego::AnimChannelInfo::kRotation;
+            channel_info->data_buffer_.format = engine::renderer::Format::R32G32B32A32_SFLOAT;
+            assert(output_accessor.type == TINYGLTF_TYPE_VEC4);
+        }
+        else if (src_channel.target_path == "translation") {
+            channel_info->type_ = ego::AnimChannelInfo::kTranslation;
+            channel_info->data_buffer_.format = engine::renderer::Format::R32G32B32_SFLOAT;
+            assert(output_accessor.type == TINYGLTF_TYPE_VEC3);
+        }
+        else if (src_channel.target_path == "scale") {
+            channel_info->type_ = ego::AnimChannelInfo::kScale;
+            channel_info->data_buffer_.format = engine::renderer::Format::R32G32B32_SFLOAT;
+            assert(output_accessor.type == TINYGLTF_TYPE_VEC3);
+        }
+        else {
+            assert(0);
+        }
+
+        assert(input_accessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT);
+        assert(input_accessor.type == TINYGLTF_TYPE_SCALAR);
+
+        channel_info->sample_buffer_.buffer_view_idx = input_accessor.bufferView;
+        channel_info->sample_buffer_.offset = input_accessor.byteOffset;
+        channel_info->sample_buffer_.format = engine::renderer::Format::R32_SFLOAT;
+
+        channel_info->data_buffer_.buffer_view_idx = output_accessor.bufferView;
+        channel_info->data_buffer_.offset = output_accessor.byteOffset;
+
+        const auto& sampler_buffer_view = model.bufferViews[input_accessor.bufferView];
+        const auto& data_buffer_view = model.bufferViews[output_accessor.bufferView];
+        const auto& sampler_buffer = model.buffers[sampler_buffer_view.buffer];
+        const auto& data_buffer = model.buffers[data_buffer_view.buffer];
+        assert(sampler_buffer_view.byteStride == 0);
+        assert(data_buffer_view.byteStride == 0);
+        const auto sampler_start = sampler_buffer.data.data() + input_accessor.byteOffset + sampler_buffer_view.byteOffset;
+        const auto data_start = data_buffer.data.data() + output_accessor.byteOffset + data_buffer_view.byteOffset;
+        std::vector<float> frames(input_accessor.count);
+        std::memcpy(
+            frames.data(),
+            sampler_start,
+            sizeof(float) * input_accessor.count);
+        const float* frame_time = (const float*)frames.data();
+
+        assert(input_accessor.count == output_accessor.count);
+        auto sample_count = input_accessor.count;
+        if (output_accessor.type == TINYGLTF_TYPE_VEC4) {
+            std::vector<glm::vec4> channel_data(sample_count);
+            std::memcpy(
+                channel_data.data(),
+                data_start,
+                sizeof(glm::vec4) * sample_count);
+
+            for (auto i = 0; i < sample_count; i++) {
+                channel_info->samples_.push_back(std::make_pair(frames[i], channel_data[i]));
+            }
+        }
+        else {
+            std::vector<glm::vec3> channel_data(sample_count);
+            std::memcpy(
+                channel_data.data(),
+                data_buffer.data.data() + output_accessor.byteOffset + data_buffer_view.byteOffset,
+                sizeof(glm::vec3) * sample_count);
+
+            for (auto i = 0; i < sample_count; i++) {
+                channel_info->samples_.push_back(std::make_pair(frames[i], glm::vec4(channel_data[i], 0.0f)));
+            }
+        }
+
+        anim_info.channels_.push_back(channel_info);
+    }
+}
+
+static void setupAnimations(
+    const tinygltf::Model& model,
+    std::shared_ptr<ego::ObjectData>& gltf_object) {
+    gltf_object->animations_.resize(model.animations.size());
+    for (int i_anim = 0; i_anim < model.animations.size(); i_anim++) {
+        setupAnimation(model, model.animations[i_anim], gltf_object->animations_[i_anim]);
+    }
+}
+
+static void setupSkin(
+    const renderer::DeviceInfo& device_info,
+    const tinygltf::Model& model,
+    const tinygltf::Skin& src_skin,
+    ego::SkinInfo& skin_info) {
+
+    skin_info.name_ = src_skin.name;
+    // Find the root node of the skeleton
+    skin_info.skeleton_root_ = src_skin.skeleton;
+
+    // Find joint nodes
+    for (auto joint_index : src_skin.joints) {
+        skin_info.joints_.push_back(joint_index);
+    }
+
+    // Get the inverse bind matrices from the buffer associated to this skin
+    if (src_skin.inverseBindMatrices > -1)
+    {
+        const tinygltf::Accessor& accessor = model.accessors[src_skin.inverseBindMatrices];
+        const tinygltf::BufferView& bufferView = model.bufferViews[accessor.bufferView];
+        const tinygltf::Buffer& buffer = model.buffers[bufferView.buffer];
+        const auto src_buffer_data = &buffer.data[accessor.byteOffset + bufferView.byteOffset];
+        const auto src_data_size = accessor.count * sizeof(glm::mat4);
+        skin_info.inverse_bind_matrices_.resize(accessor.count);
+        memcpy(skin_info.inverse_bind_matrices_.data(), src_buffer_data, src_data_size);
+
+        renderer::Helper::createBufferWithSrcData(
+            device_info,
+            SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
+            src_data_size,
+            src_buffer_data,
+            skin_info.joints_buffer_.buffer,
+            skin_info.joints_buffer_.memory);
+    }
+}
+
+static void setupSkins(
+    const renderer::DeviceInfo& device_info,
+    const tinygltf::Model& model,
+    std::shared_ptr<ego::ObjectData>& gltf_object) {
+    gltf_object->skins_.resize(model.skins.size());
+    for (int i_skin = 0; i_skin < model.skins.size(); i_skin++) {
+        setupSkin(device_info, model, model.skins[i_skin], gltf_object->skins_[i_skin]);
+    }
+}
+
 static void setupNode(
     const tinygltf::Model& model,
-    const tinygltf::Node& node,
-    ego::NodeInfo& node_info) {
+    const uint32_t node_idx,
+    std::shared_ptr<ego::ObjectData>& gltf_object) {
 
-    bool has_matrix = false;
-    glm::mat4 mesh_matrix(1);
+    const auto& node = model.nodes[node_idx];
+    auto& node_info = gltf_object->nodes_[node_idx];
     if (node.matrix.size() == 16) {
         // Use 'matrix' attribute
         const auto& m = node.matrix.data();
-        mesh_matrix =
+        node_info.matrix_ =
             glm::mat4(m[0], m[1], m[2], m[3],
                 m[4], m[5], m[6], m[7],
                 m[8], m[9], m[10], m[11],
                 m[12], m[13], m[14], m[15]);
-        has_matrix = true;
-    }
-    else {
-        // Assume Trans x Rotate x Scale order
-        if (node.scale.size() == 3) {
-            mesh_matrix = glm::scale(mesh_matrix, glm::vec3(node.scale[0], node.scale[1], node.scale[2]));
-            has_matrix = true;
-        }
-
-        if (node.rotation.size() == 4) {
-            mesh_matrix = glm::rotate(mesh_matrix, glm::radians(static_cast<float>(node.rotation[0])), glm::vec3(node.rotation[1], node.rotation[2], node.rotation[3]));
-            has_matrix = true;
-        }
-
-        if (node.translation.size() == 3) {
-            mesh_matrix = glm::translate(mesh_matrix, glm::vec3(node.translation[0], node.translation[1], node.translation[2]));
-            has_matrix = true;
-        }
     }
 
-    if (has_matrix) {
-        node_info.matrix = std::make_shared<glm::mat4>(mesh_matrix);
+    if (node.scale.size() == 3) {
+        node_info.scale_ = glm::vec3(node.scale[0], node.scale[1], node.scale[2]);
     }
 
-    node_info.mesh_idx = node.mesh;
+    if (node.rotation.size() == 4) {
+        node_info.rotation_ =
+            glm::quat(static_cast<float>(node.rotation[0]),
+                static_cast<float>(node.rotation[0]),
+                static_cast<float>(node.rotation[0]),
+                static_cast<float>(node.rotation[0]));
+    }
+
+    if (node.translation.size() == 3) {
+        node_info.translation_ = glm::vec3(node.translation[0], node.translation[1], node.translation[2]);
+    }
+
+    node_info.mesh_idx_ = node.mesh;
+    node_info.skin_idx_ = node.skin;
 
     // Draw child nodes.
-    node_info.child_idx.resize(node.children.size());
+    node_info.child_idx_.resize(node.children.size());
     for (size_t i = 0; i < node.children.size(); i++) {
         assert(node.children[i] < model.nodes.size());
-        node_info.child_idx[i] = node.children[i];
+        node_info.child_idx_[i] = node.children[i];
+        gltf_object->nodes_[node_info.child_idx_[i]].parent_idx_ = node_idx;
     }
 }
 
@@ -492,7 +577,7 @@ static void setupNodes(
     std::shared_ptr<ego::ObjectData>& gltf_object) {
     gltf_object->nodes_.resize(model.nodes.size());
     for (int i_node = 0; i_node < model.nodes.size(); i_node++) {
-        setupNode(model, model.nodes[i_node], gltf_object->nodes_[i_node]);
+        setupNode(model, i_node, gltf_object);
     }
 }
 
@@ -552,11 +637,13 @@ static std::shared_ptr<ego::ObjectData> loadGltfModel(
 
     setupMeshState(device_info, model, gltf_object);
     setupMeshes(model, gltf_object);
+    setupAnimations(model, gltf_object);
+    setupSkins(device_info, model, gltf_object);
     setupNodes(model, gltf_object);
     setupModel(model, gltf_object);
-    for (auto& root : gltf_object->scenes_) {
-        for (auto& node : root.nodes_) {
-            calculateBbox(gltf_object, root.nodes_[0], glm::mat4(1.0f), root.bbox_min_, root.bbox_max_);
+    for (auto& scene : gltf_object->scenes_) {
+        for (auto& node : scene.nodes_) {
+            calculateBbox(gltf_object, scene.nodes_[0], glm::mat4(1.0f), scene.bbox_min_, scene.bbox_max_);
         }
     }
 
@@ -689,15 +776,15 @@ static std::vector<renderer::TextureDescriptor> addGltfTextures(
 static void updateDescriptorSets(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
-    const std::shared_ptr<renderer::DescriptorSetLayout>& desc_set_layout,
+    const std::shared_ptr<renderer::DescriptorSetLayout>& material_desc_set_layout,
+    const std::shared_ptr<renderer::DescriptorSetLayout>& skin_desc_set_layout,
     const std::shared_ptr<ego::ObjectData>& gltf_object,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const renderer::TextureInfo& thin_film_lut_tex)
 {
-    for (uint32_t i_mat = 0; i_mat < gltf_object->materials_.size(); i_mat++) {
-        auto& material = gltf_object->materials_[i_mat];
+    for (auto& material : gltf_object->materials_) {
         material.desc_set_ = device->createDescriptorSets(
-            descriptor_pool, desc_set_layout, 1)[0];
+            descriptor_pool, material_desc_set_layout, 1)[0];
 
         std::vector<renderer::BufferDescriptor> material_buffer_descs;
         renderer::Helper::addOneBuffer(
@@ -713,6 +800,22 @@ static void updateDescriptorSets(
 
         device->updateDescriptorSets(material_tex_descs, material_buffer_descs);
     }
+
+    for (auto& skin : gltf_object->skins_) {
+        skin.desc_set_ = device->createDescriptorSets(
+            descriptor_pool, skin_desc_set_layout, 1)[0];
+
+        std::vector<renderer::BufferDescriptor> skin_buffer_descs;
+        renderer::Helper::addOneBuffer(
+            skin_buffer_descs,
+            JOINT_CONSTANT_INDEX,
+            skin.joints_buffer_.buffer,
+            skin.desc_set_,
+            renderer::DescriptorType::STORAGE_BUFFER,
+            sizeof(skin.joints_.size() * sizeof(glm::mat4)));
+
+        device->updateDescriptorSets({}, skin_buffer_descs);
+    }
 }
 
 static void drawMesh(
@@ -721,6 +824,7 @@ static void drawMesh(
     const std::shared_ptr<renderer::PipelineLayout>& gltf_pipeline_layout,
     const renderer::DescriptorSetList& desc_set_list,
     const ego::MeshInfo& mesh_info,
+    const ego::SkinInfo* skin_info,
     const glsl::ModelParams& model_params) {
     for (const auto& prim : mesh_info.primitives_) {
         const auto& attrib_list = prim.attribute_descs_;
@@ -743,7 +847,19 @@ static void drawMesh(
             const auto& material = gltf_object->materials_[prim.material_idx_];
             desc_sets.push_back(material.desc_set_);
         }
-        cmd_buf->bindDescriptorSets(renderer::PipelineBindPoint::GRAPHICS, gltf_pipeline_layout, desc_sets);
+
+        cmd_buf->bindDescriptorSets(
+            renderer::PipelineBindPoint::GRAPHICS,
+            gltf_pipeline_layout,
+            desc_sets);
+
+        if (skin_info) {
+            cmd_buf->bindDescriptorSets(
+                renderer::PipelineBindPoint::GRAPHICS,
+                gltf_pipeline_layout,
+                {skin_info->desc_set_},
+                MODEL_PARAMS_SET);
+        }
 
         cmd_buf->pushConstants(SET_FLAG_BIT(ShaderStage, VERTEX_BIT), gltf_pipeline_layout, &model_params, sizeof(model_params));
 
@@ -759,40 +875,35 @@ static void drawNodes(
     const std::shared_ptr<ego::ObjectData>& gltf_object,
     const std::shared_ptr<renderer::PipelineLayout>& gltf_pipeline_layout,
     const renderer::DescriptorSetList& desc_set_list,
-    int32_t node_idx,
-    const glm::mat4& parent_matrix) {
+    int32_t node_idx) {
     if (node_idx >= 0) {
         const auto& node = gltf_object->nodes_[node_idx];
-        auto cur_matrix = parent_matrix;
-        if (node.matrix) {
-            cur_matrix *= *node.matrix;
-        }
-        if (node.mesh_idx >= 0) {
+        if (node.mesh_idx_ >= 0) {
             glsl::ModelParams model_params{};
-            model_params.model_mat = cur_matrix;
+            model_params.model_mat = node.cached_matrix_;
             auto invert_mat = inverse(model_params.model_mat);
             model_params.normal_mat = transpose(invert_mat);
             drawMesh(cmd_buf,
                 gltf_object,
                 gltf_pipeline_layout,
                 desc_set_list,
-                gltf_object->meshes_[node.mesh_idx],
+                gltf_object->meshes_[node.mesh_idx_],
+                node.skin_idx_ > -1 ? &gltf_object->skins_[node.skin_idx_] : nullptr,
                 model_params);
         }
 
-        for (auto& child_idx : node.child_idx) {
+        for (auto& child_idx : node.child_idx_) {
             drawNodes(cmd_buf,
                 gltf_object,
                 gltf_pipeline_layout,
                 desc_set_list,
-                child_idx,
-                cur_matrix);
+                child_idx);
         }
     }
 }
 
 // material texture descriptor set layout.
-static std::shared_ptr<renderer::DescriptorSetLayout> createDescriptorSetLayout(
+static std::shared_ptr<renderer::DescriptorSetLayout> createMaterialDescriptorSetLayout(
     const std::shared_ptr<renderer::Device>& device) {
     std::vector<renderer::DescriptorSetLayoutBinding> bindings;
     bindings.reserve(7);
@@ -815,10 +926,25 @@ static std::shared_ptr<renderer::DescriptorSetLayout> createDescriptorSetLayout(
     return device->createDescriptorSetLayout(bindings);
 }
 
+static std::shared_ptr<renderer::DescriptorSetLayout> createSkinDescriptorSetLayout(
+    const std::shared_ptr<renderer::Device>& device) {
+    std::vector<renderer::DescriptorSetLayoutBinding> bindings;
+    bindings.resize(1);
+
+    bindings[0] =
+        renderer::helper::getBufferDescriptionSetLayoutBinding(
+            JOINT_CONSTANT_INDEX,
+            SET_FLAG_BIT(ShaderStage, VERTEX_BIT),
+            renderer::DescriptorType::STORAGE_BUFFER);
+
+    return device->createDescriptorSetLayout(bindings);
+}
+
 static std::shared_ptr<renderer::PipelineLayout> createGltfPipelineLayout(
     const std::shared_ptr<renderer::Device>& device,
     const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
-    const std::shared_ptr<renderer::DescriptorSetLayout>& material_desc_set_layout) {
+    const std::shared_ptr<renderer::DescriptorSetLayout>& material_desc_set_layout,
+    const std::shared_ptr<renderer::DescriptorSetLayout>& skin_desc_set_layout) {
     renderer::PushConstantRange push_const_range{};
     push_const_range.stage_flags = SET_FLAG_BIT(ShaderStage, VERTEX_BIT);
     push_const_range.offset = 0;
@@ -826,6 +952,7 @@ static std::shared_ptr<renderer::PipelineLayout> createGltfPipelineLayout(
 
     renderer::DescriptorSetLayoutList desc_set_layouts = global_desc_set_layouts;
     desc_set_layouts.push_back(material_desc_set_layout);
+    desc_set_layouts.push_back(skin_desc_set_layout);
 
     return device->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
@@ -838,13 +965,17 @@ static renderer::ShaderModuleList getGltfShaderModules(
     bool has_skin_set_0,
     bool has_material) {
     renderer::ShaderModuleList shader_modules(2);
-    std::string feature_str = std::string(has_texcoord_0 ? "_TEX" : "") +
-        (has_tangent ? "_TN" : (has_normals ? "_N" : "")) +
-        (has_skin_set_0 ? "_SKIN" : "");
-    feature_str = has_material ? feature_str : "_NOMTL";
+    auto vert_feature_str = std::string(has_texcoord_0 ? "_TEX" : "") +
+        (has_tangent ? "_TN" : (has_normals ? "_N" : ""));
+    vert_feature_str = has_material ? vert_feature_str : "_NOMTL";
+    auto frag_feature_str = vert_feature_str;
+    if (has_skin_set_0) {
+        vert_feature_str += "_SKIN";
+    }
+    
     uint64_t vert_code_size, frag_code_size;
-    auto vert_shader_code = engine::helper::readFile("lib/shaders/base_vert" + feature_str + ".spv", vert_code_size);
-    auto frag_shader_code = engine::helper::readFile("lib/shaders/base_frag" + feature_str + ".spv", frag_code_size);
+    auto vert_shader_code = engine::helper::readFile("lib/shaders/base_vert" + vert_feature_str + ".spv", vert_code_size);
+    auto frag_shader_code = engine::helper::readFile("lib/shaders/base_frag" + frag_feature_str + ".spv", frag_code_size);
 
     shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
     shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
@@ -960,7 +1091,7 @@ std::vector<renderer::BufferDescriptor> addGltfIndirectDrawBuffers(
         INDIRECT_DRAW_BUFFER_INDEX,
         buffer.buffer,
         description_set,
-        engine::renderer::DescriptorType::STORAGE_BUFFER,
+        renderer::DescriptorType::STORAGE_BUFFER,
         buffer.buffer->getSize());
 
     return descriptor_writes;
@@ -1199,6 +1330,7 @@ namespace game_object {
 uint32_t GltfObject::max_alloc_game_objects_in_buffer = 4096;
 
 std::shared_ptr<renderer::DescriptorSetLayout> GltfObject::material_desc_set_layout_;
+std::shared_ptr<renderer::DescriptorSetLayout> GltfObject::skin_desc_set_layout_;
 std::shared_ptr<renderer::PipelineLayout> GltfObject::gltf_pipeline_layout_;
 std::unordered_map<size_t, std::shared_ptr<renderer::Pipeline>> GltfObject::gltf_pipeline_list_;
 std::unordered_map<std::string, std::shared_ptr<ObjectData>> GltfObject::object_list_;
@@ -1246,6 +1378,132 @@ void ObjectData::destroy() {
     }
 }
 
+struct compare {
+    bool operator()(const std::pair<int, glm::vec4>& value,
+        const int& key)
+    {
+        return (value.first < key);
+    }
+    bool operator()(const int& key,
+        const std::pair<int, glm::vec4> & value)
+    {
+        return (key < value.first);
+    }
+};
+
+void AnimChannelInfo::update(ObjectData* object, float time, float time_scale/* = 1.0f*/, bool repeat/* = true */ ) {
+    float scaled_time = time / time_scale;
+    auto& last_one = samples_.back();
+    
+    float play_time = scaled_time;
+    if (repeat && scaled_time > last_one.first) {
+        play_time = glm::fract(scaled_time / last_one.first)* last_one.first;
+    }
+
+    auto result = std::lower_bound(samples_.begin(), samples_.end(), play_time,
+        [](const std::pair<float, glm::vec4>& info, float value) {
+            return info.first < value; });
+
+    auto lower = result == samples_.begin() ? result : (result - 1);
+    auto upper = result == samples_.end() ? (samples_.end() - 1) : result;
+
+    auto step = upper->first - lower->first;
+
+    float ratio = step == 0.0f ? 0.0f : glm::clamp((play_time - lower->first) / step, 0.0f, 1.0f);
+
+    auto& target_node = object->nodes_[node_idx_];
+    if (type_ == kTranslation)
+    {
+        target_node.translation_ = glm::mix(lower->second, upper->second, ratio);
+    }
+    else if (type_ == kRotation)
+    {
+        auto q1 = glm::quat(lower->second.x, lower->second.y, lower->second.z, lower->second.w);
+        auto q2 = glm::quat(upper->second.x, upper->second.y, upper->second.z, upper->second.w);
+        target_node.rotation_ = glm::normalize(glm::slerp(q1, q2, ratio));
+    }
+    else if (type_ == kScale)
+    {
+        target_node.scale_ = glm::mix(lower->second, upper->second, ratio);
+    }
+}
+
+glm::mat4 NodeInfo::getLocalMatrix() {
+    auto joint_mat =
+        glm::translate(glm::mat4(1.0f), translation_) *
+        glm::mat4(rotation_) *
+        glm::scale(glm::mat4(1.0f), scale_);
+
+    return joint_mat * matrix_;
+}
+
+glm::mat4 ObjectData::getNodeMatrix(const int32_t& node_idx) {
+    if (node_idx < 0)
+        return glm::mat4(1.0f);
+
+    auto& node = nodes_[node_idx];
+    glm::mat4 node_matrix = node.getLocalMatrix();
+    auto parent_idx = node.parent_idx_;
+    while (parent_idx >= 0) {
+        auto& parent_node = nodes_[parent_idx];
+        node_matrix = parent_node.getLocalMatrix() * node_matrix;
+        parent_idx = parent_node.parent_idx_;
+    }
+
+    return node_matrix;
+}
+
+void ObjectData::updateJoints(
+    const renderer::DeviceInfo& device_info,
+    int32_t node_idx) {
+    auto& node = nodes_[node_idx];
+    if (node.skin_idx_ > -1)
+    {
+        // Update the joint matrices
+        auto inverse_transform = glm::inverse(getNodeMatrix(node_idx));
+        auto& skin = skins_[node.skin_idx_];
+        auto num_joints = skin.joints_.size();
+        std::vector<glm::mat4> joint_matrices(num_joints);
+        for (size_t i = 0; i < num_joints; i++) {
+            joint_matrices[i] =
+                getNodeMatrix(skin.joints_[i]) *
+                skin.inverse_bind_matrices_[i];
+            joint_matrices[i] = inverse_transform * joint_matrices[i];
+        }
+
+        renderer::Helper::updateBufferWithSrcData(
+            device_info,
+            joint_matrices.size() * sizeof(glm::mat4),
+            joint_matrices.data(),
+            skin.joints_buffer_.buffer);
+    }
+
+    for (auto& child : node.child_idx_) {
+        updateJoints(device_info, child);
+    }
+}
+
+void ObjectData::update(
+    const renderer::DeviceInfo& device_info,
+    const float& time) {
+    // update all animations
+    for (auto& anim : animations_) {
+        for (auto& channel : anim.channels_) {
+            channel->update(this, time);
+        }
+    }
+
+    // update hierarchy matrix
+    for (auto i = 0; i < nodes_.size(); i++) {
+        nodes_[i].cached_matrix_ = getNodeMatrix(i);
+    }
+
+    // update joints
+    for (auto i = 0; i < nodes_.size(); i++) {
+        updateJoints(device_info, i);
+    }
+}
+
 GltfObject::GltfObject(
     const renderer::DeviceInfo& device_info,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
@@ -1267,6 +1525,7 @@ GltfObject::GltfObject(
             device_info.device,
             descriptor_pool,
             material_desc_set_layout_,
+            skin_desc_set_layout_,
             object_,
             texture_sampler,
             thin_film_lut_tex);
@@ -1393,7 +1652,12 @@ void GltfObject::initStaticMembers(
 
     if (material_desc_set_layout_ == nullptr) {
         material_desc_set_layout_ =
-            createDescriptorSetLayout(device);
+            createMaterialDescriptorSetLayout(device);
+    }
+
+    if (skin_desc_set_layout_ == nullptr) {
+        skin_desc_set_layout_ =
+            createSkinDescriptorSetLayout(device);
     }
 
     if (gltf_indirect_draw_desc_set_layout_ == nullptr) {
@@ -1436,11 +1700,13 @@ void GltfObject::createStaticMembers(
 
         if (gltf_pipeline_layout_ == nullptr) {
             assert(material_desc_set_layout_);
+            assert(skin_desc_set_layout_);
             gltf_pipeline_layout_ =
                 createGltfPipelineLayout(
                     device,
                     global_desc_set_layouts,
-                    material_desc_set_layout_);
+                    material_desc_set_layout_,
+                    skin_desc_set_layout_);
         }
     }
 
@@ -1576,6 +1842,7 @@ void GltfObject::generateDescriptorSet(
             device,
             descriptor_pool,
             material_desc_set_layout_,
+            skin_desc_set_layout_,
             object.second,
             texture_sampler,
             thin_film_lut_tex);
@@ -1602,6 +1869,7 @@ void GltfObject::generateDescriptorSet(
 void GltfObject::destoryStaticMembers(
     const std::shared_ptr<renderer::Device>& device) {
     device->destroyDescriptorSetLayout(material_desc_set_layout_);
+    device->destroyDescriptorSetLayout(skin_desc_set_layout_);
     device->destroyPipelineLayout(gltf_pipeline_layout_);
     gltf_pipeline_list_.clear();
     object_list_.clear();
@@ -1756,8 +2024,15 @@ void GltfObject::draw(
             object_,
             gltf_pipeline_layout_,
             desc_set_list,
-            node_idx,
-            glm::mat4(1));
+            node_idx);
+    }
+}
+
+void GltfObject::update(
+    const renderer::DeviceInfo& device_info,
+    const float& time) {
+    if (object_) {
+        object_->update(device_info, time);
     }
 }
 

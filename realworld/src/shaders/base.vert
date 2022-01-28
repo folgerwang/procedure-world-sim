@@ -10,6 +10,10 @@ layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniform
     ViewParams view_params;
 };
 
+layout(std430, set = MODEL_PARAMS_SET, binding = JOINT_CONSTANT_INDEX) readonly buffer JointMatrices {
+	mat4 joint_matrices[];
+};
+
 layout(location = VINPUT_POSITION) in vec3 in_position;
 
 #ifdef HAS_UV_SET0
@@ -103,7 +107,18 @@ vec3 getTangent()
 #endif
 
 void main() {
+	// Calculate skinned matrix from weights and joint indices of the current vertex
+#ifdef HAS_SKIN_SET_0
+	mat4 skin_matrix = 
+		in_weights_0.x * joint_matrices[int(in_joints_0.x)] +
+		in_weights_0.y * joint_matrices[int(in_joints_0.y)] +
+		in_weights_0.z * joint_matrices[int(in_joints_0.z)] +
+		in_weights_0.w * joint_matrices[int(in_joints_0.w)];
+    vec3 position_ls = (model_params.model_mat * (skin_matrix * vec4(in_position, 1.0))).xyz;
+#else
     vec3 position_ls = (model_params.model_mat * vec4(in_position, 1.0)).xyz;
+#endif
+
     mat3 local_world_rot_mat =
         mat3x3(in_loc_rot_mat_0,
                in_loc_rot_mat_1,

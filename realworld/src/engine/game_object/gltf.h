@@ -53,34 +53,63 @@ public:
     size_t getHash() const { return hash_; }
 };
 
-struct AnimSampleInfo {
+struct BufferViewInfo {
     uint32_t                buffer_view_idx;
     uint64_t                offset;
     renderer::Format        format;
 };
 
-struct AnimRotationInfo {
-    uint32_t                buffer_view_idx;
-    uint64_t                offset;
-    renderer::Format        format;
+struct ObjectData;
+struct AnimChannelInfo {
+    enum AnimChannelType {
+        kTranslation,
+        kRotation,
+        kScale,
+        kMaxNumChannels,
+    };
+
+    AnimChannelType         type_;
+    uint32_t                node_idx_;
+    BufferViewInfo          sample_buffer_;
+    BufferViewInfo          data_buffer_;
+    std::vector<std::pair<float, glm::vec4>>    samples_;
+
+    void update(ObjectData* object, float time, float time_scale = 1.0f, bool repeat = true);
 };
 
 struct AnimationInfo {
-    std::vector<AnimSampleInfo>     samples;
-    std::vector<AnimRotationInfo>   rotation;
+    std::vector<std::shared_ptr<AnimChannelInfo>> channels_;
+};
+
+struct SkinInfo {
+    std::string             name_;
+    int32_t                 skeleton_root_;
+    std::vector<int32_t>    joints_;
+    std::vector<glm::mat4>  inverse_bind_matrices_;
+    renderer::BufferInfo    joints_buffer_;
+    std::shared_ptr<renderer::DescriptorSet>    desc_set_;
 };
 
 struct MeshInfo {
     std::vector<PrimitiveInfo>  primitives_;
-    std::vector<AnimationInfo>  animations_;
     glm::vec3                   bbox_min_ = glm::vec3(std::numeric_limits<float>::max());
     glm::vec3                   bbox_max_ = glm::vec3(std::numeric_limits<float>::min());
 };
 
 struct NodeInfo {
-    std::vector<int32_t>        child_idx;
-    int32_t                     mesh_idx = -1;
-    std::shared_ptr<glm::mat4>  matrix;
+    int32_t                     parent_idx_ = -1;
+    std::vector<int32_t>        child_idx_{-1};
+
+    int32_t                     mesh_idx_ = -1;
+    int32_t                     skin_idx_ = -1;
+
+    glm::vec3                   translation_{};
+    glm::vec3                   scale_{1.0f};
+    glm::quat                   rotation_{};
+    glm::mat4                   matrix_ = glm::mat4(1.0f);
+
+    glm::mat4                   cached_matrix_ = glm::mat4(1.0f);
+    glm::mat4 getLocalMatrix();
 };
 
 struct SceneInfo {
@@ -95,6 +124,8 @@ struct ObjectData {
     std::vector<SceneInfo>      scenes_;
     std::vector<NodeInfo>       nodes_;
     std::vector<MeshInfo>       meshes_;
+    std::vector<AnimationInfo>  animations_;
+    std::vector<SkinInfo>       skins_;
     std::vector<renderer::BufferInfo>     buffers_;
     std::vector<BufferView>     buffer_views_;
 
@@ -111,6 +142,14 @@ struct ObjectData {
 public:
     ObjectData(const std::shared_ptr<renderer::Device>& device) : device_(device) {}
     ~ObjectData() { destroy(); }
+
+    void update(const renderer::DeviceInfo& device_info, const float& time);
+
+    glm::mat4 getNodeMatrix(const int32_t& node_idx);
+
+    void updateJoints(
+        const renderer::DeviceInfo& device_info,
+        int32_t node_idx);
 
     void generateSharedDescriptorSet(
         const std::shared_ptr<renderer::Device>& device,
@@ -134,6 +173,7 @@ class GltfObject {
     static uint32_t max_alloc_game_objects_in_buffer;
 
     static std::shared_ptr<renderer::DescriptorSetLayout> material_desc_set_layout_;
+    static std::shared_ptr<renderer::DescriptorSetLayout> skin_desc_set_layout_;
     static std::shared_ptr<renderer::PipelineLayout> gltf_pipeline_layout_;
     static std::unordered_map<size_t, std::shared_ptr<renderer::Pipeline>> gltf_pipeline_list_;
     static std::unordered_map<std::string, std::shared_ptr<ObjectData>> object_list_;
@@ -174,6 +214,8 @@ public:
 
     void draw(const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const renderer::DescriptorSetList& desc_set_list);
+
+    void update(const renderer::DeviceInfo& device_info, const float& time);
 
     static void createGameObjectUpdateDescSet(
         const std::shared_ptr<renderer::Device>& device,

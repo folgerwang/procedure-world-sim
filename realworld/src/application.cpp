@@ -1481,6 +1481,10 @@ void RealWorldApplication::drawFrame() {
         gltf_objects_.push_back(gltf_obj);
     }
 
+    for (auto& gltf_obj : gltf_objects_) {
+        gltf_obj->update(device_info_, current_time_);
+    }
+
     command_buffer->reset(0);
     command_buffer->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
 

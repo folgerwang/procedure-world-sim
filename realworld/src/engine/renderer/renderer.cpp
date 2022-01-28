@@ -259,6 +259,31 @@ void Helper::createBufferWithSrcData(
     device->freeMemory(staging_buffer_memory);
 }
 
+void Helper::updateBufferWithSrcData(
+    const DeviceInfo& device_info,
+    const uint64_t& buffer_size,
+    const void* src_data,
+    const std::shared_ptr<Buffer>& buffer) {
+    const auto& device = device_info.device;
+
+    std::shared_ptr<Buffer> staging_buffer;
+    std::shared_ptr<DeviceMemory> staging_buffer_memory;
+    device->createBuffer(
+        buffer_size,
+        SET_FLAG_BIT(BufferUsage, TRANSFER_SRC_BIT),
+        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        staging_buffer,
+        staging_buffer_memory);
+
+    device->updateBufferMemory(staging_buffer_memory, buffer_size, src_data);
+
+    vk::helper::copyBuffer(device_info, staging_buffer, buffer, buffer_size);
+
+    device->destroyBuffer(staging_buffer);
+    device->freeMemory(staging_buffer_memory);
+}
+
 void Helper::generateMipmapLevels(
     const std::shared_ptr<CommandBuffer>& cmd_buf,
     const std::shared_ptr<Image>& image,

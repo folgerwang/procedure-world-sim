@@ -36,7 +36,7 @@
 #define MODEL_PARAMS_SET            3
 
 // MODEL_PARAMS_SET.
-#define MODEL_CONSTANT_INDEX        0
+#define JOINT_CONSTANT_INDEX        0
 // VIEW_PARAMS_SET
 #define VIEW_CONSTANT_INDEX         6
 

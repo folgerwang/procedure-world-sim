@@ -53,7 +53,8 @@ public:
     virtual void bindDescriptorSets(
         PipelineBindPoint bind_point,
         const std::shared_ptr<PipelineLayout>& pipeline_layout,
-        const DescriptorSetList& desc_sets) final;
+        const DescriptorSetList& desc_sets,
+        const uint32_t first_set_idx = 0) final;
     virtual void pushConstants(
         ShaderStageFlags stages,
         const std::shared_ptr<PipelineLayout>& pipeline_layout,

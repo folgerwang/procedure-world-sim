@@ -405,6 +405,12 @@ public:
         std::shared_ptr<Buffer>& buffer,
         std::shared_ptr<DeviceMemory>& buffer_memory);
 
+    static void updateBufferWithSrcData(
+        const DeviceInfo& device_info,
+        const uint64_t& buffer_size,
+        const void* src_data,
+        const std::shared_ptr<Buffer>& buffer);
+
     static void transitionImageLayout(
         const renderer::DeviceInfo& device_info,
         const std::shared_ptr<renderer::Image>& image,

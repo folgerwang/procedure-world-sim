@@ -172,7 +172,8 @@ void VulkanCommandBuffer::bindIndexBuffer(
 void VulkanCommandBuffer::bindDescriptorSets(
     PipelineBindPoint bind_point,
     const std::shared_ptr<PipelineLayout>& pipeline_layout,
-    const DescriptorSetList& desc_sets) {
+    const DescriptorSetList& desc_sets,
+    const uint32_t first_set_idx/* = 0 */ ) {
     std::vector<VkDescriptorSet> vk_desc_sets;
     auto vk_pipeline_layout = RENDER_TYPE_CAST(PipelineLayout, pipeline_layout);
     for (auto i = 0; i < desc_sets.size(); i++) {
@@ -182,7 +183,7 @@ void VulkanCommandBuffer::bindDescriptorSets(
         cmd_buf_,
         helper::toVkPipelineBindPoint(bind_point),
         vk_pipeline_layout->get(),
-        0,
+        first_set_idx,
         static_cast<uint32_t>(vk_desc_sets.size()),
         vk_desc_sets.data(),
         0,
