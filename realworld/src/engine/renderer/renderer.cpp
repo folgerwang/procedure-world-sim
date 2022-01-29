@@ -228,35 +228,48 @@ void Helper::addOneBuffer(
 void Helper::createBufferWithSrcData(
     const DeviceInfo& device_info,
     const BufferUsageFlags& usage,
+    const MemoryPropertyFlags& memory_property,
     const uint64_t& buffer_size,
     const void* src_data,
     std::shared_ptr<Buffer>& buffer,
     std::shared_ptr<DeviceMemory>& buffer_memory) {
     const auto& device = device_info.device;
 
-    std::shared_ptr<Buffer> staging_buffer;
-    std::shared_ptr<DeviceMemory> staging_buffer_memory;
-    device->createBuffer(
-        buffer_size,
-        SET_FLAG_BIT(BufferUsage, TRANSFER_SRC_BIT),
-        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
-        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
-        staging_buffer,
-        staging_buffer_memory);
+    if (memory_property == SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT)) {
+        std::shared_ptr<Buffer> staging_buffer;
+        std::shared_ptr<DeviceMemory> staging_buffer_memory;
+        device->createBuffer(
+            buffer_size,
+            SET_FLAG_BIT(BufferUsage, TRANSFER_SRC_BIT),
+            SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+            SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+            staging_buffer,
+            staging_buffer_memory);
 
-    device->updateBufferMemory(staging_buffer_memory, buffer_size, src_data);
+        device->updateBufferMemory(staging_buffer_memory, buffer_size, src_data);
 
-    device->createBuffer(
-        buffer_size,
-        SET_FLAG_BIT(BufferUsage, TRANSFER_DST_BIT) | usage,
-        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
-        buffer,
-        buffer_memory);
+        device->createBuffer(
+            buffer_size,
+            SET_FLAG_BIT(BufferUsage, TRANSFER_DST_BIT) | usage,
+            memory_property,
+            buffer,
+            buffer_memory);
 
-    vk::helper::copyBuffer(device_info, staging_buffer, buffer, buffer_size);
+        vk::helper::copyBuffer(device_info, staging_buffer, buffer, buffer_size);
 
-    device->destroyBuffer(staging_buffer);
-    device->freeMemory(staging_buffer_memory);
+        device->destroyBuffer(staging_buffer);
+        device->freeMemory(staging_buffer_memory);
+    }
+    else {
+        device->createBuffer(
+            buffer_size,
+            usage,
+            memory_property,
+            buffer,
+            buffer_memory);
+
+        device->updateBufferMemory(buffer_memory, buffer_size, src_data);
+    }
 }
 
 void Helper::updateBufferWithSrcData(
@@ -282,6 +295,14 @@ void Helper::updateBufferWithSrcData(
 
     device->destroyBuffer(staging_buffer);
     device->freeMemory(staging_buffer_memory);
+}
+
+void Helper::updateBufferWithSrcData(
+    const std::shared_ptr<Device>& device,
+    const uint64_t& buffer_size,
+    const void* src_data,
+    const std::shared_ptr<DeviceMemory>& buffer_memory) {
+    device->updateBufferMemory(buffer_memory, buffer_size, src_data);
 }
 
 void Helper::generateMipmapLevels(

@@ -400,6 +400,7 @@ public:
     static void createBufferWithSrcData(
         const DeviceInfo& device_info,
         const BufferUsageFlags& usage,
+        const MemoryPropertyFlags& memory_property,
         const uint64_t& buffer_size,
         const void* src_data,
         std::shared_ptr<Buffer>& buffer,
@@ -410,6 +411,12 @@ public:
         const uint64_t& buffer_size,
         const void* src_data,
         const std::shared_ptr<Buffer>& buffer);
+
+    static void updateBufferWithSrcData(
+        const std::shared_ptr<Device>& device,
+        const uint64_t& buffer_size,
+        const void* src_data,
+        const std::shared_ptr<DeviceMemory>& buffer_memory);
 
     static void transitionImageLayout(
         const renderer::DeviceInfo& device_info,

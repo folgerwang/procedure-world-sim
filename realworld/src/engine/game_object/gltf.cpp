@@ -99,6 +99,7 @@ static void setupMeshState(
                 device_info,
                 SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
                 SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT),
+                SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
                 buffer.data.size(),
                 buffer.data.data(),
                 gltf_object->buffers_[i].buffer,
@@ -510,6 +511,8 @@ static void setupSkin(
         renderer::Helper::createBufferWithSrcData(
             device_info,
             SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
+            SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+            SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
             src_data_size,
             src_buffer_data,
             skin_info.joints_buffer_.buffer,
@@ -680,6 +683,7 @@ static std::shared_ptr<ego::ObjectData> loadGltfModel(
         device_info,
         SET_FLAG_BIT(BufferUsage, INDIRECT_BUFFER_BIT) |
         SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
         indirect_draw_cmd_buffer.size() * sizeof(uint32_t),
         indirect_draw_cmd_buffer.data(),
         gltf_object->indirect_draw_cmd_.buffer,
@@ -928,16 +932,12 @@ static std::shared_ptr<renderer::DescriptorSetLayout> createMaterialDescriptorSe
 
 static std::shared_ptr<renderer::DescriptorSetLayout> createSkinDescriptorSetLayout(
     const std::shared_ptr<renderer::Device>& device) {
-    std::vector<renderer::DescriptorSetLayoutBinding> bindings;
-    bindings.resize(1);
 
-    bindings[0] =
+    return device->createDescriptorSetLayout({
         renderer::helper::getBufferDescriptionSetLayoutBinding(
             JOINT_CONSTANT_INDEX,
             SET_FLAG_BIT(ShaderStage, VERTEX_BIT),
-            renderer::DescriptorType::STORAGE_BUFFER);
-
-    return device->createDescriptorSetLayout(bindings);
+            renderer::DescriptorType::STORAGE_BUFFER) });
 }
 
 static std::shared_ptr<renderer::PipelineLayout> createGltfPipelineLayout(
@@ -1472,10 +1472,10 @@ void ObjectData::updateJoints(
         }
 
         renderer::Helper::updateBufferWithSrcData(
-            device_info,
+            device_info.device,
             joint_matrices.size() * sizeof(glm::mat4),
             joint_matrices.data(),
-            skin.joints_buffer_.buffer);
+            skin.joints_buffer_.memory);
     }
 
     for (auto& child : node.child_idx_) {

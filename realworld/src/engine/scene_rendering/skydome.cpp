@@ -113,6 +113,7 @@ er::BufferInfo createVertexBuffer(
     er::Helper::createBufferWithSrcData(
         device_info,
         SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT),
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
         buffer_size,
         vertices.data(),
         buffer.buffer,
@@ -138,6 +139,7 @@ er::BufferInfo createIndexBuffer(
     er::Helper::createBufferWithSrcData(
         device_info,
         SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT),
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
         buffer_size,
         indices.data(),
         buffer.buffer,

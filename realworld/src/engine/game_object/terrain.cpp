@@ -2454,6 +2454,7 @@ void TileObject::createMeshBuffers() {
         device_info_,
         SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT) |
         SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
         index_buffer_size,
         index_buffer.data(),
         index_buffer_.buffer,
