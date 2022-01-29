@@ -816,7 +816,7 @@ static void updateDescriptorSets(
             skin.joints_buffer_.buffer,
             skin.desc_set_,
             renderer::DescriptorType::STORAGE_BUFFER,
-            sizeof(skin.joints_.size() * sizeof(glm::mat4)));
+            skin.joints_.size() * sizeof(glm::mat4));
 
         device->updateDescriptorSets({}, skin_buffer_descs);
     }
