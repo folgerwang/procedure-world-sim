@@ -222,7 +222,6 @@ struct ViewParams {
 
 struct ModelParams {
     mat4 model_mat;
-    mat4 normal_mat;
 };
 
 struct IblParams {

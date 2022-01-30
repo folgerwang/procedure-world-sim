@@ -885,8 +885,6 @@ static void drawNodes(
         if (node.mesh_idx_ >= 0) {
             glsl::ModelParams model_params{};
             model_params.model_mat = node.cached_matrix_;
-            auto invert_mat = inverse(model_params.model_mat);
-            model_params.normal_mat = transpose(invert_mat);
             drawMesh(cmd_buf,
                 gltf_object,
                 gltf_pipeline_layout,

@@ -110,7 +110,7 @@ vec3 getTangent()
 
 void main() {
 	// Calculate skinned matrix from weights and joint indices of the current vertex
-    vec3 position_ls = in_position;
+    mat4 matrix_ls = model_params.model_mat;
 #if defined(HAS_SKIN_SET_0) || defined(HAS_SKIN_SET_1)
 #ifdef HAS_SKIN_SET_0
 	mat4 skin_matrix =
@@ -126,10 +126,9 @@ void main() {
 		in_weights_1.z * joint_matrices[int(in_joints_1.z)] +
 		in_weights_1.w * joint_matrices[int(in_joints_1.w)];
 #endif
-    position_ls = (skin_matrix * vec4(position_ls, 1.0f)).xyz;
+    matrix_ls = matrix_ls * skin_matrix;
 #endif
-
-    position_ls = (model_params.model_mat * vec4(position_ls, 1.0f)).xyz;
+    vec3 position_ls = (matrix_ls * vec4(in_position, 1.0f)).xyz;
 
     mat3 local_world_rot_mat =
         mat3x3(in_loc_rot_mat_0,
@@ -150,11 +149,10 @@ void main() {
 #endif
 
 #ifdef HAS_NORMALS
-    vec3 normal_ls = mat3(model_params.normal_mat) * getNormal();
-    out_data.vertex_normal = normalize(local_world_rot_mat * normal_ls);
+    mat3 normal_mat = transpose(inverse(local_world_rot_mat * mat3(matrix_ls)));
+    out_data.vertex_normal = normalize(normal_mat * getNormal());
 #ifdef HAS_TANGENT
-    vec3 tangent_ls = mat3(model_params.model_mat) * getTangent();
-    out_data.vertex_tangent = normalize(local_world_rot_mat * tangent_ls);
+    out_data.vertex_tangent = normalize(normal_mat * getTangent());
     out_data.vertex_binormal = cross(out_data.vertex_normal, out_data.vertex_tangent) * in_tangent.w;
 #endif
 #endif // !HAS_NORMALS
