@@ -537,6 +537,8 @@ static void setupNode(
 
     const auto& node = model.nodes[node_idx];
     auto& node_info = gltf_object->nodes_[node_idx];
+    node_info.name_ = node.name;
+
     if (node.matrix.size() == 16) {
         // Use 'matrix' attribute
         const auto& m = node.matrix.data();
@@ -559,10 +561,10 @@ static void setupNode(
     if (node.rotation.size() == 4) {
         node_info.rotation_ =
             glm::quat(
-                node.rotation[3],
-                node.rotation[0],
-                node.rotation[1],
-                node.rotation[2]);
+                static_cast<float>(node.rotation[3]),
+                static_cast<float>(node.rotation[0]),
+                static_cast<float>(node.rotation[1]),
+                static_cast<float>(node.rotation[2]));
     }
 
     if (node.translation.size() == 3) {
@@ -826,7 +828,7 @@ static void updateDescriptorSets(
             skin.joints_buffer_.buffer,
             skin.desc_set_,
             renderer::DescriptorType::STORAGE_BUFFER,
-            skin.joints_.size() * sizeof(glm::mat4));
+            static_cast<uint32_t>(skin.joints_.size() * sizeof(glm::mat4)));
 
         device->updateDescriptorSets({}, skin_buffer_descs);
     }
@@ -1496,10 +1498,12 @@ void ObjectData::update(
     const uint32_t& active_anim_idx,
     const float& time) {
     // update all animations
-    assert(active_anim_idx < animations_.size());
-    auto& anim = animations_[active_anim_idx];
-    for (auto& channel : anim.channels_) {
-        channel->update(this, time);
+    if (animations_.size() > 0) {
+        assert(active_anim_idx < animations_.size());
+        auto& anim = animations_[active_anim_idx];
+        for (auto& channel : anim.channels_) {
+            channel->update(this, time);
+        }
     }
 
     // update hierarchy matrix
@@ -1507,10 +1511,12 @@ void ObjectData::update(
         nodes_[i_node].cached_matrix_ = getNodeMatrix(i_node);
     }
 
-    // update joints
-    for (auto& scene : scenes_) {
-        for (auto& node : scene.nodes_) {
-            updateJoints(device_info, node);
+        // update joints
+    if (animations_.size() > 0) {
+        for (auto& scene : scenes_) {
+            for (auto& node : scene.nodes_) {
+                updateJoints(device_info, node);
+            }
         }
     }
 }

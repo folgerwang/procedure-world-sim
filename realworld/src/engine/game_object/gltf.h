@@ -97,6 +97,7 @@ struct MeshInfo {
 };
 
 struct NodeInfo {
+    std::string                 name_;
     int32_t                     parent_idx_ = -1;
     std::vector<int32_t>        child_idx_;
 
