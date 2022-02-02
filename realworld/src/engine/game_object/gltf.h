@@ -98,7 +98,7 @@ struct MeshInfo {
 
 struct NodeInfo {
     int32_t                     parent_idx_ = -1;
-    std::vector<int32_t>        child_idx_{-1};
+    std::vector<int32_t>        child_idx_;
 
     int32_t                     mesh_idx_ = -1;
     int32_t                     skin_idx_ = -1;
@@ -110,6 +110,9 @@ struct NodeInfo {
 
     glm::mat4                   cached_matrix_ = glm::mat4(1.0f);
     glm::mat4 getLocalMatrix();
+    const glm::mat4& getCachedMatrix() const {
+        return cached_matrix_;
+    }
 };
 
 struct SceneInfo {
@@ -143,7 +146,10 @@ public:
     ObjectData(const std::shared_ptr<renderer::Device>& device) : device_(device) {}
     ~ObjectData() { destroy(); }
 
-    void update(const renderer::DeviceInfo& device_info, const float& time);
+    void update(
+        const renderer::DeviceInfo& device_info,
+        const uint32_t& active_anim_idx,
+        const float& time);
 
     glm::mat4 getNodeMatrix(const int32_t& node_idx);
 

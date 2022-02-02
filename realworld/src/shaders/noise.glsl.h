@@ -21,6 +21,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.*/
 
 #ifdef __cplusplus
+#define GLM_FORCE_RADIANS
 #include "glm/glm.hpp"
 using namespace glm;
 #else

@@ -46,7 +46,7 @@ private:
     void createDescriptorSets();
     void createCommandBuffers();
     void createSyncObjects();
-    void updateViewConstBuffer(uint32_t current_image, float near_z = 0.5f);
+    void updateViewConstBuffer(uint32_t current_image, float near_z = 0.1f);
     std::vector<er::TextureDescriptor> addGlobalTextures(
         const std::shared_ptr<er::DescriptorSet>& description_set);
     void mainLoop();

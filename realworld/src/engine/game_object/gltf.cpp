@@ -541,26 +541,36 @@ static void setupNode(
         // Use 'matrix' attribute
         const auto& m = node.matrix.data();
         node_info.matrix_ =
-            glm::mat4(m[0], m[1], m[2], m[3],
+            glm::mat4(
+                m[0], m[1], m[2], m[3],
                 m[4], m[5], m[6], m[7],
                 m[8], m[9], m[10], m[11],
                 m[12], m[13], m[14], m[15]);
     }
 
     if (node.scale.size() == 3) {
-        node_info.scale_ = glm::vec3(node.scale[0], node.scale[1], node.scale[2]);
+        node_info.scale_ =
+            glm::vec3(
+                node.scale[0],
+                node.scale[1],
+                node.scale[2]);
     }
 
     if (node.rotation.size() == 4) {
         node_info.rotation_ =
-            glm::quat(static_cast<float>(node.rotation[0]),
-                static_cast<float>(node.rotation[0]),
-                static_cast<float>(node.rotation[0]),
-                static_cast<float>(node.rotation[0]));
+            glm::quat(
+                node.rotation[3],
+                node.rotation[0],
+                node.rotation[1],
+                node.rotation[2]);
     }
 
     if (node.translation.size() == 3) {
-        node_info.translation_ = glm::vec3(node.translation[0], node.translation[1], node.translation[2]);
+        node_info.translation_ = 
+            glm::vec3(
+                node.translation[0],
+                node.translation[1],
+                node.translation[2]);
     }
 
     node_info.mesh_idx_ = node.mesh;
@@ -1416,8 +1426,8 @@ void AnimChannelInfo::update(ObjectData* object, float time, float time_scale/* 
     }
     else if (type_ == kRotation)
     {
-        auto q1 = glm::quat(lower->second.x, lower->second.y, lower->second.z, lower->second.w);
-        auto q2 = glm::quat(upper->second.x, upper->second.y, upper->second.z, upper->second.w);
+        auto q1 = glm::quat(lower->second.w, lower->second.x, lower->second.y, lower->second.z);
+        auto q2 = glm::quat(upper->second.w, upper->second.x, upper->second.y, upper->second.z);
         target_node.rotation_ = glm::normalize(glm::slerp(q1, q2, ratio));
     }
     else if (type_ == kScale)
@@ -1458,15 +1468,15 @@ void ObjectData::updateJoints(
     if (node.skin_idx_ > -1)
     {
         // Update the joint matrices
-        auto inverse_transform = glm::inverse(getNodeMatrix(node_idx));
+        auto inverse_transform = glm::inverse(node.getCachedMatrix());
         auto& skin = skins_[node.skin_idx_];
         auto num_joints = skin.joints_.size();
         std::vector<glm::mat4> joint_matrices(num_joints);
         for (size_t i = 0; i < num_joints; i++) {
             joint_matrices[i] =
-                getNodeMatrix(skin.joints_[i]) *
+                inverse_transform *
+                nodes_[skin.joints_[i]].getCachedMatrix() *
                 skin.inverse_bind_matrices_[i];
-            joint_matrices[i] = inverse_transform * joint_matrices[i];
         }
 
         renderer::Helper::updateBufferWithSrcData(
@@ -1483,22 +1493,25 @@ void ObjectData::updateJoints(
 
 void ObjectData::update(
     const renderer::DeviceInfo& device_info,
+    const uint32_t& active_anim_idx,
     const float& time) {
     // update all animations
-    for (auto& anim : animations_) {
-        for (auto& channel : anim.channels_) {
-            channel->update(this, time);
-        }
+    assert(active_anim_idx < animations_.size());
+    auto& anim = animations_[active_anim_idx];
+    for (auto& channel : anim.channels_) {
+        channel->update(this, time);
     }
 
     // update hierarchy matrix
-    for (auto i = 0; i < nodes_.size(); i++) {
-        nodes_[i].cached_matrix_ = getNodeMatrix(i);
+    for (auto i_node = 0; i_node < nodes_.size(); i_node++) {
+        nodes_[i_node].cached_matrix_ = getNodeMatrix(i_node);
     }
 
     // update joints
-    for (auto i = 0; i < nodes_.size(); i++) {
-        updateJoints(device_info, i);
+    for (auto& scene : scenes_) {
+        for (auto& node : scene.nodes_) {
+            updateJoints(device_info, node);
+        }
     }
 }
 
@@ -2030,7 +2043,7 @@ void GltfObject::update(
     const renderer::DeviceInfo& device_info,
     const float& time) {
     if (object_) {
-        object_->update(device_info, time);
+        object_->update(device_info, 0, time);
     }
 }
 
