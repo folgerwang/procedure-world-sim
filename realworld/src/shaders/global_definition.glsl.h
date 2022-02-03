@@ -520,7 +520,7 @@ struct GameCameraParams {
     uint            num_game_objs;
     int             game_obj_idx;
     uint            camera_rot_update;
-    int             pad;
+    float           mouse_wheel_offset;
 };
 
 // could be updated from frame to frame.
@@ -538,7 +538,8 @@ struct GameCameraInfo {
     vec3            facing_dir;
     float           pitch;
     vec2            mouse_pos;
-    vec2            pad;
+    float           camera_follow_dist;
+    float           pad;
 };
 
 #ifdef __cplusplus

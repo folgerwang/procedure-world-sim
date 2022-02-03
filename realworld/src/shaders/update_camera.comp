@@ -102,6 +102,7 @@ void main()
         camera_info.mouse_pos = params.mouse_pos;
         camera_info.yaw = 0.0f;
         camera_info.pitch = 0.0f;
+        camera_info.camera_follow_dist = 5.0f;
         camera_info.status |= 0x00000001;
     }
     vec2 mouse_offset = params.mouse_pos - camera_info.mouse_pos;
@@ -175,7 +176,9 @@ void main()
 #endif
         }
 
-        eye_pos = game_obj_info.position - (camera_info.facing_dir - camera_info.up_vector) * 4.0f;
+        camera_info.camera_follow_dist += params.mouse_wheel_offset * 0.1f;
+
+        eye_pos = game_obj_info.position - (camera_info.facing_dir - camera_info.up_vector * 2) * camera_info.camera_follow_dist;
         target_pos = game_obj_info.position;
         up_dir = camera_info.up_vector;
     }
