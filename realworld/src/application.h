@@ -54,7 +54,7 @@ private:
     void drawScene(
         std::shared_ptr<er::CommandBuffer> command_buffer,
         const er::SwapChainInfo& swap_chain_info,
-        const std::vector<std::shared_ptr<er::DescriptorSet>>& frame_desc_sets,
+        const std::shared_ptr<er::DescriptorSet>& view_desc_set,
         const glm::uvec2& screen_size,
         uint32_t image_index,
         float delta_t,
@@ -84,7 +84,7 @@ private:
     std::shared_ptr<er::Surface> surface_;
     er::SwapChainInfo swap_chain_info_;
     std::shared_ptr<er::DescriptorPool> descriptor_pool_;
-    std::vector<std::shared_ptr<er::DescriptorSet>> desc_sets_;
+    std::shared_ptr<er::DescriptorSet> view_desc_set_;
     std::shared_ptr<er::DescriptorSetLayout> view_desc_set_layout_;
     std::shared_ptr<er::DescriptorSetLayout> global_tex_desc_set_layout_;
     std::shared_ptr<er::DescriptorSet> global_tex_desc_set_;

@@ -10,8 +10,8 @@ const int jSteps = 8;
 #include "sun.glsl.h"
 #include "sunlight_scattering.glsl.h"
 
-layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniformBufferObject {
-    ViewParams view_params;
+layout(std430, set = VIEW_PARAMS_SET, binding = VIEW_CAMERA_BUFFER_INDEX) readonly buffer CameraInfoBuffer {
+	GameCameraInfo camera_info;
 };
 
 layout(location = 0) in VsPsData {
@@ -25,14 +25,14 @@ layout(push_constant) uniform SunSkyUniformBufferObject {
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    vec3 view_dir = normalize(in_data.vertex_position - view_params.camera_pos.xyz);
+    vec3 view_dir = normalize(in_data.vertex_position - camera_info.position.xyz);
 
     vec3 color = vec3(0.0, 0.0, 0.0);
     vec3 sun_pos = normalize(params.sun_pos);
 
 #if RENDER_SUNLIGHT_SCATTERING
     vec3 r = view_dir;
-    vec3 r0 = vec3(0, kPlanetRadius, 0) + view_params.camera_pos.xyz;
+    vec3 r0 = vec3(0, kPlanetRadius, 0) + camera_info.position.xyz;
     float g = params.g;
     float cast_range = rsi(r0, r, kAtmosphereRadius);
 #if ATMOSPHERE_USE_LUT

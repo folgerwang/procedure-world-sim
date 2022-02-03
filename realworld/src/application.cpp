@@ -956,25 +956,15 @@ void RealWorldApplication::createDescriptorSetLayout() {
     }
 
     {
-        std::vector<er::DescriptorSetLayoutBinding> bindings(2);
-
-        bindings[0].binding = VIEW_CONSTANT_INDEX;
+        std::vector<er::DescriptorSetLayoutBinding> bindings(1);
+        bindings[0].binding = VIEW_CAMERA_BUFFER_INDEX;
         bindings[0].descriptor_count = 1;
-        bindings[0].descriptor_type = er::DescriptorType::UNIFORM_BUFFER;
+        bindings[0].descriptor_type = er::DescriptorType::STORAGE_BUFFER;
         bindings[0].stage_flags =
             SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
             SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) |
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
         bindings[0].immutable_samplers = nullptr; // Optional
-
-        bindings[1].binding = VIEW_CAMERA_BUFFER_INDEX;
-        bindings[1].descriptor_count = 1;
-        bindings[1].descriptor_type = er::DescriptorType::STORAGE_BUFFER;
-        bindings[1].stage_flags =
-            SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
-            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) |
-            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
-        bindings[1].immutable_samplers = nullptr; // Optional
 
         view_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
     }
@@ -1063,28 +1053,17 @@ void RealWorldApplication::createDescriptorSets() {
     }
 
     {
-        desc_sets_ = device_->createDescriptorSets(descriptor_pool_, view_desc_set_layout_, buffer_count);
-        for (uint64_t i = 0; i < buffer_count; i++) {
-            std::vector<er::BufferDescriptor> buffer_descs;
-            buffer_descs.reserve(2);
-            er::Helper::addOneBuffer(
-                buffer_descs,
-                VIEW_CONSTANT_INDEX,
-                view_const_buffers_[i].buffer,
-                desc_sets_[i],
-                er::DescriptorType::UNIFORM_BUFFER,
-                sizeof(glsl::ViewParams));
-
-            er::Helper::addOneBuffer(
-                buffer_descs,
-                VIEW_CAMERA_BUFFER_INDEX,
-                ego::GameCamera::getGameCameraBuffer()->buffer,
-                desc_sets_[i],
-                er::DescriptorType::STORAGE_BUFFER,
-                sizeof(glsl::GameCameraInfo));
-
-            device_->updateDescriptorSets({}, buffer_descs);
-        }
+        view_desc_set_ = device_->createDescriptorSets(descriptor_pool_, view_desc_set_layout_, 1)[0];
+        std::vector<er::BufferDescriptor> buffer_descs;
+        buffer_descs.reserve(1);
+        er::Helper::addOneBuffer(
+            buffer_descs,
+            VIEW_CAMERA_BUFFER_INDEX,
+            ego::GameCamera::getGameCameraBuffer()->buffer,
+            view_desc_set_,
+            er::DescriptorType::STORAGE_BUFFER,
+            sizeof(glsl::GameCameraInfo));
+        device_->updateDescriptorSets({}, buffer_descs);
     }
 }
 
@@ -1122,7 +1101,7 @@ void RealWorldApplication::mainLoop() {
 void RealWorldApplication::drawScene(
     std::shared_ptr<er::CommandBuffer> command_buffer,
     const er::SwapChainInfo& swap_chain_info,
-    const std::vector<std::shared_ptr<er::DescriptorSet>>& frame_desc_sets,
+    const std::shared_ptr<er::DescriptorSet>& view_desc_set,
     const glm::uvec2& screen_size,
     uint32_t image_index,
     float delta_t,
@@ -1130,7 +1109,6 @@ void RealWorldApplication::drawScene(
 
     auto frame_buffer = swap_chain_info.framebuffers[image_index];
     auto src_color = swap_chain_info.image_views[image_index];
-    auto frame_desc_set = frame_desc_sets[image_index];
 
     auto& cmd_buf = command_buffer;
 
@@ -1171,7 +1149,7 @@ void RealWorldApplication::drawScene(
         clear_values_,
         kCubemapSize);
  
-    er::DescriptorSetList desc_sets{ global_tex_desc_set_, frame_desc_set };
+    er::DescriptorSetList desc_sets{ global_tex_desc_set_, view_desc_set };
 
     {
         // only init one time.
@@ -1239,7 +1217,7 @@ void RealWorldApplication::drawScene(
         game_camera_params.fov = glm::radians(45.0f);
         game_camera_params.aspect = swap_chain_info_.extent.x / (float)swap_chain_info_.extent.y;
         game_camera_params.z_near = 0.1f;
-        game_camera_params.z_far = 2000.0f;
+        game_camera_params.z_far = 40000.0f;
         game_camera_params.sensitivity = 0.2f;
         game_camera_params.num_game_objs = 0;
         game_camera_params.game_obj_idx = -1;
@@ -1295,7 +1273,7 @@ void RealWorldApplication::drawScene(
 
         // render skybox.
         {
-            skydome_->draw(cmd_buf, frame_desc_set);
+            skydome_->draw(cmd_buf, view_desc_set);
         }
 
         cmd_buf->endRenderPass();
@@ -1382,7 +1360,7 @@ void RealWorldApplication::drawScene(
             if (!menu_->isVolumeMoistTurnOff()) {
                 volume_cloud_->renderVolumeCloud(
                     cmd_buf,
-                    frame_desc_set,
+                    view_desc_set,
                     hdr_color_buffer_.image,
                     skydome_,
                     menu_->getViewExtFactor(),
@@ -1565,7 +1543,7 @@ void RealWorldApplication::drawFrame() {
 
     drawScene(command_buffer,
         swap_chain_info_,
-        desc_sets_,
+        view_desc_set_,
         swap_chain_info_.extent,
         image_index,
         delta_t_,
