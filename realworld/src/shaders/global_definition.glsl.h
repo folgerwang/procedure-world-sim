@@ -181,7 +181,7 @@
 #define kNodeWaterBack                          0x02      // -y
 #define kNodeWaterFront                         0x03      // +y
 
-#define kNumGltfInstance                        1 // 4096
+#define kNumGltfInstance                        4096 // 4096
 
 #define GLFW_KEY_W                  87
 #define GLFW_KEY_S                  83

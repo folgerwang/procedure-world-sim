@@ -1219,8 +1219,8 @@ void RealWorldApplication::drawScene(
         game_camera_params.z_near = 0.1f;
         game_camera_params.z_far = 40000.0f;
         game_camera_params.sensitivity = 0.2f;
-        game_camera_params.num_game_objs = 0;
-        game_camera_params.game_obj_idx = -1;
+        game_camera_params.num_game_objs = static_cast<int32_t>(gltf_objects_.size());
+        game_camera_params.game_obj_idx = 0;
         game_camera_params.camera_rot_update = (!s_camera_paused && s_mouse_right_button_pressed) ? 1 : 0;
 
         ego::GameCamera::updateGameCameraBuffer(
