@@ -8,8 +8,8 @@
 #include "ibl.glsl.h"
 #include "tile_common.glsl.h"
 
-layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniformBufferObject {
-    ViewParams view_params;
+layout(std430, set = VIEW_PARAMS_SET, binding = VIEW_CAMERA_BUFFER_INDEX) readonly buffer CameraInfoBuffer {
+	GameCameraInfo camera_info;
 };
 
 layout(push_constant) uniform TileUniformBufferObject {
@@ -101,12 +101,12 @@ void main() {
     water_normal.y += water_noise * 0.35;
     water_normal = normalize(water_normal);
     vec2 screen_uv = gl_FragCoord.xy * tile_params.inv_screen_size;
-    float dist_scale = length(vec3((screen_uv * 2.0f - 1.0f) * view_params.depth_params.zw, 1.0f));
+    float dist_scale = length(vec3((screen_uv * 2.0f - 1.0f) * camera_info.depth_params.zw, 1.0f));
 
     float depth_z = texture(src_depth, screen_uv).r;
-    float bg_view_dist = view_params.proj[3].z / (depth_z + view_params.proj[2].z) * dist_scale;
+    float bg_view_dist = camera_info.proj[3].z / (depth_z + camera_info.proj[2].z) * dist_scale;
 
-    vec3 view_vec = view_params.camera_pos.xyz - in_data.vertex_position;
+    vec3 view_vec = camera_info.position.xyz - in_data.vertex_position;
     float view_dist = length(view_vec);
     vec3 view = normalize(view_vec);
 
@@ -115,7 +115,7 @@ void main() {
     vec3 refract_ray = refract(-view, water_normal, 1.0 / 1.33);
     vec3 refract_pos = in_data.vertex_position + refract_ray * water_ray_dist;
 
-    vec4 refracted_screen_pos = view_params.proj * view_params.view * vec4(refract_pos, 1.0f);
+    vec4 refracted_screen_pos = camera_info.proj * camera_info.view * vec4(refract_pos, 1.0f);
     refracted_screen_pos.xy /= refracted_screen_pos.w;
 
     float fade_dist_1 = max(water_ray_dist / 20.0f, 0);

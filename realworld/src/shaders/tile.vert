@@ -2,8 +2,8 @@
 #extension GL_ARB_separate_shader_objects : enable
 #include "global_definition.glsl.h"
 
-layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniformBufferObject {
-    ViewParams view_params;
+layout(std430, set = VIEW_PARAMS_SET, binding = VIEW_CAMERA_BUFFER_INDEX) readonly buffer CameraInfoBuffer {
+	GameCameraInfo camera_info;
 };
 
 layout(push_constant) uniform TileUniformBufferObject {
@@ -47,7 +47,7 @@ void main() {
 #endif
 
     vec4 position_ws = vec4(x, layer_height, y, 1.0);
-    gl_Position = view_params.view_proj * position_ws;
+    gl_Position = camera_info.view_proj * position_ws;
 
     out_data.vertex_position = position_ws.xyz;
     out_data.world_map_uv = world_map_uv;

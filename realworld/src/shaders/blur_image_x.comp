@@ -9,8 +9,8 @@ layout(push_constant) uniform BlurImageUniformBufferObject {
     BlurImageParams params;
 };
 
-layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniformBufferObject {
-    ViewParams view_params;
+layout(std430, set = VIEW_PARAMS_SET, binding = VIEW_CAMERA_BUFFER_INDEX) readonly buffer CameraInfoBuffer {
+	GameCameraInfo camera_info;
 };
 
 layout(set = 0, binding = SRC_TEX_INDEX) uniform sampler2D src_img;
@@ -36,9 +36,9 @@ void main()
 		vec2 uv0 = (sgc + 0.5) * params.inv_size;
 		vec2 uv1 = vec2(uv0.x + params.inv_size.x, uv0.y);
 	    s_src_color[slc.x] = texture(src_img, uv0);
-		s_src_depth[slc.x] = view_params.proj[3].z / (texture(depth_img, uv0).x + view_params.proj[2].z);
+		s_src_depth[slc.x] = camera_info.proj[3].z / (texture(depth_img, uv0).x + camera_info.proj[2].z);
 		s_src_color[slc.x+1] = texture(src_img, uv1);
-		s_src_depth[slc.x+1] = view_params.proj[3].z / (texture(depth_img, uv1).x + view_params.proj[2].z);
+		s_src_depth[slc.x+1] = camera_info.proj[3].z / (texture(depth_img, uv1).x + camera_info.proj[2].z);
 	}
 
 	barrier();

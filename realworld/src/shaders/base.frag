@@ -5,8 +5,8 @@
 #include "brdf.glsl.h"
 #include "punctual.glsl.h"
 
-layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniformBufferObject {
-    ViewParams view_params;
+layout(std430, set = VIEW_PARAMS_SET, binding = VIEW_CAMERA_BUFFER_INDEX) readonly buffer CameraInfoBuffer {
+	GameCameraInfo camera_info;
 };
 
 #ifndef NO_MTL
@@ -576,7 +576,7 @@ void main() {
     outColor = (vec4(linearTosRGB(baseColor.rgb), baseColor.a));
     return;
 #endif
-    vec3 v = normalize(view_params.camera_pos.xyz - in_data.vertex_position);
+    vec3 v = normalize(camera_info.position.xyz - in_data.vertex_position);
     NormalInfo normal_info = getNormalInfo(v);
 
     vec3 n = normal_info.n;

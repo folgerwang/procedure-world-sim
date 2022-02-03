@@ -279,7 +279,10 @@ public:
         float water_flow_strength,
         int update_frame_count,
         int soil_water,
+        float delta_t,
         bool enble_airflow);
+
+    static std::shared_ptr<renderer::BufferInfo> getGameObjectsBuffer();
 };
 
 } // namespace game_object

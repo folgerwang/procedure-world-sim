@@ -1057,34 +1057,14 @@ static std::shared_ptr<renderer::Pipeline> createGltfPipeline(
     return gltf_pipeline;
 }
 
-static renderer::ShaderModuleList getGlftfIndirectDrawCsModules(
-    const std::shared_ptr<renderer::Device>& device) {
+static renderer::ShaderModuleList getComputeShaderModules(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::string& compute_shader_name) {
     uint64_t compute_code_size;
     renderer::ShaderModuleList shader_modules;
     shader_modules.reserve(1);
-    auto compute_shader_code = engine::helper::readFile("lib/shaders/update_gltf_indirect_draw_comp.spv", compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
-}
-
-static renderer::ShaderModuleList getUpdateGameObjectsCsModules(
-    const std::shared_ptr<renderer::Device>& device) {
-    uint64_t compute_code_size;
-    renderer::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    auto compute_shader_code = engine::helper::readFile("lib/shaders/update_game_objects_comp.spv", compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
-}
-
-static renderer::ShaderModuleList getUpdateInstanceBufferCsModules(
-    const std::shared_ptr<renderer::Device>& device) {
-    uint64_t compute_code_size;
-    renderer::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    auto compute_shader_code = engine::helper::readFile("lib/shaders/update_instance_buffer_comp.spv", compute_code_size);
+    auto file_path = "lib/shaders/" + compute_shader_name + "_comp.spv";
+    auto compute_shader_code = engine::helper::readFile(file_path, compute_code_size);
     shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
 
     return shader_modules;
@@ -1284,7 +1264,7 @@ static std::shared_ptr<renderer::PipelineLayout> createInstanceBufferPipelineLay
 static std::shared_ptr<renderer::Pipeline> createGltfIndirectDrawPipeline(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout) {
-    auto tile_creator_cs_modules = getGlftfIndirectDrawCsModules(device);
+    auto tile_creator_cs_modules = getComputeShaderModules(device, "update_gltf_indirect_draw");
     assert(tile_creator_cs_modules.size() == 1);
 
     auto pipeline = device->createPipeline(
@@ -1301,7 +1281,7 @@ static std::shared_ptr<renderer::Pipeline> createGltfIndirectDrawPipeline(
 static std::shared_ptr<renderer::Pipeline> createGameObjectsPipeline(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout) {
-    auto update_game_objects_cs_modules = getUpdateGameObjectsCsModules(device);
+    auto update_game_objects_cs_modules = getComputeShaderModules(device, "update_game_objects");
     assert(update_game_objects_cs_modules.size() == 1);
 
     auto pipeline = device->createPipeline(
@@ -1318,7 +1298,7 @@ static std::shared_ptr<renderer::Pipeline> createGameObjectsPipeline(
 static std::shared_ptr<renderer::Pipeline> createInstanceBufferPipeline(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout) {
-    auto update_instance_buffer_cs_modules = getUpdateInstanceBufferCsModules(device);
+    auto update_instance_buffer_cs_modules = getComputeShaderModules(device, "update_instance_buffer");
     assert(update_instance_buffer_cs_modules.size() == 1);
 
     auto pipeline = device->createPipeline(
@@ -1910,18 +1890,14 @@ void GltfObject::updateGameObjectsBuffer(
     float water_flow_strength,
     int update_frame_count,
     int soil_water,
+    float delta_t,
     bool enble_airflow) {
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, update_game_objects_pipeline_);
 
-    static std::chrono::time_point s_last_time = std::chrono::steady_clock::now();
-    auto cur_time = std::chrono::steady_clock::now();
-    std::chrono::duration<double> elapsed_seconds = cur_time - s_last_time;
-    s_last_time = cur_time;
-
     glsl::GameObjectsUpdateParams params;
     params.num_objects = max_alloc_game_objects_in_buffer;
-    params.delta_t = static_cast<float>(elapsed_seconds.count());
+    params.delta_t = delta_t;
     params.frame_count = update_frame_count;
     params.world_min = world_min;
     params.inv_world_range = 1.0f / world_range;
@@ -2051,6 +2027,10 @@ void GltfObject::update(
     if (object_) {
         object_->update(device_info, 0, time);
     }
+}
+
+std::shared_ptr<renderer::BufferInfo> GltfObject::getGameObjectsBuffer() {
+    return game_objects_buffer_;
 }
 
 } // game_object

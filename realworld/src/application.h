@@ -1,6 +1,7 @@
 #pragma once
 #include "engine/renderer/renderer.h"
 #include "shaders/global_definition.glsl.h"
+#include "engine/game_object/camera.h"
 #include "engine/game_object/gltf.h"
 #include "engine/game_object/terrain.h"
 #include "engine/game_object/debug_draw.h"
@@ -124,6 +125,7 @@ private:
     std::vector<std::shared_ptr<er::Fence>> in_flight_fences_;
     std::vector<std::shared_ptr<er::Fence>> images_in_flight_;
 
+    std::shared_ptr<ego::GameCamera> game_camera_;
     std::vector<std::shared_ptr<ego::GltfObject>> gltf_objects_;
     std::shared_ptr<es::Skydome> skydome_;
     std::shared_ptr<es::WeatherSystem> weather_system_;

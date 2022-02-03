@@ -7,8 +7,8 @@
 
 #include "ibl.glsl.h"
 
-layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniformBufferObject {
-    ViewParams view_params;
+layout(std430, set = VIEW_PARAMS_SET, binding = VIEW_CAMERA_BUFFER_INDEX) readonly buffer CameraInfoBuffer {
+	GameCameraInfo camera_info;
 };
 
 layout(push_constant) uniform TileUniformBufferObject {
@@ -254,7 +254,7 @@ void main() {
     MaterialInfo material_info;
     material_info.baseColor = albedo;
 
-    vec3 view = normalize(view_params.camera_pos.xyz - in_data.vertex_position);
+    vec3 view = normalize(camera_info.position.xyz - in_data.vertex_position);
 
     vec3 f_diffuse = vec3(0);
     vec3 f_specular = vec3(0);

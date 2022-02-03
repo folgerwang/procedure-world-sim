@@ -153,6 +153,7 @@ static bool s_camera_paused = false;
 static bool s_mouse_init = false;
 static bool s_mouse_right_button_pressed = false;
 static glm::vec2 s_last_mouse_pos;
+static int s_key = 0;
 static float s_yaw = 0.0f;
 static float s_pitch = 0.0f;
 const float s_camera_speed = 10.0f;
@@ -164,6 +165,7 @@ static void keyInputCallback(GLFWwindow* window, int key, int scancode, int acti
 {
     auto up_vector = abs(s_camera_dir[1]) < glm::min(abs(s_camera_dir[0]), abs(s_camera_dir[2])) ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
     auto camera_right = glm::normalize(glm::cross(s_camera_dir, s_camera_up));
+    s_key = 0;
     if (action != GLFW_RELEASE && !s_camera_paused) {
         if (key == GLFW_KEY_W)
             s_camera_pos += s_camera_speed * s_camera_dir;
@@ -173,6 +175,7 @@ static void keyInputCallback(GLFWwindow* window, int key, int scancode, int acti
             s_camera_pos -= s_camera_speed * camera_right;
         if (key == GLFW_KEY_D)
             s_camera_pos += s_camera_speed * camera_right;
+        s_key = key;
     }
 
     if (action == GLFW_PRESS && key == GLFW_KEY_ESCAPE) {
@@ -473,8 +476,6 @@ void RealWorldApplication::initVulkan() {
         swap_chain_info_.extent,
         kCubemapSize);
 
-    createDescriptorSets();
-
     for (auto& image : swap_chain_info_.images) {
         er::Helper::transitionImageLayout(
             device_info_,
@@ -515,12 +516,25 @@ void RealWorldApplication::initVulkan() {
         ego::TileObject::getWaterFlow(),
         weather_system_->getAirflowTex());
 
+    assert(ego::GltfObject::getGameObjectsBuffer());
+    ego::GameCamera::initStaticMembers(
+        device_,
+        descriptor_pool_,
+        desc_set_layouts,
+        texture_sampler_,
+        ego::TileObject::getRockLayer(),
+        ego::TileObject::getSoilWaterLayer(0),
+        ego::TileObject::getSoilWaterLayer(1),
+        *ego::GltfObject::getGameObjectsBuffer());
+
     ego::DebugDrawObject::initStaticMembers(
         device_info_,
         hdr_render_pass_,
         graphic_pipeline_info_,
         desc_set_layouts,
         swap_chain_info_.extent);
+
+    createDescriptorSets();
 
     volume_noise_ = std::make_shared<es::VolumeNoise>(
         device_info_,
@@ -621,6 +635,8 @@ void RealWorldApplication::recreateSwapChain() {
         graphic_pipeline_info_,
         desc_set_layouts,
         swap_chain_info_.extent);
+    ego::GameCamera::recreateStaticMembers(
+        device_);
     ego::DebugDrawObject::recreateStaticMembers(
         device_,
         hdr_render_pass_,
@@ -691,6 +707,16 @@ void RealWorldApplication::recreateSwapChain() {
         ego::TileObject::getSoilWaterLayer(1),
         ego::TileObject::getWaterFlow(),
         weather_system_->getAirflowTex());
+
+    assert(ego::GltfObject::getGameObjectsBuffer());
+    ego::GameCamera::generateDescriptorSet(
+        device_,
+        descriptor_pool_,
+        texture_sampler_,
+        ego::TileObject::getRockLayer(),
+        ego::TileObject::getSoilWaterLayer(0),
+        ego::TileObject::getSoilWaterLayer(1),
+        *ego::GltfObject::getGameObjectsBuffer());
 
     ego::TileObject::updateStaticDescriptorSet(
         device_,
@@ -930,18 +956,25 @@ void RealWorldApplication::createDescriptorSetLayout() {
     }
 
     {
-        std::vector<er::DescriptorSetLayoutBinding> bindings(1);
+        std::vector<er::DescriptorSetLayoutBinding> bindings(2);
 
-        er::DescriptorSetLayoutBinding ubo_layout_binding{};
-        ubo_layout_binding.binding = VIEW_CONSTANT_INDEX;
-        ubo_layout_binding.descriptor_count = 1;
-        ubo_layout_binding.descriptor_type = er::DescriptorType::UNIFORM_BUFFER;
-        ubo_layout_binding.stage_flags = 
+        bindings[0].binding = VIEW_CONSTANT_INDEX;
+        bindings[0].descriptor_count = 1;
+        bindings[0].descriptor_type = er::DescriptorType::UNIFORM_BUFFER;
+        bindings[0].stage_flags =
             SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
             SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) |
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
-        ubo_layout_binding.immutable_samplers = nullptr; // Optional
-        bindings[0] = ubo_layout_binding;
+        bindings[0].immutable_samplers = nullptr; // Optional
+
+        bindings[1].binding = VIEW_CAMERA_BUFFER_INDEX;
+        bindings[1].descriptor_count = 1;
+        bindings[1].descriptor_type = er::DescriptorType::STORAGE_BUFFER;
+        bindings[1].stage_flags =
+            SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
+            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) |
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
+        bindings[1].immutable_samplers = nullptr; // Optional
 
         view_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
     }
@@ -1033,6 +1066,7 @@ void RealWorldApplication::createDescriptorSets() {
         desc_sets_ = device_->createDescriptorSets(descriptor_pool_, view_desc_set_layout_, buffer_count);
         for (uint64_t i = 0; i < buffer_count; i++) {
             std::vector<er::BufferDescriptor> buffer_descs;
+            buffer_descs.reserve(2);
             er::Helper::addOneBuffer(
                 buffer_descs,
                 VIEW_CONSTANT_INDEX,
@@ -1040,6 +1074,14 @@ void RealWorldApplication::createDescriptorSets() {
                 desc_sets_[i],
                 er::DescriptorType::UNIFORM_BUFFER,
                 sizeof(glsl::ViewParams));
+
+            er::Helper::addOneBuffer(
+                buffer_descs,
+                VIEW_CAMERA_BUFFER_INDEX,
+                ego::GameCamera::getGameCameraBuffer()->buffer,
+                desc_sets_[i],
+                er::DescriptorType::STORAGE_BUFFER,
+                sizeof(glsl::GameCameraInfo));
 
             device_->updateDescriptorSets({}, buffer_descs);
         }
@@ -1165,6 +1207,12 @@ void RealWorldApplication::drawScene(
 
     // this has to be happened after tile update, or you wont get the right height info.
     {
+        static std::chrono::time_point s_last_time = std::chrono::steady_clock::now();
+        auto cur_time = std::chrono::steady_clock::now();
+        std::chrono::duration<double> elapsed_seconds = cur_time - s_last_time;
+        auto delta_t = static_cast<float>(elapsed_seconds.count());
+        s_last_time = cur_time;
+
         ego::GltfObject::updateGameObjectsBuffer(
             cmd_buf,
             ego::TileObject::getWorldMin(),
@@ -1174,7 +1222,33 @@ void RealWorldApplication::drawScene(
             menu_->getWaterFlowStrength(),
             s_update_frame_count,
             s_dbuf_idx,
+            delta_t,
             menu_->isAirfowOn());
+
+        glsl::GameCameraParams game_camera_params;
+        game_camera_params.world_min = ego::TileObject::getWorldMin();
+        game_camera_params.inv_world_range = 1.0f / ego::TileObject::getWorldRange();
+        game_camera_params.camera_pos = s_camera_pos;
+        game_camera_params.key = s_key;
+        game_camera_params.camera_dir = s_camera_dir;
+        game_camera_params.frame_count = s_update_frame_count;
+        game_camera_params.camera_up = s_camera_up;
+        game_camera_params.delta_t = delta_t;
+        game_camera_params.mouse_pos = s_last_mouse_pos;
+        game_camera_params.camera_speed = s_camera_speed;
+        game_camera_params.fov = glm::radians(45.0f);
+        game_camera_params.aspect = swap_chain_info_.extent.x / (float)swap_chain_info_.extent.y;
+        game_camera_params.z_near = 0.1f;
+        game_camera_params.z_far = 2000.0f;
+        game_camera_params.sensitivity = 0.2f;
+        game_camera_params.num_game_objs = 0;
+        game_camera_params.game_obj_idx = -1;
+        game_camera_params.camera_rot_update = (!s_camera_paused && s_mouse_right_button_pressed) ? 1 : 0;
+
+        ego::GameCamera::updateGameCameraBuffer(
+            cmd_buf,
+            game_camera_params,
+            s_dbuf_idx);
 
         for (auto& gltf_obj : gltf_objects_) {
             gltf_obj->updateBuffers(cmd_buf);
@@ -1381,12 +1455,13 @@ void RealWorldApplication::drawFrame() {
     updateViewConstBuffer(image_index);
 
     time_t now = time(0);
-    tm* localtm = gmtime(&now);
+    tm localtm;
+    gmtime_s(&localtm, &now);
 
     float latitude = 37.4419f;
     float longtitude = -122.1430f; // west.
 
-    skydome_->update(latitude, longtitude, localtm->tm_yday, 22/*localtm->tm_hour*/, localtm->tm_min, localtm->tm_sec);
+    skydome_->update(latitude, longtitude, localtm.tm_yday, 22/*localtm->tm_hour*/, localtm.tm_min, localtm.tm_sec);
 
     device_->resetFences(in_flight_fences);
 
@@ -1587,6 +1662,7 @@ void RealWorldApplication::cleanup() {
     ego::TileObject::destoryStaticMembers(device_);
     gltf_objects_.clear();
     ego::GltfObject::destoryStaticMembers(device_);
+    ego::GameCamera::destoryStaticMembers(device_);
 
     for (uint64_t i = 0; i < kMaxFramesInFlight; i++) {
         device_->destroySemaphore(render_finished_semaphores_[i]);

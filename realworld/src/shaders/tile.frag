@@ -9,8 +9,8 @@
 #include "ibl.glsl.h"
 #include "tile_common.glsl.h"
 
-layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniformBufferObject {
-    ViewParams view_params;
+layout(std430, set = VIEW_PARAMS_SET, binding = VIEW_CAMERA_BUFFER_INDEX) readonly buffer CameraInfoBuffer {
+	GameCameraInfo camera_info;
 };
 
 layout(push_constant) uniform TileUniformBufferObject {
@@ -105,7 +105,7 @@ void main() {
     MaterialInfo material_info;
     material_info.baseColor = albedo;
 
-    vec3 view_vec = view_params.camera_pos.xyz - in_data.vertex_position;
+    vec3 view_vec = camera_info.position.xyz - in_data.vertex_position;
     float view_dist = length(view_vec);
     vec3 view = normalize(view_vec);
 

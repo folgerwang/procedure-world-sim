@@ -8,10 +8,6 @@
 #include "ibl.glsl.h"
 #include "tile_common.glsl.h"
 
-layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniformBufferObject {
-    ViewParams view_params;
-};
-
 layout(push_constant) uniform DebugDrawUniformBufferObject {
     DebugDrawParams params;
 };

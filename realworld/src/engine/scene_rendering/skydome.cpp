@@ -604,7 +604,7 @@ void Skydome::recreate(
 // render skybox.
 void Skydome::draw(
     const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
-    const std::shared_ptr<renderer::DescriptorSet>& frame_desc_set) {
+    const std::shared_ptr<renderer::DescriptorSet>& view_desc_set) {
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, skybox_pipeline_);
     std::vector<std::shared_ptr<renderer::Buffer>> buffers(1);
     std::vector<uint64_t> offsets(1);
@@ -626,13 +626,10 @@ void Skydome::draw(
         &sun_sky_params,
         sizeof(sun_sky_params));
 
-    renderer::DescriptorSetList desc_sets{
-        skybox_tex_desc_set_,
-        frame_desc_set };
     cmd_buf->bindDescriptorSets(
         renderer::PipelineBindPoint::GRAPHICS,
         skybox_pipeline_layout_,
-        desc_sets);
+        {skybox_tex_desc_set_, view_desc_set });
 
     cmd_buf->drawIndexed(36);
 }

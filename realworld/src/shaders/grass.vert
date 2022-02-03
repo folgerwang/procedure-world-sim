@@ -4,8 +4,8 @@
 
 layout(location = 0) in vec2 height;
 
-layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniformBufferObject {
-    ViewParams view_params;
+layout(std430, set = VIEW_PARAMS_SET, binding = VIEW_CAMERA_BUFFER_INDEX) readonly buffer CameraInfoBuffer {
+	GameCameraInfo camera_info;
 };
 
 layout(push_constant) uniform TileUniformBufferObject {
@@ -30,7 +30,7 @@ void main() {
     float y = tile_params.min.y + factor_y * tile_params.range.y;
 
     vec4 position_ws = vec4(x, height.x, y, 1.0);
-    gl_Position = view_params.proj * view_params.view * position_ws;
+    gl_Position = camera_info.proj * camera_info.view * position_ws;
 
     out_data.vertex_position = position_ws.xyz;
 }

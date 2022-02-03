@@ -6,8 +6,8 @@ layout(push_constant) uniform ModelUniformBufferObject {
     ModelParams model_params;
 };
 
-layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniformBufferObject {
-    ViewParams view_params;
+layout(std430, set = VIEW_PARAMS_SET, binding = VIEW_CAMERA_BUFFER_INDEX) readonly buffer CameraInfoBuffer {
+	GameCameraInfo camera_info;
 };
 
 #if defined(HAS_SKIN_SET_0) || defined(HAS_SKIN_SET_1)
@@ -138,7 +138,7 @@ void main() {
         local_world_rot_mat *
         position_ls +
         in_loc_pos_scale.xyz;
-    gl_Position = view_params.view_proj * vec4(position_ws, 1.0);
+    gl_Position = camera_info.view_proj * vec4(position_ws, 1.0);
     out_data.vertex_position = position_ws;
     out_data.vertex_tex_coord = vec4(0);
 #ifdef HAS_UV_SET0

@@ -3,12 +3,12 @@
 #include "global_definition.glsl.h"
 #include "weather_common.glsl.h"
 
-layout(set = VIEW_PARAMS_SET, binding = VIEW_CONSTANT_INDEX) uniform ViewUniformBufferObject {
-    ViewParams view_params;
-};
-
 layout(push_constant) uniform DebugDrawUniformBufferObject {
     DebugDrawParams params;
+};
+
+layout(std430, set = VIEW_PARAMS_SET, binding = VIEW_CAMERA_BUFFER_INDEX) readonly buffer CameraInfoBuffer {
+	GameCameraInfo camera_info;
 };
 
 layout(location = 0) out VsPsData {
@@ -32,7 +32,7 @@ void main() {
     vec3 f_xyz = (vec3(ix, iy, iz) + 0.5f) * params.inv_size;
 
     vec3 sample_pos = f_xyz * params.debug_range + params.debug_min;
-    vec4 position_ss = view_params.proj * view_params.view * vec4(sample_pos, 1.0);
+    vec4 position_ss = camera_info.view_proj * vec4(sample_pos, 1.0);
 
     vec3 uvw;
     uvw.z = log2(max((sample_pos.y - kAirflowLowHeight), 0.0f) + 1.0f) /
@@ -46,7 +46,7 @@ void main() {
 
     vec4 airflow_info = texture(src_airflow, uvw);
     vec3 arrow_dir = airflow_info.xyz * 2.0f - 1.0f;
-    vec3 view_dir = sample_pos - view_params.camera_pos.xyz;
+    vec3 view_dir = sample_pos - camera_info.position.xyz;
     vec3 left_dir = normalize(cross(arrow_dir, view_dir));
 
     vec3 offset = vec3(0);
@@ -68,5 +68,5 @@ void main() {
     }
 
     vec4 position_ws = vec4(sample_pos, 1.0);
-    gl_Position = view_params.proj * view_params.view * position_ws;
+    gl_Position = camera_info.view_proj * position_ws;
 }

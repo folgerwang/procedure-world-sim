@@ -123,6 +123,9 @@
     <ClCompile Include="src\engine\game_object\debug_draw.cpp">
       <Filter>Source Files\engine\game_object</Filter>
     </ClCompile>
+    <ClCompile Include="src\engine\game_object\camera.cpp">
+      <Filter>Source Files\engine\game_object</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\shaders\functions.glsl.h">
@@ -239,6 +242,9 @@
     <ClInclude Include="src\shaders\inoise.glsl.h">
       <Filter>Resource Files\shaders</Filter>
     </ClInclude>
+    <ClInclude Include="src\engine\game_object\camera.h">
+      <Filter>Header Files\engine\game_object</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="src\shaders\cube_ibl.frag">
@@ -341,6 +347,9 @@
       <Filter>Resource Files\shaders</Filter>
     </None>
     <None Include="src\shaders\perlin_noise_init.comp">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\update_camera.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
   </ItemGroup>

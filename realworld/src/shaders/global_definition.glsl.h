@@ -39,6 +39,7 @@
 #define JOINT_CONSTANT_INDEX        0
 // VIEW_PARAMS_SET
 #define VIEW_CONSTANT_INDEX         6
+#define VIEW_CAMERA_BUFFER_INDEX    7
 
 // PBR_GLOBAL_PARAMS_SET ibl lighting textures.
 #define GGX_LUT_INDEX               0
@@ -49,53 +50,54 @@
 #define THIN_FILM_LUT_INDEX         5
 
 // PBR_MATERIAL_PARAMS_SET
-#define PBR_CONSTANT_INDEX          7
-#define BASE_COLOR_TEX_INDEX        8
+#define PBR_CONSTANT_INDEX          8
+#define BASE_COLOR_TEX_INDEX        9
 #define NORMAL_TEX_INDEX            (BASE_COLOR_TEX_INDEX + 1)
 #define METAL_ROUGHNESS_TEX_INDEX   (BASE_COLOR_TEX_INDEX + 2)
 #define EMISSIVE_TEX_INDEX          (BASE_COLOR_TEX_INDEX + 3)
 #define OCCLUSION_TEX_INDEX         (BASE_COLOR_TEX_INDEX + 4)
 
 // TILE_TEXTURE_PARAMS_SET
-#define DST_SOIL_WATER_LAYER_BUFFER_INDEX   6
-#define DST_WATER_NORMAL_BUFFER_INDEX       7
-#define DST_WATER_FLOW_BUFFER_INDEX         8
-#define SRC_COLOR_TEX_INDEX                 9
-#define SRC_DEPTH_TEX_INDEX                 10
-#define ROCK_LAYER_BUFFER_INDEX             11
-#define SOIL_WATER_LAYER_BUFFER_INDEX       12
-#define ORTHER_INFO_LAYER_BUFFER_INDEX      13
-#define WATER_NORMAL_BUFFER_INDEX           14
-#define WATER_FLOW_BUFFER_INDEX             15
-#define SRC_AIRFLOW_INDEX                   17
-#define SRC_MAP_MASK_INDEX                  18
+#define TILE_BASE_PARAMS_INDEX              7
+#define DST_SOIL_WATER_LAYER_BUFFER_INDEX   (TILE_BASE_PARAMS_INDEX + 0)
+#define DST_WATER_NORMAL_BUFFER_INDEX       (TILE_BASE_PARAMS_INDEX + 1)
+#define DST_WATER_FLOW_BUFFER_INDEX         (TILE_BASE_PARAMS_INDEX + 2)
+#define SRC_COLOR_TEX_INDEX                 (TILE_BASE_PARAMS_INDEX + 3)
+#define SRC_DEPTH_TEX_INDEX                 (TILE_BASE_PARAMS_INDEX + 4)
+#define ROCK_LAYER_BUFFER_INDEX             (TILE_BASE_PARAMS_INDEX + 5)
+#define SOIL_WATER_LAYER_BUFFER_INDEX       (TILE_BASE_PARAMS_INDEX + 6)
+#define ORTHER_INFO_LAYER_BUFFER_INDEX      (TILE_BASE_PARAMS_INDEX + 7)
+#define WATER_NORMAL_BUFFER_INDEX           (TILE_BASE_PARAMS_INDEX + 8)
+#define WATER_FLOW_BUFFER_INDEX             (TILE_BASE_PARAMS_INDEX + 9)
+#define SRC_AIRFLOW_INDEX                   (TILE_BASE_PARAMS_INDEX + 10)
+#define SRC_MAP_MASK_INDEX                  (TILE_BASE_PARAMS_INDEX + 11)
 
 // Airflow texture.
-#define DST_TEMP_TEX_INDEX                  19
-#define DST_MOISTURE_TEX_INDEX              20
-#define DST_PRESSURE_TEX_INDEX              21
-#define DST_AIRFLOW_TEX_INDEX               22
-#define DST_CLOUD_LIGHTING_TEX_INDEX        23
-#define DST_CLOUD_SHADOW_TEX_INDEX          24
-#define SRC_TEMP_TEX_INDEX                  25
-#define SRC_MOISTURE_TEX_INDEX              26
-#define SRC_PRESSURE_TEX_INDEX              27
-#define SRC_CLOUD_LIGHTING_TEX_INDEX        28
-#define SRC_CLOUD_SHADOW_TEX_INDEX          29
-#define DST_FOG_CLOUD_INDEX                 30
-#define DST_SCATTERING_LUT_INDEX            31
-#define DST_SCATTERING_LUT_SUM_INDEX        31
-#define SRC_SCATTERING_LUT_INDEX            32
-#define SRC_SCATTERING_LUT_SUM_INDEX        32
+#define DST_TEMP_TEX_INDEX                  (TILE_BASE_PARAMS_INDEX + 12)
+#define DST_MOISTURE_TEX_INDEX              (TILE_BASE_PARAMS_INDEX + 13)
+#define DST_PRESSURE_TEX_INDEX              (TILE_BASE_PARAMS_INDEX + 14)
+#define DST_AIRFLOW_TEX_INDEX               (TILE_BASE_PARAMS_INDEX + 15)
+#define DST_CLOUD_LIGHTING_TEX_INDEX        (TILE_BASE_PARAMS_INDEX + 16)
+#define DST_CLOUD_SHADOW_TEX_INDEX          (TILE_BASE_PARAMS_INDEX + 17)
+#define SRC_TEMP_TEX_INDEX                  (TILE_BASE_PARAMS_INDEX + 18)
+#define SRC_MOISTURE_TEX_INDEX              (TILE_BASE_PARAMS_INDEX + 19)
+#define SRC_PRESSURE_TEX_INDEX              (TILE_BASE_PARAMS_INDEX + 20)
+#define SRC_CLOUD_LIGHTING_TEX_INDEX        (TILE_BASE_PARAMS_INDEX + 21)
+#define SRC_CLOUD_SHADOW_TEX_INDEX          (TILE_BASE_PARAMS_INDEX + 22)
+#define DST_FOG_CLOUD_INDEX                 (TILE_BASE_PARAMS_INDEX + 23)
+#define DST_SCATTERING_LUT_INDEX            (TILE_BASE_PARAMS_INDEX + 24)
+#define DST_SCATTERING_LUT_SUM_INDEX        (TILE_BASE_PARAMS_INDEX + 24)
+#define SRC_SCATTERING_LUT_INDEX            (TILE_BASE_PARAMS_INDEX + 25)
+#define SRC_SCATTERING_LUT_SUM_INDEX        (TILE_BASE_PARAMS_INDEX + 25)
 
-#define DETAIL_NOISE_TEXTURE_INDEX          33
-#define ROUGH_NOISE_TEXTURE_INDEX           34
-#define PERMUTATION_TEXTURE_INDEX           35
-#define PERMUTATION_2D_TEXTURE_INDEX        36
-#define GRAD_TEXTURE_INDEX                  37
-#define PERM_GRAD_TEXTURE_INDEX             38
-#define PERM_GRAD_4D_TEXTURE_INDEX          39
-#define GRAD_4D_TEXTURE_INDEX               40
+#define DETAIL_NOISE_TEXTURE_INDEX          (TILE_BASE_PARAMS_INDEX + 26)
+#define ROUGH_NOISE_TEXTURE_INDEX           (TILE_BASE_PARAMS_INDEX + 27)
+#define PERMUTATION_TEXTURE_INDEX           (TILE_BASE_PARAMS_INDEX + 28)
+#define PERMUTATION_2D_TEXTURE_INDEX        (TILE_BASE_PARAMS_INDEX + 29)
+#define GRAD_TEXTURE_INDEX                  (TILE_BASE_PARAMS_INDEX + 30)
+#define PERM_GRAD_TEXTURE_INDEX             (TILE_BASE_PARAMS_INDEX + 31)
+#define PERM_GRAD_4D_TEXTURE_INDEX          (TILE_BASE_PARAMS_INDEX + 32)
+#define GRAD_4D_TEXTURE_INDEX               (TILE_BASE_PARAMS_INDEX + 33)
 
 // Noise Texture.
 #define DST_PERLIN_NOISE_TEX_INDEX          0
@@ -110,8 +112,9 @@
 #define INDEX_BUFFER_INDEX                  1
 
 #define INDIRECT_DRAW_BUFFER_INDEX          0
-#define GAME_OBJECTS_BUFFER_INDEX           0
-#define INSTANCE_BUFFER_INDEX               1
+#define GAME_OBJECTS_BUFFER_INDEX           1
+#define INSTANCE_BUFFER_INDEX               2
+#define CAMERA_OBJECT_BUFFER_INDEX          3
 
 #define FEATURE_MATERIAL_SPECULARGLOSSINESS     0x00000001
 #define FEATURE_MATERIAL_METALLICROUGHNESS      0x00000002
@@ -178,6 +181,13 @@
 #define kNodeWaterRight                         0x01      // +x
 #define kNodeWaterBack                          0x02      // -y
 #define kNodeWaterFront                         0x03      // +y
+
+#define kNumGltfInstance                        1 // 4096
+
+#define GLFW_KEY_W                  87
+#define GLFW_KEY_S                  83
+#define GLFW_KEY_A                  65
+#define GLFW_KEY_D                  68
 
 #ifdef __cplusplus
 #pragma once
@@ -477,19 +487,59 @@ struct InstanceDataInfo {
     vec4            mat_pos_scale;
 };
 
+// could be updated from frame to frame.
 struct GameObjectInfo {
-    // could be updated from frame to frame.
-    vec3              position;                 // 32-bits float position.
-    uint              packed_up_vector;         // 2 half x, y for up vector.
+    vec3            position;                 // 32-bits float position.
+    uint            packed_up_vector;         // 2 half x, y for up vector.
 
-    uint              packed_facing_dir;        // 2 half x, y for facing vector.
-    uint              packed_moving_dir_xy;     // 2 half x, y for moving vector.
-    uint              packed_moving_dir_z_signs;// 2 half z and signs.
-    uint              status;                   // 32 bits for status, todo. 
+    uint            packed_facing_dir;        // 2 half x, y for facing vector.
+    uint            packed_moving_dir_xy;     // 2 half x, y for moving vector.
+    uint            packed_moving_dir_z_signs;// 2 half z and signs.
+    uint            status;                   // 32 bits for status, todo.
 
-    uint              packed_mass_scale;        // 2 half mass and scale.
-    uint              packed_radius_angle;      // 2 half awareness radius and angle.
-    uint              pad[2];
+    uint            packed_mass_scale;        // 2 half mass and scale.
+    uint            packed_radius_angle;      // 2 half awareness radius and angle.
+    uint            pad[2];
+};
+
+struct GameCameraParams {
+    vec2            world_min;
+    vec2            inv_world_range;
+    vec3            camera_pos;
+    int             key;
+    vec3            camera_dir;
+    int             frame_count;
+    vec3            camera_up;
+    float           delta_t;
+    vec2            mouse_pos;
+    float           camera_speed;
+    float           fov;
+    float           aspect;
+    float           z_near;
+    float           z_far;
+    float           sensitivity;
+    uint            num_game_objs;
+    int             game_obj_idx;
+    uint            camera_rot_update;
+    int             pad;
+};
+
+// could be updated from frame to frame.
+struct GameCameraInfo {
+    mat4            view;
+    mat4            proj;
+    mat4            view_proj;
+    mat4            inv_view_proj;
+    mat4            inv_view_proj_relative;
+    vec4            depth_params;
+    vec3            position;
+    uint            status;                   // 32 bits for status, todo.
+    vec3            up_vector;
+    float           yaw;
+    vec3            facing_dir;
+    float           pitch;
+    vec2            mouse_pos;
+    vec2            pad;
 };
 
 #ifdef __cplusplus
