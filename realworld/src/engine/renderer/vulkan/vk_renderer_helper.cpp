@@ -2074,19 +2074,11 @@ std::vector<VkPipelineShaderStageCreateInfo> getShaderStages(
     const std::vector<std::shared_ptr<renderer::ShaderModule>>& shader_modules) {
     std::vector<VkPipelineShaderStageCreateInfo> shader_stages(shader_modules.size());
 
-    // todo.
-    auto vk_vert_shader_module = RENDER_TYPE_CAST(ShaderModule, shader_modules[0]);
-    shader_stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shader_stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    shader_stages[0].module = vk_vert_shader_module->get();
-    shader_stages[0].pName = "main";
-
-    // todo.
-    for (int i = 1; i < shader_modules.size(); i++) {
-        auto vk_frag_shader_module = RENDER_TYPE_CAST(ShaderModule, shader_modules[i]);
+    for (auto i = 0; i < shader_modules.size(); i++) {
+        auto vk_shader_module = RENDER_TYPE_CAST(ShaderModule, shader_modules[i]);
         shader_stages[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        shader_stages[i].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        shader_stages[i].module = vk_frag_shader_module->get();
+        shader_stages[i].stage = helper::toVkShaderStageFlagBits(vk_shader_module->getShaderStage());
+        shader_stages[i].module = vk_shader_module->get();
         shader_stages[i].pName = "main";
     }
 

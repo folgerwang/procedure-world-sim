@@ -444,7 +444,7 @@ std::shared_ptr<Pipeline> VulkanDevice::createPipeline(
 std::shared_ptr<Pipeline> VulkanDevice::createPipeline(
     const std::shared_ptr<PipelineLayout>& pipeline_layout,
     const std::shared_ptr<ShaderModule>& shader_module) {
-    auto ibl_compute_shader_stages = helper::getComputeShaderStages({ shader_module });
+    auto shader_stages = helper::getShaderStages({ shader_module });
 
     auto vk_ibl_comp_pipeline_layout = RENDER_TYPE_CAST(PipelineLayout, pipeline_layout);
     assert(vk_ibl_comp_pipeline_layout);
@@ -452,7 +452,7 @@ std::shared_ptr<Pipeline> VulkanDevice::createPipeline(
     // flags = 0, - e.g. disable optimization
     VkComputePipelineCreateInfo pipeline_info = {};
     pipeline_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    pipeline_info.stage = ibl_compute_shader_stages[0];
+    pipeline_info.stage = shader_stages[0];
     pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
     pipeline_info.basePipelineIndex = -1;
     pipeline_info.layout = vk_ibl_comp_pipeline_layout->get();
