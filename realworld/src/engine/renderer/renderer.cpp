@@ -138,6 +138,14 @@ std::shared_ptr<Device> Helper::createLogicalDevice(
     return vk::helper::createLogicalDevice(physical_device, surface, indices);
 }
 
+void Helper::initRayTracingProperties(
+    const std::shared_ptr<renderer::PhysicalDevice>& physical_device,
+    const std::shared_ptr<renderer::Device>& device,
+    PhysicalDeviceRayTracingPipelineProperties& rt_pipeline_properties,
+    PhysicalDeviceAccelerationStructureFeatures& as_features) {
+    return vk::helper::initRayTracingProperties(physical_device, device, rt_pipeline_properties, as_features);
+}
+
 void Helper::createSwapChain(
     GLFWwindow* window,
     const std::shared_ptr<Device>& device,
@@ -243,6 +251,7 @@ void Helper::createBufferWithSrcData(
             SET_FLAG_BIT(BufferUsage, TRANSFER_SRC_BIT),
             SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
             SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+            0,
             staging_buffer,
             staging_buffer_memory);
 
@@ -252,6 +261,7 @@ void Helper::createBufferWithSrcData(
             buffer_size,
             SET_FLAG_BIT(BufferUsage, TRANSFER_DST_BIT) | usage,
             memory_property,
+            0,
             buffer,
             buffer_memory);
 
@@ -265,6 +275,7 @@ void Helper::createBufferWithSrcData(
             buffer_size,
             usage,
             memory_property,
+            0,
             buffer,
             buffer_memory);
 
@@ -286,6 +297,7 @@ void Helper::updateBufferWithSrcData(
         SET_FLAG_BIT(BufferUsage, TRANSFER_SRC_BIT),
         SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
         SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        0,
         staging_buffer,
         staging_buffer_memory);
 
@@ -335,6 +347,7 @@ void Helper::create2DTextureImage(
         SET_FLAG_BIT(BufferUsage, TRANSFER_SRC_BIT),
         SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
         SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        0,
         staging_buffer,
         staging_buffer_memory);
 
@@ -416,6 +429,7 @@ void Helper::dumpTextureImage(
         SET_FLAG_BIT(BufferUsage, TRANSFER_DST_BIT),
         SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
         SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        0,
         staging_buffer,
         staging_buffer_memory);
 
@@ -507,6 +521,7 @@ void Helper::createCubemapTexture(
             SET_FLAG_BIT(BufferUsage, TRANSFER_SRC_BIT),
             SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
             SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+            0,
             staging_buffer,
             staging_buffer_memory);
 
@@ -541,7 +556,8 @@ void Helper::createCubemapTexture(
     texture.memory = device->allocateMemory(
         mem_requirements.size,
         mem_requirements.memory_type_bits,
-        vk::helper::toVkMemoryPropertyFlags(SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT)));
+        vk::helper::toVkMemoryPropertyFlags(SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT)),
+        0);
     device->bindImageMemory(texture.image, texture.memory);
 
     if (data) {

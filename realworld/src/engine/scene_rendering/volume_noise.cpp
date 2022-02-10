@@ -239,10 +239,6 @@ std::shared_ptr<er::Pipeline> createGraphicsPipeline(
         shader_modules,
         display_size);
 
-    for (auto& shader_module : shader_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
     return cloud_pipeline;
 }
 #endif
@@ -396,7 +392,7 @@ void VolumeNoise::recreate(
         erh::createComputePipeline(
             device,
             noise_init_pipeline_layout_,
-            "perlin_noise_init");
+            "perlin_noise_init_comp.spv");
 
 #if 0
     // create a global ibl texture descriptor set.

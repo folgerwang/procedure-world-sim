@@ -379,6 +379,111 @@ struct DrawIndirectCommand {
     uint32_t    first_instance;
 };
 
+union DeviceOrHostAddressConst {
+    DeviceAddress   device_address;
+    const void*     host_address;
+};
+
+union DeviceOrHostAddress {
+    DeviceAddress   device_address;
+    void*           host_address;
+};
+
+struct AccelerationStructureGeometryTrianglesData {
+    StructureType                    struct_type;
+    const void*                      p_next;
+    Format                           vertex_format;
+    DeviceOrHostAddressConst         vertex_data;
+    DeviceSize                       vertex_stride;
+    uint32_t                         max_vertex;
+    IndexType                        index_type;
+    DeviceOrHostAddressConst         index_data;
+    DeviceOrHostAddressConst         transform_data;
+};
+
+struct AccelerationStructureGeometryAabbsData {
+    StructureType                    struct_type;
+    const void*                      p_next;
+    DeviceOrHostAddressConst         data;
+    DeviceSize                       stride;
+};
+
+struct AccelerationStructureGeometryInstancesData {
+    StructureType                    struct_type;
+    const void*                      p_next;
+    Bool32                           array_of_pointers;
+    DeviceOrHostAddressConst         data;
+};
+
+union AccelerationStructureGeometryData {
+    AccelerationStructureGeometryTrianglesData    triangles;
+    AccelerationStructureGeometryAabbsData        aabbs;
+    AccelerationStructureGeometryInstancesData    instances;
+};
+
+struct AccelerationStructureGeometry {
+    GeometryType                         geometry_type;
+    AccelerationStructureGeometryData    geometry;
+    GeometryFlags                        flags;
+};
+
+struct AccelerationStructureBuildGeometryInfo {
+    AccelerationStructureType                 type;
+    BuildAccelerationStructureFlags           flags;
+    BuildAccelerationStructureMode            mode;
+    AccelerationStructure                     src_as;
+    AccelerationStructure                     dst_as;
+    std::vector<std::shared_ptr<AccelerationStructureGeometry>> geometries;
+    DeviceOrHostAddress                       scratch_data;
+};
+
+struct AccelerationStructureBuildSizesInfo {
+    StructureType                   struct_type;
+    const void*                     p_next;
+    DeviceSize                      as_size;
+    DeviceSize                      update_scratch_size;
+    DeviceSize                      build_scratch_size;
+};
+
+struct AccelerationStructureBuildRangeInfo {
+    uint32_t    primitive_count;
+    uint32_t    primitive_offset;
+    uint32_t    first_vertex;
+    uint32_t    transform_offset;
+};
+
+struct TransformMatrix {
+    float    matrix[3][4];
+};
+
+struct AccelerationStructureInstance {
+    TransformMatrix               transform;
+    uint32_t                      instance_custom_index : 24;
+    uint32_t                      mask : 8;
+    uint32_t                      instance_shader_binding_table_record_offset : 24;
+    GeometryInstanceFlags         flags : 8;
+    uint64_t                      acceleration_structure_reference;
+};
+
+struct PhysicalDeviceRayTracingPipelineProperties {
+    uint32_t           shader_group_handle_size;
+    uint32_t           max_ray_recursion_depth;
+    uint32_t           max_shader_group_stride;
+    uint32_t           shader_group_base_alignment;
+    uint32_t           shader_group_handle_capture_replay_size;
+    uint32_t           max_ray_dispatch_invocation_count;
+    uint32_t           shader_group_handle_alignment;
+    uint32_t           max_ray_hit_attribute_size;
+};
+
+struct PhysicalDeviceAccelerationStructureFeatures {
+    Bool32             acceleration_structure;
+    Bool32             acceleration_structure_capture_replay;
+    Bool32             acceleration_structure_indirect_build;
+    Bool32             acceleration_structure_host_commands;
+    Bool32             descriptor_binding_acceleration_structure_update_after_bind;
+};
+
 struct GraphicPipelineInfo {
     std::shared_ptr<PipelineColorBlendStateCreateInfo> blend_state_info;
     std::shared_ptr<PipelineRasterizationStateCreateInfo> rasterization_info;

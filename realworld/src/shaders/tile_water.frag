@@ -118,8 +118,8 @@ void main() {
     vec4 refracted_screen_pos = camera_info.proj * camera_info.view * vec4(refract_pos, 1.0f);
     refracted_screen_pos.xy /= refracted_screen_pos.w;
 
-    float fade_dist_1 = max(water_ray_dist / 20.0f, 0);
-    float fade_dist_2 = max(distorted_water_ray_dist / 20.0f, 0);
+    float fade_dist_1 = max(water_ray_dist / 10.0f, 0);
+    float fade_dist_2 = max(distorted_water_ray_dist / 10.0f, 0);
 
     float fade_rate = exp(-fade_dist_1 * fade_dist_1);
     float thickness_fade_rate = exp(-fade_dist_2 * fade_dist_2);

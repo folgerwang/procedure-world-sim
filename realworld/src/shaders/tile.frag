@@ -77,8 +77,7 @@ struct MaterialInfo
 
 void main() {
     vec3 pos = in_data.vertex_position;
-    vec3 tnor = terrainNormal(vec2(pos.x, pos.z), 0.00625f, 100.0f);
-
+    vec3 tnor = terrainNormal(vec2(pos.x, pos.z), 0.0625f, 100.0f);
     // bump map
     vec4 tt = fbmd_8(pos * 0.3f * vec3(1.0f, 0.2f, 1.0f));
     vec3 normal = normalize(tnor + 0.8f*(1.0f - abs(tnor.y))*0.8f*vec3(tt.y, tt.z, tt.w));

@@ -149,8 +149,8 @@ float fbm_9(vec2 x)
 
 vec3 fbmd_9(vec2 x)
 {
-    float f = 1.9f;
-    float s = 0.55f;
+    float f = 1.97f;
+    float s = 0.557f;
     float a = 0.0f;
     float b = 0.5f;
     vec2  d = vec2(0.0);

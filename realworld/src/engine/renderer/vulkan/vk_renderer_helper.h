@@ -7,6 +7,18 @@ struct GLFWwindow;
 namespace engine {
 namespace renderer {
 namespace vk {
+
+extern PFN_vkGetBufferDeviceAddressKHR vkGetBufferDeviceAddressKHR;
+extern PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR;
+extern PFN_vkDestroyAccelerationStructureKHR vkDestroyAccelerationStructureKHR;
+extern PFN_vkGetAccelerationStructureBuildSizesKHR vkGetAccelerationStructureBuildSizesKHR;
+extern PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR;
+extern PFN_vkCmdBuildAccelerationStructuresKHR vkCmdBuildAccelerationStructuresKHR;
+extern PFN_vkBuildAccelerationStructuresKHR vkBuildAccelerationStructuresKHR;
+extern PFN_vkCmdTraceRaysKHR vkCmdTraceRaysKHR;
+extern PFN_vkGetRayTracingShaderGroupHandlesKHR vkGetRayTracingShaderGroupHandlesKHR;
+extern PFN_vkCreateRayTracingPipelinesKHR vkCreateRayTracingPipelinesKHR;
+
 namespace helper {
 
 struct SwapChainSupportDetails {
@@ -25,6 +37,7 @@ VkImageCreateFlags toVkImageCreateFlags(renderer::ImageCreateFlags flags);
 VkImageTiling toVkImageTiling(renderer::ImageTiling tiling);
 VkImageLayout toVkImageLayout(renderer::ImageLayout layout);
 VkShaderStageFlagBits toVkShaderStageFlagBits(renderer::ShaderStageFlagBits stage);
+VkMemoryAllocateFlags toVkMemoryAllocateFlags(renderer::MemoryAllocateFlags flags);
 VkMemoryPropertyFlags toVkMemoryPropertyFlags(renderer::MemoryPropertyFlags flags);
 VkCommandBufferUsageFlags toCommandBufferUsageFlags(renderer::CommandBufferUsageFlags flags);
 VkImageType toVkImageType(renderer::ImageType view_type);
@@ -58,6 +71,21 @@ VkStencilOp toVkStencilOp(renderer::StencilOp stencil_op);
 VkAttachmentLoadOp toVkAttachmentLoadOp(renderer::AttachmentLoadOp load_op);
 VkAttachmentStoreOp toVkAttachmentStoreOp(renderer::AttachmentStoreOp store_op);
 VkAttachmentDescriptionFlags toVkAttachmentDescriptionFlags(renderer::AttachmentDescriptionFlags flags);
+VkAccelerationStructureBuildTypeKHR toVkAccelerationStructureBuildType(const renderer::AccelerationStructureBuildType& as_build_type);
+VkGeometryTypeKHR toVkGeometryType(const renderer::GeometryType& geometry_type);
+VkGeometryFlagsKHR toVkGeometryFlags(const renderer::GeometryFlags& flags);
+VkAccelerationStructureGeometryKHR toVkAsGeometry(const renderer::AccelerationStructureGeometry& as_geo);
+VkBuildAccelerationStructureFlagsKHR toVkBuildAccelerationStructureFlags(const renderer::BuildAccelerationStructureFlags& flags);
+VkBuildAccelerationStructureModeKHR toVkBuildAccelerationStructureMode(const renderer::BuildAccelerationStructureMode& as_mode);
+VkAccelerationStructureTypeKHR toVkAccelerationStructureType(const renderer::AccelerationStructureType& as_type);
+VkAccelerationStructureBuildGeometryInfoKHR
+toVkAccelerationStructureBuildGeometryInfo(
+    const AccelerationStructureBuildGeometryInfo& build_info,
+    std::unique_ptr<VkAccelerationStructureGeometryKHR[]>& geoms);
+VkAccelerationStructureBuildRangeInfoKHR
+toVkAccelerationStructureBuildRangeInfo(
+    const AccelerationStructureBuildRangeInfo& as_build_range_info);
+VkGeometryInstanceFlagsKHR toVkGeometryInstanceFlags(const renderer::GeometryInstanceFlags& flags);
 VkDependencyFlags toVkDependencyFlags(renderer::DependencyFlags flags);
 VkSubpassDescriptionFlags toVkSubpassDescriptionFlags(renderer::SubpassDescriptionFlags flags);
 std::vector<VkVertexInputBindingDescription> toVkVertexInputBindingDescription(
@@ -116,6 +144,12 @@ std::shared_ptr<renderer::Device> createLogicalDevice(
     const std::shared_ptr<renderer::PhysicalDevice>& physical_device,
     const std::shared_ptr<renderer::Surface>& surface,
     const renderer::QueueFamilyIndices& indices);
+
+void initRayTracingProperties(
+    const std::shared_ptr<renderer::PhysicalDevice>& physical_device,
+    const std::shared_ptr<renderer::Device>& device,
+    PhysicalDeviceRayTracingPipelineProperties& rt_pipeline_properties,
+    PhysicalDeviceAccelerationStructureFeatures& as_features);
 
 VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& available_formats);
 

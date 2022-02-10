@@ -150,6 +150,7 @@ static void setupMeshState(
                 SET_FLAG_BIT(BufferUsage, UNIFORM_BUFFER_BIT),
                 SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
                 SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+                0,
                 dst_material.uniform_buffer_.buffer,
                 dst_material.uniform_buffer_.memory);
 
@@ -983,12 +984,17 @@ static renderer::ShaderModuleList getGltfShaderModules(
         vert_feature_str += "_SKIN";
     }
     
-    uint64_t vert_code_size, frag_code_size;
-    auto vert_shader_code = engine::helper::readFile("lib/shaders/base_vert" + vert_feature_str + ".spv", vert_code_size);
-    auto frag_shader_code = engine::helper::readFile("lib/shaders/base_frag" + frag_feature_str + ".spv", frag_code_size);
+    shader_modules[0] =
+        renderer::helper::loadShaderModule(
+            device,
+            "base_vert" + vert_feature_str + ".spv",
+            renderer::ShaderStageFlagBits::VERTEX_BIT);
 
-    shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
-    shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
+    shader_modules[1] =
+        renderer::helper::loadShaderModule(
+            device,
+            "base_frag" + frag_feature_str + ".spv",
+            renderer::ShaderStageFlagBits::FRAGMENT_BIT);
 
     return shader_modules;
 }
@@ -1050,24 +1056,7 @@ static std::shared_ptr<renderer::Pipeline> createGltfPipeline(
         shader_modules,
         display_size);
 
-    for (auto& shader_module : shader_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
     return gltf_pipeline;
-}
-
-static renderer::ShaderModuleList getComputeShaderModules(
-    const std::shared_ptr<renderer::Device>& device,
-    const std::string& compute_shader_name) {
-    uint64_t compute_code_size;
-    renderer::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    auto file_path = "lib/shaders/" + compute_shader_name + "_comp.spv";
-    auto compute_shader_code = engine::helper::readFile(file_path, compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
 }
 
 std::vector<renderer::BufferDescriptor> addGltfIndirectDrawBuffers(
@@ -1259,57 +1248,6 @@ static std::shared_ptr<renderer::PipelineLayout> createInstanceBufferPipelineLay
     push_const_range.size = sizeof(glsl::InstanceBufferUpdateParams);
 
     return device->createPipelineLayout(desc_set_layouts, { push_const_range });
-}
-
-static std::shared_ptr<renderer::Pipeline> createGltfIndirectDrawPipeline(
-    const std::shared_ptr<renderer::Device>& device,
-    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout) {
-    auto tile_creator_cs_modules = getComputeShaderModules(device, "update_gltf_indirect_draw");
-    assert(tile_creator_cs_modules.size() == 1);
-
-    auto pipeline = device->createPipeline(
-        pipeline_layout,
-        tile_creator_cs_modules[0]);
-
-    for (auto& shader_module : tile_creator_cs_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
-    return pipeline;
-}
-
-static std::shared_ptr<renderer::Pipeline> createGameObjectsPipeline(
-    const std::shared_ptr<renderer::Device>& device,
-    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout) {
-    auto update_game_objects_cs_modules = getComputeShaderModules(device, "update_game_objects");
-    assert(update_game_objects_cs_modules.size() == 1);
-
-    auto pipeline = device->createPipeline(
-        pipeline_layout,
-        update_game_objects_cs_modules[0]);
-
-    for (auto& shader_module : update_game_objects_cs_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
-    return pipeline;
-}
-
-static std::shared_ptr<renderer::Pipeline> createInstanceBufferPipeline(
-    const std::shared_ptr<renderer::Device>& device,
-    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout) {
-    auto update_instance_buffer_cs_modules = getComputeShaderModules(device, "update_instance_buffer");
-    assert(update_instance_buffer_cs_modules.size() == 1);
-
-    auto pipeline = device->createPipeline(
-        pipeline_layout,
-        update_instance_buffer_cs_modules[0]);
-
-    for (auto& shader_module : update_instance_buffer_cs_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
-    return pipeline;
 }
 
 } // namespace
@@ -1547,6 +1485,7 @@ GltfObject::GltfObject(
             SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
             SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
             SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+            0,
             object_->instance_buffer_.buffer,
             object_->instance_buffer_.memory);
 
@@ -1643,6 +1582,7 @@ void GltfObject::initStaticMembers(
             kMaxNumObjects * sizeof(glsl::GameObjectInfo),
             SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
             SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+            0,
             game_objects_buffer_->buffer,
             game_objects_buffer_->memory);
     }
@@ -1730,9 +1670,10 @@ void GltfObject::createStaticMembers(
         if (gltf_indirect_draw_pipeline_ == nullptr) {
             assert(gltf_indirect_draw_pipeline_layout_);
             gltf_indirect_draw_pipeline_ =
-                createGltfIndirectDrawPipeline(
+                renderer::helper::createComputePipeline(
                     device,
-                    gltf_indirect_draw_pipeline_layout_);
+                    gltf_indirect_draw_pipeline_layout_,
+                    "update_gltf_indirect_draw_comp.spv");
         }
     }
 
@@ -1759,9 +1700,10 @@ void GltfObject::createStaticMembers(
         if (update_game_objects_pipeline_ == nullptr) {
             assert(update_game_objects_pipeline_layout_);
             update_game_objects_pipeline_ =
-                createGameObjectsPipeline(
+                renderer::helper::createComputePipeline(
                     device,
-                    update_game_objects_pipeline_layout_);
+                    update_game_objects_pipeline_layout_,
+                    "update_game_objects_comp.spv");
         }
     }
 
@@ -1788,9 +1730,10 @@ void GltfObject::createStaticMembers(
         if (update_instance_buffer_pipeline_ == nullptr) {
             assert(update_instance_buffer_pipeline_layout_);
             update_instance_buffer_pipeline_ =
-                createInstanceBufferPipeline(
+                renderer::helper::createComputePipeline(
                     device,
-                    update_instance_buffer_pipeline_layout_);
+                    update_instance_buffer_pipeline_layout_,
+                    "update_instance_buffer_comp.spv");
         }
     }
 }

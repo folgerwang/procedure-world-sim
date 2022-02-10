@@ -403,6 +403,7 @@ void RealWorldApplication::initVulkan() {
     physical_device_ = er::Helper::pickPhysicalDevice(physical_devices_, surface_);
     queue_indices_ = er::Helper::findQueueFamilies(physical_device_, surface_);
     device_ = er::Helper::createLogicalDevice(physical_device_, surface_, queue_indices_);
+    er::Helper::initRayTracingProperties(physical_device_, device_, rt_pipeline_properties_, as_features_);
     assert(device_);
     depth_format_ = er::Helper::findDepthFormat(device_);
     device_info_.device = device_;
@@ -794,18 +795,6 @@ void RealWorldApplication::createImageViews() {
     }
 }
 
-er::ShaderModuleList getIblComputeShaderModules(
-    std::shared_ptr<er::Device> device)
-{
-    uint64_t compute_code_size;
-    er::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    auto compute_shader_code = engine::helper::readFile("lib/shaders/ibl_smooth_comp.spv", compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
-}
-
 void RealWorldApplication::createCubemapRenderPass() {
     auto color_attachment = FillAttachmentDescription(
         er::Format::R16G16B16A16_SFLOAT,
@@ -987,6 +976,7 @@ void RealWorldApplication::createUniformBuffers() {
             SET_FLAG_BIT(BufferUsage, UNIFORM_BUFFER_BIT),
             SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
             SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+            0,
             view_const_buffers_[i].buffer,
             view_const_buffers_[i].memory);
     }
@@ -1413,6 +1403,364 @@ void RealWorldApplication::drawScene(
     s_dbuf_idx = 1 - s_dbuf_idx;
 }
 
+struct BottomlevelDataInfo {
+    er::BufferInfo   vertex_buffer{};
+    er::BufferInfo   index_buffer{};
+    er::BufferInfo   transform_buffer{};
+    er::BufferInfo   as_buffer{};
+    er::BufferInfo   scratch_buffer{};
+
+    er::AccelerationStructure   as_handle{};
+    er::DeviceAddress   as_device_address = 0;
+};
+
+void initBottomLevelDataInfo(
+    const er::DeviceInfo& device_info,
+    BottomlevelDataInfo& bl_data_info) {
+    // Setup vertices for a single triangle
+    struct Vertex {
+        float pos[3];
+    };
+
+    std::vector<Vertex> vertices = {
+    { {  1.0f,  1.0f, 0.0f } },
+    { { -1.0f,  1.0f, 0.0f } },
+    { {  0.0f, -1.0f, 0.0f } }
+    };
+
+    // Setup indices
+    std::vector<uint32_t> indices = { 0, 1, 2 };
+    auto index_count = static_cast<uint32_t>(indices.size());
+
+    // Setup identity transform matrix
+    glm::mat3x4 transform_matrix = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f
+    };
+
+    // Create buffers
+    // For the sake of simplicity we won't stage the vertex data to the GPU memory
+    // Vertex buffer
+    er::Helper::createBufferWithSrcData(
+        device_info,
+        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT) |
+        SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
+        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        vertices.size() * sizeof(Vertex),
+        vertices.data(),
+        bl_data_info.vertex_buffer.buffer,
+        bl_data_info.vertex_buffer.memory);
+
+    // Index buffer
+    er::Helper::createBufferWithSrcData(
+        device_info,
+        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT) |
+        SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
+        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        indices.size() * sizeof(uint32_t),
+        indices.data(),
+        bl_data_info.index_buffer.buffer,
+        bl_data_info.index_buffer.memory);
+
+    // Transform buffer
+    er::Helper::createBufferWithSrcData(
+        device_info,
+        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT) |
+        SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
+        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        sizeof(transform_matrix),
+        &transform_matrix,
+        bl_data_info.transform_buffer.buffer,
+        bl_data_info.transform_buffer.memory);
+
+    // Build
+    auto as_geometry = std::make_shared<er::AccelerationStructureGeometry>();
+    as_geometry->flags = SET_FLAG_BIT(Geometry, OPAQUE_BIT_KHR);
+    as_geometry->geometry_type = er::GeometryType::TRIANGLES_KHR;
+    as_geometry->geometry.triangles.struct_type =
+        er::StructureType::ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    as_geometry->geometry.triangles.vertex_format = er::Format::R32G32B32_SFLOAT;
+    as_geometry->geometry.triangles.vertex_data.device_address =
+        bl_data_info.vertex_buffer.buffer->getDeviceAddress();
+    as_geometry->geometry.triangles.max_vertex = 3;
+    as_geometry->geometry.triangles.vertex_stride = sizeof(Vertex);
+    as_geometry->geometry.triangles.index_type = er::IndexType::UINT32;
+    as_geometry->geometry.triangles.index_data.device_address =
+        bl_data_info.index_buffer.buffer->getDeviceAddress();
+    as_geometry->geometry.triangles.transform_data.device_address =
+        bl_data_info.transform_buffer.buffer->getDeviceAddress();
+
+    // Get size info
+    er::AccelerationStructureBuildGeometryInfo as_build_geometry_info{};
+    as_build_geometry_info.type = er::AccelerationStructureType::BOTTOM_LEVEL_KHR;
+    as_build_geometry_info.flags = SET_FLAG_BIT(BuildAccelerationStructure, PREFER_FAST_TRACE_BIT_KHR);
+    as_build_geometry_info.geometries.push_back(as_geometry);
+
+    const uint32_t num_triangles = 1;
+    er::AccelerationStructureBuildSizesInfo as_build_size_info{};
+    as_build_size_info.struct_type = er::StructureType::ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+
+    device_info.device->getAccelerationStructureBuildSizes(
+        er::AccelerationStructureBuildType::DEVICE_KHR,
+        as_build_geometry_info,
+        num_triangles,
+        as_build_size_info);
+
+    device_info.device->createBuffer(
+        as_build_size_info.as_size,
+        SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_STORAGE_BIT_KHR) |
+        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT),
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
+        bl_data_info.as_buffer.buffer,
+        bl_data_info.as_buffer.memory);
+
+    bl_data_info.as_handle = device_info.device->createAccelerationStructure(
+        bl_data_info.as_buffer.buffer,
+        er::AccelerationStructureType::BOTTOM_LEVEL_KHR);
+
+    device_info.device->createBuffer(
+        as_build_size_info.build_scratch_size,
+        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT) |
+        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT),
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
+        bl_data_info.scratch_buffer.buffer,
+        bl_data_info.scratch_buffer.memory);
+
+    as_build_geometry_info.mode = er::BuildAccelerationStructureMode::BUILD_KHR;
+    as_build_geometry_info.dst_as = bl_data_info.as_handle;
+    as_build_geometry_info.scratch_data.device_address =
+        bl_data_info.scratch_buffer.buffer->getDeviceAddress();
+
+    er::AccelerationStructureBuildRangeInfo as_build_range_info{};
+    as_build_range_info.primitive_count = num_triangles;
+    as_build_range_info.primitive_offset = 0;
+    as_build_range_info.first_vertex = 0;
+    as_build_range_info.transform_offset = 0;
+
+    // Build the acceleration structure on the device via a one-time command buffer submission
+    // Some implementations may support acceleration structure building on the host (VkPhysicalDeviceAccelerationStructureFeaturesKHR->accelerationStructureHostCommands), but we prefer device builds
+    auto command_buffers = device_info.device->allocateCommandBuffers(device_info.cmd_pool, 1);
+    if (command_buffers.size() > 0) {
+        auto& cmd_buf = command_buffers[0];
+        if (cmd_buf) {
+            cmd_buf->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
+            cmd_buf->buildAccelerationStructures({ as_build_geometry_info }, { as_build_range_info });
+            cmd_buf->endCommandBuffer();
+        }
+
+        device_info.cmd_queue->submit(command_buffers);
+        device_info.cmd_queue->waitIdle();
+        device_info.device->freeCommandBuffers(device_info.cmd_pool, command_buffers);
+    }
+
+    bl_data_info.as_device_address =
+        device_info.device->getAccelerationStructureDeviceAddress(bl_data_info.as_handle);
+}
+
+struct ToplevelDataInfo {
+    er::BufferInfo   instance_buffer{};
+    er::BufferInfo   as_buffer{};
+    er::BufferInfo   scratch_buffer{};
+
+    er::AccelerationStructure   as_handle{};
+    er::DeviceAddress   as_device_address = 0;
+};
+
+void initTopLevelDataInfo(
+    const er::DeviceInfo& device_info,
+    const BottomlevelDataInfo& bl_data_info,
+    ToplevelDataInfo& tl_data_info) {
+
+    er::TransformMatrix transform_matrix = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f };
+
+    er::AccelerationStructureInstance instance{};
+    instance.transform = transform_matrix;
+    instance.instance_custom_index = 0;
+    instance.mask = 0xFF;
+    instance.instance_shader_binding_table_record_offset = 0;
+    instance.flags = SET_FLAG_BIT(GeometryInstance, TRIANGLE_FACING_CULL_DISABLE_BIT_KHR);
+    instance.acceleration_structure_reference = bl_data_info.as_device_address;
+
+    // Instance buffer
+    er::Helper::createBufferWithSrcData(
+        device_info,
+        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT) |
+        SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
+        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        sizeof(instance),
+        &instance,
+        tl_data_info.instance_buffer.buffer,
+        tl_data_info.instance_buffer.memory);
+
+    auto as_geometry = std::make_shared<er::AccelerationStructureGeometry>();
+    as_geometry->flags = SET_FLAG_BIT(Geometry, OPAQUE_BIT_KHR);
+    as_geometry->geometry_type = er::GeometryType::INSTANCES_KHR;
+    as_geometry->geometry.instances.struct_type =
+        er::StructureType::ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    as_geometry->geometry.instances.array_of_pointers = 0x00;
+    as_geometry->geometry.instances.data.device_address =
+        tl_data_info.instance_buffer.buffer->getDeviceAddress();
+
+    // Get size info
+    /*
+    The pSrcAccelerationStructure, dstAccelerationStructure, and mode members of pBuildInfo are ignored. Any VkDeviceOrHostAddressKHR members of pBuildInfo are ignored by this command, except that the hostAddress member of VkAccelerationStructureGeometryTrianglesDataKHR::transformData will be examined to check if it is NULL.*
+    */
+    // Get size info
+    er::AccelerationStructureBuildGeometryInfo as_build_geometry_info{};
+    as_build_geometry_info.type = er::AccelerationStructureType::TOP_LEVEL_KHR;
+    as_build_geometry_info.flags = SET_FLAG_BIT(BuildAccelerationStructure, PREFER_FAST_TRACE_BIT_KHR);
+    as_build_geometry_info.geometries.push_back(as_geometry);
+
+    uint32_t primitive_count = 1;
+    er::AccelerationStructureBuildSizesInfo as_build_size_info{};
+    as_build_size_info.struct_type = er::StructureType::ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+
+    device_info.device->getAccelerationStructureBuildSizes(
+        er::AccelerationStructureBuildType::DEVICE_KHR,
+        as_build_geometry_info,
+        primitive_count,
+        as_build_size_info);
+
+    device_info.device->createBuffer(
+        as_build_size_info.as_size,
+        SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_STORAGE_BIT_KHR) |
+        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT),
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
+        tl_data_info.as_buffer.buffer,
+        tl_data_info.as_buffer.memory);
+
+
+    tl_data_info.as_handle = device_info.device->createAccelerationStructure(
+        tl_data_info.as_buffer.buffer,
+        er::AccelerationStructureType::TOP_LEVEL_KHR);
+
+    device_info.device->createBuffer(
+        as_build_size_info.build_scratch_size,
+        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT) |
+        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT),
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
+        tl_data_info.scratch_buffer.buffer,
+        tl_data_info.scratch_buffer.memory);
+
+    as_build_geometry_info.mode = er::BuildAccelerationStructureMode::BUILD_KHR;
+    as_build_geometry_info.dst_as = tl_data_info.as_handle;
+    as_build_geometry_info.scratch_data.device_address =
+        tl_data_info.scratch_buffer.buffer->getDeviceAddress();
+
+    er::AccelerationStructureBuildRangeInfo as_build_range_info{};
+    as_build_range_info.primitive_count = primitive_count;
+    as_build_range_info.primitive_offset = 0;
+    as_build_range_info.first_vertex = 0;
+    as_build_range_info.transform_offset = 0;
+
+    // Build the acceleration structure on the device via a one-time command buffer submission
+    // Some implementations may support acceleration structure building on the host (VkPhysicalDeviceAccelerationStructureFeaturesKHR->accelerationStructureHostCommands), but we prefer device builds
+    auto command_buffers = device_info.device->allocateCommandBuffers(device_info.cmd_pool, 1);
+    if (command_buffers.size() > 0) {
+        auto& cmd_buf = command_buffers[0];
+        if (cmd_buf) {
+            cmd_buf->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
+            cmd_buf->buildAccelerationStructures({ as_build_geometry_info }, { as_build_range_info });
+            cmd_buf->endCommandBuffer();
+        }
+
+        device_info.cmd_queue->submit(command_buffers);
+        device_info.cmd_queue->waitIdle();
+        device_info.device->freeCommandBuffers(device_info.cmd_pool, command_buffers);
+    }
+
+    tl_data_info.as_device_address =
+        device_info.device->getAccelerationStructureDeviceAddress(tl_data_info.as_handle);
+}
+
+uint32_t alignedSize(uint32_t size, uint32_t alignment) {
+    return (size + alignment - 1) / alignment * alignment;
+}
+
+void createShaderBindingTable(
+    const er::DeviceInfo& device_info,
+    er::PhysicalDeviceRayTracingPipelineProperties rt_pipeline_properties,
+    er::PhysicalDeviceAccelerationStructureFeatures as_features) {
+
+#if 0
+    const uint32_t handle_size = rt_pipeline_properties.shader_group_handle_size;
+    const uint32_t handle_size_aligned = 
+        alignedSize(rt_pipeline_properties.shader_group_handle_size,
+            rt_pipeline_properties.shader_group_handle_alignment);
+    const uint32_t group_count = static_cast<uint32_t>(shaderGroups.size());
+    const uint32_t sbt_size = group_count * handle_size_aligned;
+
+    std::vector<uint8_t> shader_handle_storage(sbt_size);
+    VK_CHECK_RESULT(vkGetRayTracingShaderGroupHandlesKHR(device, pipeline, 0, group_count, sbt_size, shader_handle_storage.data()));
+
+    const VkBufferUsageFlags bufferUsageFlags = VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    const VkMemoryPropertyFlags memoryUsageFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    VK_CHECK_RESULT(vulkanDevice->createBuffer(bufferUsageFlags, memoryUsageFlags, &raygenShaderBindingTable, handleSize));
+    VK_CHECK_RESULT(vulkanDevice->createBuffer(bufferUsageFlags, memoryUsageFlags, &missShaderBindingTable, handleSize));
+    VK_CHECK_RESULT(vulkanDevice->createBuffer(bufferUsageFlags, memoryUsageFlags, &hitShaderBindingTable, handleSize));
+
+    // Copy handles
+    raygenShaderBindingTable.map();
+    missShaderBindingTable.map();
+    hitShaderBindingTable.map();
+    memcpy(raygenShaderBindingTable.mapped, shaderHandleStorage.data(), handleSize);
+    memcpy(missShaderBindingTable.mapped, shaderHandleStorage.data() + handleSizeAligned, handleSize);
+    memcpy(hitShaderBindingTable.mapped, shaderHandleStorage.data() + handleSizeAligned * 2, handleSize);
+#endif
+}
+
+void testRayTracing(
+    const er::DeviceInfo& device_info,
+    const std::shared_ptr<er::CommandBuffer>& command_buffer,
+    er::PhysicalDeviceRayTracingPipelineProperties rt_pipeline_properties,
+    er::PhysicalDeviceAccelerationStructureFeatures as_features) {
+
+    static bool s_rt_init = false;
+    static BottomlevelDataInfo s_bl_data_info;
+    static ToplevelDataInfo s_tl_data_info;
+
+    if (!s_rt_init) {
+        initBottomLevelDataInfo(device_info, s_bl_data_info);
+        initTopLevelDataInfo(device_info, s_bl_data_info, s_tl_data_info);
+        createShaderBindingTable(device_info, rt_pipeline_properties, as_features);
+        s_rt_init = true;
+    }
+
+    er::BufferInfo   scratch_buffer;
+    uint32_t scratch_buffer_size = 1024;
+    device_info.device->createBuffer(
+        scratch_buffer_size,
+        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT) |
+        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT),
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
+        scratch_buffer.buffer,
+        scratch_buffer.memory);
+
+    er::BufferInfo   blas_buffer;
+    uint32_t blas_buffer_size = 1024;
+    device_info.device->createBuffer(
+        blas_buffer_size,
+        SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_STORAGE_BIT_KHR) |
+        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT),
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
+        blas_buffer.buffer,
+        blas_buffer.memory);
+}
+
 void RealWorldApplication::drawFrame() {
     std::vector<std::shared_ptr<er::Fence>> in_flight_fences(1);
     in_flight_fences[0] = in_flight_fences_[current_frame_];
@@ -1548,6 +1896,9 @@ void RealWorldApplication::drawFrame() {
 
     command_buffer->reset(0);
     command_buffer->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
+
+    // ray tracing test.
+    testRayTracing(device_info_, command_buffer, rt_pipeline_properties_, as_features_);
 
     drawScene(command_buffer,
         swap_chain_info_,

@@ -9,42 +9,6 @@
 namespace {
 namespace er = engine::renderer;
 
-er::ShaderModuleList getBlurImageXShaderModules(
-    std::shared_ptr<er::Device> device)
-{
-    uint64_t compute_code_size;
-    er::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    auto compute_shader_code = engine::helper::readFile("lib/shaders/blur_image_x_comp.spv", compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
-}
-
-er::ShaderModuleList getBlurImageYMergeShaderModules(
-    std::shared_ptr<er::Device> device)
-{
-    uint64_t compute_code_size;
-    er::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    auto compute_shader_code = engine::helper::readFile("lib/shaders/blur_image_y_merge_comp.spv", compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
-}
-
-er::ShaderModuleList getRenderCloudFogShaderModules(
-    std::shared_ptr<er::Device> device)
-{
-    uint64_t compute_code_size;
-    er::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    auto compute_shader_code = engine::helper::readFile("lib/shaders/render_volume_cloud_comp.spv", compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
-}
-
 std::vector<er::TextureDescriptor> addBlurImageTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
@@ -246,40 +210,6 @@ std::shared_ptr<er::PipelineLayout>
         { push_const_range });
 }
 
-std::shared_ptr<er::Pipeline> createBlurImageXPipeline(
-    const std::shared_ptr<er::Device>& device,
-    const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
-    auto cs_modules = getBlurImageXShaderModules(device);
-    assert(cs_modules.size() == 1);
-
-    auto pipeline = device->createPipeline(
-        pipeline_layout,
-        cs_modules[0]);
-
-    for (auto& shader_module : cs_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
-    return pipeline;
-}
-
-std::shared_ptr<er::Pipeline> createBlurImageYMergePipeline(
-    const std::shared_ptr<er::Device>& device,
-    const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
-    auto cs_modules = getBlurImageYMergeShaderModules(device);
-    assert(cs_modules.size() == 1);
-
-    auto pipeline = device->createPipeline(
-        pipeline_layout,
-        cs_modules[0]);
-
-    for (auto& shader_module : cs_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
-    return pipeline;
-}
-
 std::shared_ptr<er::PipelineLayout> createRenderCloudFogPipelineLayout(
     const std::shared_ptr<er::Device>& device,
     const std::shared_ptr<er::DescriptorSetLayout>& desc_set_layout,
@@ -292,23 +222,6 @@ std::shared_ptr<er::PipelineLayout> createRenderCloudFogPipelineLayout(
     return device->createPipelineLayout(
         { desc_set_layout , view_desc_set_layout },
         { push_const_range });
-}
-
-std::shared_ptr<er::Pipeline> createRenderCloudFogPipeline(
-    const std::shared_ptr<er::Device>& device,
-    const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
-    auto cs_modules = getRenderCloudFogShaderModules(device);
-    assert(cs_modules.size() == 1);
-
-    auto pipeline = device->createPipeline(
-        pipeline_layout,
-        cs_modules[0]);
-
-    for (auto& shader_module : cs_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
-    return pipeline;
 }
 
 } // namespace
@@ -517,13 +430,17 @@ void VolumeCloud::recreate(
             blur_image_desc_set_layout_,
             view_desc_set_layout);
 
-    blur_image_x_pipeline_ = createBlurImageXPipeline(
-        device,
-        blur_image_pipeline_layout_);
+    blur_image_x_pipeline_ = 
+        renderer::helper::createComputePipeline(
+            device,
+            blur_image_pipeline_layout_,
+            "blur_image_x_comp.spv");
 
-    blur_image_y_merge_pipeline_ = createBlurImageYMergePipeline(
-        device,
-        blur_image_pipeline_layout_);
+    blur_image_y_merge_pipeline_ =
+        renderer::helper::createComputePipeline(
+            device,
+            blur_image_pipeline_layout_,
+            "blur_image_y_merge_comp.spv");
 
     for (auto dbuf_idx = 0; dbuf_idx < 2; dbuf_idx++) {
         render_cloud_fog_desc_set_[dbuf_idx] = nullptr;
@@ -556,9 +473,10 @@ void VolumeCloud::recreate(
             view_desc_set_layout);
 
     render_cloud_fog_pipeline_ =
-        createRenderCloudFogPipeline(
+        renderer::helper::createComputePipeline(
             device,
-            render_cloud_fog_pipeline_layout_);
+            render_cloud_fog_pipeline_layout_,
+            "render_volume_cloud_comp.spv");
 }
 
 void VolumeCloud::renderVolumeCloud(

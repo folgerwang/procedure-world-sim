@@ -71,13 +71,17 @@ std::vector<renderer::TextureDescriptor> addDebugDrawBuffers(
 
 static renderer::ShaderModuleList getDebugDrawShaderModules(
     std::shared_ptr<renderer::Device> device) {
-    uint64_t vert_code_size, frag_code_size;
     renderer::ShaderModuleList shader_modules(2);
-    auto vert_shader_code = engine::helper::readFile("lib/shaders/debug_draw_vert.spv", vert_code_size);
-    auto frag_shader_code = engine::helper::readFile("lib/shaders/debug_draw_frag.spv", frag_code_size);
-
-    shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
-    shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
+    shader_modules[0] =
+        renderer::helper::loadShaderModule(
+            device,
+            "debug_draw_vert.spv",
+            renderer::ShaderStageFlagBits::VERTEX_BIT);
+    shader_modules[1] =
+        renderer::helper::loadShaderModule(
+            device,
+            "debug_draw_frag.spv",
+            renderer::ShaderStageFlagBits::FRAGMENT_BIT);
 
     return shader_modules;
 }
@@ -143,10 +147,6 @@ static std::shared_ptr<renderer::Pipeline> createDebugDrawPipeline(
         new_graphic_pipeline_info,
         shader_modules,
         display_size);
-
-    for (auto& shader_module : shader_modules) {
-        device->destroyShaderModule(shader_module);
-    }
 
     return pipeline;
 }

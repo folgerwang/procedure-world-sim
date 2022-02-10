@@ -81,9 +81,10 @@ void transitMapTextureFromStoreImage(
     const std::vector<std::shared_ptr<renderer::Image>>& images,
     const renderer::ImageLayout& new_layout = renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
-renderer::ShaderModuleList getComputeShaderModules(
+std::shared_ptr<ShaderModule> loadShaderModule(
     const std::shared_ptr<renderer::Device>& device,
-    const std::string& compute_shader_name);
+    const std::string& shader_name,
+    const ShaderStageFlagBits& shader_stage);
 
 std::shared_ptr<renderer::PipelineLayout> createComputePipelineLayout(
     const std::shared_ptr<renderer::Device>& device,

@@ -9,6 +9,13 @@ namespace engine {
 namespace renderer {
 namespace vk {
 
+VulkanDevice::VulkanDevice(
+    const std::shared_ptr<PhysicalDevice>& physical_device,
+    const VkDevice& device)
+    : physical_device_(physical_device), device_(device)
+{
+}
+
 std::shared_ptr<Buffer> VulkanDevice::createBuffer(uint64_t buf_size, BufferUsageFlags usage, bool sharing/* = false*/) {
     VkBufferCreateInfo buffer_info{};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -31,14 +38,24 @@ void VulkanDevice::createBuffer(
     const uint64_t& buffer_size,
     const BufferUsageFlags& usage,
     const MemoryPropertyFlags& properties,
+    const MemoryAllocateFlags& allocate_flags,
     std::shared_ptr<Buffer>& buffer,
     std::shared_ptr<DeviceMemory>& buffer_memory) {
     buffer = createBuffer(buffer_size, usage);
     auto mem_requirements = getBufferMemoryRequirements(buffer);
     buffer_memory = allocateMemory(mem_requirements.size,
         mem_requirements.memory_type_bits,
-        helper::toVkMemoryPropertyFlags(properties));
+        properties,
+        allocate_flags);
     bindBufferMemory(buffer, buffer_memory);
+
+    if ((usage & static_cast<uint32_t>(BufferUsageFlagBits::SHADER_DEVICE_ADDRESS_BIT)) != 0) {
+        VkBufferDeviceAddressInfoKHR bufferDeviceAddressInfo{};
+        auto vk_buffer = RENDER_TYPE_CAST(Buffer, buffer);
+        bufferDeviceAddressInfo.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+        bufferDeviceAddressInfo.buffer = vk_buffer->get();
+        vk_buffer->set_device_address(vkGetBufferDeviceAddressKHR(device_, &bufferDeviceAddressInfo));
+    }
 }
 
 std::shared_ptr<Image> VulkanDevice::createImage(
@@ -174,7 +191,11 @@ std::shared_ptr<Fence> VulkanDevice::createFence() {
     return vk_fence;
 }
 
-std::shared_ptr<ShaderModule> VulkanDevice::createShaderModule(uint64_t size, void* data) {
+std::shared_ptr<ShaderModule>
+VulkanDevice::createShaderModule(
+    uint64_t size,
+    void* data,
+    ShaderStageFlagBits shader_stage) {
     VkShaderModuleCreateInfo create_info{};
     create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     create_info.codeSize = size;
@@ -186,7 +207,7 @@ std::shared_ptr<ShaderModule> VulkanDevice::createShaderModule(uint64_t size, vo
     }
 
     auto vk_shader_module = std::make_shared<VulkanShaderModule>();
-    vk_shader_module->set(shader_module);
+    vk_shader_module->set(shader_module, shader_stage);
 
     return vk_shader_module;
 }
@@ -651,10 +672,22 @@ std::vector<std::shared_ptr<Image>> VulkanDevice::getSwapchainImages(std::shared
     return vk_swap_chain_images;
 }
 
-std::shared_ptr<DeviceMemory> VulkanDevice::allocateMemory(uint64_t buf_size, uint32_t memory_type_bits, MemoryPropertyFlags properties) {
+std::shared_ptr<DeviceMemory>
+VulkanDevice::allocateMemory(
+    const uint64_t& buf_size,
+    const uint32_t& memory_type_bits,
+    const MemoryPropertyFlags& properties,
+    const MemoryAllocateFlags& allocate_flags) {
+    VkMemoryAllocateFlagsInfo alloc_flags_info{};
+    alloc_flags_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+    alloc_flags_info.flags = helper::toVkMemoryAllocateFlags(allocate_flags);
+
     VkMemoryAllocateInfo alloc_info{};
     alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     alloc_info.allocationSize = buf_size;
+    if (allocate_flags != 0) {
+        alloc_info.pNext = &alloc_flags_info;
+    }
     alloc_info.memoryTypeIndex = helper::findMemoryType(getPhysicalDevice(), memory_type_bits, properties);
 
     VkDeviceMemory memory;
@@ -911,6 +944,54 @@ void VulkanDevice::waitForFences(const std::vector<std::shared_ptr<Fence>>& fenc
 
 void VulkanDevice::waitIdle() {
     vkDeviceWaitIdle(device_);
+}
+
+void VulkanDevice::getAccelerationStructureBuildSizes(
+    AccelerationStructureBuildType         as_build_type,
+    const AccelerationStructureBuildGeometryInfo& build_info,
+    const uint32_t& max_primitive_counts,
+    AccelerationStructureBuildSizesInfo& size_info) {
+
+    std::unique_ptr<VkAccelerationStructureGeometryKHR[]> geoms;
+    auto as_build_geo_info = helper::toVkAccelerationStructureBuildGeometryInfo(build_info, geoms);
+
+    VkAccelerationStructureBuildSizesInfoKHR as_build_size_info{};
+    as_build_size_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+
+    vkGetAccelerationStructureBuildSizesKHR(
+        device_,
+        helper::toVkAccelerationStructureBuildType(as_build_type),
+        &as_build_geo_info,
+        &max_primitive_counts,
+        &as_build_size_info);
+
+    size_info.struct_type = StructureType::ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
+    size_info.as_size = as_build_size_info.accelerationStructureSize;
+    size_info.update_scratch_size = as_build_size_info.updateScratchSize;
+    size_info.build_scratch_size = as_build_size_info.buildScratchSize;
+}
+
+AccelerationStructure VulkanDevice::createAccelerationStructure(
+    const std::shared_ptr<Buffer>& buffer,
+    const AccelerationStructureType& as_type) {
+    VkAccelerationStructureCreateInfoKHR as_create_info{};
+    as_create_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    as_create_info.buffer = RENDER_TYPE_CAST(Buffer, buffer)->get();
+    as_create_info.size = buffer->getSize();
+    as_create_info.type = helper::toVkAccelerationStructureType(as_type);
+    VkAccelerationStructureKHR as_handle;
+    vkCreateAccelerationStructureKHR(device_, &as_create_info, nullptr, &as_handle);
+    return reinterpret_cast<AccelerationStructure>(as_handle);
+}
+
+DeviceAddress VulkanDevice::getAccelerationStructureDeviceAddress(const AccelerationStructure& as) {
+    VkAccelerationStructureDeviceAddressInfoKHR as_device_info{};
+    as_device_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+    as_device_info.accelerationStructure = reinterpret_cast<VkAccelerationStructureKHR>(as);
+    auto device_address = vkGetAccelerationStructureDeviceAddressKHR(device_, &as_device_info);
+
+    DeviceAddress result = device_address;
+    return result;
 }
 
 } // vk

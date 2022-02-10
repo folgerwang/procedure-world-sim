@@ -11,6 +11,7 @@ public:
         const uint64_t& buffer_size,
         const BufferUsageFlags& usage,
         const MemoryPropertyFlags& properties,
+        const MemoryAllocateFlags& alloc_flags,
         std::shared_ptr<Buffer>& buffer,
         std::shared_ptr<DeviceMemory>& buffer_memory) = 0;
     virtual void updateDescriptorSets(
@@ -64,7 +65,11 @@ public:
     virtual std::vector<std::shared_ptr<renderer::Image>> getSwapchainImages(std::shared_ptr<Swapchain> swap_chain) = 0;
     virtual std::shared_ptr<CommandPool> createCommandPool(uint32_t queue_family_index, CommandPoolCreateFlags flags) = 0;
     virtual std::shared_ptr<Queue> getDeviceQueue(uint32_t queue_family_index, uint32_t queue_index = 0) = 0;
-    virtual std::shared_ptr<DeviceMemory> allocateMemory(uint64_t buf_size, uint32_t memory_type_bits, MemoryPropertyFlags properties) = 0;
+    virtual std::shared_ptr<DeviceMemory> allocateMemory(
+        const uint64_t& buf_size,
+        const uint32_t& memory_type_bits,
+        const MemoryPropertyFlags& properties,
+        const MemoryAllocateFlags& allocate_flags) = 0;
     virtual MemoryRequirements getBufferMemoryRequirements(std::shared_ptr<Buffer> buffer) = 0;
     virtual MemoryRequirements getImageMemoryRequirements(std::shared_ptr<Image> image) = 0;
     virtual std::shared_ptr<Buffer> createBuffer(uint64_t buf_size, BufferUsageFlags usage, bool sharing = false) = 0;
@@ -80,8 +85,13 @@ public:
         uint32_t num_samples = 1,
         uint32_t num_mips = 1,
         uint32_t num_layers = 1) = 0;
-    virtual std::shared_ptr<ShaderModule> createShaderModule(uint64_t size, void* data) = 0;
-    virtual std::shared_ptr<ImageView> createImageView(
+    virtual std::shared_ptr<ShaderModule>
+        createShaderModule(
+            uint64_t size,
+            void* data,
+            ShaderStageFlagBits shader_stage) = 0;
+    virtual std::shared_ptr<ImageView>
+        createImageView(
         std::shared_ptr<Image> image,
         ImageViewType view_type,
         Format format,
@@ -90,7 +100,8 @@ public:
         uint32_t mip_count = 1,
         uint32_t base_layer = 0,
         uint32_t layer_count = 1) = 0;
-    virtual std::shared_ptr<Framebuffer> createFrameBuffer(
+    virtual std::shared_ptr<Framebuffer>
+        createFrameBuffer(
         const std::shared_ptr<RenderPass>& render_pass,
         const std::vector<std::shared_ptr<ImageView>>& attachments,
         const glm::uvec2& extent) = 0;
@@ -123,6 +134,15 @@ public:
     virtual void resetFences(const std::vector<std::shared_ptr<Fence>>& fences) = 0;
     virtual void waitForFences(const std::vector<std::shared_ptr<Fence>>& fences) = 0;
     virtual void waitIdle() = 0;
+    virtual void getAccelerationStructureBuildSizes(
+        AccelerationStructureBuildType         as_build_type,
+        const AccelerationStructureBuildGeometryInfo& build_info,
+        const uint32_t& max_primitive_counts,
+        AccelerationStructureBuildSizesInfo& size_info) = 0;
+    virtual AccelerationStructure createAccelerationStructure(
+        const std::shared_ptr<Buffer>& buffer,
+        const AccelerationStructureType& as_type) = 0;
+    virtual DeviceAddress getAccelerationStructureDeviceAddress(const AccelerationStructure& as) = 0;
 };
 
 } // namespace renderer

@@ -105,6 +105,9 @@ public:
         uint32_t size = 0,
         uint32_t offset = 0) = 0;
     //virtual void pipelineBarrier() = 0;
+    virtual void buildAccelerationStructures(
+        const std::vector<AccelerationStructureBuildGeometryInfo>& as_build_geo_list,
+        const std::vector<AccelerationStructureBuildRangeInfo>& as_build_range_list) = 0;
 };
 
 } // namespace renderer

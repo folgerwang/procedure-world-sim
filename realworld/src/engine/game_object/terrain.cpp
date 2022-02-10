@@ -1757,62 +1757,35 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     return descriptor_writes;
 }
 
-static renderer::ShaderModuleList getTileCreatorCsModules(
-    const std::shared_ptr<renderer::Device>& device) {
-    uint64_t compute_code_size;
-    renderer::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    auto compute_shader_code = engine::helper::readFile("lib/shaders/tile_creator_comp.spv", compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
-}
-
-static renderer::ShaderModuleList getTileUpdateCsModules(
-    const std::shared_ptr<renderer::Device>& device) {
-    uint64_t compute_code_size;
-    renderer::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    auto compute_shader_code = engine::helper::readFile("lib/shaders/tile_update_comp.spv", compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
-}
-
-static renderer::ShaderModuleList getTileFlowUpdateCsModules(
-    const std::shared_ptr<renderer::Device>& device) {
-    uint64_t compute_code_size;
-    renderer::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    auto compute_shader_code = engine::helper::readFile("lib/shaders/tile_flow_update_comp.spv", compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
-}
-
 static renderer::ShaderModuleList getTileShaderModules(
     std::shared_ptr<renderer::Device> device) {
-    uint64_t vert_code_size, frag_code_size;
     renderer::ShaderModuleList shader_modules(2);
-    auto vert_shader_code = engine::helper::readFile("lib/shaders/tile_soil_vert.spv", vert_code_size);
-    auto frag_shader_code = engine::helper::readFile("lib/shaders/tile_frag.spv", frag_code_size);
-
-    shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
-    shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
-
+    shader_modules[0] =
+        renderer::helper::loadShaderModule(
+            device,
+            "tile_soil_vert.spv",
+            renderer::ShaderStageFlagBits::VERTEX_BIT);
+    shader_modules[1] =
+        renderer::helper::loadShaderModule(
+            device,
+            "tile_frag.spv",
+            renderer::ShaderStageFlagBits::FRAGMENT_BIT);
     return shader_modules;
 }
 
 static renderer::ShaderModuleList getTileWaterShaderModules(
     std::shared_ptr<renderer::Device> device) {
-    uint64_t vert_code_size, frag_code_size;
     renderer::ShaderModuleList shader_modules(2);
-    auto vert_shader_code = engine::helper::readFile("lib/shaders/tile_water_vert.spv", vert_code_size);
-    auto frag_shader_code = engine::helper::readFile("lib/shaders/tile_water_frag.spv", frag_code_size);
-
-    shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
-    shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
-
+    shader_modules[0] =
+        renderer::helper::loadShaderModule(
+            device,
+            "tile_water_vert.spv",
+            renderer::ShaderStageFlagBits::VERTEX_BIT);
+    shader_modules[1] =
+        renderer::helper::loadShaderModule(
+            device,
+            "tile_water_frag.spv",
+            renderer::ShaderStageFlagBits::FRAGMENT_BIT);
     return shader_modules;
 }
 
@@ -1949,57 +1922,6 @@ static std::shared_ptr<renderer::PipelineLayout> createTileFlowUpdatePipelineLay
     return device->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
 
-static std::shared_ptr<renderer::Pipeline> createTileCreatorPipeline(
-    const std::shared_ptr<renderer::Device>& device,
-    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout) {
-    auto tile_creator_compute_shader_modules = getTileCreatorCsModules(device);
-    assert(tile_creator_compute_shader_modules.size() == 1);
-
-    auto pipeline = device->createPipeline(
-        pipeline_layout,
-        tile_creator_compute_shader_modules[0]);
-
-    for (auto& shader_module : tile_creator_compute_shader_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
-    return pipeline;
-}
-
-static std::shared_ptr<renderer::Pipeline> createTileUpdatePipeline(
-    const std::shared_ptr<renderer::Device>& device,
-    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout) {
-    auto tile_update_compute_shader_modules = getTileUpdateCsModules(device);
-    assert(tile_update_compute_shader_modules.size() == 1);
-
-    auto pipeline = device->createPipeline(
-        pipeline_layout,
-        tile_update_compute_shader_modules[0]);
-
-    for (auto& shader_module : tile_update_compute_shader_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
-    return pipeline;
-}
-
-static std::shared_ptr<renderer::Pipeline> createTileFlowUpdatePipeline(
-    const std::shared_ptr<renderer::Device>& device,
-    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout) {
-    auto tile_flow_update_compute_shader_modules = getTileFlowUpdateCsModules(device);
-    assert(tile_flow_update_compute_shader_modules.size() == 1);
-
-    auto pipeline = device->createPipeline(
-        pipeline_layout,
-        tile_flow_update_compute_shader_modules[0]);
-
-    for (auto& shader_module : tile_flow_update_compute_shader_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
-    return pipeline;
-}
-
 static std::shared_ptr<renderer::PipelineLayout> createTilePipelineLayout(
     const std::shared_ptr<renderer::Device>& device,
     const renderer::DescriptorSetLayoutList& desc_set_layouts) {
@@ -2034,10 +1956,6 @@ static std::shared_ptr<renderer::Pipeline> createTilePipeline(
         shader_modules,
         display_size);
 
-    for (auto& shader_module : shader_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
     return pipeline;
 }
 
@@ -2063,10 +1981,6 @@ static std::shared_ptr<renderer::Pipeline> createTileWaterPipeline(
         new_graphic_pipeline_info,
         shader_modules,
         display_size);
-
-    for (auto& shader_module : shader_modules) {
-        device->destroyShaderModule(shader_module);
-    }
 
     return pipeline;
 }
@@ -2201,9 +2115,10 @@ void TileObject::createStaticMembers(
     if (tile_creator_pipeline_ == nullptr) {
         assert(tile_creator_pipeline_layout_);
         tile_creator_pipeline_ =
-            createTileCreatorPipeline(
+            renderer::helper::createComputePipeline(
                 device,
-                tile_creator_pipeline_layout_);
+                tile_creator_pipeline_layout_,
+                "tile_creator_comp.spv");
     }
 
     if (tile_update_pipeline_layout_ == nullptr) {
@@ -2217,9 +2132,10 @@ void TileObject::createStaticMembers(
     if (tile_update_pipeline_ == nullptr) {
         assert(tile_update_pipeline_layout_);
         tile_update_pipeline_ =
-            createTileUpdatePipeline(
+            renderer::helper::createComputePipeline(
                 device,
-                tile_update_pipeline_layout_);
+                tile_update_pipeline_layout_,
+                "tile_update_comp.spv");
     }
 
     if (tile_flow_update_pipeline_layout_ == nullptr) {
@@ -2233,9 +2149,10 @@ void TileObject::createStaticMembers(
     if (tile_flow_update_pipeline_ == nullptr) {
         assert(tile_flow_update_pipeline_layout_);
         tile_flow_update_pipeline_ =
-            createTileFlowUpdatePipeline(
+            renderer::helper::createComputePipeline(
                 device,
-                tile_flow_update_pipeline_layout_);
+                tile_flow_update_pipeline_layout_,
+                "tile_flow_update_comp.spv");
     }
 
     auto desc_set_layouts = global_desc_set_layouts;

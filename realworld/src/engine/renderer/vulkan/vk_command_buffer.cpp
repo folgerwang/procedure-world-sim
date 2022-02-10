@@ -382,6 +382,30 @@ void VulkanCommandBuffer::addBufferBarrier(
     );
 }
 
+void VulkanCommandBuffer::buildAccelerationStructures(
+    const std::vector<AccelerationStructureBuildGeometryInfo>& as_build_geo_list,
+    const std::vector<AccelerationStructureBuildRangeInfo>& as_build_range_list) {
+
+    std::vector<std::unique_ptr<VkAccelerationStructureGeometryKHR[]>> geoms(as_build_geo_list.size());
+    std::vector<VkAccelerationStructureBuildGeometryInfoKHR> vk_geoms(as_build_geo_list.size());
+    for (auto i = 0; i < as_build_geo_list.size(); i++) {
+        vk_geoms[i] = helper::toVkAccelerationStructureBuildGeometryInfo(as_build_geo_list[i], geoms[i]);
+    }
+
+    std::vector<VkAccelerationStructureBuildRangeInfoKHR> vk_as_build_range_list(as_build_range_list.size());
+    std::vector<VkAccelerationStructureBuildRangeInfoKHR*> vk_as_build_range_ptr_list(as_build_range_list.size());
+    for (auto i = 0; i < as_build_range_list.size(); i++) {
+        vk_as_build_range_list[i] = helper::toVkAccelerationStructureBuildRangeInfo(as_build_range_list[i]);
+        vk_as_build_range_ptr_list[i] = &vk_as_build_range_list[i];
+    }
+    
+    vkCmdBuildAccelerationStructuresKHR(
+        cmd_buf_,
+        static_cast<uint32_t>(as_build_geo_list.size()),
+        vk_geoms.data(),
+        vk_as_build_range_ptr_list.data());
+}
+
 } // namespace vk
 } // namespace renderer
 } // namespace engine

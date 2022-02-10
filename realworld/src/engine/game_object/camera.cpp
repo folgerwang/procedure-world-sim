@@ -16,19 +16,6 @@ namespace ego = engine::game_object;
 namespace engine {
 
 namespace {
-static renderer::ShaderModuleList getComputeShaderModules(
-    const std::shared_ptr<renderer::Device>& device,
-    const std::string& compute_shader_name) {
-    uint64_t compute_code_size;
-    renderer::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    auto file_path = "lib/shaders/" + compute_shader_name + "_comp.spv";
-    auto compute_shader_code = engine::helper::readFile(file_path, compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
-}
-
 std::vector<renderer::BufferDescriptor> addGameCameraInfoBuffer(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
     const renderer::BufferInfo& game_objects_buffer,
@@ -116,23 +103,6 @@ static std::shared_ptr<renderer::PipelineLayout> createGameCameraPipelineLayout(
     return device->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
 
-static std::shared_ptr<renderer::Pipeline> createGameCameraPipeline(
-    const std::shared_ptr<renderer::Device>& device,
-    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout) {
-    auto update_camera_cs_modules = getComputeShaderModules(device, "update_camera");
-    assert(update_camera_cs_modules.size() == 1);
-
-    auto pipeline = device->createPipeline(
-        pipeline_layout,
-        update_camera_cs_modules[0]);
-
-    for (auto& shader_module : update_camera_cs_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
-    return pipeline;
-}
-
 } // namespace
 
 namespace game_object {
@@ -196,6 +166,7 @@ void GameCamera::initStaticMembers(
             sizeof(glsl::GameCameraInfo),
             SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
             SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+            0,
             game_camera_buffer_->buffer,
             game_camera_buffer_->memory);
     }
@@ -243,9 +214,10 @@ void GameCamera::createStaticMembers(
         if (update_game_camera_pipeline_ == nullptr) {
             assert(update_game_camera_pipeline_layout_);
             update_game_camera_pipeline_ =
-                createGameCameraPipeline(
+                renderer::helper::createComputePipeline(
                     device,
-                    update_game_camera_pipeline_layout_);
+                    update_game_camera_pipeline_layout_,
+                    "update_camera_comp.spv");
         }
     }
 }

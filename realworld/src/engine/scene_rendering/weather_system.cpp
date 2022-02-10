@@ -10,19 +10,6 @@ namespace {
 namespace er = engine::renderer;
 namespace erh = er::helper;
 
-er::ShaderModuleList getComputeShaderModules(
-    const std::shared_ptr<er::Device>& device,
-    const std::string& compute_shader_name) {
-    uint64_t compute_code_size;
-    er::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    std::string file_name = std::string("lib/shaders/") + compute_shader_name + "_comp.spv";
-    auto compute_shader_code = engine::helper::readFile(file_name.c_str(), compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
-}
-
 std::vector<er::TextureDescriptor> addTemperatureInitTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const er::TextureInfo& temp_tex,
@@ -524,7 +511,7 @@ void WeatherSystem::recreate(
     temperature_init_pipeline_ = erh::createComputePipeline(
         device,
         temperature_init_pipeline_layout_,
-        "temperature_init");
+        "temperature_init_comp.spv");
 
     airflow_pipeline_layout_ =
         erh::createComputePipelineLayout(
@@ -535,7 +522,7 @@ void WeatherSystem::recreate(
     airflow_pipeline_ = erh::createComputePipeline(
         device,
         airflow_pipeline_layout_,
-        "airflow_update");
+        "airflow_update_comp.spv");
 
     cloud_shadow_pipeline_layout_ =
         erh::createComputePipelineLayout(
@@ -546,7 +533,7 @@ void WeatherSystem::recreate(
     cloud_shadow_init_pipeline_ = erh::createComputePipeline(
         device,
         cloud_shadow_pipeline_layout_,
-        "cloud_shadow_init");
+        "cloud_shadow_init_comp.spv");
 
     cloud_shadow_merge_pipeline_layout_ =
         erh::createComputePipelineLayout(
@@ -557,7 +544,7 @@ void WeatherSystem::recreate(
     cloud_shadow_merge_pipeline_ = erh::createComputePipeline(
         device,
         cloud_shadow_merge_pipeline_layout_,
-        "cloud_shadow_merge");
+        "cloud_shadow_merge_comp.spv");
 }
 
 // update air flow buffer.

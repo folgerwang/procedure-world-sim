@@ -216,6 +216,28 @@ void transitMapTextureFromStoreImage(
         SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT));
 }
 
+static std::unordered_map<std::string, std::shared_ptr<ShaderModule>> s_shader_module_list;
+std::shared_ptr<ShaderModule> loadShaderModule(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::string& shader_name,
+    const ShaderStageFlagBits& shader_stage) {
+    auto path_file_name = std::string("lib/shaders/") + shader_name;
+    auto search_result = s_shader_module_list.find(path_file_name);
+    std::shared_ptr<ShaderModule> result;
+    if (search_result == s_shader_module_list.end()) {
+        uint64_t shader_code_size;
+        auto shader_code = engine::helper::readFile(path_file_name.c_str(), shader_code_size);
+        auto shader_module = device->createShaderModule(shader_code_size, shader_code.data(), shader_stage);
+        s_shader_module_list[path_file_name] = shader_module;
+        result = shader_module;
+    }
+    else {
+        result = search_result->second;
+    }
+
+    return result;
+}
+
 std::shared_ptr<renderer::PipelineLayout> createComputePipelineLayout(
     const std::shared_ptr<renderer::Device>& device,
     const renderer::DescriptorSetLayoutList& desc_set_layouts,
@@ -228,35 +250,19 @@ std::shared_ptr<renderer::PipelineLayout> createComputePipelineLayout(
     return device->createPipelineLayout(desc_set_layouts, { push_const_range });
 }
 
-renderer::ShaderModuleList getComputeShaderModules(
-    const std::shared_ptr<renderer::Device>& device,
-    const std::string& compute_shader_name) {
-    uint64_t compute_code_size;
-    renderer::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    std::string file_name = std::string("lib/shaders/") + compute_shader_name + "_comp.spv";
-    auto compute_shader_code = engine::helper::readFile(file_name.c_str(), compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
-}
-
 std::shared_ptr<renderer::Pipeline> createComputePipeline(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout,
     const std::string& compute_shader_name) {
-
-    auto compute_shader_modules =
-        getComputeShaderModules(device, compute_shader_name);
-    assert(compute_shader_modules.size() == 1);
+    auto shader_module =
+        renderer::helper::loadShaderModule(
+            device,
+            compute_shader_name,
+            renderer::ShaderStageFlagBits::COMPUTE_BIT);
 
     auto pipeline = device->createPipeline(
         pipeline_layout,
-        compute_shader_modules[0]);
-
-    for (auto& shader_module : compute_shader_modules) {
-        device->destroyShaderModule(shader_module);
-    }
+        shader_module);
 
     return pipeline;
 }

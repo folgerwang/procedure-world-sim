@@ -11,6 +11,18 @@
 namespace engine {
 namespace renderer {
 namespace vk {
+
+PFN_vkGetBufferDeviceAddressKHR vkGetBufferDeviceAddressKHR;
+PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR;
+PFN_vkDestroyAccelerationStructureKHR vkDestroyAccelerationStructureKHR;
+PFN_vkGetAccelerationStructureBuildSizesKHR vkGetAccelerationStructureBuildSizesKHR;
+PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR;
+PFN_vkCmdBuildAccelerationStructuresKHR vkCmdBuildAccelerationStructuresKHR;
+PFN_vkBuildAccelerationStructuresKHR vkBuildAccelerationStructuresKHR;
+PFN_vkCmdTraceRaysKHR vkCmdTraceRaysKHR;
+PFN_vkGetRayTracingShaderGroupHandlesKHR vkGetRayTracingShaderGroupHandlesKHR;
+PFN_vkCreateRayTracingPipelinesKHR vkCreateRayTracingPipelinesKHR;
+
 namespace helper {
 
 static uint32_t max_vertex_input_attribute_offset = 0;
@@ -25,7 +37,10 @@ const std::vector<const char*> device_extensions = {
     VK_KHR_MAINTENANCE3_EXTENSION_NAME,
     VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
     VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
-    VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME
+    VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+    VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
+    VK_KHR_SPIRV_1_4_EXTENSION_NAME,
+    VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME
 };
 
 #ifdef NDEBUG
@@ -536,12 +551,39 @@ VkBufferUsageFlags toVkBufferUsageFlags(renderer::BufferUsageFlags flags) {
     ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, VERTEX_BUFFER_BIT);
     ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, INDIRECT_BUFFER_BIT);
     ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, SHADER_DEVICE_ADDRESS_BIT);
+#ifdef ENABLE_BETA_EXTENSIONS
+    ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, VIDEO_DECODE_SRC_BIT_KHR);
+#endif
+#ifdef ENABLE_BETA_EXTENSIONS
+    ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, VIDEO_DECODE_DST_BIT_KHR);
+#endif
     ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, TRANSFORM_FEEDBACK_BUFFER_BIT_EXT);
     ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, TRANSFORM_FEEDBACK_COUNTER_BUFFER_BIT_EXT);
     ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, CONDITIONAL_RENDERING_BIT_EXT);
+    ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR);
+    ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, ACCELERATION_STRUCTURE_STORAGE_BIT_KHR);
+    ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, SHADER_BINDING_TABLE_BIT_KHR);
+#ifdef ENABLE_BETA_EXTENSIONS
+    ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, VIDEO_ENCODE_DST_BIT_KHR);
+#endif
+#ifdef ENABLE_BETA_EXTENSIONS
+    ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, VIDEO_ENCODE_SRC_BIT_KHR);
+#endif
     ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, RAY_TRACING_BIT_NV);
     ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, SHADER_DEVICE_ADDRESS_BIT_EXT);
     ADD_FLAG_BIT(BufferUsage, BUFFER_USAGE, SHADER_DEVICE_ADDRESS_BIT_KHR);
+
+    return result;
+}
+
+VkMemoryAllocateFlags toVkMemoryAllocateFlags(renderer::MemoryAllocateFlags flags) {
+    VkMemoryAllocateFlags result = 0;
+    ADD_FLAG_BIT(MemoryAllocate, MEMORY_ALLOCATE, DEVICE_MASK_BIT);
+    ADD_FLAG_BIT(MemoryAllocate, MEMORY_ALLOCATE, DEVICE_ADDRESS_BIT);
+    ADD_FLAG_BIT(MemoryAllocate, MEMORY_ALLOCATE, DEVICE_ADDRESS_CAPTURE_REPLAY_BIT);
+    ADD_FLAG_BIT(MemoryAllocate, MEMORY_ALLOCATE, DEVICE_MASK_BIT_KHR);
+    ADD_FLAG_BIT(MemoryAllocate, MEMORY_ALLOCATE, DEVICE_ADDRESS_BIT_KHR);
+    ADD_FLAG_BIT(MemoryAllocate, MEMORY_ALLOCATE, DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_KHR);
 
     return result;
 }
@@ -1094,7 +1136,8 @@ VkStencilOp toVkStencilOp(renderer::StencilOp stencil_op) {
     return VK_STENCIL_OP_KEEP;
 }
 
-VkAttachmentLoadOp toVkAttachmentLoadOp(renderer::AttachmentLoadOp load_op) {
+VkAttachmentLoadOp toVkAttachmentLoadOp(
+    const renderer::AttachmentLoadOp& load_op) {
     auto flag = load_op;
     SELECT_FLAG(AttachmentLoadOp, ATTACHMENT_LOAD_OP, LOAD);
     else SELECT_FLAG(AttachmentLoadOp, ATTACHMENT_LOAD_OP, CLEAR);
@@ -1102,12 +1145,112 @@ VkAttachmentLoadOp toVkAttachmentLoadOp(renderer::AttachmentLoadOp load_op) {
     return VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 };
 
-VkAttachmentStoreOp toVkAttachmentStoreOp(renderer::AttachmentStoreOp store_op) {
+VkAttachmentStoreOp toVkAttachmentStoreOp(
+    const renderer::AttachmentStoreOp& store_op) {
     auto flag = store_op;
     SELECT_FLAG(AttachmentStoreOp, ATTACHMENT_STORE_OP, STORE);
     else SELECT_FLAG(AttachmentStoreOp, ATTACHMENT_STORE_OP, DONT_CARE);
     else SELECT_FLAG(AttachmentStoreOp, ATTACHMENT_STORE_OP, NONE_QCOM);
     return VK_ATTACHMENT_STORE_OP_DONT_CARE;
+}
+
+VkGeometryTypeKHR toVkGeometryType(
+    const renderer::GeometryType& geometry_type) {
+    auto flag = geometry_type;
+    SELECT_FLAG(GeometryType, GEOMETRY_TYPE, TRIANGLES_KHR);
+    else SELECT_FLAG(GeometryType, GEOMETRY_TYPE, AABBS_KHR);
+    else SELECT_FLAG(GeometryType, GEOMETRY_TYPE, INSTANCES_KHR);
+    return VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+}
+
+VkGeometryInstanceFlagsKHR toVkGeometryInstanceFlags(
+    const renderer::GeometryInstanceFlags& flags) {
+    VkGeometryInstanceFlagsKHR result = 0;
+    ADD_FLAG_BIT(GeometryInstance, GEOMETRY_INSTANCE, TRIANGLE_FACING_CULL_DISABLE_BIT_KHR);
+    ADD_FLAG_BIT(GeometryInstance, GEOMETRY_INSTANCE, TRIANGLE_FRONT_COUNTERCLOCKWISE_BIT_KHR);
+    ADD_FLAG_BIT(GeometryInstance, GEOMETRY_INSTANCE, FORCE_OPAQUE_BIT_KHR);
+    ADD_FLAG_BIT(GeometryInstance, GEOMETRY_INSTANCE, FORCE_NO_OPAQUE_BIT_KHR);
+    return result;
+}
+
+VkAccelerationStructureGeometryKHR
+toVkAsGeometry(
+    const renderer::AccelerationStructureGeometry& as_geo) {
+    VkAccelerationStructureGeometryKHR vk_as_geo;
+
+    const auto& geo_type = as_geo.geometry_type;
+    vk_as_geo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    vk_as_geo.pNext = nullptr;
+    vk_as_geo.geometryType = helper::toVkGeometryType(as_geo.geometry_type);
+    vk_as_geo.flags = helper::toVkGeometryFlags(as_geo.flags);
+
+    if (geo_type == renderer::GeometryType::TRIANGLES_KHR) {
+        auto& triangles = vk_as_geo.geometry.triangles;
+        const auto& src_triangles = as_geo.geometry.triangles;
+        triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;// ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+        triangles.pNext = nullptr;
+        triangles.vertexFormat = helper::toVkFormat(src_triangles.vertex_format);
+        triangles.vertexData.hostAddress = src_triangles.vertex_data.host_address;
+        triangles.vertexStride = src_triangles.vertex_stride;
+        triangles.maxVertex = src_triangles.max_vertex;
+        triangles.indexType = helper::toVkIndexType(src_triangles.index_type);
+        triangles.indexData.hostAddress = src_triangles.index_data.host_address;
+        triangles.transformData.hostAddress = src_triangles.transform_data.host_address; 
+    }
+    else if (geo_type == renderer::GeometryType::AABBS_KHR) {
+        auto& aabbs = vk_as_geo.geometry.aabbs;
+        const auto& src_aabbs = as_geo.geometry.aabbs;
+        aabbs.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_AABBS_DATA_KHR;
+        aabbs.pNext = nullptr;
+        aabbs.stride = src_aabbs.stride;
+        aabbs.data.hostAddress = src_aabbs.data.host_address;
+    }
+    else if (geo_type == renderer::GeometryType::INSTANCES_KHR) {
+        auto& instances = vk_as_geo.geometry.instances;
+        const auto& src_instances = as_geo.geometry.instances;
+        instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+        instances.pNext = nullptr;
+        instances.data.hostAddress = src_instances.data.host_address;
+        instances.arrayOfPointers = src_instances.array_of_pointers;
+    }
+
+    return vk_as_geo;
+}
+
+VkAccelerationStructureBuildGeometryInfoKHR
+toVkAccelerationStructureBuildGeometryInfo(
+    const AccelerationStructureBuildGeometryInfo& build_info,
+    std::unique_ptr<VkAccelerationStructureGeometryKHR[]>& geometries) {
+    const auto geom_count = build_info.geometries.size();
+    geometries = std::make_unique<VkAccelerationStructureGeometryKHR[]>(geom_count);
+    for (auto i = 0; i < geom_count; i++) {
+        geometries[i] = helper::toVkAsGeometry(*build_info.geometries[i]);
+    }
+
+    VkAccelerationStructureBuildGeometryInfoKHR as_build_geo_info{};
+    as_build_geo_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    as_build_geo_info.type = helper::toVkAccelerationStructureType(build_info.type);
+    as_build_geo_info.flags = helper::toVkBuildAccelerationStructureFlags(build_info.flags);
+    as_build_geo_info.mode = helper::toVkBuildAccelerationStructureMode(build_info.mode);
+    as_build_geo_info.dstAccelerationStructure = reinterpret_cast<VkAccelerationStructureKHR>(build_info.dst_as);
+    as_build_geo_info.srcAccelerationStructure = reinterpret_cast<VkAccelerationStructureKHR>(build_info.src_as);
+    as_build_geo_info.scratchData.hostAddress = build_info.scratch_data.host_address;
+    as_build_geo_info.geometryCount = static_cast<uint32_t>(geom_count);
+    as_build_geo_info.pGeometries = &geometries[0];
+
+    return as_build_geo_info;
+}
+
+VkAccelerationStructureBuildRangeInfoKHR
+toVkAccelerationStructureBuildRangeInfo(
+    const AccelerationStructureBuildRangeInfo& as_build_range_info) {
+    VkAccelerationStructureBuildRangeInfoKHR vk_as_build_range_info{};
+    vk_as_build_range_info.firstVertex = as_build_range_info.first_vertex;
+    vk_as_build_range_info.primitiveCount = as_build_range_info.primitive_count;
+    vk_as_build_range_info.primitiveOffset = as_build_range_info.primitive_offset;
+    vk_as_build_range_info.transformOffset = as_build_range_info.transform_offset;
+
+    return vk_as_build_range_info;
 }
 
 VkAttachmentDescriptionFlags toVkAttachmentDescriptionFlags(renderer::AttachmentDescriptionFlags flags) {
@@ -1121,9 +1264,55 @@ VkDependencyFlags toVkDependencyFlags(renderer::DependencyFlags flags) {
     ADD_FLAG_BIT(Dependency, DEPENDENCY, BY_REGION_BIT);
     ADD_FLAG_BIT(Dependency, DEPENDENCY, DEVICE_GROUP_BIT);
     ADD_FLAG_BIT(Dependency, DEPENDENCY, VIEW_LOCAL_BIT);
-    ADD_FLAG_BIT(Dependency, DEPENDENCY, VIEW_LOCAL_BIT_KHR);
-    ADD_FLAG_BIT(Dependency, DEPENDENCY, DEVICE_GROUP_BIT_KHR);
     return result;
+}
+
+VkGeometryFlagsKHR toVkGeometryFlags(const renderer::GeometryFlags& flags) {
+    VkGeometryFlagsKHR result = 0;
+    ADD_FLAG_BIT(Geometry, GEOMETRY, OPAQUE_BIT_KHR);
+    ADD_FLAG_BIT(Geometry, GEOMETRY, NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR);
+    return result;
+}
+
+VkAccelerationStructureTypeKHR
+toVkAccelerationStructureType(
+    const renderer::AccelerationStructureType& as_type) {
+    auto flag = as_type;
+    SELECT_FLAG(AccelerationStructureType, ACCELERATION_STRUCTURE_TYPE, TOP_LEVEL_KHR);
+    else SELECT_FLAG(AccelerationStructureType, ACCELERATION_STRUCTURE_TYPE, BOTTOM_LEVEL_KHR);
+    else SELECT_FLAG(AccelerationStructureType, ACCELERATION_STRUCTURE_TYPE, GENERIC_KHR);
+    return VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+}
+
+VkBuildAccelerationStructureFlagsKHR
+toVkBuildAccelerationStructureFlags(
+    const renderer::BuildAccelerationStructureFlags& flags) {
+    VkBuildAccelerationStructureFlagsKHR result = 0;
+    ADD_FLAG_BIT(BuildAccelerationStructure, BUILD_ACCELERATION_STRUCTURE, ALLOW_UPDATE_BIT_KHR);
+    ADD_FLAG_BIT(BuildAccelerationStructure, BUILD_ACCELERATION_STRUCTURE, ALLOW_COMPACTION_BIT_KHR);
+    ADD_FLAG_BIT(BuildAccelerationStructure, BUILD_ACCELERATION_STRUCTURE, PREFER_FAST_TRACE_BIT_KHR);
+    ADD_FLAG_BIT(BuildAccelerationStructure, BUILD_ACCELERATION_STRUCTURE, PREFER_FAST_BUILD_BIT_KHR);
+    ADD_FLAG_BIT(BuildAccelerationStructure, BUILD_ACCELERATION_STRUCTURE, LOW_MEMORY_BIT_KHR);
+    return result;
+}
+
+VkBuildAccelerationStructureModeKHR
+toVkBuildAccelerationStructureMode(
+    const renderer::BuildAccelerationStructureMode& as_mode) {
+    auto flag = as_mode;
+    SELECT_FLAG(BuildAccelerationStructureMode, BUILD_ACCELERATION_STRUCTURE_MODE, BUILD_KHR);
+    else SELECT_FLAG(BuildAccelerationStructureMode, BUILD_ACCELERATION_STRUCTURE_MODE, UPDATE_KHR);
+    return VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+}
+
+VkAccelerationStructureBuildTypeKHR
+toVkAccelerationStructureBuildType(
+    const renderer::AccelerationStructureBuildType& as_build_type) {
+    auto flag = as_build_type;
+    SELECT_FLAG(AccelerationStructureBuildType, ACCELERATION_STRUCTURE_BUILD_TYPE, HOST_KHR);
+    else SELECT_FLAG(AccelerationStructureBuildType, ACCELERATION_STRUCTURE_BUILD_TYPE, DEVICE_KHR);
+    else SELECT_FLAG(AccelerationStructureBuildType, ACCELERATION_STRUCTURE_BUILD_TYPE, HOST_OR_DEVICE_KHR);
+    return VK_ACCELERATION_STRUCTURE_BUILD_TYPE_HOST_OR_DEVICE_KHR;
 }
 
 VkSubpassDescriptionFlags toVkSubpassDescriptionFlags(renderer::SubpassDescriptionFlags flags) {
@@ -1588,6 +1777,28 @@ SwapChainSupportDetails querySwapChainSupport(
     return details;
 }
 
+//--------------------------------------------------------------------------------------------------
+// Initialize Vulkan ray tracing
+// #VKRay
+void initRayTracing(const VkPhysicalDevice& device)
+{
+    VkPhysicalDeviceRayTracingPipelinePropertiesKHR
+        rt_properties{
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR };
+
+    // Requesting ray tracing properties
+    VkPhysicalDeviceProperties2 prop2{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+    prop2.pNext = &rt_properties;
+    vkGetPhysicalDeviceProperties2(device, &prop2);
+
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR as_features{};
+    as_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    VkPhysicalDeviceFeatures2 device_features2{};
+    device_features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    device_features2.pNext = &as_features;
+    vkGetPhysicalDeviceFeatures2(device, &device_features2);
+}
+
 bool isDeviceSuitable(
     const std::shared_ptr<renderer::PhysicalDevice>& physical_device,
     const std::shared_ptr<renderer::Surface>& surface) {
@@ -1596,6 +1807,8 @@ bool isDeviceSuitable(
     const auto& vk_physical_device = RENDER_TYPE_CAST(PhysicalDevice, physical_device);
     assert(vk_physical_device);
     auto device = vk_physical_device->get();
+
+    initRayTracing(device);
 
     bool extensions_supported = checkDeviceExtensionSupport(physical_device);
 
@@ -1699,6 +1912,57 @@ std::shared_ptr<renderer::Device> createLogicalDevice(
 
     auto vk_logic_device = std::make_shared<renderer::vk::VulkanDevice>(physical_device, vk_device);
     return vk_logic_device;
+}
+
+void initRayTracingProperties(
+    const std::shared_ptr<renderer::PhysicalDevice>& physical_device,
+    const std::shared_ptr<renderer::Device>& device,
+    PhysicalDeviceRayTracingPipelineProperties& rt_pipeline_properties,
+    PhysicalDeviceAccelerationStructureFeatures& as_features) {
+    const auto& vk_physical_device = RENDER_TYPE_CAST(PhysicalDevice, physical_device)->get();
+    const auto& vk_device = RENDER_TYPE_CAST(Device, device)->get();
+
+    // Get the ray tracing and accelertion structure related function pointers required by this sample
+    vkGetBufferDeviceAddressKHR = reinterpret_cast<PFN_vkGetBufferDeviceAddressKHR>(vkGetDeviceProcAddr(vk_device, "vkGetBufferDeviceAddressKHR"));
+    vkCmdBuildAccelerationStructuresKHR = reinterpret_cast<PFN_vkCmdBuildAccelerationStructuresKHR>(vkGetDeviceProcAddr(vk_device, "vkCmdBuildAccelerationStructuresKHR"));
+    vkBuildAccelerationStructuresKHR = reinterpret_cast<PFN_vkBuildAccelerationStructuresKHR>(vkGetDeviceProcAddr(vk_device, "vkBuildAccelerationStructuresKHR"));
+    vkCreateAccelerationStructureKHR = reinterpret_cast<PFN_vkCreateAccelerationStructureKHR>(vkGetDeviceProcAddr(vk_device, "vkCreateAccelerationStructureKHR"));
+    vkDestroyAccelerationStructureKHR = reinterpret_cast<PFN_vkDestroyAccelerationStructureKHR>(vkGetDeviceProcAddr(vk_device, "vkDestroyAccelerationStructureKHR"));
+    vkGetAccelerationStructureBuildSizesKHR = reinterpret_cast<PFN_vkGetAccelerationStructureBuildSizesKHR>(vkGetDeviceProcAddr(vk_device, "vkGetAccelerationStructureBuildSizesKHR"));
+    vkGetAccelerationStructureDeviceAddressKHR = reinterpret_cast<PFN_vkGetAccelerationStructureDeviceAddressKHR>(vkGetDeviceProcAddr(vk_device, "vkGetAccelerationStructureDeviceAddressKHR"));
+    vkCmdTraceRaysKHR = reinterpret_cast<PFN_vkCmdTraceRaysKHR>(vkGetDeviceProcAddr(vk_device, "vkCmdTraceRaysKHR"));
+    vkGetRayTracingShaderGroupHandlesKHR = reinterpret_cast<PFN_vkGetRayTracingShaderGroupHandlesKHR>(vkGetDeviceProcAddr(vk_device, "vkGetRayTracingShaderGroupHandlesKHR"));
+    vkCreateRayTracingPipelinesKHR = reinterpret_cast<PFN_vkCreateRayTracingPipelinesKHR>(vkGetDeviceProcAddr(vk_device, "vkCreateRayTracingPipelinesKHR"));
+
+    // Get ray tracing pipeline properties, which will be used later on in the sample
+    VkPhysicalDeviceRayTracingPipelinePropertiesKHR  ray_tracing_pipeline_properties{};
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR acceleration_structure_features{};
+
+    ray_tracing_pipeline_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+    VkPhysicalDeviceProperties2 device_properties2{};
+    device_properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    device_properties2.pNext = &ray_tracing_pipeline_properties;
+    vkGetPhysicalDeviceProperties2(vk_physical_device, &device_properties2);
+    rt_pipeline_properties.max_ray_dispatch_invocation_count = ray_tracing_pipeline_properties.maxRayDispatchInvocationCount;
+    rt_pipeline_properties.max_ray_hit_attribute_size = ray_tracing_pipeline_properties.maxRayHitAttributeSize;
+    rt_pipeline_properties.max_ray_recursion_depth = ray_tracing_pipeline_properties.maxRayRecursionDepth;
+    rt_pipeline_properties.max_shader_group_stride = ray_tracing_pipeline_properties.maxShaderGroupStride;
+    rt_pipeline_properties.shader_group_base_alignment = ray_tracing_pipeline_properties.shaderGroupBaseAlignment;
+    rt_pipeline_properties.shader_group_handle_alignment = ray_tracing_pipeline_properties.shaderGroupHandleAlignment;
+    rt_pipeline_properties.shader_group_handle_capture_replay_size = ray_tracing_pipeline_properties.shaderGroupHandleCaptureReplaySize;
+    rt_pipeline_properties.shader_group_handle_size = ray_tracing_pipeline_properties.shaderGroupHandleSize;
+
+    // Get acceleration structure properties, which will be used later on in the sample
+    acceleration_structure_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    VkPhysicalDeviceFeatures2 device_features2{};
+    device_features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    device_features2.pNext = &acceleration_structure_features;
+    vkGetPhysicalDeviceFeatures2(vk_physical_device, &device_features2);
+    as_features.acceleration_structure = acceleration_structure_features.accelerationStructure;
+    as_features.acceleration_structure_capture_replay = acceleration_structure_features.accelerationStructureCaptureReplay;
+    as_features.acceleration_structure_host_commands = acceleration_structure_features.accelerationStructureHostCommands;
+    as_features.acceleration_structure_indirect_build = acceleration_structure_features.accelerationStructureIndirectBuild;
+    as_features.descriptor_binding_acceleration_structure_update_after_bind = acceleration_structure_features.descriptorBindingAccelerationStructureUpdateAfterBind;
 }
 
 int rateDeviceSuitability(const VkPhysicalDevice& device) {
@@ -1886,7 +2150,8 @@ void createTextureImage(
     auto mem_requirements = device->getImageMemoryRequirements(image);
     image_memory = device->allocateMemory(mem_requirements.size,
         mem_requirements.memory_type_bits,
-        toVkMemoryPropertyFlags(properties));
+        toVkMemoryPropertyFlags(properties),
+        0);
     device->bindImageMemory(image, image_memory);
 }
 
@@ -2443,7 +2708,7 @@ void createGradTexture(
     renderer::Helper::create2DTextureImage(
         device_info,
         format,
-        n,
+        static_cast<uint32_t>(n),
         1,
         4,
         grad.data(),

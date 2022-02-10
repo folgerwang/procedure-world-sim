@@ -95,6 +95,9 @@ private:
     std::shared_ptr<er::RenderPass> cubemap_render_pass_;
     std::shared_ptr<er::CommandPool> command_pool_;
 
+    er::PhysicalDeviceRayTracingPipelineProperties rt_pipeline_properties_;
+    er::PhysicalDeviceAccelerationStructureFeatures as_features_;
+
     er::Format hdr_format_ = er::Format::B10G11R11_UFLOAT_PACK32;// E5B9G9R9_UFLOAT_PACK32; this format not supported here.
     er::Format depth_format_ = er::Format::D24_UNORM_S8_UINT;
     er::TextureInfo hdr_color_buffer_;

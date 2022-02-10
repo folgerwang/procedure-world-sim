@@ -176,9 +176,9 @@ void main()
 #endif
         }
 
-        camera_info.camera_follow_dist += params.mouse_wheel_offset * 0.1f;
+        camera_info.camera_follow_dist = max(camera_info.camera_follow_dist - params.mouse_wheel_offset * 0.1f, 0.1f);
 
-        eye_pos = game_obj_info.position - (camera_info.facing_dir - camera_info.up_vector * 2) * camera_info.camera_follow_dist;
+        eye_pos = game_obj_info.position - camera_info.facing_dir * camera_info.camera_follow_dist;
         target_pos = game_obj_info.position;
         up_dir = camera_info.up_vector;
     }

@@ -68,6 +68,7 @@ class Image {
 class Buffer {
 public:
     virtual uint32_t getSize() = 0;
+    virtual uint64_t getDeviceAddress() = 0;
 };
 
 class Semaphore {
@@ -207,11 +208,16 @@ public:
 class VulkanBuffer : public Buffer {
     uint32_t         size_;
     VkBuffer         buffer_;
+    uint64_t         device_address_ = 0;
 public:
     VkBuffer get() { return buffer_; }
     void set(const VkBuffer& buffer, uint32_t size) { buffer_ = buffer; size_ = size; }
+    void set_device_address(uint64_t device_address) { device_address_ = device_address; }
     virtual uint32_t getSize() final {
         return size_;
+    }
+    virtual uint64_t getDeviceAddress() final {
+        return device_address_;
     }
 };
 
@@ -256,10 +262,17 @@ public:
     
 
 class VulkanShaderModule : public ShaderModule {
-    VkShaderModule shader_module_;
+    VkShaderModule          shader_module_;
+    ShaderStageFlagBits     shader_stage_;
 public:
+    void set(
+        const VkShaderModule& shader_module,
+        const ShaderStageFlagBits& shader_stage) {
+        shader_module_ = shader_module;
+        shader_stage_ = shader_stage;
+    }
+    ShaderStageFlagBits getShaderStage() { return shader_stage_; }
     VkShaderModule get() { return shader_module_; }
-    void set(const VkShaderModule& shader_module) { shader_module_ = shader_module; }
 };
 } // namespace vk
 
@@ -306,6 +319,12 @@ public:
         const std::shared_ptr<PhysicalDevice>& physical_device,
         const std::shared_ptr<Surface>& surface,
         const QueueFamilyIndices& indices);
+
+    static void initRayTracingProperties(
+        const std::shared_ptr<renderer::PhysicalDevice>& physical_device,
+        const std::shared_ptr<renderer::Device>& device,
+        PhysicalDeviceRayTracingPipelineProperties& rt_pipeline_properties,
+        PhysicalDeviceAccelerationStructureFeatures& as_features);
 
     static void createSwapChain(
         GLFWwindow* window,

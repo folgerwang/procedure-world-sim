@@ -11,31 +11,32 @@ namespace er = engine::renderer;
 er::ShaderModuleList getIblShaderModules(
     const std::shared_ptr<er::Device>& device)
 {
-    uint64_t vert_code_size, frag_code_size;
-    er::ShaderModuleList shader_modules;
-    shader_modules.reserve(6);
-    auto vert_shader_code = engine::helper::readFile("lib/shaders/full_screen_vert.spv", vert_code_size);
-    shader_modules.push_back(device->createShaderModule(vert_code_size, vert_shader_code.data()));
-    auto frag_shader_code = engine::helper::readFile("lib/shaders/panorama_to_cubemap_frag.spv", frag_code_size);
-    shader_modules.push_back(device->createShaderModule(frag_code_size, frag_shader_code.data()));
-    auto labertian_frag_shader_code = engine::helper::readFile("lib/shaders/ibl_labertian_frag.spv", frag_code_size);
-    shader_modules.push_back(device->createShaderModule(frag_code_size, labertian_frag_shader_code.data()));
-    auto ggx_frag_shader_code = engine::helper::readFile("lib/shaders/ibl_ggx_frag.spv", frag_code_size);
-    shader_modules.push_back(device->createShaderModule(frag_code_size, ggx_frag_shader_code.data()));
-    auto charlie_frag_shader_code = engine::helper::readFile("lib/shaders/ibl_charlie_frag.spv", frag_code_size);
-    shader_modules.push_back(device->createShaderModule(frag_code_size, charlie_frag_shader_code.data()));
-
-    return shader_modules;
-}
-
-er::ShaderModuleList getIblComputeShaderModules(
-    const std::shared_ptr<er::Device>& device)
-{
-    uint64_t compute_code_size;
-    er::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    auto compute_shader_code = engine::helper::readFile("lib/shaders/ibl_smooth_comp.spv", compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
+    er::ShaderModuleList shader_modules(5);
+    shader_modules[0] =
+        er::helper::loadShaderModule(
+            device,
+            "full_screen_vert.spv",
+            er::ShaderStageFlagBits::VERTEX_BIT);
+    shader_modules[1] =
+        er::helper::loadShaderModule(
+            device,
+            "panorama_to_cubemap_frag.spv",
+            er::ShaderStageFlagBits::FRAGMENT_BIT);
+    shader_modules[2] =
+        er::helper::loadShaderModule(
+            device,
+            "ibl_labertian_frag.spv",
+            er::ShaderStageFlagBits::FRAGMENT_BIT);
+    shader_modules[3] =
+        er::helper::loadShaderModule(
+            device,
+            "ibl_ggx_frag.spv",
+            er::ShaderStageFlagBits::FRAGMENT_BIT);
+    shader_modules[4] =
+        er::helper::loadShaderModule(
+            device,
+            "ibl_charlie_frag.spv",
+            er::ShaderStageFlagBits::FRAGMENT_BIT);
 
     return shader_modules;
 }
@@ -140,23 +141,6 @@ std::shared_ptr<er::PipelineLayout> createCubemapComputePipelineLayout(
         { push_const_range });
 }
 
-std::shared_ptr<er::Pipeline> createComputePipeline(
-    const std::shared_ptr<er::Device>& device,
-    const std::shared_ptr<er::PipelineLayout>& ibl_comp_pipeline_layout) {
-    auto ibl_compute_shader_modules = getIblComputeShaderModules(device);
-    assert(ibl_compute_shader_modules.size() == 1);
-
-    auto blur_comp_pipeline = device->createPipeline(
-        ibl_comp_pipeline_layout,
-        ibl_compute_shader_modules[0]);
-
-    for (auto& shader_module : ibl_compute_shader_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
-    return blur_comp_pipeline;
-}
-
 }
 
 namespace engine {
@@ -215,9 +199,11 @@ IblCreator::IblCreator(
         device_info.device,
         ibl_comp_desc_set_layout_);
 
-    blur_comp_pipeline_ = createComputePipeline(
-        device_info.device,
-        ibl_comp_pipeline_layout_);
+    blur_comp_pipeline_ = 
+        er::helper::createComputePipeline(
+            device_info.device,
+            ibl_comp_pipeline_layout_,
+            "ibl_smooth_comp.spv");
 
     ibl_pipeline_layout_ = createCubemapPipelineLayout(
         device_info.device,
@@ -354,10 +340,6 @@ void IblCreator::createIblGraphicsPipelines(
             cube_graphic_pipeline_info,
             { ibl_shader_modules[0], ibl_shader_modules[4] },
             glm::uvec2(cube_size, cube_size));
-
-        for (auto& shader_module : ibl_shader_modules) {
-            device->destroyShaderModule(shader_module);
-        }
     }
 }
 

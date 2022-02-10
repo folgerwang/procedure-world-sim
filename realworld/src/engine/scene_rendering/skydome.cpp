@@ -30,67 +30,37 @@ struct SkyBoxVertex {
     }
 };
 
-er::ShaderModuleList getSkyScatteringLutFirstPassShaderModules(
-    std::shared_ptr<er::Device> device)
-{
-    uint64_t compute_code_size;
-    er::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    auto compute_shader_code = engine::helper::readFile("lib/shaders/sky_scattering_lut_first_pass_comp.spv", compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
-}
-
-er::ShaderModuleList getSkyScatteringLutSumPassShaderModules(
-    std::shared_ptr<er::Device> device)
-{
-    uint64_t compute_code_size;
-    er::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    auto compute_shader_code = engine::helper::readFile("lib/shaders/sky_scattering_lut_sum_pass_comp.spv", compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
-}
-
-er::ShaderModuleList getSkyScatteringLutFinalPassShaderModules(
-    std::shared_ptr<er::Device> device)
-{
-    uint64_t compute_code_size;
-    er::ShaderModuleList shader_modules;
-    shader_modules.reserve(1);
-    auto compute_shader_code = engine::helper::readFile("lib/shaders/sky_scattering_lut_final_pass_comp.spv", compute_code_size);
-    shader_modules.push_back(device->createShaderModule(compute_code_size, compute_shader_code.data()));
-
-    return shader_modules;
-}
-
 er::ShaderModuleList getSkyboxShaderModules(
     std::shared_ptr<er::Device> device)
 {
-    uint64_t vert_code_size, frag_code_size;
     er::ShaderModuleList shader_modules(2);
-    auto vert_shader_code = engine::helper::readFile("lib/shaders/skybox_vert.spv", vert_code_size);
-    auto frag_shader_code = engine::helper::readFile("lib/shaders/skybox_frag.spv", frag_code_size);
-
-    shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
-    shader_modules[1] = device->createShaderModule(frag_code_size, frag_shader_code.data());
-
+    shader_modules[0] =
+        er::helper::loadShaderModule(
+            device,
+            "skybox_vert.spv",
+            er::ShaderStageFlagBits::VERTEX_BIT);
+    shader_modules[1] =
+        er::helper::loadShaderModule(
+            device,
+            "skybox_frag.spv",
+            er::ShaderStageFlagBits::FRAGMENT_BIT);
     return shader_modules;
 }
 
 er::ShaderModuleList getCubeSkyboxShaderModules(
     std::shared_ptr<er::Device> device)
 {
-    uint64_t vert_code_size, frag_code_size;
     er::ShaderModuleList shader_modules(2);
-    auto vert_shader_code = engine::helper::readFile("lib/shaders/full_screen_vert.spv", vert_code_size);
-    auto cube_skybox_shader_code = engine::helper::readFile("lib/shaders/cube_skybox.spv", frag_code_size);
-
-    shader_modules[0] = device->createShaderModule(vert_code_size, vert_shader_code.data());
-    shader_modules[1] = device->createShaderModule(frag_code_size, cube_skybox_shader_code.data());
-
+    shader_modules[0] =
+        er::helper::loadShaderModule(
+            device,
+            "full_screen_vert.spv",
+            er::ShaderStageFlagBits::VERTEX_BIT);
+    shader_modules[1] =
+        er::helper::loadShaderModule(
+            device,
+            "cube_skybox.spv",
+            er::ShaderStageFlagBits::FRAGMENT_BIT);
     return shader_modules;
 }
 
@@ -289,10 +259,6 @@ std::shared_ptr<er::Pipeline> createGraphicsPipeline(
         shader_modules,
         display_size);
 
-    for (auto& shader_module : shader_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
     return skybox_pipeline;
 }
 
@@ -335,57 +301,6 @@ std::shared_ptr<er::PipelineLayout> createSkyScatteringLutPipelineLayout(
     return device->createPipelineLayout(
         { desc_set_layout},
         { });
-}
-
-std::shared_ptr<er::Pipeline> createSkyScatteringLutFirstPassPipeline(
-    const std::shared_ptr<er::Device>& device,
-    const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
-    auto cs_modules = getSkyScatteringLutFirstPassShaderModules(device);
-    assert(cs_modules.size() == 1);
-
-    auto pipeline = device->createPipeline(
-        pipeline_layout,
-        cs_modules[0]);
-
-    for (auto& shader_module : cs_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
-    return pipeline;
-}
-
-std::shared_ptr<er::Pipeline> createSkyScatteringLutSumPassPipeline(
-    const std::shared_ptr<er::Device>& device,
-    const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
-    auto cs_modules = getSkyScatteringLutSumPassShaderModules(device);
-    assert(cs_modules.size() == 1);
-
-    auto pipeline = device->createPipeline(
-        pipeline_layout,
-        cs_modules[0]);
-
-    for (auto& shader_module : cs_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
-    return pipeline;
-}
-
-std::shared_ptr<er::Pipeline> createSkyScatteringLutFinalPassPipeline(
-    const std::shared_ptr<er::Device>& device,
-    const std::shared_ptr<er::PipelineLayout>& pipeline_layout) {
-    auto cs_modules = getSkyScatteringLutFinalPassShaderModules(device);
-    assert(cs_modules.size() == 1);
-
-    auto pipeline = device->createPipeline(
-        pipeline_layout,
-        cs_modules[0]);
-
-    for (auto& shader_module : cs_modules) {
-        device->destroyShaderModule(shader_module);
-    }
-
-    return pipeline;
 }
 
 } // namespace
@@ -501,19 +416,22 @@ Skydome::Skydome(
             sky_scattering_lut_final_pass_desc_set_layout_);
 
     sky_scattering_lut_first_pass_pipeline_ =
-        createSkyScatteringLutFirstPassPipeline(
+        renderer::helper::createComputePipeline(
             device,
-            sky_scattering_lut_first_pass_pipeline_layout_);
+            sky_scattering_lut_first_pass_pipeline_layout_,
+            "sky_scattering_lut_first_pass_comp.spv");
 
     sky_scattering_lut_sum_pass_pipeline_ =
-        createSkyScatteringLutSumPassPipeline(
+        renderer::helper::createComputePipeline(
             device,
-            sky_scattering_lut_sum_pass_pipeline_layout_);
+            sky_scattering_lut_sum_pass_pipeline_layout_,
+            "sky_scattering_lut_sum_pass_comp.spv");
 
     sky_scattering_lut_final_pass_pipeline_ =
-        createSkyScatteringLutFinalPassPipeline(
+        renderer::helper::createComputePipeline(
             device,
-            sky_scattering_lut_final_pass_pipeline_layout_);
+            sky_scattering_lut_final_pass_pipeline_layout_,
+            "sky_scattering_lut_final_pass_comp.spv");
 }
 
 void Skydome::recreate(
