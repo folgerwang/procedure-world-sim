@@ -233,53 +233,51 @@ void Helper::addOneBuffer(
     descriptor_writes.push_back(buffer_desc);
 }
 
-void Helper::createBufferWithSrcData(
+void Helper::createBuffer(
     const DeviceInfo& device_info,
     const BufferUsageFlags& usage,
     const MemoryPropertyFlags& memory_property,
-    const uint64_t& buffer_size,
-    const void* src_data,
+    const MemoryAllocateFlags& allocate_flags,
     std::shared_ptr<Buffer>& buffer,
-    std::shared_ptr<DeviceMemory>& buffer_memory) {
+    std::shared_ptr<DeviceMemory>& buffer_memory,
+    const uint64_t buffer_size /*= 0*/,
+    const void* src_data/*= nullptr*/) {
     const auto& device = device_info.device;
 
-    if (memory_property == SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT)) {
-        std::shared_ptr<Buffer> staging_buffer;
-        std::shared_ptr<DeviceMemory> staging_buffer_memory;
-        device->createBuffer(
-            buffer_size,
-            SET_FLAG_BIT(BufferUsage, TRANSFER_SRC_BIT),
-            SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
-            SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
-            0,
-            staging_buffer,
-            staging_buffer_memory);
+    bool has_src_data = buffer_size > 0 && src_data;
+    bool need_stage_buffer = has_src_data && (memory_property == SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT));
 
-        device->updateBufferMemory(staging_buffer_memory, buffer_size, src_data);
+    device->createBuffer(
+        buffer_size,
+        (need_stage_buffer ? SET_FLAG_BIT(BufferUsage, TRANSFER_DST_BIT) : 0) | usage,
+        memory_property,
+        allocate_flags,
+        buffer,
+        buffer_memory);
 
-        device->createBuffer(
-            buffer_size,
-            SET_FLAG_BIT(BufferUsage, TRANSFER_DST_BIT) | usage,
-            memory_property,
-            0,
-            buffer,
-            buffer_memory);
+    if (has_src_data) {
+        if (need_stage_buffer) {
+            std::shared_ptr<Buffer> staging_buffer;
+            std::shared_ptr<DeviceMemory> staging_buffer_memory;
+            device->createBuffer(
+                buffer_size,
+                SET_FLAG_BIT(BufferUsage, TRANSFER_SRC_BIT),
+                SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+                SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+                0,
+                staging_buffer,
+                staging_buffer_memory);
 
-        vk::helper::copyBuffer(device_info, staging_buffer, buffer, buffer_size);
+            device->updateBufferMemory(staging_buffer_memory, buffer_size, src_data);
 
-        device->destroyBuffer(staging_buffer);
-        device->freeMemory(staging_buffer_memory);
-    }
-    else {
-        device->createBuffer(
-            buffer_size,
-            usage,
-            memory_property,
-            0,
-            buffer,
-            buffer_memory);
+            vk::helper::copyBuffer(device_info, staging_buffer, buffer, buffer_size);
 
-        device->updateBufferMemory(buffer_memory, buffer_size, src_data);
+            device->destroyBuffer(staging_buffer);
+            device->freeMemory(staging_buffer_memory);
+        }
+        else {
+            device->updateBufferMemory(buffer_memory, buffer_size, src_data);
+        }
     }
 }
 

@@ -95,15 +95,16 @@ static void setupMeshState(
         gltf_object->buffers_.resize(model.buffers.size());
         for (size_t i = 0; i < model.buffers.size(); i++) {
             auto buffer = model.buffers[i];
-            renderer::Helper::createBufferWithSrcData(
+            renderer::Helper::createBuffer(
                 device_info,
                 SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
                 SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT),
                 SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
-                buffer.data.size(),
-                buffer.data.data(),
+                0,
                 gltf_object->buffers_[i].buffer,
-                gltf_object->buffers_[i].memory);
+                gltf_object->buffers_[i].memory,
+                buffer.data.size(),
+                buffer.data.data());
         }
     }
 
@@ -509,15 +510,16 @@ static void setupSkin(
         skin_info.inverse_bind_matrices_.resize(accessor.count);
         memcpy(skin_info.inverse_bind_matrices_.data(), src_buffer_data, src_data_size);
 
-        renderer::Helper::createBufferWithSrcData(
+        renderer::Helper::createBuffer(
             device_info,
             SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
             SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
             SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
-            src_data_size,
-            src_buffer_data,
+            0,
             skin_info.joints_buffer_.buffer,
-            skin_info.joints_buffer_.memory);
+            skin_info.joints_buffer_.memory,
+            src_data_size,
+            src_buffer_data);
     }
 }
 
@@ -692,15 +694,16 @@ static std::shared_ptr<ego::ObjectData> loadGltfModel(
         }
     }
 
-    renderer::Helper::createBufferWithSrcData(
+    renderer::Helper::createBuffer(
         device_info,
         SET_FLAG_BIT(BufferUsage, INDIRECT_BUFFER_BIT) |
         SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
         SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
-        indirect_draw_cmd_buffer.size() * sizeof(uint32_t),
-        indirect_draw_cmd_buffer.data(),
+        0,
         gltf_object->indirect_draw_cmd_.buffer,
-        gltf_object->indirect_draw_cmd_.memory);
+        gltf_object->indirect_draw_cmd_.memory,
+        indirect_draw_cmd_buffer.size() * sizeof(uint32_t),
+        indirect_draw_cmd_buffer.data());
 
     gltf_object->num_prims_ = num_prims;
 

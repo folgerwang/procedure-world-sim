@@ -27,7 +27,7 @@ namespace helper {
 
 static uint32_t max_vertex_input_attribute_offset = 0;
 const std::vector<const char*> validation_layers = {
-    "VK_LAYER_KHRONOS_validation"
+    "VK_LAYER_KHRONOS_validation",
 };
 
 const std::vector<const char*> device_extensions = {
@@ -40,7 +40,8 @@ const std::vector<const char*> device_extensions = {
     VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
     VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
     VK_KHR_SPIRV_1_4_EXTENSION_NAME,
-    VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME
+    VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
+    VK_KHR_DEVICE_GROUP_EXTENSION_NAME
 };
 
 #ifdef NDEBUG
@@ -581,9 +582,6 @@ VkMemoryAllocateFlags toVkMemoryAllocateFlags(renderer::MemoryAllocateFlags flag
     ADD_FLAG_BIT(MemoryAllocate, MEMORY_ALLOCATE, DEVICE_MASK_BIT);
     ADD_FLAG_BIT(MemoryAllocate, MEMORY_ALLOCATE, DEVICE_ADDRESS_BIT);
     ADD_FLAG_BIT(MemoryAllocate, MEMORY_ALLOCATE, DEVICE_ADDRESS_CAPTURE_REPLAY_BIT);
-    ADD_FLAG_BIT(MemoryAllocate, MEMORY_ALLOCATE, DEVICE_MASK_BIT_KHR);
-    ADD_FLAG_BIT(MemoryAllocate, MEMORY_ALLOCATE, DEVICE_ADDRESS_BIT_KHR);
-    ADD_FLAG_BIT(MemoryAllocate, MEMORY_ALLOCATE, DEVICE_ADDRESS_CAPTURE_REPLAY_BIT_KHR);
 
     return result;
 }
@@ -1487,6 +1485,7 @@ std::vector<const char*> getRequiredExtensions() {
     glfw_extensions = glfwGetRequiredInstanceExtensions(&glfw_extensionCount);
 
     std::vector<const char*> extensions(glfw_extensions, glfw_extensions + glfw_extensionCount);
+    extensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
 
     if (hasEnabledValidationLayers()) {
        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
@@ -1881,6 +1880,11 @@ std::shared_ptr<renderer::Device> createLogicalDevice(
 
     VkPhysicalDeviceFeatures device_features{};
     device_features.samplerAnisotropy = VK_TRUE;
+    device_features.geometryShader = VK_TRUE;
+    device_features.imageCubeArray = VK_TRUE;
+    device_features.shaderInt16 = VK_TRUE;
+    device_features.multiDrawIndirect = VK_TRUE;
+    device_features.multiViewport = VK_TRUE;
 
     VkDeviceCreateInfo create_info{};
     create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -1902,6 +1906,30 @@ std::shared_ptr<renderer::Device> createLogicalDevice(
 
     create_info.enabledExtensionCount = static_cast<uint32_t>(device_extensions.size());
     create_info.ppEnabledExtensionNames = device_extensions.data();
+
+    VkPhysicalDeviceBufferDeviceAddressFeatures enabledBufferDeviceAddresFeatures{};
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR enabledRayTracingPipelineFeatures{};
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR enabledAccelerationStructureFeatures{};
+
+    // Enable features required for ray tracing using feature chaining via pNext		
+    enabledBufferDeviceAddresFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+    enabledBufferDeviceAddresFeatures.bufferDeviceAddress = VK_TRUE;
+
+    enabledRayTracingPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+    enabledRayTracingPipelineFeatures.rayTracingPipeline = VK_TRUE;
+    enabledRayTracingPipelineFeatures.pNext = &enabledBufferDeviceAddresFeatures;
+
+    enabledAccelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    enabledAccelerationStructureFeatures.accelerationStructure = VK_TRUE;
+    enabledAccelerationStructureFeatures.pNext = &enabledRayTracingPipelineFeatures;
+
+    // If a pNext(Chain) has been passed, we need to add it to the device creation info
+    VkPhysicalDeviceFeatures2 physicalDeviceFeatures2{};
+    physicalDeviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    physicalDeviceFeatures2.features = device_features;
+    physicalDeviceFeatures2.pNext = &enabledAccelerationStructureFeatures;
+    create_info.pEnabledFeatures = nullptr;
+    create_info.pNext = &physicalDeviceFeatures2;
 
     const auto& vk_physical_device = RENDER_TYPE_CAST(PhysicalDevice, physical_device);
     assert(vk_physical_device);

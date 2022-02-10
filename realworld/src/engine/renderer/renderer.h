@@ -416,14 +416,15 @@ public:
         uint64_t buffer_size = 0,
         void* data = nullptr);
 
-    static void createBufferWithSrcData(
+    static void createBuffer(
         const DeviceInfo& device_info,
         const BufferUsageFlags& usage,
         const MemoryPropertyFlags& memory_property,
-        const uint64_t& buffer_size,
-        const void* src_data,
+        const MemoryAllocateFlags& allocate_flags,
         std::shared_ptr<Buffer>& buffer,
-        std::shared_ptr<DeviceMemory>& buffer_memory);
+        std::shared_ptr<DeviceMemory>& buffer_memory,
+        const uint64_t buffer_size = 0,
+        const void* src_data = nullptr);
 
     static void updateBufferWithSrcData(
         const DeviceInfo& device_info,

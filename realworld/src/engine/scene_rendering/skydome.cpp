@@ -80,14 +80,15 @@ er::BufferInfo createVertexBuffer(
     uint64_t buffer_size = sizeof(vertices[0]) * vertices.size();
 
     er::BufferInfo buffer;
-    er::Helper::createBufferWithSrcData(
+    er::Helper::createBuffer(
         device_info,
         SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT),
         SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
-        buffer_size,
-        vertices.data(),
+        0,
         buffer.buffer,
-        buffer.memory);
+        buffer.memory,
+        buffer_size,
+        vertices.data());
 
     return buffer;
 }
@@ -106,14 +107,15 @@ er::BufferInfo createIndexBuffer(
         sizeof(indices[0]) * indices.size();
 
     er::BufferInfo buffer;
-    er::Helper::createBufferWithSrcData(
+    er::Helper::createBuffer(
         device_info,
         SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT),
         SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
-        buffer_size,
-        indices.data(),
+        0,
         buffer.buffer,
-        buffer.memory);
+        buffer.memory,
+        buffer_size,
+        indices.data());
 
     return buffer;
 }

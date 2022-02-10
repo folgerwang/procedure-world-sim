@@ -1442,40 +1442,43 @@ void initBottomLevelDataInfo(
     // Create buffers
     // For the sake of simplicity we won't stage the vertex data to the GPU memory
     // Vertex buffer
-    er::Helper::createBufferWithSrcData(
+    er::Helper::createBuffer(
         device_info,
         SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT) |
         SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
         SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
         SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
-        vertices.size() * sizeof(Vertex),
-        vertices.data(),
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
         bl_data_info.vertex_buffer.buffer,
-        bl_data_info.vertex_buffer.memory);
+        bl_data_info.vertex_buffer.memory,
+        vertices.size() * sizeof(Vertex),
+        vertices.data());
 
     // Index buffer
-    er::Helper::createBufferWithSrcData(
+    er::Helper::createBuffer(
         device_info,
         SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT) |
         SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
         SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
         SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
-        indices.size() * sizeof(uint32_t),
-        indices.data(),
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
         bl_data_info.index_buffer.buffer,
-        bl_data_info.index_buffer.memory);
+        bl_data_info.index_buffer.memory,
+        indices.size() * sizeof(uint32_t),
+        indices.data());
 
     // Transform buffer
-    er::Helper::createBufferWithSrcData(
+    er::Helper::createBuffer(
         device_info,
         SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT) |
         SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
         SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
         SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
-        sizeof(transform_matrix),
-        &transform_matrix,
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
         bl_data_info.transform_buffer.buffer,
-        bl_data_info.transform_buffer.memory);
+        bl_data_info.transform_buffer.memory,
+        sizeof(transform_matrix),
+        &transform_matrix);
 
     // Build
     auto as_geometry = std::make_shared<er::AccelerationStructureGeometry>();
@@ -1591,16 +1594,17 @@ void initTopLevelDataInfo(
     instance.acceleration_structure_reference = bl_data_info.as_device_address;
 
     // Instance buffer
-    er::Helper::createBufferWithSrcData(
+    er::Helper::createBuffer(
         device_info,
         SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT) |
         SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
         SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
         SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
-        sizeof(instance),
-        &instance,
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
         tl_data_info.instance_buffer.buffer,
-        tl_data_info.instance_buffer.memory);
+        tl_data_info.instance_buffer.memory,
+        sizeof(instance),
+        &instance);
 
     auto as_geometry = std::make_shared<er::AccelerationStructureGeometry>();
     as_geometry->flags = SET_FLAG_BIT(Geometry, OPAQUE_BIT_KHR);
@@ -1733,11 +1737,11 @@ void testRayTracing(
 
     if (!s_rt_init) {
         initBottomLevelDataInfo(device_info, s_bl_data_info);
-        initTopLevelDataInfo(device_info, s_bl_data_info, s_tl_data_info);
-        createShaderBindingTable(device_info, rt_pipeline_properties, as_features);
+//        initTopLevelDataInfo(device_info, s_bl_data_info, s_tl_data_info);
+//        createShaderBindingTable(device_info, rt_pipeline_properties, as_features);
         s_rt_init = true;
     }
-
+/*
     er::BufferInfo   scratch_buffer;
     uint32_t scratch_buffer_size = 1024;
     device_info.device->createBuffer(
@@ -1758,7 +1762,7 @@ void testRayTracing(
         SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
         SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
         blas_buffer.buffer,
-        blas_buffer.memory);
+        blas_buffer.memory);*/
 }
 
 void RealWorldApplication::drawFrame() {

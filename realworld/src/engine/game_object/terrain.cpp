@@ -2367,15 +2367,16 @@ void TileObject::createMeshBuffers() {
     auto segment_count = static_cast<uint32_t>(TileConst::kSegmentCount);
     auto index_buffer = generateTileMeshIndex(segment_count);
     auto index_buffer_size = static_cast<uint32_t>(sizeof(index_buffer[0]) * index_buffer.size());
-    renderer::Helper::createBufferWithSrcData(
+    renderer::Helper::createBuffer(
         device_info_,
         SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT) |
         SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
         SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
-        index_buffer_size,
-        index_buffer.data(),
+        0,
         index_buffer_.buffer,
-        index_buffer_.memory);
+        index_buffer_.memory,
+        index_buffer_size,
+        index_buffer.data());
 }
 
 void TileObject::generateStaticDescriptorSet(

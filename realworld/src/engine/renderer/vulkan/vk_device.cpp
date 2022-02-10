@@ -688,7 +688,11 @@ VulkanDevice::allocateMemory(
     if (allocate_flags != 0) {
         alloc_info.pNext = &alloc_flags_info;
     }
-    alloc_info.memoryTypeIndex = helper::findMemoryType(getPhysicalDevice(), memory_type_bits, properties);
+    alloc_info.memoryTypeIndex =
+        helper::findMemoryType(
+            getPhysicalDevice(),
+            memory_type_bits,
+            properties);
 
     VkDeviceMemory memory;
     if (vkAllocateMemory(device_, &alloc_info, nullptr, &memory) != VK_SUCCESS) {
