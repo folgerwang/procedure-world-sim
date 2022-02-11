@@ -3,6 +3,7 @@
 #include <map>
 #include <limits>
 #include <chrono>
+#include <string>
 #include <filesystem>
 #include "Windows.h"
 
@@ -1403,6 +1404,7 @@ void RealWorldApplication::drawScene(
     s_dbuf_idx = 1 - s_dbuf_idx;
 }
 
+const uint32_t g_object_count = 3;
 struct BottomlevelDataInfo {
     er::BufferInfo   vertex_buffer{};
     er::BufferInfo   index_buffer{};
@@ -1432,12 +1434,14 @@ void initBottomLevelDataInfo(
     std::vector<uint32_t> indices = { 0, 1, 2 };
     auto index_count = static_cast<uint32_t>(indices.size());
 
-    // Setup identity transform matrix
-    glm::mat3x4 transform_matrix = {
-        1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f
-    };
+    std::vector<glm::mat3x4> transform_matrices(g_object_count);
+    for (uint32_t i = 0; i < g_object_count; i++) {
+        transform_matrices[i] = {
+            1.0f, 0.0f, 0.0f, (float)i * 3.0f - 3.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f
+        };
+    }
 
     // Create buffers
     // For the sake of simplicity we won't stage the vertex data to the GPU memory
@@ -1477,40 +1481,42 @@ void initBottomLevelDataInfo(
         SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
         bl_data_info.transform_buffer.buffer,
         bl_data_info.transform_buffer.memory,
-        sizeof(transform_matrix),
-        &transform_matrix);
-
-    // Build
-    auto as_geometry = std::make_shared<er::AccelerationStructureGeometry>();
-    as_geometry->flags = SET_FLAG_BIT(Geometry, OPAQUE_BIT_KHR);
-    as_geometry->geometry_type = er::GeometryType::TRIANGLES_KHR;
-    as_geometry->geometry.triangles.struct_type =
-        er::StructureType::ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-    as_geometry->geometry.triangles.vertex_format = er::Format::R32G32B32_SFLOAT;
-    as_geometry->geometry.triangles.vertex_data.device_address =
-        bl_data_info.vertex_buffer.buffer->getDeviceAddress();
-    as_geometry->geometry.triangles.max_vertex = 3;
-    as_geometry->geometry.triangles.vertex_stride = sizeof(Vertex);
-    as_geometry->geometry.triangles.index_type = er::IndexType::UINT32;
-    as_geometry->geometry.triangles.index_data.device_address =
-        bl_data_info.index_buffer.buffer->getDeviceAddress();
-    as_geometry->geometry.triangles.transform_data.device_address =
-        bl_data_info.transform_buffer.buffer->getDeviceAddress();
+        sizeof(glm::mat3x4) * g_object_count,
+        &transform_matrices[0]);
 
     // Get size info
     er::AccelerationStructureBuildGeometryInfo as_build_geometry_info{};
     as_build_geometry_info.type = er::AccelerationStructureType::BOTTOM_LEVEL_KHR;
     as_build_geometry_info.flags = SET_FLAG_BIT(BuildAccelerationStructure, PREFER_FAST_TRACE_BIT_KHR);
-    as_build_geometry_info.geometries.push_back(as_geometry);
 
-    const uint32_t num_triangles = 1;
+    // Build
+    for (uint32_t i = 0; i < g_object_count; i++) {
+        auto as_geometry = std::make_shared<er::AccelerationStructureGeometry>();
+        as_geometry->flags = SET_FLAG_BIT(Geometry, OPAQUE_BIT_KHR);
+        as_geometry->geometry_type = er::GeometryType::TRIANGLES_KHR;
+        as_geometry->geometry.triangles.struct_type =
+            er::StructureType::ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+        as_geometry->geometry.triangles.vertex_format = er::Format::R32G32B32_SFLOAT;
+        as_geometry->geometry.triangles.vertex_data.device_address =
+            bl_data_info.vertex_buffer.buffer->getDeviceAddress();
+        as_geometry->geometry.triangles.max_vertex = 3;
+        as_geometry->geometry.triangles.vertex_stride = sizeof(Vertex);
+        as_geometry->geometry.triangles.index_type = er::IndexType::UINT32;
+        as_geometry->geometry.triangles.index_data.device_address =
+            bl_data_info.index_buffer.buffer->getDeviceAddress();
+        as_geometry->geometry.triangles.transform_data.device_address =
+            bl_data_info.transform_buffer.buffer->getDeviceAddress();
+        as_geometry->max_primitive_count = 1;
+
+        as_build_geometry_info.geometries.push_back(as_geometry);
+    }
+
     er::AccelerationStructureBuildSizesInfo as_build_size_info{};
     as_build_size_info.struct_type = er::StructureType::ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
 
     device_info.device->getAccelerationStructureBuildSizes(
         er::AccelerationStructureBuildType::DEVICE_KHR,
         as_build_geometry_info,
-        num_triangles,
         as_build_size_info);
 
     device_info.device->createBuffer(
@@ -1540,11 +1546,14 @@ void initBottomLevelDataInfo(
     as_build_geometry_info.scratch_data.device_address =
         bl_data_info.scratch_buffer.buffer->getDeviceAddress();
 
-    er::AccelerationStructureBuildRangeInfo as_build_range_info{};
-    as_build_range_info.primitive_count = num_triangles;
-    as_build_range_info.primitive_offset = 0;
-    as_build_range_info.first_vertex = 0;
-    as_build_range_info.transform_offset = 0;
+    uint32_t num_triangles = 1;
+    std::vector<er::AccelerationStructureBuildRangeInfo> as_build_range_infos(g_object_count);
+    for (auto i = 0; i < g_object_count; i++) {
+        as_build_range_infos[i].primitive_count = num_triangles;
+        as_build_range_infos[i].primitive_offset = 0;
+        as_build_range_infos[i].first_vertex = 0;
+        as_build_range_infos[i].transform_offset = i * sizeof(glm::mat3x4);
+    }
 
     // Build the acceleration structure on the device via a one-time command buffer submission
     // Some implementations may support acceleration structure building on the host (VkPhysicalDeviceAccelerationStructureFeaturesKHR->accelerationStructureHostCommands), but we prefer device builds
@@ -1553,7 +1562,7 @@ void initBottomLevelDataInfo(
         auto& cmd_buf = command_buffers[0];
         if (cmd_buf) {
             cmd_buf->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
-            cmd_buf->buildAccelerationStructures({ as_build_geometry_info }, { as_build_range_info });
+            cmd_buf->buildAccelerationStructures({ as_build_geometry_info }, as_build_range_infos);
             cmd_buf->endCommandBuffer();
         }
 
@@ -1585,6 +1594,8 @@ void initTopLevelDataInfo(
         0.0f, 1.0f, 0.0f, 0.0f,
         0.0f, 0.0f, 1.0f, 0.0f };
 
+    uint32_t primitive_count = 1;
+
     er::AccelerationStructureInstance instance{};
     instance.transform = transform_matrix;
     instance.instance_custom_index = 0;
@@ -1614,6 +1625,7 @@ void initTopLevelDataInfo(
     as_geometry->geometry.instances.array_of_pointers = 0x00;
     as_geometry->geometry.instances.data.device_address =
         tl_data_info.instance_buffer.buffer->getDeviceAddress();
+    as_geometry->max_primitive_count = primitive_count;
 
     // Get size info
     /*
@@ -1625,14 +1637,12 @@ void initTopLevelDataInfo(
     as_build_geometry_info.flags = SET_FLAG_BIT(BuildAccelerationStructure, PREFER_FAST_TRACE_BIT_KHR);
     as_build_geometry_info.geometries.push_back(as_geometry);
 
-    uint32_t primitive_count = 1;
     er::AccelerationStructureBuildSizesInfo as_build_size_info{};
     as_build_size_info.struct_type = er::StructureType::ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
 
     device_info.device->getAccelerationStructureBuildSizes(
         er::AccelerationStructureBuildType::DEVICE_KHR,
         as_build_geometry_info,
-        primitive_count,
         as_build_size_info);
 
     device_info.device->createBuffer(
@@ -1703,6 +1713,7 @@ struct RayTracingRenderingInfo {
     er::BufferInfo raygen_shader_binding_table;
     er::BufferInfo miss_shader_binding_table;
     er::BufferInfo hit_shader_binding_table;
+    er::BufferInfo callable_shader_binding_table;
     er::BufferInfo ubo;
     er::TextureInfo result_image;
 };
@@ -1718,10 +1729,11 @@ uint32_t alignedSize(uint32_t size, uint32_t alignment) {
 
 std::shared_ptr<er::DescriptorSetLayout> createRtDescriptorSetLayout(
     const std::shared_ptr<er::Device>& device) {
-    std::vector<er::DescriptorSetLayoutBinding> bindings(3);
+    std::vector<er::DescriptorSetLayoutBinding> bindings(5);
     bindings[0] = er::helper::getBufferDescriptionSetLayoutBinding(
         0,
-        SET_FLAG_BIT(ShaderStage, RAYGEN_BIT_KHR),
+        SET_FLAG_BIT(ShaderStage, RAYGEN_BIT_KHR) |
+        SET_FLAG_BIT(ShaderStage, CLOSEST_HIT_BIT_KHR),
         er::DescriptorType::ACCELERATION_STRUCTURE_KHR);
     bindings[1] = er::helper::getBufferDescriptionSetLayoutBinding(
         1,
@@ -1729,8 +1741,18 @@ std::shared_ptr<er::DescriptorSetLayout> createRtDescriptorSetLayout(
         er::DescriptorType::STORAGE_IMAGE);
     bindings[2] = er::helper::getBufferDescriptionSetLayoutBinding(
         2,
-        SET_FLAG_BIT(ShaderStage, RAYGEN_BIT_KHR),
+        SET_FLAG_BIT(ShaderStage, RAYGEN_BIT_KHR) |
+        SET_FLAG_BIT(ShaderStage, CLOSEST_HIT_BIT_KHR) |
+        SET_FLAG_BIT(ShaderStage, MISS_BIT_KHR),
         er::DescriptorType::UNIFORM_BUFFER);
+    bindings[3] = er::helper::getBufferDescriptionSetLayoutBinding(
+        3,
+        SET_FLAG_BIT(ShaderStage, CLOSEST_HIT_BIT_KHR),
+        er::DescriptorType::STORAGE_BUFFER);
+    bindings[4] = er::helper::getBufferDescriptionSetLayoutBinding(
+        4,
+        SET_FLAG_BIT(ShaderStage, CLOSEST_HIT_BIT_KHR),
+        er::DescriptorType::STORAGE_BUFFER);
     return device->createDescriptorSetLayout(bindings);
 }
 
@@ -1738,6 +1760,9 @@ enum {
     kRayGenIndex,
     kRayMissIndex,
     kClosestHitIndex,
+    kCallable1Index,
+    kCallable2Index,
+    kCallable3Index,
     kNumRtShaders
 };
 void createRayTracingPipeline(
@@ -1760,6 +1785,15 @@ void createRayTracingPipeline(
             device,
             "rt_closesthit_rchit.spv",
             er::ShaderStageFlagBits::CLOSEST_HIT_BIT_KHR);
+    for (auto i = 0; i < g_object_count; i++) {
+        auto index = kCallable1Index + static_cast<uint32_t>(i);
+        auto callable_shader_name = std::string("rt_callable") + std::to_string(i+1) + "_rcall.spv";
+        rt_render_info.shader_modules[index] =
+            er::helper::loadShaderModule(
+                device,
+                callable_shader_name,
+                er::ShaderStageFlagBits::CALLABLE_BIT_KHR);
+    }
 
     rt_render_info.shader_groups.resize(kNumRtShaders);
     rt_render_info.shader_groups[kRayGenIndex].type = er::RayTracingShaderGroupType::GENERAL_KHR;
@@ -1768,6 +1802,11 @@ void createRayTracingPipeline(
     rt_render_info.shader_groups[kRayMissIndex].general_shader = kRayMissIndex;
     rt_render_info.shader_groups[kClosestHitIndex].type = er::RayTracingShaderGroupType::TRIANGLES_HIT_GROUP_KHR;
     rt_render_info.shader_groups[kClosestHitIndex].closest_hit_shader = kClosestHitIndex;
+    for (auto i = 0; i < g_object_count; i++) {
+        auto index = kCallable1Index + static_cast<uint32_t>(i);
+        rt_render_info.shader_groups[index].type = er::RayTracingShaderGroupType::GENERAL_KHR;
+        rt_render_info.shader_groups[index].general_shader = index;
+    }
 
     rt_render_info.rt_desc_set_layout = createRtDescriptorSetLayout(device);
     rt_render_info.rt_pipeline_layout =
@@ -1777,7 +1816,8 @@ void createRayTracingPipeline(
         device->createPipeline(
             rt_render_info.rt_pipeline_layout,
             rt_render_info.shader_modules,
-            rt_render_info.shader_groups);
+            rt_render_info.shader_groups,
+            2);
 }
 
 void createShaderBindingTable(
@@ -1837,21 +1877,37 @@ void createShaderBindingTable(
         handle_size,
         shader_handle_storage.data() + handle_size_aligned * 2);
 
+    er::Helper::createBuffer(
+        device_info,
+        SET_FLAG_BIT(BufferUsage, SHADER_BINDING_TABLE_BIT_KHR) |
+        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT),
+        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
+        rt_render_info.callable_shader_binding_table.buffer,
+        rt_render_info.callable_shader_binding_table.memory,
+        handle_size * g_object_count,
+        shader_handle_storage.data() + handle_size_aligned * 3);
+
     rt_render_info.raygen_shader_sbt_entry.device_address =
         rt_render_info.raygen_shader_binding_table.buffer->getDeviceAddress();
     rt_render_info.raygen_shader_sbt_entry.size = handle_size_aligned;
     rt_render_info.raygen_shader_sbt_entry.stride = handle_size_aligned;
+
     rt_render_info.miss_shader_sbt_entry.device_address =
         rt_render_info.miss_shader_binding_table.buffer->getDeviceAddress();
     rt_render_info.miss_shader_sbt_entry.size = handle_size_aligned;
     rt_render_info.miss_shader_sbt_entry.stride = handle_size_aligned;
+
     rt_render_info.hit_shader_sbt_entry.device_address =
         rt_render_info.hit_shader_binding_table.buffer->getDeviceAddress();
     rt_render_info.hit_shader_sbt_entry.size = handle_size_aligned;
     rt_render_info.hit_shader_sbt_entry.stride = handle_size_aligned;
-    rt_render_info.callable_shader_sbt_entry.device_address = 0;
-    rt_render_info.callable_shader_sbt_entry.size = 0;
-    rt_render_info.callable_shader_sbt_entry.stride = 0;
+    
+    rt_render_info.callable_shader_sbt_entry.device_address =
+        rt_render_info.callable_shader_binding_table.buffer->getDeviceAddress();
+    rt_render_info.callable_shader_sbt_entry.size = handle_size_aligned * 3;
+    rt_render_info.callable_shader_sbt_entry.stride = handle_size_aligned;
 }
 
 void createRtResources(
@@ -1871,7 +1927,7 @@ void createRtResources(
         er::Format::R16G16B16A16_SFLOAT,
         glm::uvec2(1920, 1080),
         rt_render_info.result_image,
-        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, TRANSFER_SRC_BIT) |
         SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
         er::ImageLayout::GENERAL);
 }
@@ -1879,6 +1935,7 @@ void createRtResources(
 void createDescriptorSets(
     const er::DeviceInfo& device_info,
     const std::shared_ptr<er::DescriptorPool>& descriptor_pool,
+    const BottomlevelDataInfo& bl_data_info,
     const ToplevelDataInfo& tl_data_info,
     RayTracingRenderingInfo& rt_render_info) {
     const auto& device = device_info.device;
@@ -1890,7 +1947,7 @@ void createDescriptorSets(
             1)[0];
 
     er::WriteDescriptorList descriptor_writes;
-    descriptor_writes.reserve(3);
+    descriptor_writes.reserve(5);
 
     er::Helper::addOneAccelerationStructure(
         descriptor_writes,
@@ -1915,6 +1972,22 @@ void createDescriptorSets(
         2,
         rt_render_info.ubo.buffer,
         rt_render_info.ubo.buffer->getSize());
+
+    er::Helper::addOneBuffer(
+        descriptor_writes,
+        rt_render_info.rt_desc_set,
+        er::DescriptorType::STORAGE_BUFFER,
+        3,
+        bl_data_info.vertex_buffer.buffer,
+        bl_data_info.vertex_buffer.buffer->getSize());
+
+    er::Helper::addOneBuffer(
+        descriptor_writes,
+        rt_render_info.rt_desc_set,
+        er::DescriptorType::STORAGE_BUFFER,
+        4,
+        bl_data_info.index_buffer.buffer,
+        bl_data_info.index_buffer.buffer->getSize());
 
     device->updateDescriptorSets(descriptor_writes);
 }
@@ -1954,6 +2027,7 @@ er::TextureInfo testRayTracing(
         createDescriptorSets(
             device_info,
             descriptor_pool,
+            s_bl_data_info,
             s_tl_data_info,
             s_rt_render_info);
 
@@ -2145,9 +2219,9 @@ void RealWorldApplication::drawFrame() {
         current_time_);
 
     er::ImageResourceInfo src_info = {
-        er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-        SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
-        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
+        er::ImageLayout::GENERAL,
+        SET_FLAG_BIT(Access, SHADER_WRITE_BIT),
+        SET_FLAG_BIT(PipelineStage, RAY_TRACING_SHADER_BIT_KHR) };
 
     er::ImageResourceInfo dst_info = {
         er::ImageLayout::PRESENT_SRC_KHR,

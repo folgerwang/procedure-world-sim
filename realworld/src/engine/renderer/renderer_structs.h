@@ -429,6 +429,7 @@ struct AccelerationStructureGeometry {
     GeometryType                         geometry_type;
     AccelerationStructureGeometryData    geometry;
     GeometryFlags                        flags;
+    uint32_t                             max_primitive_count = 0;
 };
 
 struct AccelerationStructureBuildGeometryInfo {

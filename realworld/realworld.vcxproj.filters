@@ -361,5 +361,14 @@
     <None Include="src\shaders\rt_closesthit.rchit">
       <Filter>Resource Files\shaders</Filter>
     </None>
+    <None Include="src\shaders\rt_callable2.rcall">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\rt_callable3.rcall">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\rt_callable1.rcall">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

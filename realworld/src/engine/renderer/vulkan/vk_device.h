@@ -152,7 +152,6 @@ public:
     virtual void getAccelerationStructureBuildSizes(
         AccelerationStructureBuildType         as_build_type,
         const AccelerationStructureBuildGeometryInfo& build_info,
-        const uint32_t& max_primitive_counts,
         AccelerationStructureBuildSizesInfo& size_info) final;
     virtual AccelerationStructure createAccelerationStructure(
         const std::shared_ptr<Buffer>& buffer,

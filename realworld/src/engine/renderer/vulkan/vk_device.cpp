@@ -1033,11 +1033,15 @@ void VulkanDevice::waitIdle() {
 void VulkanDevice::getAccelerationStructureBuildSizes(
     AccelerationStructureBuildType         as_build_type,
     const AccelerationStructureBuildGeometryInfo& build_info,
-    const uint32_t& max_primitive_counts,
     AccelerationStructureBuildSizesInfo& size_info) {
 
     std::unique_ptr<VkAccelerationStructureGeometryKHR[]> geoms;
     auto as_build_geo_info = helper::toVkAccelerationStructureBuildGeometryInfo(build_info, geoms);
+
+    std::vector<uint32_t> max_primitive_counts(build_info.geometries.size());
+    for (auto i = 0; i < build_info.geometries.size(); i++) {
+        max_primitive_counts[i] = build_info.geometries[i]->max_primitive_count;
+    }
 
     VkAccelerationStructureBuildSizesInfoKHR as_build_size_info{};
     as_build_size_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
@@ -1046,7 +1050,7 @@ void VulkanDevice::getAccelerationStructureBuildSizes(
         device_,
         helper::toVkAccelerationStructureBuildType(as_build_type),
         &as_build_geo_info,
-        &max_primitive_counts,
+        max_primitive_counts.data(),
         &as_build_size_info);
 
     size_info.struct_type = StructureType::ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
