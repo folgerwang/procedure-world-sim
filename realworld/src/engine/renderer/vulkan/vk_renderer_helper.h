@@ -68,10 +68,11 @@ VkFrontFace toVkFrontFace(renderer::FrontFace front_face);
 VkSampleCountFlags toVkSampleCountFlags(renderer::SampleCountFlags flags);
 VkCompareOp toVkCompareOp(renderer::CompareOp compare_op);
 VkStencilOp toVkStencilOp(renderer::StencilOp stencil_op);
-VkAttachmentLoadOp toVkAttachmentLoadOp(renderer::AttachmentLoadOp load_op);
-VkAttachmentStoreOp toVkAttachmentStoreOp(renderer::AttachmentStoreOp store_op);
+VkAttachmentLoadOp toVkAttachmentLoadOp(const renderer::AttachmentLoadOp load_op);
+VkAttachmentStoreOp toVkAttachmentStoreOp(const renderer::AttachmentStoreOp store_op);
 VkAttachmentDescriptionFlags toVkAttachmentDescriptionFlags(renderer::AttachmentDescriptionFlags flags);
 VkAccelerationStructureBuildTypeKHR toVkAccelerationStructureBuildType(const renderer::AccelerationStructureBuildType& as_build_type);
+VkRayTracingShaderGroupTypeKHR toVkRayTracingShaderGroupType(const renderer::RayTracingShaderGroupType& rt_shader_group_type);
 VkGeometryTypeKHR toVkGeometryType(const renderer::GeometryType& geometry_type);
 VkGeometryFlagsKHR toVkGeometryFlags(const renderer::GeometryFlags& flags);
 VkAccelerationStructureGeometryKHR toVkAsGeometry(const renderer::AccelerationStructureGeometry& as_geo);
@@ -85,6 +86,9 @@ toVkAccelerationStructureBuildGeometryInfo(
 VkAccelerationStructureBuildRangeInfoKHR
 toVkAccelerationStructureBuildRangeInfo(
     const AccelerationStructureBuildRangeInfo& as_build_range_info);
+VkStridedDeviceAddressRegionKHR
+toVkStridedDeviceAddressRegion(
+    const renderer::StridedDeviceAddressRegion& device_address_region);
 VkGeometryInstanceFlagsKHR toVkGeometryInstanceFlags(const renderer::GeometryInstanceFlags& flags);
 VkDependencyFlags toVkDependencyFlags(renderer::DependencyFlags flags);
 VkSubpassDescriptionFlags toVkSubpassDescriptionFlags(renderer::SubpassDescriptionFlags flags);
@@ -161,7 +165,10 @@ renderer::Format findDepthFormat(const std::shared_ptr<renderer::Device>& device
 bool isDepthFormat(const renderer::Format& format);
 
 std::vector<VkPipelineShaderStageCreateInfo> getShaderStages(
-    const std::vector<std::shared_ptr<renderer::ShaderModule>>& shader_modules);
+    const ShaderModuleList& shader_modules);
+
+std::vector<VkRayTracingShaderGroupCreateInfoKHR> getShaderGroups(
+    const RtShaderGroupCreateInfoList& src_shader_groups);
 
 uint32_t findMemoryType(
     const std::shared_ptr<renderer::PhysicalDevice>& physical_device,
@@ -170,7 +177,7 @@ uint32_t findMemoryType(
 
 VkWriteDescriptorSet addDescriptWrite(
     const VkDescriptorSet& description_set,
-    const VkDescriptorImageInfo& image_info,
+    const VkDescriptorImageInfo* image_info,
     uint32_t binding,
     const VkDescriptorType& desc_type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 

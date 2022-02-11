@@ -30,40 +30,40 @@ namespace engine {
 namespace game_object {
 namespace {
 
-std::vector<renderer::TextureDescriptor> addDebugDrawBuffers(
+renderer::WriteDescriptorList addDebugDrawBuffers(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
     const std::shared_ptr<renderer::Sampler>&texture_sampler,
     const std::shared_ptr<renderer::ImageView>& temp_volume_tex,
     const std::shared_ptr<renderer::ImageView>& moisture_volume_tex,
     const std::shared_ptr<renderer::ImageView>& airflow_tex) {
-    std::vector<renderer::TextureDescriptor> descriptor_writes;
+    renderer::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(3);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_TEMP_TEX_INDEX,
         texture_sampler,
         temp_volume_tex,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_MOISTURE_TEX_INDEX,
         texture_sampler,
         moisture_volume_tex,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_AIRFLOW_INDEX,
         texture_sampler,
         airflow_tex,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
@@ -271,7 +271,7 @@ void DebugDrawObject::generateStaticDescriptorSet(
         temp_volume_tex,
         moisture_volume_tex,
         airflow_tex);
-    device->updateDescriptorSets(texture_descs, {});
+    device->updateDescriptorSets(texture_descs);
 }
 
 void DebugDrawObject::updateStaticDescriptorSet(

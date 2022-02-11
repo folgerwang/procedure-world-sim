@@ -120,95 +120,95 @@ er::BufferInfo createIndexBuffer(
     return buffer;
 }
 
-std::vector<er::TextureDescriptor> addSkyboxTextures(
+er::WriteDescriptorList addSkyboxTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
     const std::shared_ptr<er::ImageView>& scattering_lut_tex) {
-    std::vector<er::TextureDescriptor> descriptor_writes;
+    er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(1);
 
     // envmap texture.
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_SCATTERING_LUT_INDEX,
         texture_sampler,
         scattering_lut_tex,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
 }
 
-std::vector<er::TextureDescriptor> addSkyScatteringLutFirstPassTextures(
+er::WriteDescriptorList addSkyScatteringLutFirstPassTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::ImageView>& sky_scattering_lut_tex) {
-    std::vector<er::TextureDescriptor> descriptor_writes;
+    er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(1);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         DST_SCATTERING_LUT_INDEX,
         nullptr,
         sky_scattering_lut_tex,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     return descriptor_writes;
 }
 
-std::vector<er::TextureDescriptor> addSkyScatteringLutSumPassTextures(
+er::WriteDescriptorList addSkyScatteringLutSumPassTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::ImageView>& sky_scattering_lut_sum_tex,
     const std::shared_ptr<er::ImageView>& sky_scattering_lut_tex) {
-    std::vector<er::TextureDescriptor> descriptor_writes;
+    er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(2);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         DST_SCATTERING_LUT_SUM_INDEX,
         nullptr,
         sky_scattering_lut_sum_tex,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         SRC_SCATTERING_LUT_INDEX,
         nullptr,
         sky_scattering_lut_tex,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     return descriptor_writes;
 }
 
-std::vector<er::TextureDescriptor> addSkyScatteringLutFinalPassTextures(
+er::WriteDescriptorList addSkyScatteringLutFinalPassTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::ImageView>& sky_scattering_lut_tex,
     const std::shared_ptr<er::ImageView>& sky_scattering_lut_sum_tex) {
-    std::vector<er::TextureDescriptor> descriptor_writes;
+    er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(2);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         DST_SCATTERING_LUT_INDEX,
         nullptr,
         sky_scattering_lut_tex,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         SRC_SCATTERING_LUT_SUM_INDEX,
         nullptr,
         sky_scattering_lut_sum_tex,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     return descriptor_writes;
@@ -469,7 +469,7 @@ void Skydome::recreate(
         skybox_tex_desc_set_,
         texture_sampler,
         sky_scattering_lut_tex_.view);
-    device->updateDescriptorSets(skybox_texture_descs, {});
+    device->updateDescriptorSets(skybox_texture_descs);
 
     sky_scattering_lut_first_pass_desc_set_ =
         device->createDescriptorSets(
@@ -480,7 +480,7 @@ void Skydome::recreate(
             sky_scattering_lut_first_pass_desc_set_,
             sky_scattering_lut_tex_.view);
     device->updateDescriptorSets(
-        sky_scattering_lut_first_pass_texture_descs, {});
+        sky_scattering_lut_first_pass_texture_descs);
 
     sky_scattering_lut_sum_pass_desc_set_ =
         device->createDescriptorSets(
@@ -492,7 +492,7 @@ void Skydome::recreate(
             sky_scattering_lut_sum_tex_.view,
             sky_scattering_lut_tex_.view);
     device->updateDescriptorSets(
-        sky_scattering_lut_sum_pass_texture_descs, {});
+        sky_scattering_lut_sum_pass_texture_descs);
 
     sky_scattering_lut_final_pass_desc_set_ =
         device->createDescriptorSets(
@@ -504,7 +504,7 @@ void Skydome::recreate(
             sky_scattering_lut_tex_.view,
             sky_scattering_lut_sum_tex_.view);
     device->updateDescriptorSets(
-        sky_scattering_lut_final_pass_texture_descs, {});
+        sky_scattering_lut_final_pass_texture_descs);
 
     assert(view_desc_set_layout);
     skybox_pipeline_layout_ =

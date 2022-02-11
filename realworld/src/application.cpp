@@ -1007,26 +1007,26 @@ void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, float n
         &view_params_);
 }
 
-std::vector<er::TextureDescriptor> RealWorldApplication::addGlobalTextures(
+er::WriteDescriptorList RealWorldApplication::addGlobalTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set)
 {
-    std::vector<er::TextureDescriptor> descriptor_writes;
+    er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(5);
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         GGX_LUT_INDEX,
         texture_sampler_,
         ggx_lut_tex_.view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         CHARLIE_LUT_INDEX,
         texture_sampler_,
         charlie_lut_tex_.view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     ibl_creator_->addToGlobalTextures(
@@ -1045,21 +1045,21 @@ void RealWorldApplication::createDescriptorSets() {
 
         // create a global ibl texture descriptor set.
         auto global_texture_descs = addGlobalTextures(global_tex_desc_set_);
-        device_->updateDescriptorSets(global_texture_descs, {});
+        device_->updateDescriptorSets(global_texture_descs);
     }
 
     {
         view_desc_set_ = device_->createDescriptorSets(descriptor_pool_, view_desc_set_layout_, 1)[0];
-        std::vector<er::BufferDescriptor> buffer_descs;
+        er::WriteDescriptorList buffer_descs;
         buffer_descs.reserve(1);
         er::Helper::addOneBuffer(
             buffer_descs,
-            VIEW_CAMERA_BUFFER_INDEX,
-            ego::GameCamera::getGameCameraBuffer()->buffer,
             view_desc_set_,
             er::DescriptorType::STORAGE_BUFFER,
+            VIEW_CAMERA_BUFFER_INDEX,
+            ego::GameCamera::getGameCameraBuffer()->buffer,
             sizeof(glsl::GameCameraInfo));
-        device_->updateDescriptorSets({}, buffer_descs);
+        device_->updateDescriptorSets(buffer_descs);
     }
 }
 
@@ -1689,80 +1689,289 @@ void initTopLevelDataInfo(
         device_info.device->getAccelerationStructureDeviceAddress(tl_data_info.as_handle);
 }
 
+struct RayTracingRenderingInfo {
+    er::ShaderModuleList shader_modules;
+    er::RtShaderGroupCreateInfoList shader_groups;
+    std::shared_ptr<er::DescriptorSetLayout> rt_desc_set_layout;
+    std::shared_ptr<er::PipelineLayout> rt_pipeline_layout;
+    std::shared_ptr<er::Pipeline> rt_pipeline;
+    std::shared_ptr<er::DescriptorSet> rt_desc_set;
+    er::StridedDeviceAddressRegion raygen_shader_sbt_entry;
+    er::StridedDeviceAddressRegion miss_shader_sbt_entry;
+    er::StridedDeviceAddressRegion hit_shader_sbt_entry;
+    er::StridedDeviceAddressRegion callable_shader_sbt_entry;
+    er::BufferInfo raygen_shader_binding_table;
+    er::BufferInfo miss_shader_binding_table;
+    er::BufferInfo hit_shader_binding_table;
+    er::BufferInfo ubo;
+    er::TextureInfo result_image;
+};
+
+struct UniformData {
+    glm::mat4 view_inverse;
+    glm::mat4 proj_inverse;
+};
+
 uint32_t alignedSize(uint32_t size, uint32_t alignment) {
     return (size + alignment - 1) / alignment * alignment;
 }
 
+std::shared_ptr<er::DescriptorSetLayout> createRtDescriptorSetLayout(
+    const std::shared_ptr<er::Device>& device) {
+    std::vector<er::DescriptorSetLayoutBinding> bindings(3);
+    bindings[0] = er::helper::getBufferDescriptionSetLayoutBinding(
+        0,
+        SET_FLAG_BIT(ShaderStage, RAYGEN_BIT_KHR),
+        er::DescriptorType::ACCELERATION_STRUCTURE_KHR);
+    bindings[1] = er::helper::getBufferDescriptionSetLayoutBinding(
+        1,
+        SET_FLAG_BIT(ShaderStage, RAYGEN_BIT_KHR),
+        er::DescriptorType::STORAGE_IMAGE);
+    bindings[2] = er::helper::getBufferDescriptionSetLayoutBinding(
+        2,
+        SET_FLAG_BIT(ShaderStage, RAYGEN_BIT_KHR),
+        er::DescriptorType::UNIFORM_BUFFER);
+    return device->createDescriptorSetLayout(bindings);
+}
+
+enum {
+    kRayGenIndex,
+    kRayMissIndex,
+    kClosestHitIndex,
+    kNumRtShaders
+};
+void createRayTracingPipeline(
+    const er::DeviceInfo& device_info,
+    RayTracingRenderingInfo& rt_render_info) {
+    const auto& device = device_info.device;
+    rt_render_info.shader_modules.resize(kNumRtShaders);
+    rt_render_info.shader_modules[kRayGenIndex] =
+        er::helper::loadShaderModule(
+            device,
+            "raygen_rgen.spv",
+            er::ShaderStageFlagBits::RAYGEN_BIT_KHR);
+    rt_render_info.shader_modules[kRayMissIndex] =
+        er::helper::loadShaderModule(
+            device,
+            "miss_rmiss.spv",
+            er::ShaderStageFlagBits::MISS_BIT_KHR);
+    rt_render_info.shader_modules[kClosestHitIndex] =
+        er::helper::loadShaderModule(
+            device,
+            "closesthit_rchit.spv",
+            er::ShaderStageFlagBits::CLOSEST_HIT_BIT_KHR);
+
+    rt_render_info.shader_groups.resize(kNumRtShaders);
+    rt_render_info.shader_groups[kRayGenIndex].type = er::RayTracingShaderGroupType::GENERAL_KHR;
+    rt_render_info.shader_groups[kRayGenIndex].general_shader = kRayGenIndex;
+    rt_render_info.shader_groups[kRayMissIndex].type = er::RayTracingShaderGroupType::GENERAL_KHR;
+    rt_render_info.shader_groups[kRayMissIndex].general_shader = kRayMissIndex;
+    rt_render_info.shader_groups[kClosestHitIndex].type = er::RayTracingShaderGroupType::TRIANGLES_HIT_GROUP_KHR;
+    rt_render_info.shader_groups[kClosestHitIndex].closest_hit_shader = kClosestHitIndex;
+
+    rt_render_info.rt_desc_set_layout = createRtDescriptorSetLayout(device);
+    rt_render_info.rt_pipeline_layout =
+        device->createPipelineLayout(
+            { rt_render_info.rt_desc_set_layout }, { });
+    rt_render_info.rt_pipeline =
+        device->createPipeline(
+            rt_render_info.rt_pipeline_layout,
+            rt_render_info.shader_modules,
+            rt_render_info.shader_groups);
+}
+
 void createShaderBindingTable(
     const er::DeviceInfo& device_info,
-    er::PhysicalDeviceRayTracingPipelineProperties rt_pipeline_properties,
-    er::PhysicalDeviceAccelerationStructureFeatures as_features) {
-
-#if 0
+    const er::PhysicalDeviceRayTracingPipelineProperties& rt_pipeline_properties,
+    const er::PhysicalDeviceAccelerationStructureFeatures& as_features,
+    RayTracingRenderingInfo& rt_render_info) {
+    const auto& device = device_info.device;
     const uint32_t handle_size = rt_pipeline_properties.shader_group_handle_size;
     const uint32_t handle_size_aligned = 
         alignedSize(rt_pipeline_properties.shader_group_handle_size,
             rt_pipeline_properties.shader_group_handle_alignment);
-    const uint32_t group_count = static_cast<uint32_t>(shaderGroups.size());
+    const uint32_t group_count =
+        static_cast<uint32_t>(rt_render_info.shader_groups.size());
     const uint32_t sbt_size = group_count * handle_size_aligned;
 
     std::vector<uint8_t> shader_handle_storage(sbt_size);
-    VK_CHECK_RESULT(vkGetRayTracingShaderGroupHandlesKHR(device, pipeline, 0, group_count, sbt_size, shader_handle_storage.data()));
+    device->getRayTracingShaderGroupHandles(
+        rt_render_info.rt_pipeline,
+        group_count,
+        sbt_size,
+        shader_handle_storage.data());
 
-    const VkBufferUsageFlags bufferUsageFlags = VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-    const VkMemoryPropertyFlags memoryUsageFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    VK_CHECK_RESULT(vulkanDevice->createBuffer(bufferUsageFlags, memoryUsageFlags, &raygenShaderBindingTable, handleSize));
-    VK_CHECK_RESULT(vulkanDevice->createBuffer(bufferUsageFlags, memoryUsageFlags, &missShaderBindingTable, handleSize));
-    VK_CHECK_RESULT(vulkanDevice->createBuffer(bufferUsageFlags, memoryUsageFlags, &hitShaderBindingTable, handleSize));
+    er::Helper::createBuffer(
+        device_info,
+        SET_FLAG_BIT(BufferUsage, SHADER_BINDING_TABLE_BIT_KHR) |
+        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT),
+        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
+        rt_render_info.raygen_shader_binding_table.buffer,
+        rt_render_info.raygen_shader_binding_table.memory,
+        handle_size,
+        shader_handle_storage.data());
 
-    // Copy handles
-    raygenShaderBindingTable.map();
-    missShaderBindingTable.map();
-    hitShaderBindingTable.map();
-    memcpy(raygenShaderBindingTable.mapped, shaderHandleStorage.data(), handleSize);
-    memcpy(missShaderBindingTable.mapped, shaderHandleStorage.data() + handleSizeAligned, handleSize);
-    memcpy(hitShaderBindingTable.mapped, shaderHandleStorage.data() + handleSizeAligned * 2, handleSize);
-#endif
+    er::Helper::createBuffer(
+        device_info,
+        SET_FLAG_BIT(BufferUsage, SHADER_BINDING_TABLE_BIT_KHR) |
+        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT),
+        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
+        rt_render_info.miss_shader_binding_table.buffer,
+        rt_render_info.miss_shader_binding_table.memory,
+        handle_size,
+        shader_handle_storage.data() + handle_size_aligned);
+
+    er::Helper::createBuffer(
+        device_info,
+        SET_FLAG_BIT(BufferUsage, SHADER_BINDING_TABLE_BIT_KHR) |
+        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT),
+        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
+        rt_render_info.hit_shader_binding_table.buffer,
+        rt_render_info.hit_shader_binding_table.memory,
+        handle_size,
+        shader_handle_storage.data() + handle_size_aligned * 2);
+
+    rt_render_info.raygen_shader_sbt_entry.device_address =
+        rt_render_info.raygen_shader_binding_table.buffer->getDeviceAddress();
+    rt_render_info.raygen_shader_sbt_entry.size = handle_size_aligned;
+    rt_render_info.raygen_shader_sbt_entry.stride = handle_size_aligned;
+    rt_render_info.miss_shader_sbt_entry.device_address =
+        rt_render_info.miss_shader_binding_table.buffer->getDeviceAddress();
+    rt_render_info.miss_shader_sbt_entry.size = handle_size_aligned;
+    rt_render_info.miss_shader_sbt_entry.stride = handle_size_aligned;
+    rt_render_info.hit_shader_sbt_entry.device_address =
+        rt_render_info.hit_shader_binding_table.buffer->getDeviceAddress();
+    rt_render_info.hit_shader_sbt_entry.size = handle_size_aligned;
+    rt_render_info.hit_shader_sbt_entry.stride = handle_size_aligned;
+    rt_render_info.callable_shader_sbt_entry.device_address = 0;
+    rt_render_info.callable_shader_sbt_entry.size = 0;
+    rt_render_info.callable_shader_sbt_entry.stride = 0;
+}
+
+void createRtResources(
+    const er::DeviceInfo& device_info,
+    RayTracingRenderingInfo& rt_render_info) {
+    device_info.device->createBuffer(
+        sizeof(UniformData),
+        SET_FLAG_BIT(BufferUsage, UNIFORM_BUFFER_BIT),
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        0,
+        rt_render_info.ubo.buffer,
+        rt_render_info.ubo.memory);
+
+    er::Helper::create2DTextureImage(
+        device_info,
+        er::Format::R16G16B16A16_SFLOAT,
+        glm::uvec2(1920, 1080),
+        rt_render_info.result_image,
+        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
+        SET_FLAG_BIT(ImageUsage, STORAGE_BIT),
+        er::ImageLayout::GENERAL);
+}
+
+void createDescriptorSets(
+    const er::DeviceInfo& device_info,
+    const std::shared_ptr<er::DescriptorPool>& descriptor_pool,
+    const ToplevelDataInfo& tl_data_info,
+    RayTracingRenderingInfo& rt_render_info) {
+    const auto& device = device_info.device;
+
+    rt_render_info.rt_desc_set =
+        device->createDescriptorSets(
+            descriptor_pool,
+            rt_render_info.rt_desc_set_layout,
+            1)[0];
+
+    er::WriteDescriptorList descriptor_writes;
+    descriptor_writes.reserve(3);
+
+    er::Helper::addOneAccelerationStructure(
+        descriptor_writes,
+        rt_render_info.rt_desc_set,
+        er::DescriptorType::ACCELERATION_STRUCTURE_KHR,
+        0,
+        { tl_data_info.as_handle });
+
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        rt_render_info.rt_desc_set,
+        er::DescriptorType::STORAGE_IMAGE,
+        1,
+        nullptr,
+        rt_render_info.result_image.view,
+        er::ImageLayout::GENERAL);
+
+    er::Helper::addOneBuffer(
+        descriptor_writes,
+        rt_render_info.rt_desc_set,
+        er::DescriptorType::UNIFORM_BUFFER,
+        2,
+        rt_render_info.ubo.buffer,
+        rt_render_info.ubo.buffer->getSize());
+
+    device->updateDescriptorSets(descriptor_writes);
 }
 
 void testRayTracing(
     const er::DeviceInfo& device_info,
-    const std::shared_ptr<er::CommandBuffer>& command_buffer,
+    const std::shared_ptr<er::DescriptorPool>& descriptor_pool,
+    const std::shared_ptr<er::CommandBuffer>& cmd_buf,
     er::PhysicalDeviceRayTracingPipelineProperties rt_pipeline_properties,
     er::PhysicalDeviceAccelerationStructureFeatures as_features) {
 
     static bool s_rt_init = false;
     static BottomlevelDataInfo s_bl_data_info;
     static ToplevelDataInfo s_tl_data_info;
+    static RayTracingRenderingInfo s_rt_render_info;
 
     if (!s_rt_init) {
-        initBottomLevelDataInfo(device_info, s_bl_data_info);
-//        initTopLevelDataInfo(device_info, s_bl_data_info, s_tl_data_info);
-//        createShaderBindingTable(device_info, rt_pipeline_properties, as_features);
+        initBottomLevelDataInfo(
+            device_info,
+            s_bl_data_info);
+        initTopLevelDataInfo(
+            device_info,
+            s_bl_data_info,
+            s_tl_data_info);
+        createRayTracingPipeline(
+            device_info,
+            s_rt_render_info);
+        createShaderBindingTable(
+            device_info,
+            rt_pipeline_properties,
+            as_features,
+            s_rt_render_info);
+        createRtResources(
+            device_info,
+            s_rt_render_info);
+        createDescriptorSets(
+            device_info,
+            descriptor_pool,
+            s_tl_data_info,
+            s_rt_render_info);
+
         s_rt_init = true;
     }
-/*
-    er::BufferInfo   scratch_buffer;
-    uint32_t scratch_buffer_size = 1024;
-    device_info.device->createBuffer(
-        scratch_buffer_size,
-        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT) |
-        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT),
-        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
-        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
-        scratch_buffer.buffer,
-        scratch_buffer.memory);
 
-    er::BufferInfo   blas_buffer;
-    uint32_t blas_buffer_size = 1024;
-    device_info.device->createBuffer(
-        blas_buffer_size,
-        SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_STORAGE_BIT_KHR) |
-        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT),
-        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
-        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
-        blas_buffer.buffer,
-        blas_buffer.memory);*/
+    cmd_buf->bindPipeline(
+        er::PipelineBindPoint::RAY_TRACING,
+        s_rt_render_info.rt_pipeline);
+    cmd_buf->bindDescriptorSets(
+        er::PipelineBindPoint::RAY_TRACING,
+        s_rt_render_info.rt_pipeline_layout,
+        {s_rt_render_info.rt_desc_set });
+
+    cmd_buf->traceRays(
+        s_rt_render_info.raygen_shader_sbt_entry,
+        s_rt_render_info.miss_shader_sbt_entry,
+        s_rt_render_info.hit_shader_sbt_entry,
+        s_rt_render_info.callable_shader_sbt_entry,
+        glm::uvec3(1920, 1080, 1));
 }
 
 void RealWorldApplication::drawFrame() {
@@ -1902,7 +2111,12 @@ void RealWorldApplication::drawFrame() {
     command_buffer->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
 
     // ray tracing test.
-    testRayTracing(device_info_, command_buffer, rt_pipeline_properties_, as_features_);
+    testRayTracing(
+        device_info_,
+        descriptor_pool_,
+        command_buffer,
+        rt_pipeline_properties_,
+        as_features_);
 
     drawScene(command_buffer,
         swap_chain_info_,

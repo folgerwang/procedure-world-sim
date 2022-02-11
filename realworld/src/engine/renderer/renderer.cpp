@@ -194,43 +194,59 @@ Format Helper::findDepthFormat(const std::shared_ptr<Device>& device) {
 }
 
 void Helper::addOneTexture(
-    std::vector<TextureDescriptor>& descriptor_writes,
+    WriteDescriptorList& descriptor_writes,
+    const std::shared_ptr<DescriptorSet>& desc_set,
+    const DescriptorType& desc_type,
     uint32_t binding,
     const std::shared_ptr<Sampler>& sampler,
     const std::shared_ptr<ImageView>& texture,
-    const std::shared_ptr<DescriptorSet>& desc_set,
-    DescriptorType desc_type,
     ImageLayout image_layout) {
 
-    TextureDescriptor tex_desc = {
-        binding,
-        sampler,
-        texture,
-        desc_set,
-        desc_type,
-        image_layout };
+    auto tex_desc = std::make_shared<TextureDescriptor>();
+    tex_desc->binding = binding;
+    tex_desc->desc_set = desc_set;
+    tex_desc->desc_type = desc_type;
+    tex_desc->image_layout = image_layout;
+    tex_desc->sampler = sampler;
+    tex_desc->texture = texture;
 
     descriptor_writes.push_back(tex_desc);
 }
 
 void Helper::addOneBuffer(
-    std::vector<BufferDescriptor>& descriptor_writes,
+    WriteDescriptorList& descriptor_writes,
+    const std::shared_ptr<DescriptorSet>& desc_set,
+    const DescriptorType& desc_type,
     uint32_t binding,
     const std::shared_ptr<Buffer>& buffer,
-    const std::shared_ptr<DescriptorSet>& desc_set,
-    DescriptorType desc_type,
     uint32_t range,
     uint32_t offset/* = 0*/) {
 
-    BufferDescriptor buffer_desc = {
-        binding,
-        offset,
-        range,
-        buffer,
-        desc_set,
-        desc_type };
+    auto buffer_desc = std::make_shared<BufferDescriptor>();
+    buffer_desc->binding = binding;
+    buffer_desc->desc_set = desc_set;
+    buffer_desc->desc_type = desc_type;
+    buffer_desc->offset = offset;
+    buffer_desc->range = range;
+    buffer_desc->buffer = buffer;
 
     descriptor_writes.push_back(buffer_desc);
+}
+
+void Helper::addOneAccelerationStructure(
+    WriteDescriptorList& descriptor_writes,
+    const std::shared_ptr<DescriptorSet>& desc_set,
+    const DescriptorType& desc_type,
+    uint32_t binding,
+    const std::vector<AccelerationStructure>& acceleration_structs) {
+
+    auto as_desc = std::make_shared<AccelerationStructDescriptor>();
+    as_desc->binding = binding;
+    as_desc->desc_set = desc_set;
+    as_desc->desc_type = desc_type;
+    as_desc->acc_structs = acceleration_structs;
+
+    descriptor_writes.push_back(as_desc);
 }
 
 void Helper::createBuffer(

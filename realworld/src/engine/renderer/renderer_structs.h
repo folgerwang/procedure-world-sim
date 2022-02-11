@@ -271,22 +271,26 @@ struct PushConstantRange {
     uint32_t              size;
 };
 
-struct TextureDescriptor {
-    uint32_t binding;
+struct WriteDescriptor {
+    uint32_t binding = (uint32_t)-1;
+    DescriptorType desc_type = DescriptorType::MAX_ENUM;
+    std::shared_ptr<DescriptorSet> desc_set = nullptr;
+};
+
+struct TextureDescriptor : public WriteDescriptor{
     std::shared_ptr<Sampler> sampler = nullptr;
-    const std::shared_ptr<ImageView>& texture = nullptr;
-    const std::shared_ptr<DescriptorSet>& desc_set = nullptr;
-    DescriptorType desc_type = DescriptorType::COMBINED_IMAGE_SAMPLER;
+    std::shared_ptr<ImageView> texture = nullptr;
     ImageLayout image_layout = ImageLayout::SHADER_READ_ONLY_OPTIMAL;
 };
 
-struct BufferDescriptor {
-    uint32_t binding;
-    uint32_t offset;
-    uint32_t range;
-    const std::shared_ptr<Buffer>& buffer = nullptr;
-    const std::shared_ptr<DescriptorSet>& desc_set = nullptr;
-    DescriptorType desc_type = DescriptorType::UNIFORM_BUFFER;
+struct BufferDescriptor : public WriteDescriptor {
+    uint32_t offset = 0;
+    uint32_t range = 0;
+    std::shared_ptr<Buffer> buffer = nullptr;
+};
+
+struct AccelerationStructDescriptor : public WriteDescriptor {
+    std::vector<AccelerationStructure> acc_structs;
 };
 
 struct QueueFamilyIndices {
@@ -484,6 +488,21 @@ struct PhysicalDeviceAccelerationStructureFeatures {
     Bool32             descriptor_binding_acceleration_structure_update_after_bind;
 };
 
+struct RayTracingShaderGroupCreateInfo {
+    RayTracingShaderGroupType         type;
+    uint32_t                          general_shader = (uint32_t)-1;
+    uint32_t                          closest_hit_shader = (uint32_t)-1;
+    uint32_t                          any_hit_shader = (uint32_t)-1;
+    uint32_t                          intersection_shader = (uint32_t)-1;
+    const void*                       p_shader_group_capture_replay_handle = nullptr;
+};
+
+struct StridedDeviceAddressRegion {
+    DeviceAddress       device_address;
+    DeviceSize          stride;
+    DeviceSize          size;
+};
+
 struct GraphicPipelineInfo {
     std::shared_ptr<PipelineColorBlendStateCreateInfo> blend_state_info;
     std::shared_ptr<PipelineRasterizationStateCreateInfo> rasterization_info;
@@ -495,5 +514,7 @@ typedef std::vector<std::shared_ptr<PhysicalDevice>> PhysicalDeviceList;
 typedef std::vector<std::shared_ptr<DescriptorSetLayout>> DescriptorSetLayoutList;
 typedef std::vector<std::shared_ptr<DescriptorSet>> DescriptorSetList;
 typedef std::vector<std::shared_ptr<ShaderModule>> ShaderModuleList;
+typedef std::vector<renderer::RayTracingShaderGroupCreateInfo> RtShaderGroupCreateInfoList;
+typedef std::vector<std::shared_ptr<WriteDescriptor>> WriteDescriptorList;
 } // namespace renderer
 } // namespace engine

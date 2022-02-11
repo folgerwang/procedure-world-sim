@@ -9,48 +9,48 @@
 namespace {
 namespace er = engine::renderer;
 
-std::vector<er::TextureDescriptor> addBlurImageTextures(
+er::WriteDescriptorList addBlurImageTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
     const std::shared_ptr<er::ImageView>& src_image,
     const std::shared_ptr<er::ImageView>& dst_image,
     const std::shared_ptr<er::ImageView>& depth_image) {
-    std::vector<er::TextureDescriptor> descriptor_writes;
+    er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(2);
 
     // envmap texture.
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_TEX_INDEX,
         texture_sampler,
         src_image,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     // envmap texture.
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         DST_TEX_INDEX,
         nullptr,
         dst_image,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_DEPTH_TEX_INDEX,
         texture_sampler,
         depth_image,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
 }
 
-std::vector<er::TextureDescriptor> addCloudFogTextures(
+er::WriteDescriptorList addCloudFogTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
     const std::shared_ptr<er::Sampler>& point_clamp_texture_sampler,
@@ -62,134 +62,134 @@ std::vector<er::TextureDescriptor> addCloudFogTextures(
     const std::shared_ptr<er::ImageView>& volume_temp_tex,
     const std::shared_ptr<er::ImageView>& cloud_lighting_tex,
     const std::shared_ptr<er::ImageView>& scattering_lut_tex) {
-    std::vector<er::TextureDescriptor> descriptor_writes;
+    er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(14);
 
     // envmap texture.
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_MOISTURE_TEX_INDEX,
         texture_sampler,
         volume_moist_tex,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_TEMP_TEX_INDEX,
         texture_sampler,
         volume_temp_tex,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_DEPTH_TEX_INDEX,
         texture_sampler,
         src_depth,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_CLOUD_LIGHTING_TEX_INDEX,
         texture_sampler,
         cloud_lighting_tex,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         DETAIL_NOISE_TEXTURE_INDEX,
         texture_sampler,
         detail_noise_tex,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         ROUGH_NOISE_TEXTURE_INDEX,
         texture_sampler,
         rough_noise_tex,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_SCATTERING_LUT_INDEX,
         texture_sampler,
         scattering_lut_tex,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         DST_FOG_CLOUD_INDEX,
         texture_sampler,
         cloud_fog_tex,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         PERMUTATION_TEXTURE_INDEX,
         point_clamp_texture_sampler,
         er::Helper::getPermutationTexture().view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         PERMUTATION_2D_TEXTURE_INDEX,
         point_clamp_texture_sampler,
         er::Helper::getPermutation2DTexture().view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         GRAD_TEXTURE_INDEX,
         point_clamp_texture_sampler,
         er::Helper::getGradTexture().view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         PERM_GRAD_TEXTURE_INDEX,
         point_clamp_texture_sampler,
         er::Helper::getPermGradTexture().view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         PERM_GRAD_4D_TEXTURE_INDEX,
         point_clamp_texture_sampler,
         er::Helper::getPermGrad4DTexture().view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         GRAD_4D_TEXTURE_INDEX,
         point_clamp_texture_sampler,
         er::Helper::getGrad4DTexture().view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
@@ -407,7 +407,7 @@ void VolumeCloud::recreate(
         fog_cloud_tex_.view,
         blurred_fog_cloud_tex_.view,
         src_depth);
-    device->updateDescriptorSets(cloud_texture_descs, {});
+    device->updateDescriptorSets(cloud_texture_descs);
 
     blur_image_y_merge_tex_desc_set_ =
         device->createDescriptorSets(
@@ -421,7 +421,7 @@ void VolumeCloud::recreate(
         blurred_fog_cloud_tex_.view,
         hdr_color,
         src_depth);
-    device->updateDescriptorSets(cloud_texture_descs, {});
+    device->updateDescriptorSets(cloud_texture_descs);
 
     assert(view_desc_set_layout);
     blur_image_pipeline_layout_ =
@@ -463,7 +463,7 @@ void VolumeCloud::recreate(
             temp_texes[dbuf_idx],
             cloud_lighting_tex,
             scattering_lut_tex);
-        device->updateDescriptorSets(render_cloud_fog_texture_descs, {});
+        device->updateDescriptorSets(render_cloud_fog_texture_descs);
     }
 
     render_cloud_fog_pipeline_layout_ =

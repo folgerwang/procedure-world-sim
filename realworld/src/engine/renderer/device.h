@@ -15,8 +15,7 @@ public:
         std::shared_ptr<Buffer>& buffer,
         std::shared_ptr<DeviceMemory>& buffer_memory) = 0;
     virtual void updateDescriptorSets(
-        const std::vector<TextureDescriptor>& texture_list,
-        const std::vector<BufferDescriptor>& buffer_list) = 0;
+        const WriteDescriptorList& write_descriptors) = 0;
     virtual DescriptorSetList createDescriptorSets(
         std::shared_ptr<DescriptorPool> descriptor_pool,
         std::shared_ptr<DescriptorSetLayout> descriptor_set_layout,
@@ -42,6 +41,11 @@ public:
     virtual std::shared_ptr<Pipeline> createPipeline(
         const std::shared_ptr<PipelineLayout>& pipeline_layout,
         const std::shared_ptr<renderer::ShaderModule>& shader_module) = 0;
+    virtual std::shared_ptr<Pipeline> createPipeline(
+        const std::shared_ptr<PipelineLayout>& pipeline_layout,
+        const ShaderModuleList& src_shader_modules,
+        const RtShaderGroupCreateInfoList& src_shader_groups,
+        const uint32_t ray_recursion_depth = 1) = 0;
     virtual std::shared_ptr<Swapchain> createSwapchain(
         const std::shared_ptr<Surface>& surface,
         const uint32_t& image_count,
@@ -142,7 +146,13 @@ public:
     virtual AccelerationStructure createAccelerationStructure(
         const std::shared_ptr<Buffer>& buffer,
         const AccelerationStructureType& as_type) = 0;
-    virtual DeviceAddress getAccelerationStructureDeviceAddress(const AccelerationStructure& as) = 0;
+    virtual DeviceAddress getAccelerationStructureDeviceAddress(
+        const AccelerationStructure& as) = 0;
+    virtual void getRayTracingShaderGroupHandles(
+        const std::shared_ptr<Pipeline>& pipeline,
+        const uint32_t group_count,
+        const uint32_t sbt_size,
+        void* shader_handle_storage) = 0;
 };
 
 } // namespace renderer

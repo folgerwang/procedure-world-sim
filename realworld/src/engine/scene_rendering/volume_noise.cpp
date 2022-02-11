@@ -98,94 +98,94 @@ er::BufferInfo createIndexBuffer(
 }
 #endif
 
-std::vector<er::TextureDescriptor> addPerlinNoiseInitTextures(
+er::WriteDescriptorList addPerlinNoiseInitTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& point_clamp_texture_sampler,
     const er::TextureInfo& perlin_noise_tex) {
-    std::vector<er::TextureDescriptor> descriptor_writes;
+    er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(7);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         DST_PERLIN_NOISE_TEX_INDEX,
         nullptr,
         perlin_noise_tex.view,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         PERMUTATION_TEXTURE_INDEX,
         point_clamp_texture_sampler,
         er::Helper::getPermutationTexture().view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         PERMUTATION_2D_TEXTURE_INDEX,
         point_clamp_texture_sampler,
         er::Helper::getPermutation2DTexture().view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         GRAD_TEXTURE_INDEX,
         point_clamp_texture_sampler,
         er::Helper::getGradTexture().view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         PERM_GRAD_TEXTURE_INDEX,
         point_clamp_texture_sampler,
         er::Helper::getPermGradTexture().view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         PERM_GRAD_4D_TEXTURE_INDEX,
         point_clamp_texture_sampler,
         er::Helper::getPermGrad4DTexture().view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         GRAD_4D_TEXTURE_INDEX,
         point_clamp_texture_sampler,
         er::Helper::getGrad4DTexture().view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
 }
 
 #if 0
-std::vector<er::TextureDescriptor> addCloudTextures(
+er::WriteDescriptorList addCloudTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler) {
-    std::vector<er::TextureDescriptor> descriptor_writes;
+    er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(1);
 
     // envmap texture.
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         BASE_COLOR_TEX_INDEX,
         texture_sampler,
         nullptr,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
@@ -367,7 +367,7 @@ void VolumeNoise::recreate(
             detail_noise_init_tex_desc_set_,
             point_clamp_texture_sampler,
             detail_noise_tex_);
-    device->updateDescriptorSets(detail_noise_init_texture_descs, {});
+    device->updateDescriptorSets(detail_noise_init_texture_descs);
 
     rough_noise_init_tex_desc_set_ =
         device->createDescriptorSets(
@@ -380,7 +380,7 @@ void VolumeNoise::recreate(
             rough_noise_init_tex_desc_set_,
             point_clamp_texture_sampler,
             rough_noise_tex_);
-    device->updateDescriptorSets(rough_noise_init_texture_descs, {});
+    device->updateDescriptorSets(rough_noise_init_texture_descs);
 
     noise_init_pipeline_layout_ =
         erh::createComputePipelineLayout(
@@ -399,7 +399,7 @@ void VolumeNoise::recreate(
     auto cloud_texture_descs = addCloudTextures(
         cloud_tex_desc_set_,
         texture_sampler);
-    device->updateDescriptorSets(cloud_texture_descs, {});
+    device->updateDescriptorSets(cloud_texture_descs);
 
     assert(view_desc_set_layout);
     cloud_pipeline_layout_ =

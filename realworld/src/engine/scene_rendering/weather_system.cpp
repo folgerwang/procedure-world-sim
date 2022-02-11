@@ -10,45 +10,45 @@ namespace {
 namespace er = engine::renderer;
 namespace erh = er::helper;
 
-std::vector<er::TextureDescriptor> addTemperatureInitTextures(
+er::WriteDescriptorList addTemperatureInitTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const er::TextureInfo& temp_tex,
     const er::TextureInfo& moisture_tex,
     const er::TextureInfo& pressure_tex) {
-    std::vector<er::TextureDescriptor> descriptor_writes;
+    er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(3);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         DST_TEMP_TEX_INDEX,
         nullptr,
         temp_tex.view,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         DST_MOISTURE_TEX_INDEX,
         nullptr,
         moisture_tex.view,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         DST_PRESSURE_TEX_INDEX,
         nullptr,
         pressure_tex.view,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     return descriptor_writes;
 }
 
-std::vector<er::TextureDescriptor> addAirflowTextures(
+er::WriteDescriptorList addAirflowTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
     const er::TextureInfo& src_temp_tex,
@@ -60,136 +60,136 @@ std::vector<er::TextureDescriptor> addAirflowTextures(
     const er::TextureInfo& dst_airflow_tex,
     const std::shared_ptr<er::ImageView>& rock_layer_tex,
     const std::shared_ptr<er::ImageView>& soil_water_layer_tex) {
-    std::vector<er::TextureDescriptor> descriptor_writes;
+    er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(9);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_TEMP_TEX_INDEX,
         texture_sampler,
         src_temp_tex.view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_MOISTURE_TEX_INDEX,
         texture_sampler,
         src_moisture_tex.view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_PRESSURE_TEX_INDEX,
         texture_sampler,
         src_pressure_tex.view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         DST_TEMP_TEX_INDEX,
         nullptr,
         dst_temp_tex.view,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         DST_MOISTURE_TEX_INDEX,
         nullptr,
         dst_moisture_tex.view,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         DST_PRESSURE_TEX_INDEX,
         nullptr,
         dst_pressure_tex.view,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         DST_AIRFLOW_TEX_INDEX,
         nullptr,
         dst_airflow_tex.view,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         ROCK_LAYER_BUFFER_INDEX,
         texture_sampler,
         rock_layer_tex,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SOIL_WATER_LAYER_BUFFER_INDEX,
         texture_sampler,
         soil_water_layer_tex,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
 }
 
-std::vector<er::TextureDescriptor> addCloudShadowTextures(
+er::WriteDescriptorList addCloudShadowTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
     const er::TextureInfo& src_moisture_tex,
     const er::TextureInfo& dst_cloud_shadow_tex) {
-    std::vector<er::TextureDescriptor> descriptor_writes;
+    er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(2);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_MOISTURE_TEX_INDEX,
         texture_sampler,
         src_moisture_tex.view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         DST_CLOUD_SHADOW_TEX_INDEX,
         nullptr,
         dst_cloud_shadow_tex.view,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     return descriptor_writes;
 }
 
-std::vector<er::TextureDescriptor> addCloudShadowMergeTextures(
+er::WriteDescriptorList addCloudShadowMergeTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
     const er::TextureInfo& dst_cloud_shadow_tex) {
-    std::vector<er::TextureDescriptor> descriptor_writes;
+    er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(1);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         DST_CLOUD_SHADOW_TEX_INDEX,
         nullptr,
         dst_cloud_shadow_tex.view,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     return descriptor_writes;
@@ -450,7 +450,7 @@ void WeatherSystem::recreate(
         temp_volume_[0],
         moisture_volume_[0],
         pressure_volume_[0]);
-    device->updateDescriptorSets(temperature_init_texture_descs, {});
+    device->updateDescriptorSets(temperature_init_texture_descs);
 
     for (int dbuf_idx = 0; dbuf_idx < 2; dbuf_idx++) {
         airflow_tex_desc_set_[dbuf_idx] = nullptr;
@@ -472,7 +472,7 @@ void WeatherSystem::recreate(
             airflow_volume_,
             rock_layer_tex,
             soil_water_layer_tex[dbuf_idx]);
-        device->updateDescriptorSets(airflow_texture_descs, {});
+        device->updateDescriptorSets(airflow_texture_descs);
 
         cloud_shadow_tex_desc_set_[dbuf_idx] = nullptr;
         cloud_shadow_tex_desc_set_[dbuf_idx] =
@@ -486,7 +486,7 @@ void WeatherSystem::recreate(
             texture_sampler,
             moisture_volume_[dbuf_idx],
             cloud_shadow_volume_);
-        device->updateDescriptorSets(cloud_shadow_texture_descs, {});
+        device->updateDescriptorSets(cloud_shadow_texture_descs);
     }
 
     cloud_shadow_merge_tex_desc_set_ = nullptr;
@@ -500,7 +500,7 @@ void WeatherSystem::recreate(
         cloud_shadow_merge_tex_desc_set_,
         texture_sampler,
         cloud_shadow_volume_);
-    device->updateDescriptorSets(cloud_shadow_merge_tex_descs, {});
+    device->updateDescriptorSets(cloud_shadow_merge_tex_descs);
 
     temperature_init_pipeline_layout_ =
         erh::createComputePipelineLayout(

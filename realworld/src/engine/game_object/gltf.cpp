@@ -710,16 +710,14 @@ static std::shared_ptr<ego::ObjectData> loadGltfModel(
     return gltf_object;
 }
 
-static std::vector<renderer::TextureDescriptor> addGltfTextures(
+static renderer::WriteDescriptorList addGltfTextures(
     const std::shared_ptr<ego::ObjectData>& gltf_object,
     const ego::MaterialInfo& material,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const renderer::TextureInfo& thin_film_lut_tex) {
 
-    const auto& description_set = material.desc_set_;
-
-    std::vector<renderer::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(10);
+    renderer::WriteDescriptorList descriptor_writes;
+    descriptor_writes.reserve(11);
     auto& textures = gltf_object->textures_;
 
     auto& black_tex = renderer::Helper::getBlackTexture();
@@ -729,66 +727,74 @@ static std::vector<renderer::TextureDescriptor> addGltfTextures(
     auto& base_color_tex_view = material.base_color_idx_ < 0 ? black_tex : textures[material.base_color_idx_];
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        material.desc_set_,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         BASE_COLOR_TEX_INDEX,
         texture_sampler,
         base_color_tex_view.view,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     // normal.
     auto& normal_tex_view = material.normal_idx_ < 0 ? black_tex : textures[material.normal_idx_];
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        material.desc_set_,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         NORMAL_TEX_INDEX,
         texture_sampler,
         normal_tex_view.view,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     // metallic roughness.
     auto& metallic_roughness_tex = material.metallic_roughness_idx_ < 0 ? black_tex : textures[material.metallic_roughness_idx_];
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        material.desc_set_,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         METAL_ROUGHNESS_TEX_INDEX,
         texture_sampler,
         metallic_roughness_tex.view,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     // emisive.
     auto& emissive_tex = material.emissive_idx_ < 0 ? black_tex : textures[material.emissive_idx_];
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        material.desc_set_,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         EMISSIVE_TEX_INDEX,
         texture_sampler,
         emissive_tex.view,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     // occlusion.
     auto& occlusion_tex = material.occlusion_idx_ < 0 ? white_tex : textures[material.occlusion_idx_];
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        material.desc_set_,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         OCCLUSION_TEX_INDEX,
         texture_sampler,
         occlusion_tex.view,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     // thin_film_lut.
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        material.desc_set_,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         THIN_FILM_LUT_INDEX,
         texture_sampler,
         thin_film_lut_tex.view,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+
+    renderer::Helper::addOneBuffer(
+        descriptor_writes,
+        material.desc_set_,
+        renderer::DescriptorType::UNIFORM_BUFFER,
+        PBR_CONSTANT_INDEX,
+        material.uniform_buffer_.buffer,
+        sizeof(glsl::PbrMaterialParams));
 
     return descriptor_writes;
 }
@@ -806,35 +812,26 @@ static void updateDescriptorSets(
         material.desc_set_ = device->createDescriptorSets(
             descriptor_pool, material_desc_set_layout, 1)[0];
 
-        std::vector<renderer::BufferDescriptor> material_buffer_descs;
-        renderer::Helper::addOneBuffer(
-            material_buffer_descs,
-            PBR_CONSTANT_INDEX,
-            material.uniform_buffer_.buffer,
-            material.desc_set_,
-            renderer::DescriptorType::UNIFORM_BUFFER,
-            sizeof(glsl::PbrMaterialParams));
-
         // create a global ibl texture descriptor set.
-        auto material_tex_descs = addGltfTextures(gltf_object, material, texture_sampler, thin_film_lut_tex);
+        auto material_descs = addGltfTextures(gltf_object, material, texture_sampler, thin_film_lut_tex);
 
-        device->updateDescriptorSets(material_tex_descs, material_buffer_descs);
+        device->updateDescriptorSets(material_descs);
     }
 
     for (auto& skin : gltf_object->skins_) {
         skin.desc_set_ = device->createDescriptorSets(
             descriptor_pool, skin_desc_set_layout, 1)[0];
 
-        std::vector<renderer::BufferDescriptor> skin_buffer_descs;
+        renderer::WriteDescriptorList skin_buffer_descs;
         renderer::Helper::addOneBuffer(
             skin_buffer_descs,
-            JOINT_CONSTANT_INDEX,
-            skin.joints_buffer_.buffer,
             skin.desc_set_,
             renderer::DescriptorType::STORAGE_BUFFER,
+            JOINT_CONSTANT_INDEX,
+            skin.joints_buffer_.buffer,
             static_cast<uint32_t>(skin.joints_.size() * sizeof(glm::mat4)));
 
-        device->updateDescriptorSets({}, skin_buffer_descs);
+        device->updateDescriptorSets(skin_buffer_descs);
     }
 }
 
@@ -1062,110 +1059,102 @@ static std::shared_ptr<renderer::Pipeline> createGltfPipeline(
     return gltf_pipeline;
 }
 
-std::vector<renderer::BufferDescriptor> addGltfIndirectDrawBuffers(
+renderer::WriteDescriptorList addGltfIndirectDrawBuffers(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
     const renderer::BufferInfo& buffer) {
-    std::vector<renderer::BufferDescriptor> descriptor_writes;
+    renderer::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(1);
 
     renderer::Helper::addOneBuffer(
         descriptor_writes,
-        INDIRECT_DRAW_BUFFER_INDEX,
-        buffer.buffer,
         description_set,
         renderer::DescriptorType::STORAGE_BUFFER,
+        INDIRECT_DRAW_BUFFER_INDEX,
+        buffer.buffer,
         buffer.buffer->getSize());
 
     return descriptor_writes;
 }
 
-std::vector<renderer::BufferDescriptor> addUpdateInstanceBuffers(
+renderer::WriteDescriptorList addUpdateInstanceBuffers(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
     const renderer::BufferInfo& game_objects_buffer,
     const renderer::BufferInfo& instance_buffer) {
-    std::vector<renderer::BufferDescriptor> descriptor_writes;
+    renderer::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(2);
 
     renderer::Helper::addOneBuffer(
         descriptor_writes,
-        GAME_OBJECTS_BUFFER_INDEX,
-        game_objects_buffer.buffer,
         description_set,
         engine::renderer::DescriptorType::STORAGE_BUFFER,
+        GAME_OBJECTS_BUFFER_INDEX,
+        game_objects_buffer.buffer,
         game_objects_buffer.buffer->getSize());
 
     renderer::Helper::addOneBuffer(
         descriptor_writes,
-        INSTANCE_BUFFER_INDEX,
-        instance_buffer.buffer,
         description_set,
         engine::renderer::DescriptorType::STORAGE_BUFFER,
+        INSTANCE_BUFFER_INDEX,
+        instance_buffer.buffer,
         instance_buffer.buffer->getSize());
 
     return descriptor_writes;
 }
 
-std::vector<renderer::BufferDescriptor> addGameObjectsInfoBuffer(
-    const std::shared_ptr<renderer::DescriptorSet>& description_set,
-    const renderer::BufferInfo& buffer) {
-    std::vector<renderer::BufferDescriptor> descriptor_writes;
-    descriptor_writes.reserve(1);
-
-    renderer::Helper::addOneBuffer(
-        descriptor_writes,
-        GAME_OBJECTS_BUFFER_INDEX,
-        buffer.buffer,
-        description_set,
-        engine::renderer::DescriptorType::STORAGE_BUFFER,
-        buffer.buffer->getSize());
-
-    return descriptor_writes;
-}
-
-std::vector<renderer::TextureDescriptor> addTileHeightmapTexture(
+renderer::WriteDescriptorList addGameObjectsInfoBuffer(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
+    const renderer::BufferInfo& buffer,
     const renderer::TextureInfo& rock_layer,
     const renderer::TextureInfo& soil_water_layer,
     const renderer::TextureInfo& water_flow,
     const std::shared_ptr<renderer::ImageView>& airflow_tex) {
-    std::vector<renderer::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(3);
+    renderer::WriteDescriptorList descriptor_writes;
+    descriptor_writes.reserve(5);
+
+    renderer::Helper::addOneBuffer(
+        descriptor_writes,
+        description_set,
+        engine::renderer::DescriptorType::STORAGE_BUFFER,
+        GAME_OBJECTS_BUFFER_INDEX,
+        buffer.buffer,
+        buffer.buffer->getSize());
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         ROCK_LAYER_BUFFER_INDEX,
         texture_sampler,
         rock_layer.view,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SOIL_WATER_LAYER_BUFFER_INDEX,
         texture_sampler,
         soil_water_layer.view,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         WATER_FLOW_BUFFER_INDEX,
         texture_sampler,
         water_flow.view,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_AIRFLOW_INDEX,
         texture_sampler,
         airflow_tex,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
@@ -1521,7 +1510,7 @@ void ObjectData::generateSharedDescriptorSet(
     auto buffer_descs = addGltfIndirectDrawBuffers(
         indirect_draw_cmd_buffer_desc_set_,
         indirect_draw_cmd_);
-    device->updateDescriptorSets({}, buffer_descs);
+    device->updateDescriptorSets(buffer_descs);
 
     // update instance buffer set.
     update_instance_buffer_desc_set_ = device->createDescriptorSets(
@@ -1533,7 +1522,7 @@ void ObjectData::generateSharedDescriptorSet(
         update_instance_buffer_desc_set_,
         *game_objects_buffer,
         instance_buffer_);
-    device->updateDescriptorSets({}, buffer_descs);
+    device->updateDescriptorSets(buffer_descs);
 }
 
 void GltfObject::createGameObjectUpdateDescSet(
@@ -1553,19 +1542,16 @@ void GltfObject::createGameObjectUpdateDescSet(
                 descriptor_pool, update_game_objects_desc_set_layout_, 1)[0];
 
         assert(game_objects_buffer_);
-        auto buffer_descs = addGameObjectsInfoBuffer(
-            update_game_objects_buffer_desc_set_[soil_water],
-            *game_objects_buffer_);
-
-        auto texture_descs = addTileHeightmapTexture(
+        auto write_descs = addGameObjectsInfoBuffer(
             update_game_objects_buffer_desc_set_[soil_water],
             texture_sampler,
+            *game_objects_buffer_,
             rock_layer,
             soil_water == 0 ? soil_water_layer_0 : soil_water_layer_1,
             water_flow,
             airflow_tex);
 
-        device->updateDescriptorSets(texture_descs, buffer_descs);
+        device->updateDescriptorSets(write_descs);
     }
 }
 

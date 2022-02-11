@@ -335,22 +335,29 @@ public:
         const ImageUsageFlags& usage);
 
     static void addOneTexture(
-        std::vector<TextureDescriptor>& descriptor_writes,
+        WriteDescriptorList& descriptor_writes,
+        const std::shared_ptr<DescriptorSet>& desc_set,
+        const DescriptorType& desc_type,
         uint32_t binding,
         const std::shared_ptr<Sampler>& sampler,
         const std::shared_ptr<ImageView>& texture,
-        const std::shared_ptr<DescriptorSet>& desc_set,
-        DescriptorType desc_type/* = DescriptorType::COMBINED_IMAGE_SAMPLER*/,
         ImageLayout image_layout/* = ImageLayout::SHADER_READ_ONLY_OPTIMAL*/);
 
     static void addOneBuffer(
-        std::vector<BufferDescriptor>& descriptor_writes,
+        WriteDescriptorList& descriptor_writes,
+        const std::shared_ptr<DescriptorSet>& desc_set,
+        const DescriptorType& desc_type,
         uint32_t binding,
         const std::shared_ptr<Buffer>& buffer,
-        const std::shared_ptr<DescriptorSet>& desc_set,
-        DescriptorType desc_type,
         uint32_t range,
         uint32_t offset = 0);
+
+    static void addOneAccelerationStructure(
+        WriteDescriptorList& descriptor_writes,
+        const std::shared_ptr<DescriptorSet>& desc_set,
+        const DescriptorType& desc_type,
+        uint32_t binding,
+        const std::vector<AccelerationStructure>& acceleration_structs);
 
     static void generateMipmapLevels(
         const std::shared_ptr<CommandBuffer>& cmd_buf,

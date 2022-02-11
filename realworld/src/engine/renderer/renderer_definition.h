@@ -1271,7 +1271,6 @@ enum class DescriptorType {
     INPUT_ATTACHMENT = 10,
     INLINE_UNIFORM_BLOCK_EXT = 1000138000,
     ACCELERATION_STRUCTURE_KHR = 1000165000,
-    ACCELERATION_STRUCTURE_NV = ACCELERATION_STRUCTURE_KHR,
     MAX_ENUM = 0x7FFFFFFF
 };
 
@@ -1632,7 +1631,7 @@ enum class DependencyFlagBits {
 };
 typedef uint32_t DependencyFlags;
 
-enum GeometryType {
+enum class GeometryType {
     TRIANGLES_KHR = 0,
     AABBS_KHR = 1,
     INSTANCES_KHR = 2,
@@ -1684,6 +1683,13 @@ enum GeometryInstanceFlagBits {
     GEOMETRY_INSTANCE_FLAG_BITS_MAX_ENUM_KHR = 0x7FFFFFFF
 };
 typedef uint32_t GeometryInstanceFlags;
+
+enum RayTracingShaderGroupType {
+    GENERAL_KHR = 0,
+    TRIANGLES_HIT_GROUP_KHR = 1,
+    PROCEDURAL_HIT_GROUP_KHR = 2,
+    RAY_TRACING_SHADER_GROUP_TYPE_MAX_ENUM_KHR = 0x7FFFFFFF
+};
 
 } // namespace renderer
 } // namespace engine

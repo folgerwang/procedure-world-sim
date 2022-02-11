@@ -245,6 +245,28 @@ void VulkanCommandBuffer::dispatch(uint32_t group_count_x, uint32_t group_count_
     vkCmdDispatch(cmd_buf_, group_count_x, group_count_y, group_count_z);
 }
 
+void VulkanCommandBuffer::traceRays(
+    const StridedDeviceAddressRegion& raygen_shader_entry,
+    const StridedDeviceAddressRegion& miss_shader_entry,
+    const StridedDeviceAddressRegion& hit_shader_entry,
+    const StridedDeviceAddressRegion& callable_shader_entry,
+    const glm::uvec3& size) {
+    auto vk_raygen_shader_entry = helper::toVkStridedDeviceAddressRegion(raygen_shader_entry);
+    auto vk_miss_shader_entry = helper::toVkStridedDeviceAddressRegion(miss_shader_entry);
+    auto vk_hit_shader_entry = helper::toVkStridedDeviceAddressRegion(hit_shader_entry);
+    auto vk_callable_shader_entry = helper::toVkStridedDeviceAddressRegion(callable_shader_entry);
+    
+    vkCmdTraceRaysKHR(
+        cmd_buf_,
+        &vk_raygen_shader_entry,
+        &vk_miss_shader_entry,
+        &vk_hit_shader_entry,
+        &vk_callable_shader_entry,
+        size.x,
+        size.y,
+        size.z);
+}
+
 void VulkanCommandBuffer::beginRenderPass(
     std::shared_ptr<RenderPass> render_pass,
     std::shared_ptr<Framebuffer> frame_buffer,

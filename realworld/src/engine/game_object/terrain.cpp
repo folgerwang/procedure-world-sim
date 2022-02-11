@@ -1498,144 +1498,144 @@ namespace engine {
 namespace game_object {
 namespace {
 
-std::vector<renderer::TextureDescriptor> addTileCreatorBuffers(
+renderer::WriteDescriptorList addTileCreatorBuffers(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const std::shared_ptr<renderer::ImageView>& heightmap_tex,
     const renderer::TextureInfo& rock_layer,
     const renderer::TextureInfo& soil_water_layer,
     const renderer::TextureInfo& grass_snow_layer) {
-    std::vector<renderer::TextureDescriptor> descriptor_writes;
+    renderer::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(4);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_DEPTH_TEX_INDEX,
         texture_sampler,
         heightmap_tex,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::STORAGE_IMAGE,
         ROCK_LAYER_BUFFER_INDEX,
         nullptr,
         rock_layer.view,
-        description_set,
-        renderer::DescriptorType::STORAGE_IMAGE,
         renderer::ImageLayout::GENERAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::STORAGE_IMAGE,
         SOIL_WATER_LAYER_BUFFER_INDEX,
         nullptr,
         soil_water_layer.view,
-        description_set,
-        renderer::DescriptorType::STORAGE_IMAGE,
         renderer::ImageLayout::GENERAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::STORAGE_IMAGE,
         ORTHER_INFO_LAYER_BUFFER_INDEX,
         nullptr,
         grass_snow_layer.view,
-        description_set,
-        renderer::DescriptorType::STORAGE_IMAGE,
         renderer::ImageLayout::GENERAL);
 
     return descriptor_writes;
 }
 
-std::vector<renderer::TextureDescriptor> addTileUpdateBuffers(
+renderer::WriteDescriptorList addTileUpdateBuffers(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const renderer::TextureInfo& rock_layer,
     const renderer::TextureInfo& soil_water_layer,
     const renderer::TextureInfo& dst_water_normal) {
-    std::vector<renderer::TextureDescriptor> descriptor_writes;
+    renderer::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(3);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         ROCK_LAYER_BUFFER_INDEX,
         texture_sampler,
         rock_layer.view,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::STORAGE_IMAGE,
         SOIL_WATER_LAYER_BUFFER_INDEX,
         nullptr,
         soil_water_layer.view,
-        description_set,
-        renderer::DescriptorType::STORAGE_IMAGE,
         renderer::ImageLayout::GENERAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::STORAGE_IMAGE,
         DST_WATER_NORMAL_BUFFER_INDEX,
         nullptr,
         dst_water_normal.view,
-        description_set,
-        renderer::DescriptorType::STORAGE_IMAGE,
         renderer::ImageLayout::GENERAL);
 
     return descriptor_writes;
 }
 
-std::vector<renderer::TextureDescriptor> addTileFlowUpdateBuffers(
+renderer::WriteDescriptorList addTileFlowUpdateBuffers(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
     const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const renderer::TextureInfo& rock_layer,
     const renderer::TextureInfo& soil_water_layer,
     const renderer::TextureInfo& dst_soil_water_layer,
     const renderer::TextureInfo& dst_water_flow) {
-    std::vector<renderer::TextureDescriptor> descriptor_writes;
+    renderer::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(4);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         ROCK_LAYER_BUFFER_INDEX,
         texture_sampler,
         rock_layer.view,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::STORAGE_IMAGE,
         SOIL_WATER_LAYER_BUFFER_INDEX,
         nullptr,
         soil_water_layer.view,
-        description_set,
-        renderer::DescriptorType::STORAGE_IMAGE,
         renderer::ImageLayout::GENERAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::STORAGE_IMAGE,
         DST_SOIL_WATER_LAYER_BUFFER_INDEX,
         nullptr,
         dst_soil_water_layer.view,
-        description_set,
-        renderer::DescriptorType::STORAGE_IMAGE,
         renderer::ImageLayout::GENERAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::STORAGE_IMAGE,
         DST_WATER_FLOW_BUFFER_INDEX,
         nullptr,
         dst_water_flow.view,
-        description_set,
-        renderer::DescriptorType::STORAGE_IMAGE,
         renderer::ImageLayout::GENERAL);
 
     return descriptor_writes;
 }
 
-std::vector<renderer::TextureDescriptor> addTileResourceTextures(
+renderer::WriteDescriptorList addTileResourceTextures(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
     const std::shared_ptr<renderer::Sampler>& clamp_texture_sampler,
     const std::shared_ptr<renderer::Sampler>& repeat_texture_sampler,
@@ -1650,108 +1650,108 @@ std::vector<renderer::TextureDescriptor> addTileResourceTextures(
     const std::shared_ptr<renderer::ImageView>& map_mask_tex,
     const std::shared_ptr<renderer::ImageView>& detail_noise_tex,
     const std::shared_ptr<renderer::ImageView>& rough_noise_tex) {
-    std::vector<renderer::TextureDescriptor> descriptor_writes;
+    renderer::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(11);
 
     // src color.
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_COLOR_TEX_INDEX,
         clamp_texture_sampler,
         src_texture,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     // src depth.
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_DEPTH_TEX_INDEX,
         clamp_texture_sampler,
         src_depth,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         ROCK_LAYER_BUFFER_INDEX,
         clamp_texture_sampler,
         rock_layer,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SOIL_WATER_LAYER_BUFFER_INDEX,
         clamp_texture_sampler,
         soil_water_layer,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         ORTHER_INFO_LAYER_BUFFER_INDEX,
         clamp_texture_sampler,
         grass_snow_layer,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         WATER_NORMAL_BUFFER_INDEX,
         clamp_texture_sampler,
         water_normal,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         WATER_FLOW_BUFFER_INDEX,
         clamp_texture_sampler,
         water_flow,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_TEMP_TEX_INDEX,
         clamp_texture_sampler,
         temp_tex,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SRC_MAP_MASK_INDEX,
         clamp_texture_sampler,
         map_mask_tex,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         DETAIL_NOISE_TEXTURE_INDEX,
         repeat_texture_sampler,
         detail_noise_tex,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         ROUGH_NOISE_TEXTURE_INDEX,
         repeat_texture_sampler,
         rough_noise_tex,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
@@ -2397,7 +2397,7 @@ void TileObject::generateStaticDescriptorSet(
         rock_layer_,
         soil_water_layer_[0], 
         grass_snow_layer_);
-    device->updateDescriptorSets(texture_descs, {});
+    device->updateDescriptorSets(texture_descs);
 
     // tile creator buffer set.
     for (int dbuf_idx = 0; dbuf_idx < 2; dbuf_idx++) {
@@ -2411,7 +2411,7 @@ void TileObject::generateStaticDescriptorSet(
             rock_layer_,
             soil_water_layer_[dbuf_idx],
             water_normal_);
-        device->updateDescriptorSets(texture_descs, {});
+        device->updateDescriptorSets(texture_descs);
 
         tile_flow_update_buffer_desc_set_[dbuf_idx] = device->createDescriptorSets(
             descriptor_pool, tile_flow_update_desc_set_layout_, 1)[0];
@@ -2424,7 +2424,7 @@ void TileObject::generateStaticDescriptorSet(
             soil_water_layer_[1 - dbuf_idx],
             soil_water_layer_[dbuf_idx],
             water_flow_);
-        device->updateDescriptorSets(texture_descs, {});
+        device->updateDescriptorSets(texture_descs);
 
         // tile params set.
         tile_res_desc_set_[dbuf_idx] = device->createDescriptorSets(
@@ -2470,7 +2470,7 @@ void TileObject::updateStaticDescriptorSet(
             map_mask_tex,
             detail_volume_noise_tex,
             rough_volume_noise_tex);
-        device->updateDescriptorSets(tile_res_descs, {});
+        device->updateDescriptorSets(tile_res_descs);
     }
 }
 

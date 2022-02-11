@@ -61,7 +61,7 @@ public:
         const uint32_t& cube_size);
 
     void addToGlobalTextures(
-        std::vector<renderer::TextureDescriptor>& descriptor_writes,
+        renderer::WriteDescriptorList& descriptor_writes,
         const std::shared_ptr<renderer::DescriptorSet>& description_set,
         const std::shared_ptr<renderer::Sampler>& texture_sampler);
 

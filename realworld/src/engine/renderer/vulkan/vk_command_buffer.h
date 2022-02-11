@@ -85,6 +85,12 @@ public:
         uint32_t group_count_x, 
         uint32_t group_count_y, 
         uint32_t group_count_z = 1) final;
+    virtual void traceRays(
+        const StridedDeviceAddressRegion& raygen_shader_entry,
+        const StridedDeviceAddressRegion& miss_shader_entry,
+        const StridedDeviceAddressRegion& hit_shader_entry,
+        const StridedDeviceAddressRegion& callable_shader_entry,
+        const glm::uvec3& size) final;
     virtual void beginRenderPass(
         std::shared_ptr<RenderPass> render_pass,
         std::shared_ptr<Framebuffer> frame_buffer,

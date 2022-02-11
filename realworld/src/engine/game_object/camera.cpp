@@ -16,56 +16,48 @@ namespace ego = engine::game_object;
 namespace engine {
 
 namespace {
-std::vector<renderer::BufferDescriptor> addGameCameraInfoBuffer(
+renderer::WriteDescriptorList addGameCameraInfoBuffer(
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
+    const std::shared_ptr<renderer::Sampler>& texture_sampler,
     const renderer::BufferInfo& game_objects_buffer,
-    const renderer::BufferInfo& game_camera_buffer) {
-    std::vector<renderer::BufferDescriptor> descriptor_writes;
-    descriptor_writes.reserve(2);
+    const renderer::BufferInfo& game_camera_buffer,
+    const renderer::TextureInfo& rock_layer,
+    const renderer::TextureInfo& soil_water_layer) {
+    renderer::WriteDescriptorList descriptor_writes;
+    descriptor_writes.reserve(4);
 
     renderer::Helper::addOneBuffer(
         descriptor_writes,
-        GAME_OBJECTS_BUFFER_INDEX,
-        game_objects_buffer.buffer,
         description_set,
         engine::renderer::DescriptorType::STORAGE_BUFFER,
+        GAME_OBJECTS_BUFFER_INDEX,
+        game_objects_buffer.buffer,
         game_objects_buffer.buffer->getSize());
 
     renderer::Helper::addOneBuffer(
         descriptor_writes,
-        CAMERA_OBJECT_BUFFER_INDEX,
-        game_camera_buffer.buffer,
         description_set,
         engine::renderer::DescriptorType::STORAGE_BUFFER,
+        CAMERA_OBJECT_BUFFER_INDEX,
+        game_camera_buffer.buffer,
         game_camera_buffer.buffer->getSize());
-
-    return descriptor_writes;
-}
-
-std::vector<renderer::TextureDescriptor> addTileHeightmapTexture(
-    const std::shared_ptr<renderer::DescriptorSet>& description_set,
-    const std::shared_ptr<renderer::Sampler>& texture_sampler,
-    const renderer::TextureInfo& rock_layer,
-    const renderer::TextureInfo& soil_water_layer) {
-    std::vector<renderer::TextureDescriptor> descriptor_writes;
-    descriptor_writes.reserve(2);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         ROCK_LAYER_BUFFER_INDEX,
         texture_sampler,
         rock_layer.view,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     renderer::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         SOIL_WATER_LAYER_BUFFER_INDEX,
         texture_sampler,
         soil_water_layer.view,
-        description_set,
-        renderer::DescriptorType::COMBINED_IMAGE_SAMPLER,
         renderer::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
@@ -136,18 +128,15 @@ void GameCamera::createGameCameraUpdateDescSet(
                 descriptor_pool, update_game_camera_desc_set_layout_, 1)[0];
 
         assert(game_camera_buffer_);
-        auto buffer_descs = addGameCameraInfoBuffer(
-            update_game_camera_desc_set_[soil_water],
-            game_objects_buffer,
-            *game_camera_buffer_);
-
-        auto texture_descs = addTileHeightmapTexture(
+        auto write_descs = addGameCameraInfoBuffer(
             update_game_camera_desc_set_[soil_water],
             texture_sampler,
+            game_objects_buffer,
+            *game_camera_buffer_,
             rock_layer,
             soil_water == 0 ? soil_water_layer_0 : soil_water_layer_1);
 
-        device->updateDescriptorSets(texture_descs, buffer_descs);
+        device->updateDescriptorSets(write_descs);
     }
 }
 

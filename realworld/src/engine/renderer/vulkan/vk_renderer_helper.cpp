@@ -1135,7 +1135,7 @@ VkStencilOp toVkStencilOp(renderer::StencilOp stencil_op) {
 }
 
 VkAttachmentLoadOp toVkAttachmentLoadOp(
-    const renderer::AttachmentLoadOp& load_op) {
+    const renderer::AttachmentLoadOp load_op) {
     auto flag = load_op;
     SELECT_FLAG(AttachmentLoadOp, ATTACHMENT_LOAD_OP, LOAD);
     else SELECT_FLAG(AttachmentLoadOp, ATTACHMENT_LOAD_OP, CLEAR);
@@ -1144,7 +1144,7 @@ VkAttachmentLoadOp toVkAttachmentLoadOp(
 };
 
 VkAttachmentStoreOp toVkAttachmentStoreOp(
-    const renderer::AttachmentStoreOp& store_op) {
+    const renderer::AttachmentStoreOp store_op) {
     auto flag = store_op;
     SELECT_FLAG(AttachmentStoreOp, ATTACHMENT_STORE_OP, STORE);
     else SELECT_FLAG(AttachmentStoreOp, ATTACHMENT_STORE_OP, DONT_CARE);
@@ -1319,6 +1319,27 @@ VkSubpassDescriptionFlags toVkSubpassDescriptionFlags(renderer::SubpassDescripti
     ADD_FLAG_BIT(SubpassDescription, SUBPASS_DESCRIPTION, PER_VIEW_POSITION_X_ONLY_BIT_NVX);
     ADD_FLAG_BIT(SubpassDescription, SUBPASS_DESCRIPTION, FRAGMENT_REGION_BIT_QCOM);
     ADD_FLAG_BIT(SubpassDescription, SUBPASS_DESCRIPTION, SHADER_RESOLVE_BIT_QCOM);
+    return result;
+}
+
+VkRayTracingShaderGroupTypeKHR
+toVkRayTracingShaderGroupType(
+    const renderer::RayTracingShaderGroupType& rt_shader_group_type) {
+    auto flag = rt_shader_group_type;
+    SELECT_FLAG(RayTracingShaderGroupType, RAY_TRACING_SHADER_GROUP_TYPE, GENERAL_KHR);
+    else SELECT_FLAG(RayTracingShaderGroupType, RAY_TRACING_SHADER_GROUP_TYPE, TRIANGLES_HIT_GROUP_KHR);
+    else SELECT_FLAG(RayTracingShaderGroupType, RAY_TRACING_SHADER_GROUP_TYPE, PROCEDURAL_HIT_GROUP_KHR);
+    return VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+}
+
+VkStridedDeviceAddressRegionKHR
+toVkStridedDeviceAddressRegion(
+    const renderer::StridedDeviceAddressRegion& device_address_region) {
+    VkStridedDeviceAddressRegionKHR result;
+    result.deviceAddress = device_address_region.device_address;
+    result.size = device_address_region.size;
+    result.stride = device_address_region.stride;
+
     return result;
 }
 
@@ -1907,29 +1928,29 @@ std::shared_ptr<renderer::Device> createLogicalDevice(
     create_info.enabledExtensionCount = static_cast<uint32_t>(device_extensions.size());
     create_info.ppEnabledExtensionNames = device_extensions.data();
 
-    VkPhysicalDeviceBufferDeviceAddressFeatures enabledBufferDeviceAddresFeatures{};
-    VkPhysicalDeviceRayTracingPipelineFeaturesKHR enabledRayTracingPipelineFeatures{};
-    VkPhysicalDeviceAccelerationStructureFeaturesKHR enabledAccelerationStructureFeatures{};
+    VkPhysicalDeviceBufferDeviceAddressFeatures enabled_buffer_device_address_features{};
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR enabled_ray_tracing_pipeline_features{};
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR enabled_acceleration_structure_features{};
 
     // Enable features required for ray tracing using feature chaining via pNext		
-    enabledBufferDeviceAddresFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
-    enabledBufferDeviceAddresFeatures.bufferDeviceAddress = VK_TRUE;
+    enabled_buffer_device_address_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+    enabled_buffer_device_address_features.bufferDeviceAddress = VK_TRUE;
 
-    enabledRayTracingPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
-    enabledRayTracingPipelineFeatures.rayTracingPipeline = VK_TRUE;
-    enabledRayTracingPipelineFeatures.pNext = &enabledBufferDeviceAddresFeatures;
+    enabled_ray_tracing_pipeline_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+    enabled_ray_tracing_pipeline_features.rayTracingPipeline = VK_TRUE;
+    enabled_ray_tracing_pipeline_features.pNext = &enabled_buffer_device_address_features;
 
-    enabledAccelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
-    enabledAccelerationStructureFeatures.accelerationStructure = VK_TRUE;
-    enabledAccelerationStructureFeatures.pNext = &enabledRayTracingPipelineFeatures;
+    enabled_acceleration_structure_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    enabled_acceleration_structure_features.accelerationStructure = VK_TRUE;
+    enabled_acceleration_structure_features.pNext = &enabled_ray_tracing_pipeline_features;
 
     // If a pNext(Chain) has been passed, we need to add it to the device creation info
-    VkPhysicalDeviceFeatures2 physicalDeviceFeatures2{};
-    physicalDeviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    physicalDeviceFeatures2.features = device_features;
-    physicalDeviceFeatures2.pNext = &enabledAccelerationStructureFeatures;
+    VkPhysicalDeviceFeatures2 physical_device_features2{};
+    physical_device_features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    physical_device_features2.features = device_features;
+    physical_device_features2.pNext = &enabled_acceleration_structure_features;
     create_info.pEnabledFeatures = nullptr;
-    create_info.pNext = &physicalDeviceFeatures2;
+    create_info.pNext = &physical_device_features2;
 
     const auto& vk_physical_device = RENDER_TYPE_CAST(PhysicalDevice, physical_device);
     assert(vk_physical_device);
@@ -2099,7 +2120,7 @@ bool isDepthFormat(const renderer::Format& format) {
 }
 
 std::vector<VkPipelineShaderStageCreateInfo> getShaderStages(
-    const std::vector<std::shared_ptr<renderer::ShaderModule>>& shader_modules) {
+    const ShaderModuleList& shader_modules) {
     std::vector<VkPipelineShaderStageCreateInfo> shader_stages(shader_modules.size());
 
     for (auto i = 0; i < shader_modules.size(); i++) {
@@ -2110,7 +2131,24 @@ std::vector<VkPipelineShaderStageCreateInfo> getShaderStages(
         shader_stages[i].pName = "main";
     }
 
-    return std::move(shader_stages);
+    return shader_stages;
+}
+
+std::vector<VkRayTracingShaderGroupCreateInfoKHR> getShaderGroups(
+    const RtShaderGroupCreateInfoList& src_shader_groups) {
+    std::vector<VkRayTracingShaderGroupCreateInfoKHR> shader_groups(src_shader_groups.size());
+
+    for (auto i = 0; i < src_shader_groups.size(); i++) {
+        shader_groups[i].sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+        shader_groups[i].type = toVkRayTracingShaderGroupType(src_shader_groups[i].type);
+        shader_groups[i].generalShader = src_shader_groups[i].general_shader;
+        shader_groups[i].anyHitShader = src_shader_groups[i].any_hit_shader;
+        shader_groups[i].closestHitShader = src_shader_groups[i].closest_hit_shader;
+        shader_groups[i].intersectionShader = src_shader_groups[i].intersection_shader;
+        shader_groups[i].pShaderGroupCaptureReplayHandle = src_shader_groups[i].p_shader_group_capture_replay_handle;
+    }
+
+    return shader_groups;
 }
 
 uint32_t findMemoryType(
@@ -2134,7 +2172,7 @@ uint32_t findMemoryType(
 
 VkWriteDescriptorSet addDescriptWrite(
     const VkDescriptorSet& description_set,
-    const VkDescriptorImageInfo& image_info,
+    const VkDescriptorImageInfo* image_info,
     uint32_t binding,
     const VkDescriptorType& desc_type/* = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER*/) {
     VkWriteDescriptorSet result = {};
@@ -2144,7 +2182,7 @@ VkWriteDescriptorSet addDescriptWrite(
     result.dstArrayElement = 0;
     result.descriptorType = desc_type;
     result.descriptorCount = 1;
-    result.pImageInfo = &image_info;
+    result.pImageInfo = image_info;
 
     return result;
 }

@@ -54,71 +54,71 @@ std::shared_ptr<er::PipelineLayout> createCubemapPipelineLayout(
         { push_const_range });
 }
 
-std::vector<er::TextureDescriptor> addPanoramaTextures(
+er::WriteDescriptorList addPanoramaTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
     const er::TextureInfo& panorama_tex) {
-    std::vector<er::TextureDescriptor> descriptor_writes;
+    er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(1);
 
     // envmap texture.
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         PANORAMA_TEX_INDEX,
         texture_sampler,
         panorama_tex.view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
 }
 
-std::vector<er::TextureDescriptor> addIblTextures(
+er::WriteDescriptorList addIblTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
     const er::TextureInfo& rt_envmap_tex)
 {
-    std::vector<er::TextureDescriptor> descriptor_writes;
+    er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(1);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         ENVMAP_TEX_INDEX,
         texture_sampler,
         rt_envmap_tex.view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
     return descriptor_writes;
 }
 
-std::vector<er::TextureDescriptor> addIblComputeTextures(
+er::WriteDescriptorList addIblComputeTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set,
     const std::shared_ptr<er::Sampler>& texture_sampler,
     const er::TextureInfo& src_tex,
     const er::TextureInfo& dst_tex)
 {
-    std::vector<er::TextureDescriptor> descriptor_writes;
+    er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(2);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         SRC_TEX_INDEX,
         texture_sampler,
         src_tex.view,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::STORAGE_IMAGE,
         DST_TEX_INDEX,
         texture_sampler,
         dst_tex.view,
-        description_set,
-        er::DescriptorType::STORAGE_IMAGE,
         er::ImageLayout::GENERAL);
 
     return descriptor_writes;
@@ -359,7 +359,7 @@ void IblCreator::createDescriptorSets(
             envmap_tex_desc_set_,
             texture_sampler,
             panorama_tex_);
-        device->updateDescriptorSets(ibl_texture_descs, {});
+        device->updateDescriptorSets(ibl_texture_descs);
     }
 
     // ibl
@@ -373,7 +373,7 @@ void IblCreator::createDescriptorSets(
             ibl_tex_desc_set_,
             texture_sampler,
             rt_envmap_tex_);
-        device->updateDescriptorSets(ibl_texture_descs, {});
+        device->updateDescriptorSets(ibl_texture_descs);
     }
 
     // ibl diffuse compute
@@ -388,7 +388,7 @@ void IblCreator::createDescriptorSets(
             texture_sampler,
             tmp_ibl_diffuse_tex_,
             rt_ibl_diffuse_tex_);
-        device->updateDescriptorSets(ibl_texture_descs, {});
+        device->updateDescriptorSets(ibl_texture_descs);
     }
 
     // ibl specular compute
@@ -403,7 +403,7 @@ void IblCreator::createDescriptorSets(
             texture_sampler,
             tmp_ibl_specular_tex_,
             rt_ibl_specular_tex_);
-        device->updateDescriptorSets(ibl_texture_descs, {});
+        device->updateDescriptorSets(ibl_texture_descs);
     }
 
     // ibl sheen compute
@@ -418,37 +418,37 @@ void IblCreator::createDescriptorSets(
             texture_sampler,
             tmp_ibl_sheen_tex_,
             rt_ibl_sheen_tex_);
-        device->updateDescriptorSets(ibl_texture_descs, {});
+        device->updateDescriptorSets(ibl_texture_descs);
     }
 }
 
 void IblCreator::addToGlobalTextures(
-    std::vector<renderer::TextureDescriptor>& descriptor_writes,
+    renderer::WriteDescriptorList& descriptor_writes,
     const std::shared_ptr<renderer::DescriptorSet>& description_set,
     const std::shared_ptr<renderer::Sampler>& texture_sampler) {
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         LAMBERTIAN_ENV_TEX_INDEX,
         texture_sampler,
         rt_ibl_diffuse_tex_.view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         GGX_ENV_TEX_INDEX,
         texture_sampler,
         rt_ibl_specular_tex_.view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
     er::Helper::addOneTexture(
         descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         CHARLIE_ENV_TEX_INDEX,
         texture_sampler,
         rt_ibl_sheen_tex_.view,
-        description_set,
-        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 }
 

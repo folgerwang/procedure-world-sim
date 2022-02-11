@@ -446,8 +446,8 @@ std::shared_ptr<Pipeline> VulkanDevice::createPipeline(
     const std::shared_ptr<ShaderModule>& shader_module) {
     auto shader_stages = helper::getShaderStages({ shader_module });
 
-    auto vk_ibl_comp_pipeline_layout = RENDER_TYPE_CAST(PipelineLayout, pipeline_layout);
-    assert(vk_ibl_comp_pipeline_layout);
+    auto vk_compute_pipeline_layout = RENDER_TYPE_CAST(PipelineLayout, pipeline_layout);
+    assert(vk_compute_pipeline_layout);
 
     // flags = 0, - e.g. disable optimization
     VkComputePipelineCreateInfo pipeline_info = {};
@@ -455,7 +455,7 @@ std::shared_ptr<Pipeline> VulkanDevice::createPipeline(
     pipeline_info.stage = shader_stages[0];
     pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
     pipeline_info.basePipelineIndex = -1;
-    pipeline_info.layout = vk_ibl_comp_pipeline_layout->get();
+    pipeline_info.layout = vk_compute_pipeline_layout->get();
 
     VkPipeline compute_pipeline;
     if (vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &compute_pipeline) != VK_SUCCESS) {
@@ -464,6 +464,38 @@ std::shared_ptr<Pipeline> VulkanDevice::createPipeline(
 
     auto vk_pipeline = std::make_shared<VulkanPipeline>();
     vk_pipeline->set(compute_pipeline);
+
+    return vk_pipeline;
+}
+
+std::shared_ptr<Pipeline> VulkanDevice::createPipeline(
+    const std::shared_ptr<PipelineLayout>& pipeline_layout, 
+    const ShaderModuleList& src_shader_modules,
+    const RtShaderGroupCreateInfoList& src_shader_groups,
+    const uint32_t ray_recursion_depth /*= 1*/) {
+
+    auto vk_rt_pipeline_layout = RENDER_TYPE_CAST(PipelineLayout, pipeline_layout);
+    assert(vk_rt_pipeline_layout);
+
+    auto shader_stages = helper::getShaderStages(src_shader_modules);
+    auto shader_groups = helper::getShaderGroups(src_shader_groups);
+
+    VkRayTracingPipelineCreateInfoKHR pipeline_info{};
+    pipeline_info.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
+    pipeline_info.stageCount = static_cast<uint32_t>(shader_stages.size());
+    pipeline_info.pStages = shader_stages.data();
+    pipeline_info.groupCount = static_cast<uint32_t>(shader_groups.size());
+    pipeline_info.pGroups = shader_groups.data();
+    pipeline_info.maxPipelineRayRecursionDepth = 1;
+    pipeline_info.layout = vk_rt_pipeline_layout->get();
+
+    VkPipeline rt_pipeline;
+    if (vkCreateRayTracingPipelinesKHR(device_, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &rt_pipeline) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create ray tracing pipeline!");
+    }
+
+    auto vk_pipeline = std::make_shared<VulkanPipeline>();
+    vk_pipeline->set(rt_pipeline);
 
     return vk_pipeline;
 }
@@ -555,7 +587,8 @@ std::shared_ptr<DescriptorPool> VulkanDevice::createDescriptorPool() {
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 256 },
         { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 256 },
         { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 256 },
-        { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 256 }
+        { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 256 },
+        { VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 256 }
     };
     VkDescriptorPoolCreateInfo pool_info = {};
     pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -574,52 +607,99 @@ std::shared_ptr<DescriptorPool> VulkanDevice::createDescriptorPool() {
 }
 
 void VulkanDevice::updateDescriptorSets(
-    const std::vector<TextureDescriptor>& texture_list,
-    const std::vector<BufferDescriptor>& buffer_list) {
-
+    const std::vector<std::shared_ptr<WriteDescriptor>>& write_descriptors) {
     std::vector<VkWriteDescriptorSet> descriptor_writes;
-    std::vector<VkDescriptorImageInfo> desc_image_infos(texture_list.size());
-    descriptor_writes.reserve(10);
-    for (auto i = 0; i < texture_list.size(); i++) {
-        const auto& tex = texture_list[i];
-        auto vk_texture = RENDER_TYPE_CAST(ImageView, tex.texture);
-        auto vk_desc_set = RENDER_TYPE_CAST(DescriptorSet, tex.desc_set);
-        desc_image_infos[i].imageLayout = helper::toVkImageLayout(tex.image_layout);
-        desc_image_infos[i].imageView = vk_texture->get();
-        if (tex.sampler) {
-            desc_image_infos[i].sampler = RENDER_TYPE_CAST(Sampler, tex.sampler)->get();
+    std::vector<std::shared_ptr<VkDescriptorImageInfo>> desc_images;
+    std::vector<std::shared_ptr<VkDescriptorBufferInfo>> desc_buffers;
+    std::vector<std::unique_ptr<VkAccelerationStructureKHR[]>> desc_ases;
+
+    for (auto i = 0; i < write_descriptors.size(); i++) {
+        const auto src_write_desc = write_descriptors[i];
+        bool is_texture =
+            src_write_desc->desc_type == DescriptorType::SAMPLER ||
+            src_write_desc->desc_type == DescriptorType::COMBINED_IMAGE_SAMPLER ||
+            src_write_desc->desc_type == DescriptorType::SAMPLED_IMAGE ||
+            src_write_desc->desc_type == DescriptorType::STORAGE_IMAGE;
+        bool is_buffer =
+            src_write_desc->desc_type == DescriptorType::UNIFORM_TEXEL_BUFFER ||
+            src_write_desc->desc_type == DescriptorType::STORAGE_TEXEL_BUFFER ||
+            src_write_desc->desc_type == DescriptorType::UNIFORM_BUFFER ||
+            src_write_desc->desc_type == DescriptorType::STORAGE_BUFFER ||
+            src_write_desc->desc_type == DescriptorType::UNIFORM_BUFFER_DYNAMIC ||
+            src_write_desc->desc_type == DescriptorType::STORAGE_BUFFER_DYNAMIC;
+         
+        auto vk_desc_set = RENDER_TYPE_CAST(DescriptorSet, src_write_desc->desc_set);
+        if (is_texture) {
+            const auto src_tex_desc = static_cast<const TextureDescriptor*>(src_write_desc.get());
+            auto vk_texture = RENDER_TYPE_CAST(ImageView, src_tex_desc->texture);
+            
+            auto desc_image = std::make_shared<VkDescriptorImageInfo>();
+            desc_images.push_back(desc_image);
+            desc_image->imageLayout = helper::toVkImageLayout(src_tex_desc->image_layout);
+            desc_image->imageView = vk_texture->get();
+            if (src_tex_desc->sampler) {
+                desc_image->sampler = RENDER_TYPE_CAST(Sampler, src_tex_desc->sampler)->get();
+            }
+            else {
+                desc_image->sampler = nullptr;
+            }
+
+            descriptor_writes.push_back(
+                helper::addDescriptWrite(
+                    vk_desc_set->get(),
+                    desc_image.get(),
+                    src_tex_desc->binding,
+                    helper::toVkDescriptorType(src_tex_desc->desc_type)));
+        }
+        else if (is_buffer) {
+            const auto src_buf_desc = static_cast<const BufferDescriptor*>(src_write_desc.get());
+            auto vk_buffer = RENDER_TYPE_CAST(Buffer, src_buf_desc->buffer);
+            auto desc_buffer = std::make_shared<VkDescriptorBufferInfo>();
+            desc_buffers.push_back(desc_buffer);
+            desc_buffer->buffer = vk_buffer->get();
+            desc_buffer->offset = src_buf_desc->offset;
+            desc_buffer->range = src_buf_desc->range;
+
+            VkWriteDescriptorSet descriptor_write = {};
+            descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptor_write.dstSet = vk_desc_set->get();
+            descriptor_write.dstBinding = src_buf_desc->binding;
+            descriptor_write.dstArrayElement = 0;
+
+            descriptor_write.descriptorType = helper::toVkDescriptorType(src_buf_desc->desc_type);
+            descriptor_write.descriptorCount = 1;
+            descriptor_write.pBufferInfo = desc_buffer.get();
+            descriptor_writes.push_back(descriptor_write);
+        }
+        else if (src_write_desc->desc_type == DescriptorType::ACCELERATION_STRUCTURE_KHR) {
+            const auto src_as_desc = static_cast<const AccelerationStructDescriptor*>(src_write_desc.get());
+            auto desc_buffer = std::make_shared<VkDescriptorBufferInfo>();
+
+            auto num_as = static_cast<uint32_t>(src_as_desc->acc_structs.size());
+            auto as_list = std::make_unique<VkAccelerationStructureKHR[]>(num_as);
+            for (size_t i = 0; i < num_as; i++) {
+                as_list[i] = reinterpret_cast<VkAccelerationStructureKHR>(src_as_desc->acc_structs[i]);
+            }
+            desc_ases.push_back(std::move(as_list));
+            VkWriteDescriptorSetAccelerationStructureKHR desc_as_info{};
+            desc_as_info.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+            desc_as_info.accelerationStructureCount = num_as;
+            desc_as_info.pAccelerationStructures = desc_ases[desc_ases.size()-1].get();
+
+            VkWriteDescriptorSet descriptor_write = {};
+            descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptor_write.dstSet = vk_desc_set->get();
+            descriptor_write.dstBinding = src_write_desc->binding;
+            descriptor_write.pNext = &desc_as_info;
+
+            descriptor_write.descriptorType =
+                helper::toVkDescriptorType(src_write_desc->desc_type);
+            descriptor_write.descriptorCount = 1;
+            descriptor_writes.push_back(descriptor_write);
         }
         else {
-            desc_image_infos[i].sampler = nullptr;
+            assert(0);
         }
-        
-        descriptor_writes.push_back(
-            helper::addDescriptWrite(
-                vk_desc_set->get(),
-                desc_image_infos[i],
-                tex.binding,
-                helper::toVkDescriptorType(tex.desc_type)));
-    }
-
-    std::vector<VkDescriptorBufferInfo> desc_buffer_infos(buffer_list.size());
-    for (auto i = 0; i < buffer_list.size(); i++) {
-        const auto& buf = buffer_list[i];
-        auto vk_buffer = RENDER_TYPE_CAST(Buffer, buf.buffer);
-        auto vk_desc_set = RENDER_TYPE_CAST(DescriptorSet, buf.desc_set);
-        desc_buffer_infos[i].buffer = vk_buffer->get();
-        desc_buffer_infos[i].offset = buf.offset;
-        desc_buffer_infos[i].range = buf.range;
-
-        VkWriteDescriptorSet descriptor_write = {};
-        descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptor_write.dstSet = vk_desc_set->get();
-        descriptor_write.dstBinding = buf.binding;
-        descriptor_write.dstArrayElement = 0;
-
-        descriptor_write.descriptorType = helper::toVkDescriptorType(buf.desc_type);
-        descriptor_write.descriptorCount = 1;
-        descriptor_write.pBufferInfo = &desc_buffer_infos[i];
-        descriptor_writes.push_back(descriptor_write);
     }
 
     vkUpdateDescriptorSets(device_,
@@ -996,6 +1076,23 @@ DeviceAddress VulkanDevice::getAccelerationStructureDeviceAddress(const Accelera
 
     DeviceAddress result = device_address;
     return result;
+}
+
+void VulkanDevice::getRayTracingShaderGroupHandles(
+    const std::shared_ptr<Pipeline>& pipeline,
+    const uint32_t group_count,
+    const uint32_t sbt_size,
+    void* shader_handle_storage) {
+    auto vk_pipeline = RENDER_TYPE_CAST(Pipeline, pipeline);
+    if (vkGetRayTracingShaderGroupHandlesKHR(
+        device_,
+        vk_pipeline->get(),
+        0,
+        group_count,
+        sbt_size,
+        shader_handle_storage) != VK_SUCCESS) {
+        throw std::runtime_error("failed to call ray tracing shader group handles!");
+    }
 }
 
 } // vk
