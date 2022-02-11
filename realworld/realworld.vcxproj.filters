@@ -352,5 +352,14 @@
     <None Include="src\shaders\update_camera.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
+    <None Include="src\shaders\rt_miss.rmiss">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\rt_raygen.rgen">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
+    <None Include="src\shaders\rt_closesthit.rchit">
+      <Filter>Resource Files\shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>

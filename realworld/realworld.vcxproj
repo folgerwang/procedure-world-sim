@@ -246,6 +246,9 @@
     <None Include="src\shaders\ibl_smooth.comp" />
     <None Include="src\shaders\perlin_noise_init.comp" />
     <None Include="src\shaders\render_volume_cloud.comp" />
+    <None Include="src\shaders\rt_closesthit.rchit" />
+    <None Include="src\shaders\rt_miss.rmiss" />
+    <None Include="src\shaders\rt_raygen.rgen" />
     <None Include="src\shaders\skybox.frag" />
     <None Include="src\shaders\skybox.vert" />
     <None Include="src\shaders\sky_scattering_lut_final_pass.comp" />
