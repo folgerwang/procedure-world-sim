@@ -1404,7 +1404,7 @@ void RealWorldApplication::drawScene(
     s_dbuf_idx = 1 - s_dbuf_idx;
 }
 
-#include "raytracing_callable.cpp"
+#include "rayquery.cpp"
 
 void RealWorldApplication::drawFrame() {
     std::vector<std::shared_ptr<er::Fence>> in_flight_fences(1);

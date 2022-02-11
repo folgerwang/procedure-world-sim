@@ -616,100 +616,6 @@ static void setupModel(
     }
 }
 
-static std::shared_ptr<ego::ObjectData> loadGltfModel(
-    const renderer::DeviceInfo& device_info,
-    const std::string& input_filename)
-{
-    tinygltf::Model model;
-    tinygltf::TinyGLTF loader;
-    std::string err;
-    std::string warn;
-
-    std::string ext = getFilePathExtension(input_filename);
-
-    bool ret = false;
-    if (ext.compare("glb") == 0) {
-        // assume binary glTF.
-        ret =
-            loader.LoadBinaryFromFile(&model, &err, &warn, input_filename.c_str());
-    }
-    else {
-        // assume ascii glTF.
-        ret = loader.LoadASCIIFromFile(&model, &err, &warn, input_filename.c_str());
-    }
-
-    if (!warn.empty()) {
-        std::cout << "Warn: " << warn.c_str() << std::endl;
-    }
-
-    if (!err.empty()) {
-        std::cout << "ERR: " << err.c_str() << std::endl;
-    }
-    if (!ret) {
-        std::cout << "Failed to load .glTF : " << input_filename << std::endl;
-        return nullptr;
-    }
-
-    auto gltf_object = std::make_shared<ego::ObjectData>(device_info.device);
-    gltf_object->meshes_.reserve(model.meshes.size());
-
-    setupMeshState(device_info, model, gltf_object);
-    setupMeshes(model, gltf_object);
-    setupAnimations(model, gltf_object);
-    setupSkins(device_info, model, gltf_object);
-    setupNodes(model, gltf_object);
-    setupModel(model, gltf_object);
-    for (auto& scene : gltf_object->scenes_) {
-        for (auto& node : scene.nodes_) {
-            calculateBbox(gltf_object, scene.nodes_[0], glm::mat4(1.0f), scene.bbox_min_, scene.bbox_max_);
-        }
-    }
-
-    // init indirect draw buffer.
-    uint32_t num_prims = 0;
-    for (auto& mesh : gltf_object->meshes_) {
-        for (auto& prim : mesh.primitives_) {
-            prim.indirect_draw_cmd_ofs_ =
-                num_prims * sizeof(renderer::DrawIndexedIndirectCommand) + INDIRECT_DRAW_BUF_OFS;
-            num_prims++;
-        }
-    }
-
-    std::vector<uint32_t> indirect_draw_cmd_buffer(
-        sizeof(renderer::DrawIndexedIndirectCommand) / sizeof(uint32_t) * num_prims + 1);
-    auto indirect_draw_buf = reinterpret_cast<renderer::DrawIndexedIndirectCommand*>(indirect_draw_cmd_buffer.data() + 1);
-
-    // clear instance count = 0;
-    indirect_draw_cmd_buffer[0] = 0;
-    uint32_t prim_idx = 0;
-    for (const auto& mesh : gltf_object->meshes_) {
-        for (const auto& prim : mesh.primitives_) {
-            indirect_draw_buf[prim_idx].first_index = 0;
-            indirect_draw_buf[prim_idx].first_instance = 0;
-            indirect_draw_buf[prim_idx].index_count =
-                static_cast<uint32_t>(prim.index_desc_.index_count);
-            indirect_draw_buf[prim_idx].instance_count = 0;
-            indirect_draw_buf[prim_idx].vertex_offset = 0;
-            prim_idx++;
-        }
-    }
-
-    renderer::Helper::createBuffer(
-        device_info,
-        SET_FLAG_BIT(BufferUsage, INDIRECT_BUFFER_BIT) |
-        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
-        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
-        0,
-        gltf_object->indirect_draw_cmd_.buffer,
-        gltf_object->indirect_draw_cmd_.memory,
-        indirect_draw_cmd_buffer.size() * sizeof(uint32_t),
-        indirect_draw_cmd_buffer.data());
-
-    gltf_object->num_prims_ = num_prims;
-
-    return gltf_object;
-}
-
 static renderer::WriteDescriptorList addGltfTextures(
     const std::shared_ptr<ego::ObjectData>& gltf_object,
     const ego::MaterialInfo& material,
@@ -1963,6 +1869,100 @@ void GltfObject::update(
 
 std::shared_ptr<renderer::BufferInfo> GltfObject::getGameObjectsBuffer() {
     return game_objects_buffer_;
+}
+
+std::shared_ptr<ego::ObjectData> GltfObject::loadGltfModel(
+    const renderer::DeviceInfo& device_info,
+    const std::string& input_filename)
+{
+    tinygltf::Model model;
+    tinygltf::TinyGLTF loader;
+    std::string err;
+    std::string warn;
+
+    std::string ext = getFilePathExtension(input_filename);
+
+    bool ret = false;
+    if (ext.compare("glb") == 0) {
+        // assume binary glTF.
+        ret =
+            loader.LoadBinaryFromFile(&model, &err, &warn, input_filename.c_str());
+    }
+    else {
+        // assume ascii glTF.
+        ret = loader.LoadASCIIFromFile(&model, &err, &warn, input_filename.c_str());
+    }
+
+    if (!warn.empty()) {
+        std::cout << "Warn: " << warn.c_str() << std::endl;
+    }
+
+    if (!err.empty()) {
+        std::cout << "ERR: " << err.c_str() << std::endl;
+    }
+    if (!ret) {
+        std::cout << "Failed to load .glTF : " << input_filename << std::endl;
+        return nullptr;
+    }
+
+    auto gltf_object = std::make_shared<ego::ObjectData>(device_info.device);
+    gltf_object->meshes_.reserve(model.meshes.size());
+
+    setupMeshState(device_info, model, gltf_object);
+    setupMeshes(model, gltf_object);
+    setupAnimations(model, gltf_object);
+    setupSkins(device_info, model, gltf_object);
+    setupNodes(model, gltf_object);
+    setupModel(model, gltf_object);
+    for (auto& scene : gltf_object->scenes_) {
+        for (auto& node : scene.nodes_) {
+            calculateBbox(gltf_object, scene.nodes_[0], glm::mat4(1.0f), scene.bbox_min_, scene.bbox_max_);
+        }
+    }
+
+    // init indirect draw buffer.
+    uint32_t num_prims = 0;
+    for (auto& mesh : gltf_object->meshes_) {
+        for (auto& prim : mesh.primitives_) {
+            prim.indirect_draw_cmd_ofs_ =
+                num_prims * sizeof(renderer::DrawIndexedIndirectCommand) + INDIRECT_DRAW_BUF_OFS;
+            num_prims++;
+        }
+    }
+
+    std::vector<uint32_t> indirect_draw_cmd_buffer(
+        sizeof(renderer::DrawIndexedIndirectCommand) / sizeof(uint32_t) * num_prims + 1);
+    auto indirect_draw_buf = reinterpret_cast<renderer::DrawIndexedIndirectCommand*>(indirect_draw_cmd_buffer.data() + 1);
+
+    // clear instance count = 0;
+    indirect_draw_cmd_buffer[0] = 0;
+    uint32_t prim_idx = 0;
+    for (const auto& mesh : gltf_object->meshes_) {
+        for (const auto& prim : mesh.primitives_) {
+            indirect_draw_buf[prim_idx].first_index = 0;
+            indirect_draw_buf[prim_idx].first_instance = 0;
+            indirect_draw_buf[prim_idx].index_count =
+                static_cast<uint32_t>(prim.index_desc_.index_count);
+            indirect_draw_buf[prim_idx].instance_count = 0;
+            indirect_draw_buf[prim_idx].vertex_offset = 0;
+            prim_idx++;
+        }
+    }
+
+    renderer::Helper::createBuffer(
+        device_info,
+        SET_FLAG_BIT(BufferUsage, INDIRECT_BUFFER_BIT) |
+        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        0,
+        gltf_object->indirect_draw_cmd_.buffer,
+        gltf_object->indirect_draw_cmd_.memory,
+        indirect_draw_cmd_buffer.size() * sizeof(uint32_t),
+        indirect_draw_cmd_buffer.data());
+
+    gltf_object->num_prims_ = num_prims;
+
+    return gltf_object;
 }
 
 } // game_object

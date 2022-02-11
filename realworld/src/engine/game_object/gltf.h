@@ -283,6 +283,10 @@ public:
         bool enble_airflow);
 
     static std::shared_ptr<renderer::BufferInfo> getGameObjectsBuffer();
+
+    static std::shared_ptr<ObjectData> loadGltfModel(
+        const renderer::DeviceInfo& device_info,
+        const std::string& input_filename);
 };
 
 } // namespace game_object
