@@ -1860,7 +1860,8 @@ void createRtResources(
     device_info.device->createBuffer(
         sizeof(UniformData),
         SET_FLAG_BIT(BufferUsage, UNIFORM_BUFFER_BIT),
-        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
         0,
         rt_render_info.ubo.buffer,
         rt_render_info.ubo.memory);
@@ -1922,6 +1923,7 @@ er::TextureInfo testRayTracing(
     const er::DeviceInfo& device_info,
     const std::shared_ptr<er::DescriptorPool>& descriptor_pool,
     const std::shared_ptr<er::CommandBuffer>& cmd_buf,
+    const glsl::ViewParams& view_params,
     er::PhysicalDeviceRayTracingPipelineProperties rt_pipeline_properties,
     er::PhysicalDeviceAccelerationStructureFeatures as_features) {
 
@@ -1958,9 +1960,21 @@ er::TextureInfo testRayTracing(
         s_rt_init = true;
     }
 
+    auto view = view_params.view;
+    view[3] = glm::vec4(0, 0, -5, 1);
+    UniformData uniform_data;
+    uniform_data.proj_inverse = glm::inverse(view_params.proj);
+    uniform_data.view_inverse = glm::inverse(view);
+
+    device_info.device->updateBufferMemory(
+        s_rt_render_info.ubo.memory,
+        sizeof(uniform_data),
+        &uniform_data);
+
     cmd_buf->bindPipeline(
         er::PipelineBindPoint::RAY_TRACING,
         s_rt_render_info.rt_pipeline);
+
     cmd_buf->bindDescriptorSets(
         er::PipelineBindPoint::RAY_TRACING,
         s_rt_render_info.rt_pipeline_layout,
@@ -2118,6 +2132,7 @@ void RealWorldApplication::drawFrame() {
         device_info_,
         descriptor_pool_,
         command_buffer,
+        view_params_,
         rt_pipeline_properties_,
         as_features_);
 
