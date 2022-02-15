@@ -369,21 +369,24 @@ void createRayTracingPipeline(
     rt_render_info.shader_modules[kRayGenIndex] =
         er::helper::loadShaderModule(
             device,
-            "rt_raygen_rgen.spv",
+            "ray_tracing/callable_test/rt_raygen_rgen.spv",
             er::ShaderStageFlagBits::RAYGEN_BIT_KHR);
     rt_render_info.shader_modules[kRayMissIndex] =
         er::helper::loadShaderModule(
             device,
-            "rt_miss_rmiss.spv",
+            "ray_tracing/callable_test/rt_miss_rmiss.spv",
             er::ShaderStageFlagBits::MISS_BIT_KHR);
     rt_render_info.shader_modules[kClosestHitIndex] =
         er::helper::loadShaderModule(
             device,
-            "rt_closesthit_rchit.spv",
+            "ray_tracing/callable_test/rt_closesthit_rchit.spv",
             er::ShaderStageFlagBits::CLOSEST_HIT_BIT_KHR);
     for (auto i = 0; i < g_object_count; i++) {
         auto index = kCallable1Index + static_cast<uint32_t>(i);
-        auto callable_shader_name = std::string("rt_callable") + std::to_string(i+1) + "_rcall.spv";
+        auto callable_shader_name =
+            std::string("ray_tracing/callable_test/rt_callable") +
+            std::to_string(i+1) +
+            "_rcall.spv";
         rt_render_info.shader_modules[index] =
             er::helper::loadShaderModule(
                 device,
