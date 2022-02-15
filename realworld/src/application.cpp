@@ -1404,7 +1404,7 @@ void RealWorldApplication::drawScene(
     s_dbuf_idx = 1 - s_dbuf_idx;
 }
 
-#include "rayquery.cpp"
+#include "raytracing_shadow.cpp"
 
 void RealWorldApplication::drawFrame() {
     std::vector<std::shared_ptr<er::Fence>> in_flight_fences(1);
@@ -1542,16 +1542,6 @@ void RealWorldApplication::drawFrame() {
     command_buffer->reset(0);
     command_buffer->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
 
-    // ray tracing test.
-    auto result_image = 
-    testRayTracing(
-        device_info_,
-        descriptor_pool_,
-        command_buffer,
-        view_params_,
-        rt_pipeline_properties_,
-        as_features_);
-
     drawScene(command_buffer,
         swap_chain_info_,
         view_desc_set_,
@@ -1560,27 +1550,39 @@ void RealWorldApplication::drawFrame() {
         delta_t_,
         current_time_);
 
-    er::ImageResourceInfo src_info = {
-        er::ImageLayout::GENERAL,
-        SET_FLAG_BIT(Access, SHADER_WRITE_BIT),
-        SET_FLAG_BIT(PipelineStage, RAY_TRACING_SHADER_BIT_KHR) };
+    if (!menu_->isRayTracingTurnOff()) {
+        // ray tracing test.
+        auto result_image =
+            testRayTracing(
+                device_info_,
+                descriptor_pool_,
+                command_buffer,
+                view_params_,
+                rt_pipeline_properties_,
+                as_features_);
 
-    er::ImageResourceInfo dst_info = {
-        er::ImageLayout::PRESENT_SRC_KHR,
-        SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
-        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
+        er::ImageResourceInfo src_info = {
+            er::ImageLayout::GENERAL,
+            SET_FLAG_BIT(Access, SHADER_WRITE_BIT),
+            SET_FLAG_BIT(PipelineStage, RAY_TRACING_SHADER_BIT_KHR) };
 
-    er::Helper::blitImage(
-        command_buffer,
-        result_image.image,
-        swap_chain_info_.images[image_index],
-        src_info,
-        src_info,
-        dst_info,
-        dst_info,
-        SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-        SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-        glm::ivec3(1920, 1080, 1));
+        er::ImageResourceInfo dst_info = {
+            er::ImageLayout::PRESENT_SRC_KHR,
+            SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
+            SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
+
+        er::Helper::blitImage(
+            command_buffer,
+            result_image.image,
+            swap_chain_info_.images[image_index],
+            src_info,
+            src_info,
+            dst_info,
+            dst_info,
+            SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+            SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+            glm::ivec3(1920, 1080, 1));
+    }
 
     s_camera_paused = menu_->draw(
         command_buffer,

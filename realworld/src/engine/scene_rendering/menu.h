@@ -10,6 +10,7 @@ class Menu {
     std::vector<std::string> gltf_file_names_;
     std::vector<std::string> to_load_gltf_names_;
     bool turn_off_water_pass_ = false;
+    bool turn_off_ray_tracing_ = true;
     bool turn_off_volume_moist_ = false;
     bool turn_on_airflow_ = false;
     uint32_t debug_draw_type_ = 0;
@@ -52,6 +53,10 @@ public:
 
     inline bool isWaterPassTurnOff() {
         return turn_off_water_pass_; 
+    }
+
+    inline bool isRayTracingTurnOff() {
+        return turn_off_ray_tracing_;
     }
 
     inline bool isVolumeMoistTurnOff() {

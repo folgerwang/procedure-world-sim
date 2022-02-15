@@ -12,6 +12,7 @@ struct BottomlevelDataInfo {
 
 void initBottomLevelDataInfo(
     const er::DeviceInfo& device_info,
+    const std::shared_ptr<ego::ObjectData>& obj_data,
     BottomlevelDataInfo& bl_data_info) {
     // Setup vertices for a single triangle
     struct Vertex {
@@ -609,6 +610,7 @@ er::TextureInfo testRayTracing(
 
         initBottomLevelDataInfo(
             device_info,
+            gltf_obj,
             s_bl_data_info);
         initTopLevelDataInfo(
             device_info,

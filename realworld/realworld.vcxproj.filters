@@ -52,6 +52,12 @@
     <Filter Include="Source Files\engine\scene_rendering">
       <UniqueIdentifier>{d3b5439e-9c99-4f9a-9d3d-5f54e8a1a637}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Resource Files\shaders\ray-tracing">
+      <UniqueIdentifier>{e59df557-dba6-4e26-8c6b-2ba9e38707e1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resource Files\shaders\ray-tracing\callable-test">
+      <UniqueIdentifier>{74585cdf-790e-423c-a479-7f8c998d95cd}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\engine\renderer\vulkan\vk_command_buffer.cpp">
@@ -352,23 +358,23 @@
     <None Include="src\shaders\update_camera.comp">
       <Filter>Resource Files\shaders</Filter>
     </None>
-    <None Include="src\shaders\rt_miss.rmiss">
-      <Filter>Resource Files\shaders</Filter>
+    <None Include="src\shaders\ray_tracing\callable_test\rt_callable3.rcall">
+      <Filter>Resource Files\shaders\ray-tracing\callable-test</Filter>
     </None>
-    <None Include="src\shaders\rt_raygen.rgen">
-      <Filter>Resource Files\shaders</Filter>
+    <None Include="src\shaders\ray_tracing\callable_test\rt_closesthit.rchit">
+      <Filter>Resource Files\shaders\ray-tracing\callable-test</Filter>
     </None>
-    <None Include="src\shaders\rt_closesthit.rchit">
-      <Filter>Resource Files\shaders</Filter>
+    <None Include="src\shaders\ray_tracing\callable_test\rt_miss.rmiss">
+      <Filter>Resource Files\shaders\ray-tracing\callable-test</Filter>
     </None>
-    <None Include="src\shaders\rt_callable2.rcall">
-      <Filter>Resource Files\shaders</Filter>
+    <None Include="src\shaders\ray_tracing\callable_test\rt_raygen.rgen">
+      <Filter>Resource Files\shaders\ray-tracing\callable-test</Filter>
     </None>
-    <None Include="src\shaders\rt_callable3.rcall">
-      <Filter>Resource Files\shaders</Filter>
+    <None Include="src\shaders\ray_tracing\callable_test\rt_callable1.rcall">
+      <Filter>Resource Files\shaders\ray-tracing\callable-test</Filter>
     </None>
-    <None Include="src\shaders\rt_callable1.rcall">
-      <Filter>Resource Files\shaders</Filter>
+    <None Include="src\shaders\ray_tracing\callable_test\rt_callable2.rcall">
+      <Filter>Resource Files\shaders\ray-tracing\callable-test</Filter>
     </None>
   </ItemGroup>
 </Project>

@@ -332,51 +332,89 @@ std::string compileGlobalShaders() {
     return error_strings;
 }
 
+static std::unordered_map<std::string, bool> s_folder_check;
+void checkAndAddFolder(const std::string& path_name) {
+    if (!std::filesystem::exists(path_name)) {
+        bool check_path = std::filesystem::create_directory(path_name);
+        assert(check_path);
+    }
+}
+
+size_t findFolderSplit(const std::string& path_name, const size_t& pos) {
+    auto pos_1 = path_name.find("/", pos);
+    auto pos_2 = path_name.find("\\", pos);
+    
+    return std::min(pos_1, pos_2);
+}
+
+void analyzeAndSplitFilePath(const std::string& path_name) {
+    size_t split_pos = std::string::npos;
+    size_t offset = 0;
+    std::vector<std::string> folder_list;
+    while((split_pos = findFolderSplit(path_name, offset)) != std::string::npos) {
+        folder_list.push_back(path_name.substr(0, split_pos));
+        offset = split_pos + 1;
+    };
+
+    for (const auto& folder : folder_list) {
+        if (s_folder_check.find(folder) == s_folder_check.end()) {
+            checkAndAddFolder(folder);
+            s_folder_check[folder] = true;
+        }
+    }
+}
+
 std::string  initCompileGlobalShaders() {
     std::string error_strings;
-    const std::string input_path = "src\\shaders";
-    const std::string output_path = "lib\\shaders";
-    auto input_folder_exist = std::filesystem::exists(input_path);
-    auto output_folder_exist = std::filesystem::exists(output_path);
-    if (input_folder_exist) {
-        if (!output_folder_exist) {
-            output_folder_exist = std::filesystem::create_directory(output_path);
-        }
-        if (output_folder_exist) {
-            std::fstream fs;
-            fs.open("src\\shaders\\shaders-compile.cfg", std::ios::in | std::ios::binary | std::ios::ate);
+    const auto input_path = "src\\shaders";
+    const auto output_path = "lib\\shaders";
+    const auto shader_compiler_str = "src\\third_party\\vulkan_lib\\glslc.exe ";
 
-            std::string buffer;
-            if (fs.is_open()) {
-                fs.seekg(0, fs.end);
-                auto size = fs.tellg();
-                fs.seekg(0, fs.beg);
-                buffer.resize(size);
-                fs.read(buffer.data(), size);
+    std::fstream fs;
+    fs.open("src\\shaders\\shaders-compile.cfg", std::ios::in | std::ios::binary | std::ios::ate);
+
+    std::string buffer;
+    if (fs.is_open()) {
+        fs.seekg(0, fs.end);
+        auto size = fs.tellg();
+        fs.seekg(0, fs.beg);
+        buffer.resize(size);
+        fs.read(buffer.data(), size);
+    }
+    fs.close();
+
+    std::istringstream buf_str(buffer);
+    for (std::string line; std::getline(buf_str, line); ) {
+        std::string input_name, output_name, params_str;
+        analyzeCommandLine(line, input_name, output_name, params_str);
+        input_name = input_path + input_name;
+        output_name = output_path + output_name;
+
+        struct stat input_attrib, output_attrib;
+        stat(input_name.c_str(), &input_attrib);
+        auto exist = stat(output_name.c_str(), &output_attrib);
+
+        analyzeAndSplitFilePath(input_name);
+        analyzeAndSplitFilePath(output_name);
+
+        bool shader_tobe_rebuilt = false;
+        if (std::filesystem::exists(input_name)) {
+            if (!std::filesystem::exists(output_name)) {
+                shader_tobe_rebuilt = true;
             }
-            fs.close();
+            else if (
+                std::filesystem::last_write_time(input_name) >
+                std::filesystem::last_write_time(output_name)) {
+                shader_tobe_rebuilt = true;
+            }
+        }
 
-            std::istringstream buf_str(buffer);
-            for (std::string line; std::getline(buf_str, line); ) {
-                std::string input_name, output_name, params_str;
-                analyzeCommandLine(line, input_name, output_name, params_str);
-                input_name = input_path + input_name;
-                output_name = output_path + output_name;
+        if (shader_tobe_rebuilt) {
+            auto cmd_str = shader_compiler_str + input_name + " " + params_str + " " + output_name;
+            auto result = exec((cmd_str + " 2>&1").c_str());
 
-                struct stat input_attrib, output_attrib;
-                stat(input_name.c_str(), &input_attrib);
-                auto exist = stat(output_name.c_str(), &output_attrib);
-
-                // only rebuild shader if output file didn't exist.
-                /*if (exist != 0)*/ {
-                    auto cmd_str = "src\\third_party\\vulkan_lib\\glslc.exe " + input_name + " " + params_str + " " + output_name;
-
-                    auto result = exec((cmd_str + " 2>&1").c_str());
-
-                    if (result.second != 0) {
-                        error_strings += cmd_str + "\n" + result.first + "\n";
-                    }
-                }
+            if (result.second != 0) {
+                error_strings += cmd_str + "\n" + result.first + "\n";
             }
         }
     }

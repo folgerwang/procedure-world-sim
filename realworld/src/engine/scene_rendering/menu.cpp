@@ -129,6 +129,15 @@ bool Menu::draw(
 
     if (ImGui::BeginMainMenuBar())
     {
+        if (ImGui::BeginMenu("Raytracing"))
+        {
+            if (ImGui::MenuItem("Turn off ray tracing", NULL, turn_off_ray_tracing_)) {
+                turn_off_ray_tracing_ = !turn_off_ray_tracing_;
+            }
+
+            ImGui::EndMenu();
+        }
+
         if (ImGui::BeginMenu("Terrain"))
         {
             if (ImGui::MenuItem("Turn off water pass", NULL, turn_off_water_pass_)) {
