@@ -419,7 +419,7 @@ void createRayTracingPipeline(
             2);
 }
 
-void createShaderBindingTable(
+void createShaderBindingTables(
     const er::DeviceInfo& device_info,
     const er::PhysicalDeviceRayTracingPipelineProperties& rt_pipeline_properties,
     const er::PhysicalDeviceAccelerationStructureFeatures& as_features,
@@ -615,7 +615,7 @@ er::TextureInfo testRayTracing(
         createRayTracingPipeline(
             device_info,
             s_rt_render_info);
-        createShaderBindingTable(
+        createShaderBindingTables(
             device_info,
             rt_pipeline_properties,
             as_features,

@@ -306,11 +306,9 @@ struct RayTracingRenderingInfo {
     er::StridedDeviceAddressRegion raygen_shader_sbt_entry;
     er::StridedDeviceAddressRegion miss_shader_sbt_entry;
     er::StridedDeviceAddressRegion hit_shader_sbt_entry;
-    er::StridedDeviceAddressRegion callable_shader_sbt_entry;
     er::BufferInfo raygen_shader_binding_table;
     er::BufferInfo miss_shader_binding_table;
     er::BufferInfo hit_shader_binding_table;
-    er::BufferInfo callable_shader_binding_table;
     er::BufferInfo ubo;
     er::TextureInfo result_image;
 };
@@ -408,7 +406,7 @@ void createRayTracingPipeline(
             2);
 }
 
-void createShaderBindingTable(
+void createShaderBindingTables(
     const er::DeviceInfo& device_info,
     const er::PhysicalDeviceRayTracingPipelineProperties& rt_pipeline_properties,
     const er::PhysicalDeviceAccelerationStructureFeatures& as_features,
@@ -450,7 +448,7 @@ void createShaderBindingTable(
         SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
         rt_render_info.miss_shader_binding_table.buffer,
         rt_render_info.miss_shader_binding_table.memory,
-        handle_size,
+        handle_size * 2,
         shader_handle_storage.data() + handle_size_aligned);
 
     er::Helper::createBuffer(
@@ -463,18 +461,6 @@ void createShaderBindingTable(
         rt_render_info.hit_shader_binding_table.buffer,
         rt_render_info.hit_shader_binding_table.memory,
         handle_size,
-        shader_handle_storage.data() + handle_size_aligned * 2);
-
-    er::Helper::createBuffer(
-        device_info,
-        SET_FLAG_BIT(BufferUsage, SHADER_BINDING_TABLE_BIT_KHR) |
-        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT),
-        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
-        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
-        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
-        rt_render_info.callable_shader_binding_table.buffer,
-        rt_render_info.callable_shader_binding_table.memory,
-        handle_size * g_object_count,
         shader_handle_storage.data() + handle_size_aligned * 3);
 
     rt_render_info.raygen_shader_sbt_entry.device_address =
@@ -484,18 +470,13 @@ void createShaderBindingTable(
 
     rt_render_info.miss_shader_sbt_entry.device_address =
         rt_render_info.miss_shader_binding_table.buffer->getDeviceAddress();
-    rt_render_info.miss_shader_sbt_entry.size = handle_size_aligned;
+    rt_render_info.miss_shader_sbt_entry.size = handle_size_aligned * 2;
     rt_render_info.miss_shader_sbt_entry.stride = handle_size_aligned;
 
     rt_render_info.hit_shader_sbt_entry.device_address =
         rt_render_info.hit_shader_binding_table.buffer->getDeviceAddress();
     rt_render_info.hit_shader_sbt_entry.size = handle_size_aligned;
     rt_render_info.hit_shader_sbt_entry.stride = handle_size_aligned;
-    
-    rt_render_info.callable_shader_sbt_entry.device_address =
-        rt_render_info.callable_shader_binding_table.buffer->getDeviceAddress();
-    rt_render_info.callable_shader_sbt_entry.size = handle_size_aligned * 3;
-    rt_render_info.callable_shader_sbt_entry.stride = handle_size_aligned;
 }
 
 void createRtResources(
@@ -610,7 +591,7 @@ er::TextureInfo testRayTracing(
         createRayTracingPipeline(
             device_info,
             s_rt_render_info);
-        createShaderBindingTable(
+        createShaderBindingTables(
             device_info,
             rt_pipeline_properties,
             as_features,
@@ -652,7 +633,7 @@ er::TextureInfo testRayTracing(
         s_rt_render_info.raygen_shader_sbt_entry,
         s_rt_render_info.miss_shader_sbt_entry,
         s_rt_render_info.hit_shader_sbt_entry,
-        s_rt_render_info.callable_shader_sbt_entry,
+        {0, 0, 0},
         glm::uvec3(1920, 1080, 1));
 
     return s_rt_render_info.result_image;
