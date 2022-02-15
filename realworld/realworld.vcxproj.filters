@@ -58,6 +58,9 @@
     <Filter Include="Resource Files\shaders\ray-tracing\callable-test">
       <UniqueIdentifier>{74585cdf-790e-423c-a479-7f8c998d95cd}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Resource Files\shaders\ray-tracing\raytracing-shadow">
+      <UniqueIdentifier>{c86cd8aa-521e-401a-a76d-26319ae888d3}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\engine\renderer\vulkan\vk_command_buffer.cpp">
@@ -375,6 +378,18 @@
     </None>
     <None Include="src\shaders\ray_tracing\callable_test\rt_callable2.rcall">
       <Filter>Resource Files\shaders\ray-tracing\callable-test</Filter>
+    </None>
+    <None Include="src\shaders\ray_tracing\raytracing_shadow\rt_closesthit.rchit">
+      <Filter>Resource Files\shaders\ray-tracing\raytracing-shadow</Filter>
+    </None>
+    <None Include="src\shaders\ray_tracing\raytracing_shadow\rt_miss.rmiss">
+      <Filter>Resource Files\shaders\ray-tracing\raytracing-shadow</Filter>
+    </None>
+    <None Include="src\shaders\ray_tracing\raytracing_shadow\rt_raygen.rgen">
+      <Filter>Resource Files\shaders\ray-tracing\raytracing-shadow</Filter>
+    </None>
+    <None Include="src\shaders\ray_tracing\raytracing_shadow\rt_shadow.rmiss">
+      <Filter>Resource Files\shaders\ray-tracing\raytracing-shadow</Filter>
     </None>
   </ItemGroup>
 </Project>

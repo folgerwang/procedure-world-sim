@@ -251,6 +251,10 @@
     <None Include="src\shaders\ray_tracing\callable_test\rt_closesthit.rchit" />
     <None Include="src\shaders\ray_tracing\callable_test\rt_miss.rmiss" />
     <None Include="src\shaders\ray_tracing\callable_test\rt_raygen.rgen" />
+    <None Include="src\shaders\ray_tracing\raytracing_shadow\rt_closesthit.rchit" />
+    <None Include="src\shaders\ray_tracing\raytracing_shadow\rt_miss.rmiss" />
+    <None Include="src\shaders\ray_tracing\raytracing_shadow\rt_raygen.rgen" />
+    <None Include="src\shaders\ray_tracing\raytracing_shadow\rt_shadow.rmiss" />
     <None Include="src\shaders\render_volume_cloud.comp" />
     <None Include="src\shaders\skybox.frag" />
     <None Include="src\shaders\skybox.vert" />

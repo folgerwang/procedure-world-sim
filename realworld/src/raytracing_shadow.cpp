@@ -356,10 +356,8 @@ std::shared_ptr<er::DescriptorSetLayout> createRtDescriptorSetLayout(
 enum {
     kRayGenIndex,
     kRayMissIndex,
+    kShadowMissIndex,
     kClosestHitIndex,
-    kCallable1Index,
-    kCallable2Index,
-    kCallable3Index,
     kNumRtShaders
 };
 void createRayTracingPipeline(
@@ -370,40 +368,33 @@ void createRayTracingPipeline(
     rt_render_info.shader_modules[kRayGenIndex] =
         er::helper::loadShaderModule(
             device,
-            "rt_raygen_rgen.spv",
+            "ray_tracing/raytracing_shadow/rt_raygen_rgen.spv",
             er::ShaderStageFlagBits::RAYGEN_BIT_KHR);
     rt_render_info.shader_modules[kRayMissIndex] =
         er::helper::loadShaderModule(
             device,
-            "rt_miss_rmiss.spv",
+            "ray_tracing/raytracing_shadow/rt_miss_rmiss.spv",
+            er::ShaderStageFlagBits::MISS_BIT_KHR);
+    rt_render_info.shader_modules[kShadowMissIndex] =
+        er::helper::loadShaderModule(
+            device,
+            "ray_tracing/raytracing_shadow/rt_shadow_rmiss.spv",
             er::ShaderStageFlagBits::MISS_BIT_KHR);
     rt_render_info.shader_modules[kClosestHitIndex] =
         er::helper::loadShaderModule(
             device,
-            "rt_closesthit_rchit.spv",
+            "ray_tracing/raytracing_shadow/rt_closesthit_rchit.spv",
             er::ShaderStageFlagBits::CLOSEST_HIT_BIT_KHR);
-    for (auto i = 0; i < g_object_count; i++) {
-        auto index = kCallable1Index + static_cast<uint32_t>(i);
-        auto callable_shader_name = std::string("rt_callable") + std::to_string(i+1) + "_rcall.spv";
-        rt_render_info.shader_modules[index] =
-            er::helper::loadShaderModule(
-                device,
-                callable_shader_name,
-                er::ShaderStageFlagBits::CALLABLE_BIT_KHR);
-    }
 
     rt_render_info.shader_groups.resize(kNumRtShaders);
     rt_render_info.shader_groups[kRayGenIndex].type = er::RayTracingShaderGroupType::GENERAL_KHR;
     rt_render_info.shader_groups[kRayGenIndex].general_shader = kRayGenIndex;
     rt_render_info.shader_groups[kRayMissIndex].type = er::RayTracingShaderGroupType::GENERAL_KHR;
     rt_render_info.shader_groups[kRayMissIndex].general_shader = kRayMissIndex;
+    rt_render_info.shader_groups[kShadowMissIndex].type = er::RayTracingShaderGroupType::GENERAL_KHR;
+    rt_render_info.shader_groups[kShadowMissIndex].general_shader = kShadowMissIndex;
     rt_render_info.shader_groups[kClosestHitIndex].type = er::RayTracingShaderGroupType::TRIANGLES_HIT_GROUP_KHR;
     rt_render_info.shader_groups[kClosestHitIndex].closest_hit_shader = kClosestHitIndex;
-    for (auto i = 0; i < g_object_count; i++) {
-        auto index = kCallable1Index + static_cast<uint32_t>(i);
-        rt_render_info.shader_groups[index].type = er::RayTracingShaderGroupType::GENERAL_KHR;
-        rt_render_info.shader_groups[index].general_shader = index;
-    }
 
     rt_render_info.rt_desc_set_layout = createRtDescriptorSetLayout(device);
     rt_render_info.rt_pipeline_layout =
