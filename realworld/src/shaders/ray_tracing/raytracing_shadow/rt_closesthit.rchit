@@ -44,8 +44,8 @@ Vertex unpack(uint index)
 
 	Vertex v;
 	v.pos = vec3(d0, d1, d2);//d0.xyz;
-	v.normal = vec3(0, 0, 0);//vec3(d0.w, d1.x, d1.y);
-	v.color = vec4(0.5, 0.5, 0.5, 1.0);//vec4(d2.x, d2.y, d2.z, 1.0);
+	v.normal = vec3(0, 1, 0);//vec3(d0.w, d1.x, d1.y);
+	v.color = vec4(0.8, 0.8, 0.8, 1.0);//vec4(d2.x, d2.y, d2.z, 1.0);
 
 	return v;
 }
@@ -53,9 +53,9 @@ Vertex unpack(uint index)
 void main()
 {
 	VertexBufferInfo geom_info = geometries.info[gl_GeometryIndexEXT];
-	uint base_idx = geom_info.index_offset + 3 * gl_PrimitiveID;
+	uint base_idx = geom_info.index_base + 3 * gl_PrimitiveID;
 
-	ivec3 index = ivec3(indices.i[base_idx], indices.i[base_idx + 1], indices.i[base_idx + 2]) + ivec3(geom_info.position_offset);
+	ivec3 index = ivec3(indices.i[base_idx], indices.i[base_idx + 1], indices.i[base_idx + 2]) + ivec3(geom_info.position_base);
 
 	Vertex v0 = unpack(index.x);
 	Vertex v1 = unpack(index.y);
@@ -80,6 +80,4 @@ void main()
 	if (shadowed) {
 		hitValue *= 0.3;
 	}
-
-	hitValue = vec3(1, 0, 0);
 }

@@ -17,10 +17,12 @@ void initBottomLevelDataInfo(
     const er::DeviceInfo& device_info,
     BottomlevelDataInfo& bl_data_info) {
 
-    std::vector<glm::mat3x4> transform_matrices(1);
-    for (uint32_t i = 0; i < 1; i++) {
+    auto num_geometries = bl_data_info.game_object->rt_geometries_.size();
+
+    std::vector<glm::mat3x4> transform_matrices(num_geometries);
+    for (uint32_t i = 0; i < num_geometries; i++) {
         transform_matrices[i] = {
-            1.0f, 0.0f, 0.0f, (float)i * 3.0f - 3.0f,
+            1.0f, 0.0f, 0.0f, 0.0f,
             0.0f, 1.0f, 0.0f, 0.0f,
             0.0f, 0.0f, 1.0f, 0.0f
         };
@@ -43,30 +45,6 @@ void initBottomLevelDataInfo(
     er::AccelerationStructureBuildGeometryInfo as_build_geometry_info{};
     as_build_geometry_info.type = er::AccelerationStructureType::BOTTOM_LEVEL_KHR;
     as_build_geometry_info.flags = SET_FLAG_BIT(BuildAccelerationStructure, PREFER_FAST_TRACE_BIT_KHR);
-
-/*
-    // Build
-    for (uint32_t i = 0; i < 1; i++) {
-        auto as_geometry = std::make_shared<er::AccelerationStructureGeometry>();
-        as_geometry->flags = SET_FLAG_BIT(Geometry, OPAQUE_BIT_KHR);
-        as_geometry->geometry_type = er::GeometryType::TRIANGLES_KHR;
-        as_geometry->geometry.triangles.struct_type =
-            er::StructureType::ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-        as_geometry->geometry.triangles.vertex_format = er::Format::R32G32B32_SFLOAT;
-        as_geometry->geometry.triangles.vertex_data.device_address =
-            bl_data_info.vertex_buffer.buffer->getDeviceAddress();
-        as_geometry->geometry.triangles.max_vertex = 3;
-        as_geometry->geometry.triangles.vertex_stride = sizeof(glm::vec3);
-        as_geometry->geometry.triangles.index_type = er::IndexType::UINT32;
-        as_geometry->geometry.triangles.index_data.device_address =
-            bl_data_info.index_buffer.buffer->getDeviceAddress();
-        as_geometry->geometry.triangles.transform_data.device_address =
-            bl_data_info.transform_buffer.buffer->getDeviceAddress();
-        as_geometry->max_primitive_count = 1;
-
-        as_build_geometry_info.geometries.push_back(as_geometry);
-    }
-*/
 
     as_build_geometry_info.geometries = bl_data_info.game_object->rt_geometries_;
 
@@ -105,10 +83,10 @@ void initBottomLevelDataInfo(
     as_build_geometry_info.scratch_data.device_address =
         bl_data_info.scratch_buffer.buffer->getDeviceAddress();
 
-    uint32_t num_triangles = 1;
-    std::vector<er::AccelerationStructureBuildRangeInfo> as_build_range_infos(1);
-    for (auto i = 0; i < 1; i++) {
-        as_build_range_infos[i].primitive_count = num_triangles;
+    std::vector<er::AccelerationStructureBuildRangeInfo> as_build_range_infos(num_geometries);
+    for (auto i = 0; i < num_geometries; i++) {
+        auto& geometry = bl_data_info.game_object->rt_geometries_[i];
+        as_build_range_infos[i].primitive_count = geometry->max_primitive_count;
         as_build_range_infos[i].primitive_offset = 0;
         as_build_range_infos[i].first_vertex = 0;
         as_build_range_infos[i].transform_offset = i * sizeof(glm::mat3x4);

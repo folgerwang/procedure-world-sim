@@ -138,10 +138,10 @@
     <ClCompile Include="src\engine\game_object\camera.cpp">
       <Filter>Source Files\engine\game_object</Filter>
     </ClCompile>
-    <ClCompile Include="src\raytracing_callable.incl">
+    <ClCompile Include="src\raytracing_callable.hpp">
       <Filter>Source Files\engine\ray_tracing</Filter>
     </ClCompile>
-    <ClCompile Include="src\raytracing_shadow.incl">
+    <ClCompile Include="src\raytracing_shadow.hpp">
       <Filter>Source Files\engine\ray_tracing</Filter>
     </ClCompile>
   </ItemGroup>

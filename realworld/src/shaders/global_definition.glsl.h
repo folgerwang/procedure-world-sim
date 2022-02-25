@@ -543,9 +543,9 @@ struct GameCameraInfo {
 };
 
 struct VertexBufferInfo {
-    uint            position_offset;
+    uint            position_base;
     uint            position_stride;
-    uint            index_offset;
+    uint            index_base;
     uint            index_bits;
 };
 

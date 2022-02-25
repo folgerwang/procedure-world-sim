@@ -677,7 +677,7 @@ static renderer::AccelerationStructureGeometryList setupRaytracing(
                     dst_prim.vertex_stride = prim.binding_descs_[i].stride;
                     assert((attr.buffer_offset % sizeof(float)) == 0);
                     dst_prim.vertex_data.device_address = vertex_device_address + attr.buffer_offset;
-                    info_list[geometry_idx].position_offset = attr.buffer_offset / sizeof(float);
+                    info_list[geometry_idx].position_base = attr.buffer_offset / sizeof(float);
                     info_list[geometry_idx].position_stride = prim.binding_descs_[i].stride / sizeof(float);
                     dst_prim.max_vertex = static_cast<uint32_t>(vertex_buffer_view.range / prim.binding_descs_[i].stride);
                     has_position = true;
@@ -687,11 +687,11 @@ static renderer::AccelerationStructureGeometryList setupRaytracing(
 
             auto& index_buffer_view = gltf_object->buffer_views_[prim.index_desc_.buffer_view];
             auto index_device_address = gltf_object->buffers_[index_buffer_view.buffer_idx].buffer->getDeviceAddress();
+            auto index_offset = prim.index_desc_.offset + index_buffer_view.offset;
             dst_prim.index_type = prim.index_desc_.index_type;
-            dst_prim.index_data.device_address =
-                index_device_address + prim.index_desc_.offset + index_buffer_view.offset;
+            dst_prim.index_data.device_address = index_device_address + index_offset;
             as_geometry->max_primitive_count = static_cast<uint32_t>(prim.index_desc_.index_count) / 3;
-            info_list[geometry_idx].index_offset = (prim.index_desc_.offset + index_buffer_view.offset) / sizeof(uint16_t);
+            info_list[geometry_idx].index_base = index_offset / sizeof(uint16_t);
 
             as_geometry->geometry.triangles.transform_data.device_address =
                 matrix_device_address + geometry_idx * sizeof(glm::mat3x4);

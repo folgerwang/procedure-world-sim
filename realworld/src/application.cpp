@@ -1406,8 +1406,8 @@ void RealWorldApplication::drawScene(
 #define ENABLE_RAYTRACING_SHADOW
 //#define ENABLE_RAYTRACING_CALLABLE
 
-#include "raytracing_callable.incl"
-#include "raytracing_shadow.incl"
+#include "raytracing_callable.hpp"
+#include "raytracing_shadow.hpp"
 
 void RealWorldApplication::drawFrame() {
     std::vector<std::shared_ptr<er::Fence>> in_flight_fences(1);
