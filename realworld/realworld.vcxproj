@@ -178,6 +178,12 @@
     <ClCompile Include="src\engine\scene_rendering\volume_noise.cpp" />
     <ClCompile Include="src\engine\scene_rendering\weather_system.cpp" />
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\raytracing_callable.incl">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="src\raytracing_shadow.incl">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="src\third_party\imgui\backends\imgui_impl_glfw.cpp" />
     <ClCompile Include="src\third_party\imgui\backends\imgui_impl_vulkan.cpp" />
     <ClCompile Include="src\third_party\imgui\imgui.cpp" />

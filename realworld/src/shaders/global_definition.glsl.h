@@ -542,6 +542,13 @@ struct GameCameraInfo {
     float           pad;
 };
 
+struct VertexBufferInfo {
+    uint            position_offset;
+    uint            position_stride;
+    uint            index_offset;
+    uint            index_bits;
+};
+
 #ifdef __cplusplus
 } //namespace glsl
 #endif

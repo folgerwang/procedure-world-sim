@@ -1403,8 +1403,11 @@ void RealWorldApplication::drawScene(
 
     s_dbuf_idx = 1 - s_dbuf_idx;
 }
+#define ENABLE_RAYTRACING_SHADOW
+//#define ENABLE_RAYTRACING_CALLABLE
 
-#include "raytracing_shadow.cpp"
+#include "raytracing_callable.incl"
+#include "raytracing_shadow.incl"
 
 void RealWorldApplication::drawFrame() {
     std::vector<std::shared_ptr<er::Fence>> in_flight_fences(1);

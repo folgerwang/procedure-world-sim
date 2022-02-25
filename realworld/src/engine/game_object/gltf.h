@@ -39,7 +39,6 @@ struct PrimitiveInfo {
 private:
     size_t hash_ = 0;
 public:
-    std::vector<uint32_t>   binding_list_;
     int32_t                 material_idx_;
     int32_t                 indirect_draw_cmd_ofs_;
     PrimitiveHashTag        tag_;
@@ -135,6 +134,10 @@ struct ObjectData {
 
     std::vector<renderer::TextureInfo>    textures_;
     std::vector<MaterialInfo>   materials_;
+
+    renderer::AccelerationStructureGeometryList rt_geometries_;
+    renderer::BufferInfo        rt_geometry_matrix_buffer_;
+    renderer::BufferInfo        rt_geometry_info_buffer_;
 
     uint32_t                    num_prims_ = 0;
     renderer::BufferInfo        indirect_draw_cmd_;

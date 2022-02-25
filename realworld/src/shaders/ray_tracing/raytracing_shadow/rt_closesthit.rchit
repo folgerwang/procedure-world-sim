@@ -1,6 +1,9 @@
 #version 460
+#include "..\..\global_definition.glsl.h"
+
 #extension GL_EXT_ray_tracing : require
 #extension GL_EXT_nonuniform_qualifier : enable
+#extension GL_EXT_shader_16bit_storage : enable
 
 layout(location = 0) rayPayloadInEXT vec3 hitValue;
 layout(location = 2) rayPayloadEXT bool shadowed;
@@ -14,8 +17,10 @@ layout(binding = 2, set = 0) uniform UBO
 	vec4 lightPos;
 	int vertexSize;
 } ubo;
-layout(binding = 3, set = 0) buffer Vertices { vec4 v[]; } vertices;
-layout(binding = 4, set = 0) buffer Indices { uint i[]; } indices;
+
+layout(binding = 3, set = 0) buffer Vertices { float v[]; } vertices;
+layout(binding = 4, set = 0) buffer Indices { uint16_t i[]; } indices;
+layout(binding = 5, set = 0) buffer Geometries { VertexBufferInfo info[]; } geometries;
 
 struct Vertex
 {
@@ -33,21 +38,24 @@ Vertex unpack(uint index)
 	// The multiplier is the size of the vertex divided by four float components (=16 bytes)
 	const int m = ubo.vertexSize / 16;
 
-	vec4 d0 = vertices.v[m * index + 0];
-	vec4 d1 = vertices.v[m * index + 1];
-	vec4 d2 = vertices.v[m * index + 2];
+	float d0 = vertices.v[index + 0];
+	float d1 = vertices.v[index + 1];
+	float d2 = vertices.v[index + 2];
 
 	Vertex v;
-	v.pos = d0.xyz;
-	v.normal = vec3(d0.w, d1.x, d1.y);
-	v.color = vec4(d2.x, d2.y, d2.z, 1.0);
+	v.pos = vec3(d0, d1, d2);//d0.xyz;
+	v.normal = vec3(0, 0, 0);//vec3(d0.w, d1.x, d1.y);
+	v.color = vec4(0.5, 0.5, 0.5, 1.0);//vec4(d2.x, d2.y, d2.z, 1.0);
 
 	return v;
 }
 
 void main()
 {
-	ivec3 index = ivec3(indices.i[3 * gl_PrimitiveID], indices.i[3 * gl_PrimitiveID + 1], indices.i[3 * gl_PrimitiveID + 2]);
+	VertexBufferInfo geom_info = geometries.info[gl_GeometryIndexEXT];
+	uint base_idx = geom_info.index_offset + 3 * gl_PrimitiveID;
+
+	ivec3 index = ivec3(indices.i[base_idx], indices.i[base_idx + 1], indices.i[base_idx + 2]) + ivec3(geom_info.position_offset);
 
 	Vertex v0 = unpack(index.x);
 	Vertex v1 = unpack(index.y);
@@ -72,4 +80,6 @@ void main()
 	if (shadowed) {
 		hitValue *= 0.3;
 	}
+
+	hitValue = vec3(1, 0, 0);
 }

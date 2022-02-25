@@ -98,9 +98,12 @@ static void setupMeshState(
             renderer::Helper::createBuffer(
                 device_info,
                 SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
-                SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT),
+                SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT) |
+                SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT) |
+                SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT) |
+                SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
                 SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
-                0,
+                SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
                 gltf_object->buffers_[i].buffer,
                 gltf_object->buffers_[i].memory,
                 buffer.data.size(),
@@ -268,9 +271,7 @@ static void setupMesh(
             assert(it->second >= 0);
             const tinygltf::Accessor& accessor = model.accessors[it->second];
 
-            dst_binding = static_cast<uint32_t>(primitive_info.binding_list_.size());
             assert(dst_binding < VINPUT_INSTANCE_BINDING_START);
-            primitive_info.binding_list_.push_back(accessor.bufferView);
 
             engine::renderer::VertexInputBindingDescription binding = {};
             binding.binding = dst_binding;
@@ -365,7 +366,7 @@ static void setupMesh(
         }
 
         const auto& indexAccessor = model.accessors[primitive.indices];
-        primitive_info.index_desc_.binding = indexAccessor.bufferView;
+        primitive_info.index_desc_.buffer_view = indexAccessor.bufferView;
         primitive_info.index_desc_.offset = indexAccessor.byteOffset;
         primitive_info.index_desc_.index_type = 
             indexAccessor.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ? 
@@ -616,6 +617,105 @@ static void setupModel(
     }
 }
 
+static renderer::AccelerationStructureGeometryList setupRaytracing(
+    const renderer::DeviceInfo& device_info,
+    std::shared_ptr<ego::ObjectData>& gltf_object) {
+
+    uint32_t num_geometries = 0;
+    for (auto& mesh : gltf_object->meshes_)
+        num_geometries += static_cast<uint32_t>(mesh.primitives_.size());
+
+    // Transform buffer
+    renderer::Helper::createBuffer(
+        device_info,
+        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT) |
+        SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
+        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
+        gltf_object->rt_geometry_matrix_buffer_.buffer,
+        gltf_object->rt_geometry_matrix_buffer_.memory,
+        sizeof(glm::mat3x4) * num_geometries);
+
+    auto matrix_device_address =
+        gltf_object->rt_geometry_matrix_buffer_.buffer->getDeviceAddress();
+
+    // Transform buffer
+    renderer::Helper::createBuffer(
+        device_info,
+        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT) |
+        SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
+        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
+        gltf_object->rt_geometry_info_buffer_.buffer,
+        gltf_object->rt_geometry_info_buffer_.memory,
+        sizeof(glsl::VertexBufferInfo) * num_geometries);
+
+    std::vector<glm::mat3x4> matrix_list(num_geometries);
+    std::vector<glsl::VertexBufferInfo> info_list(num_geometries);
+    renderer::AccelerationStructureGeometryList rt_meshes;
+    for (auto& mesh : gltf_object->meshes_) {
+        for (auto& prim : mesh.primitives_) {
+            uint32_t geometry_idx = static_cast<uint32_t>(rt_meshes.size());
+            auto as_geometry = std::make_shared<renderer::AccelerationStructureGeometry>();
+            as_geometry->flags = SET_FLAG_BIT(Geometry, OPAQUE_BIT_KHR);
+            assert(prim.tag_.topology == static_cast<uint32_t>(renderer::PrimitiveTopology::TRIANGLE_LIST));
+            as_geometry->geometry_type = renderer::GeometryType::TRIANGLES_KHR;
+            auto& dst_prim = as_geometry->geometry.triangles;
+            dst_prim.struct_type =
+                renderer::StructureType::ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+            bool has_position = false;
+            for (int i = 0; i < prim.attribute_descs_.size(); i++) {
+                auto& attr = prim.attribute_descs_[i];
+                auto& vertex_buffer_view =
+                    gltf_object->buffer_views_[attr.buffer_view];
+                auto vertex_device_address =
+                    gltf_object->buffers_[vertex_buffer_view.buffer_idx].buffer->getDeviceAddress();
+                if (attr.location == VINPUT_POSITION) {
+                    dst_prim.vertex_format = attr.format;
+                    dst_prim.vertex_stride = prim.binding_descs_[i].stride;
+                    assert((attr.buffer_offset % sizeof(float)) == 0);
+                    dst_prim.vertex_data.device_address = vertex_device_address + attr.buffer_offset;
+                    info_list[geometry_idx].position_offset = attr.buffer_offset / sizeof(float);
+                    info_list[geometry_idx].position_stride = prim.binding_descs_[i].stride / sizeof(float);
+                    dst_prim.max_vertex = static_cast<uint32_t>(vertex_buffer_view.range / prim.binding_descs_[i].stride);
+                    has_position = true;
+                }
+            }
+            assert(has_position);
+
+            auto& index_buffer_view = gltf_object->buffer_views_[prim.index_desc_.buffer_view];
+            auto index_device_address = gltf_object->buffers_[index_buffer_view.buffer_idx].buffer->getDeviceAddress();
+            dst_prim.index_type = prim.index_desc_.index_type;
+            dst_prim.index_data.device_address =
+                index_device_address + prim.index_desc_.offset + index_buffer_view.offset;
+            as_geometry->max_primitive_count = static_cast<uint32_t>(prim.index_desc_.index_count) / 3;
+            info_list[geometry_idx].index_offset = (prim.index_desc_.offset + index_buffer_view.offset) / sizeof(uint16_t);
+
+            as_geometry->geometry.triangles.transform_data.device_address =
+                matrix_device_address + geometry_idx * sizeof(glm::mat3x4);
+
+            matrix_list[geometry_idx] = glm::mat3x4(1.0f);
+
+            rt_meshes.push_back(as_geometry);
+            geometry_idx++;
+        }
+    }
+
+    device_info.device->updateBufferMemory(
+        gltf_object->rt_geometry_matrix_buffer_.memory,
+        sizeof(glm::mat3x4) * num_geometries,
+        matrix_list.data());
+
+    device_info.device->updateBufferMemory(
+        gltf_object->rt_geometry_info_buffer_.memory,
+        sizeof(glsl::VertexBufferInfo) * num_geometries,
+        info_list.data());
+
+    return rt_meshes;
+}
+
 static renderer::WriteDescriptorList addGltfTextures(
     const std::shared_ptr<ego::ObjectData>& gltf_object,
     const ego::MaterialInfo& material,
@@ -760,7 +860,7 @@ static void drawMesh(
             offsets[i_attrib] = attrib_list[i_attrib].buffer_offset;
         }
         cmd_buf->bindVertexBuffers(0, buffers, offsets);
-        const auto& index_buffer_view = gltf_object->buffer_views_[prim.index_desc_.binding];
+        const auto& index_buffer_view = gltf_object->buffer_views_[prim.index_desc_.buffer_view];
         cmd_buf->bindIndexBuffer(gltf_object->buffers_[index_buffer_view.buffer_idx].buffer,
             prim.index_desc_.offset + index_buffer_view.offset,
             prim.index_desc_.index_type);
@@ -1919,6 +2019,9 @@ std::shared_ptr<ego::ObjectData> GltfObject::loadGltfModel(
             calculateBbox(gltf_object, scene.nodes_[0], glm::mat4(1.0f), scene.bbox_min_, scene.bbox_max_);
         }
     }
+
+    gltf_object->rt_geometries_ = 
+        setupRaytracing(device_info, gltf_object);
 
     // init indirect draw buffer.
     uint32_t num_prims = 0;

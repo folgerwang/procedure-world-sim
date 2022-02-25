@@ -128,7 +128,7 @@ struct VertexInputAttributeDescription {
 };
 
 struct IndexInputBindingDescription {
-    uint32_t            binding;
+    uint32_t            buffer_view;
     uint64_t            offset;
     uint64_t            index_count;
     IndexType           index_type;
@@ -517,5 +517,6 @@ typedef std::vector<std::shared_ptr<DescriptorSet>> DescriptorSetList;
 typedef std::vector<std::shared_ptr<ShaderModule>> ShaderModuleList;
 typedef std::vector<renderer::RayTracingShaderGroupCreateInfo> RtShaderGroupCreateInfoList;
 typedef std::vector<std::shared_ptr<WriteDescriptor>> WriteDescriptorList;
+typedef std::vector<std::shared_ptr<AccelerationStructureGeometry>> AccelerationStructureGeometryList;
 } // namespace renderer
 } // namespace engine
