@@ -3,9 +3,10 @@
 struct BottomlevelDataInfo {
     er::BufferInfo   vertex_buffer{};
     er::BufferInfo   index_buffer{};
-    er::BufferInfo   transform_buffer{};
     er::BufferInfo   as_buffer{};
     er::BufferInfo   scratch_buffer{};
+    er::BufferInfo   rt_geometry_matrix_buffer{};
+    er::BufferInfo   rt_geometry_info_buffer{};
 
     er::AccelerationStructure   as_handle{};
     er::DeviceAddress   as_device_address = 0;
@@ -17,15 +18,18 @@ void initBottomLevelDataInfo(
     const er::DeviceInfo& device_info,
     BottomlevelDataInfo& bl_data_info) {
 
-    auto num_geometries = bl_data_info.game_object->rt_geometries_.size();
-
-    std::vector<glm::mat3x4> transform_matrices(num_geometries);
-    for (uint32_t i = 0; i < num_geometries; i++) {
-        transform_matrices[i] = {
-            1.0f, 0.0f, 0.0f, 0.0f,
-            0.0f, 1.0f, 0.0f, 0.0f,
-            0.0f, 0.0f, 1.0f, 0.0f
-        };
+    er::AccelerationStructureGeometryList rt_geometries;
+    std::vector<glm::mat3x4> transform_matrices;
+    for (auto i_node = 0; i_node < bl_data_info.game_object->nodes_.size(); i_node++) {
+        auto& node = bl_data_info.game_object->nodes_[i_node];
+        if (node.mesh_idx_ != -1) {
+            auto& mesh = bl_data_info.game_object->meshes_[node.mesh_idx_];
+            for (auto i = 0; i < mesh.primitives_.size(); i++) {
+                auto matrix = glm::mat3x4(glm::transpose(node.cached_matrix_));
+                transform_matrices.push_back(matrix);
+                rt_geometries.push_back(mesh.primitives_[i].as_geometry);
+            }
+        }
     }
 
     // Transform buffer
@@ -36,17 +40,34 @@ void initBottomLevelDataInfo(
         SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
         SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
         SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
-        bl_data_info.transform_buffer.buffer,
-        bl_data_info.transform_buffer.memory,
-        sizeof(glm::mat3x4) * 1,
-        &transform_matrices[0]);
+        bl_data_info.rt_geometry_matrix_buffer.buffer,
+        bl_data_info.rt_geometry_matrix_buffer.memory,
+        transform_matrices.size() * sizeof(glm::mat3x4),
+        transform_matrices.data());
+
+    auto matrix_device_address =
+        bl_data_info.rt_geometry_matrix_buffer.buffer->getDeviceAddress();
+
+    auto num_geoms = 0;
+    for (auto i_node = 0; i_node < bl_data_info.game_object->nodes_.size(); i_node++) {
+        auto& node = bl_data_info.game_object->nodes_[i_node];
+        if (node.mesh_idx_ != -1) {
+            auto& mesh = bl_data_info.game_object->meshes_[node.mesh_idx_];
+            for (auto i = 0; i < mesh.primitives_.size(); i++) {
+                rt_geometries[num_geoms]->geometry.triangles.transform_data.device_address =
+                    matrix_device_address;
+                num_geoms++;
+            }
+        }
+    }
+
 
     // Get size info
     er::AccelerationStructureBuildGeometryInfo as_build_geometry_info{};
     as_build_geometry_info.type = er::AccelerationStructureType::BOTTOM_LEVEL_KHR;
     as_build_geometry_info.flags = SET_FLAG_BIT(BuildAccelerationStructure, PREFER_FAST_TRACE_BIT_KHR);
 
-    as_build_geometry_info.geometries = bl_data_info.game_object->rt_geometries_;
+    as_build_geometry_info.geometries = rt_geometries;
 
     er::AccelerationStructureBuildSizesInfo as_build_size_info{};
     as_build_size_info.struct_type = er::StructureType::ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
@@ -83,9 +104,9 @@ void initBottomLevelDataInfo(
     as_build_geometry_info.scratch_data.device_address =
         bl_data_info.scratch_buffer.buffer->getDeviceAddress();
 
-    std::vector<er::AccelerationStructureBuildRangeInfo> as_build_range_infos(num_geometries);
-    for (auto i = 0; i < num_geometries; i++) {
-        auto& geometry = bl_data_info.game_object->rt_geometries_[i];
+    std::vector<er::AccelerationStructureBuildRangeInfo> as_build_range_infos(num_geoms);
+    for (auto i = 0; i < num_geoms; i++) {
+        auto& geometry = rt_geometries[i];
         as_build_range_infos[i].primitive_count = geometry->max_primitive_count;
         as_build_range_infos[i].primitive_offset = 0;
         as_build_range_infos[i].first_vertex = 0;
@@ -255,6 +276,7 @@ struct RayTracingRenderingInfo {
 struct UniformData {
     glm::mat4 view_inverse;
     glm::mat4 proj_inverse;
+    vec4      light_pos;
 };
 
 uint32_t alignedSize(uint32_t size, uint32_t alignment) {
@@ -506,8 +528,8 @@ void createDescriptorSets(
         rt_render_info.rt_desc_set,
         er::DescriptorType::STORAGE_BUFFER,
         5,
-        bl_data_info.game_object->rt_geometry_info_buffer_.buffer,
-        bl_data_info.game_object->rt_geometry_info_buffer_.buffer->getSize());
+        bl_data_info.rt_geometry_info_buffer.buffer,
+        bl_data_info.rt_geometry_info_buffer.buffer->getSize());
 
     device->updateDescriptorSets(descriptor_writes);
 }
@@ -530,6 +552,45 @@ er::TextureInfo testRayTracing(
             ego::GltfObject::loadGltfModel(
                 device_info,
                 "assets/vulkanscene_shadow.gltf");
+
+        std::vector<glsl::VertexBufferInfo> geom_info_list;
+        for (auto i_node = 0; i_node < s_bl_data_info.game_object->nodes_.size(); i_node++) {
+            auto& node = s_bl_data_info.game_object->nodes_[i_node];
+            if (node.mesh_idx_ != -1) {
+                auto& mesh = s_bl_data_info.game_object->meshes_[node.mesh_idx_];
+                for (auto i = 0; i < mesh.primitives_.size(); i++) {
+                    auto& src_geom = mesh.primitives_[i].as_geometry;
+                    glsl::VertexBufferInfo dst_geom;
+                    dst_geom.matrix = glm::mat3x4(glm::transpose(node.cached_matrix_));
+                    dst_geom.position_base = src_geom->position.base;
+                    dst_geom.position_stride = src_geom->position.stride;
+                    dst_geom.normal_base = src_geom->normal.base;
+                    dst_geom.normal_stride = src_geom->normal.stride;
+                    dst_geom.uv_base = src_geom->uv.base;
+                    dst_geom.uv_stride = src_geom->uv.stride;
+                    dst_geom.color_base = src_geom->color.base;
+                    dst_geom.color_stride = src_geom->color.stride;
+                    dst_geom.tangent_base = src_geom->tangent.base;
+                    dst_geom.tangent_stride = src_geom->tangent.stride;
+                    dst_geom.index_base = src_geom->index_base;
+                    dst_geom.index_bytes = src_geom->index_by_bytes;
+                    geom_info_list.push_back(dst_geom);
+                }
+            }
+        }
+
+        // Transform buffer
+        er::Helper::createBuffer(
+            device_info,
+            SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT) |
+            SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
+            SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+            SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
+            SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
+            s_bl_data_info.rt_geometry_info_buffer.buffer,
+            s_bl_data_info.rt_geometry_info_buffer.memory,
+            sizeof(glsl::VertexBufferInfo) * geom_info_list.size(),
+            geom_info_list.data());
 
         initBottomLevelDataInfo(
             device_info,
@@ -560,10 +621,11 @@ er::TextureInfo testRayTracing(
     }
 
     auto view = view_params.view;
-    view[3] = glm::vec4(0, 0, -10, 1);
+    view[3] = glm::vec4(0, 0, -20, 1);
     UniformData uniform_data;
     uniform_data.proj_inverse = glm::inverse(view_params.proj);
     uniform_data.view_inverse = glm::inverse(view);
+    uniform_data.light_pos = vec4(0, 1, 0, 0);
 
     device_info.device->updateBufferMemory(
         s_rt_render_info.ubo.memory,

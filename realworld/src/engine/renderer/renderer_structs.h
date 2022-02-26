@@ -425,11 +425,23 @@ union AccelerationStructureGeometryData {
     AccelerationStructureGeometryInstancesData    instances;
 };
 
+struct VertexInput {
+    uint32_t            base = -1;
+    uint32_t            stride = 0;
+};
+
 struct AccelerationStructureGeometry {
     GeometryType                         geometry_type;
     AccelerationStructureGeometryData    geometry;
     GeometryFlags                        flags;
     uint32_t                             max_primitive_count = 0;
+    VertexInput                          position;
+    VertexInput                          normal;
+    VertexInput                          uv;
+    VertexInput                          color;
+    VertexInput                          tangent;
+    uint32_t                             index_base = -1;
+    uint32_t                             index_by_bytes = 16;
 };
 
 struct AccelerationStructureBuildGeometryInfo {

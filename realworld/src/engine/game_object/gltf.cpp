@@ -617,52 +617,17 @@ static void setupModel(
     }
 }
 
-static renderer::AccelerationStructureGeometryList setupRaytracing(
+static void setupRaytracing(
     const renderer::DeviceInfo& device_info,
     std::shared_ptr<ego::ObjectData>& gltf_object) {
 
-    uint32_t num_geometries = 0;
-    for (auto& mesh : gltf_object->meshes_)
-        num_geometries += static_cast<uint32_t>(mesh.primitives_.size());
-
-    // Transform buffer
-    renderer::Helper::createBuffer(
-        device_info,
-        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT) |
-        SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
-        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
-        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
-        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
-        gltf_object->rt_geometry_matrix_buffer_.buffer,
-        gltf_object->rt_geometry_matrix_buffer_.memory,
-        sizeof(glm::mat3x4) * num_geometries);
-
-    auto matrix_device_address =
-        gltf_object->rt_geometry_matrix_buffer_.buffer->getDeviceAddress();
-
-    // Transform buffer
-    renderer::Helper::createBuffer(
-        device_info,
-        SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT) |
-        SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
-        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
-        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
-        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
-        gltf_object->rt_geometry_info_buffer_.buffer,
-        gltf_object->rt_geometry_info_buffer_.memory,
-        sizeof(glsl::VertexBufferInfo) * num_geometries);
-
-    std::vector<glm::mat3x4> matrix_list(num_geometries);
-    std::vector<glsl::VertexBufferInfo> info_list(num_geometries);
-    renderer::AccelerationStructureGeometryList rt_meshes;
     for (auto& mesh : gltf_object->meshes_) {
         for (auto& prim : mesh.primitives_) {
-            uint32_t geometry_idx = static_cast<uint32_t>(rt_meshes.size());
-            auto as_geometry = std::make_shared<renderer::AccelerationStructureGeometry>();
-            as_geometry->flags = SET_FLAG_BIT(Geometry, OPAQUE_BIT_KHR);
+            prim.as_geometry = std::make_shared<renderer::AccelerationStructureGeometry>();
+            prim.as_geometry->flags = SET_FLAG_BIT(Geometry, OPAQUE_BIT_KHR);
             assert(prim.tag_.topology == static_cast<uint32_t>(renderer::PrimitiveTopology::TRIANGLE_LIST));
-            as_geometry->geometry_type = renderer::GeometryType::TRIANGLES_KHR;
-            auto& dst_prim = as_geometry->geometry.triangles;
+            prim.as_geometry->geometry_type = renderer::GeometryType::TRIANGLES_KHR;
+            auto& dst_prim = prim.as_geometry->geometry.triangles;
             dst_prim.struct_type =
                 renderer::StructureType::ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
             bool has_position = false;
@@ -677,10 +642,25 @@ static renderer::AccelerationStructureGeometryList setupRaytracing(
                     dst_prim.vertex_stride = prim.binding_descs_[i].stride;
                     assert((attr.buffer_offset % sizeof(float)) == 0);
                     dst_prim.vertex_data.device_address = vertex_device_address + attr.buffer_offset;
-                    info_list[geometry_idx].position_base = attr.buffer_offset / sizeof(float);
-                    info_list[geometry_idx].position_stride = prim.binding_descs_[i].stride / sizeof(float);
+                    prim.as_geometry->position.base = static_cast<uint32_t>(attr.buffer_offset / sizeof(float));
+                    prim.as_geometry->position.stride = prim.binding_descs_[i].stride / sizeof(float);
                     dst_prim.max_vertex = static_cast<uint32_t>(vertex_buffer_view.range / prim.binding_descs_[i].stride);
                     has_position = true;
+                }
+                else if (attr.location == VINPUT_NORMAL) {
+                    assert((attr.buffer_offset % sizeof(float)) == 0);
+                    prim.as_geometry->normal.base = static_cast<uint32_t>(attr.buffer_offset / sizeof(float));
+                    prim.as_geometry->normal.stride = prim.binding_descs_[i].stride / sizeof(float);
+                }
+                else if (attr.location == VINPUT_TEXCOORD0) {
+                    assert((attr.buffer_offset % sizeof(float)) == 0);
+                    prim.as_geometry->uv.base = static_cast<uint32_t>(attr.buffer_offset / sizeof(float));
+                    prim.as_geometry->uv.stride = prim.binding_descs_[i].stride / sizeof(float);
+                }
+                else if (attr.location == VINPUT_COLOR) {
+                    assert((attr.buffer_offset % sizeof(float)) == 0);
+                    prim.as_geometry->color.base = static_cast<uint32_t>(attr.buffer_offset / sizeof(float));
+                    prim.as_geometry->color.stride = prim.binding_descs_[i].stride / sizeof(float);
                 }
             }
             assert(has_position);
@@ -690,30 +670,11 @@ static renderer::AccelerationStructureGeometryList setupRaytracing(
             auto index_offset = prim.index_desc_.offset + index_buffer_view.offset;
             dst_prim.index_type = prim.index_desc_.index_type;
             dst_prim.index_data.device_address = index_device_address + index_offset;
-            as_geometry->max_primitive_count = static_cast<uint32_t>(prim.index_desc_.index_count) / 3;
-            info_list[geometry_idx].index_base = index_offset / sizeof(uint16_t);
-
-            as_geometry->geometry.triangles.transform_data.device_address =
-                matrix_device_address + geometry_idx * sizeof(glm::mat3x4);
-
-            matrix_list[geometry_idx] = glm::mat3x4(1.0f);
-
-            rt_meshes.push_back(as_geometry);
-            geometry_idx++;
+            prim.as_geometry->max_primitive_count = static_cast<uint32_t>(prim.index_desc_.index_count) / 3;
+            prim.as_geometry->index_base = static_cast<uint32_t>(index_offset / sizeof(uint16_t));
+            prim.as_geometry->index_by_bytes = 2;
         }
     }
-
-    device_info.device->updateBufferMemory(
-        gltf_object->rt_geometry_matrix_buffer_.memory,
-        sizeof(glm::mat3x4) * num_geometries,
-        matrix_list.data());
-
-    device_info.device->updateBufferMemory(
-        gltf_object->rt_geometry_info_buffer_.memory,
-        sizeof(glsl::VertexBufferInfo) * num_geometries,
-        info_list.data());
-
-    return rt_meshes;
 }
 
 static renderer::WriteDescriptorList addGltfTextures(
@@ -2020,8 +1981,9 @@ std::shared_ptr<ego::ObjectData> GltfObject::loadGltfModel(
         }
     }
 
-    gltf_object->rt_geometries_ = 
-        setupRaytracing(device_info, gltf_object);
+    gltf_object->update(device_info, 0, 0.0f);
+
+    setupRaytracing(device_info, gltf_object);
 
     // init indirect draw buffer.
     uint32_t num_prims = 0;

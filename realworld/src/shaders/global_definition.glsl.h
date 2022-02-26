@@ -543,10 +543,19 @@ struct GameCameraInfo {
 };
 
 struct VertexBufferInfo {
+    mat3x4          matrix;
     uint            position_base;
     uint            position_stride;
+    uint            normal_base;
+    uint            normal_stride;
+    uint            uv_base;
+    uint            uv_stride;
+    uint            color_base;
+    uint            color_stride;
+    uint            tangent_base;
+    uint            tangent_stride;
     uint            index_base;
-    uint            index_bits;
+    uint            index_bytes;
 };
 
 #ifdef __cplusplus

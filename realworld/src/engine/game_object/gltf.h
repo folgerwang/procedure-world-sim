@@ -44,6 +44,8 @@ public:
     PrimitiveHashTag        tag_;
     glm::vec3               bbox_min_ = glm::vec3(std::numeric_limits<float>::max());
     glm::vec3               bbox_max_ = glm::vec3(std::numeric_limits<float>::min());
+    std::shared_ptr<renderer::AccelerationStructureGeometry>  as_geometry;
+
     renderer::IndexInputBindingDescription  index_desc_;
     std::vector<renderer::VertexInputBindingDescription> binding_descs_;
     std::vector<renderer::VertexInputAttributeDescription> attribute_descs_;
@@ -134,10 +136,6 @@ struct ObjectData {
 
     std::vector<renderer::TextureInfo>    textures_;
     std::vector<MaterialInfo>   materials_;
-
-    renderer::AccelerationStructureGeometryList rt_geometries_;
-    renderer::BufferInfo        rt_geometry_matrix_buffer_;
-    renderer::BufferInfo        rt_geometry_info_buffer_;
 
     uint32_t                    num_prims_ = 0;
     renderer::BufferInfo        indirect_draw_cmd_;
