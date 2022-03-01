@@ -368,7 +368,7 @@ void createRayTracingPipeline(
             rt_render_info.rt_pipeline_layout,
             rt_render_info.shader_modules,
             rt_render_info.shader_groups,
-            5);
+            2);
 }
 
 void createShaderBindingTables(

@@ -3,9 +3,9 @@
 
 #extension GL_EXT_ray_tracing : require
 
-layout(location = kPayLoadHitValueIdx) rayPayloadInEXT vec3 hitValue;
+layout(location = kPayLoadHitValueIdx) rayPayloadInEXT vec3 hit_value;
 
 void main()
 {
-    hitValue = vec3(0.0, 0.0, 0.2);
+    hit_value = vec3(0.0, 0.0, 0.2);
 }

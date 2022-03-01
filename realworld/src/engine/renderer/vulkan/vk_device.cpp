@@ -497,7 +497,7 @@ std::shared_ptr<Pipeline> VulkanDevice::createPipeline(
     pipeline_info.pStages = shader_stages.data();
     pipeline_info.groupCount = static_cast<uint32_t>(shader_groups.size());
     pipeline_info.pGroups = shader_groups.data();
-    pipeline_info.maxPipelineRayRecursionDepth = 1;
+    pipeline_info.maxPipelineRayRecursionDepth = ray_recursion_depth;
     pipeline_info.layout = vk_rt_pipeline_layout->get();
 
     VkPipeline rt_pipeline;

@@ -184,7 +184,7 @@
 #define kNumGltfInstance                        1 // 4096
 
 #define kPayLoadHitValueIdx                     0
-#define kPayLoadShadowedIdx                     2
+#define kPayLoadShadowedIdx                     1
 
 #define GLFW_KEY_W                  87
 #define GLFW_KEY_S                  83

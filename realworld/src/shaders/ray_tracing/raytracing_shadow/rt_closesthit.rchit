@@ -6,7 +6,7 @@
 #extension GL_EXT_shader_16bit_storage : enable
 #extension GL_EXT_shader_explicit_arithmetic_types : enable
 
-layout(location = kPayLoadHitValueIdx) rayPayloadInEXT vec3 hitValue;
+layout(location = kPayLoadHitValueIdx) rayPayloadInEXT vec3 hit_value;
 layout(location = kPayLoadShadowedIdx) rayPayloadEXT bool shadowed;
 hitAttributeEXT vec2 attribs;
 
@@ -66,12 +66,14 @@ void main()
 
 	// Interpolate normal
 	const vec3 barycentricCoords = vec3(1.0f - attribs.x - attribs.y, attribs.x, attribs.y);
-	vec3 normal = normalize(v0.normal * barycentricCoords.x + v1.normal * barycentricCoords.y + v2.normal * barycentricCoords.z);
+	vec3 normal = normalize(v0.normal * barycentricCoords.x +
+							v1.normal * barycentricCoords.y +
+							v2.normal * barycentricCoords.z);
 
 	// Basic lighting
 	vec3 light_vector = normalize(ubo.light_pos.xyz);
 	float dot_product = max(dot(light_vector, normal), 0.2);
-	hitValue = v0.color.rgb * dot_product;
+	hit_value = v0.color.rgb * dot_product;
  
 	// Shadow casting
 	float t_min = 0.001;
@@ -84,6 +86,7 @@ void main()
 	uint sbt_record_stride = 0;
 	uint miss_index = 1;
 	vec3 hit_point = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
+
 	shadowed = true;  
 	// Trace shadow ray and offset indices to match shadow hit/miss shader group indices
 	traceRayEXT(
@@ -98,28 +101,29 @@ void main()
 		light_vector,
 		t_max,
 		kPayLoadShadowedIdx);
+
 	if (shadowed) {
-		hitValue *= 0.3;
+		hit_value *= 0.3;
 	}
 
 #ifdef DEBUG_GEOMETRY_IDX
 	if (gl_GeometryIndexEXT < 2) {
-		hitValue = vec3(1, 0, 0);
+		hit_value = vec3(1, 0, 0);
 	}
 	else if (gl_GeometryIndexEXT < 4) {
-		hitValue = vec3(0, 1, 0);
+		hit_value = vec3(0, 1, 0);
 	}
 	else if (gl_GeometryIndexEXT < 6) {
-		hitValue = vec3(0, 0, 1);
+		hit_value = vec3(0, 0, 1);
 	}
 	else if (gl_GeometryIndexEXT < 8) {
-		hitValue = vec3(1, 1, 0);
+		hit_value = vec3(1, 1, 0);
 	}
 	else if (gl_GeometryIndexEXT < 10) {
-		hitValue = vec3(1, 0, 1);
+		hit_value = vec3(1, 0, 1);
 	}
 	else if (gl_GeometryIndexEXT < 12) {
-		hitValue = vec3(0, 1, 1);
+		hit_value = vec3(0, 1, 1);
 	}
 #endif
 }

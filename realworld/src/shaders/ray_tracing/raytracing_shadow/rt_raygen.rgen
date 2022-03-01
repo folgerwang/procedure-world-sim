@@ -12,7 +12,7 @@ layout(binding = 2, set = 0) uniform CameraProperties
 	vec4 light_pos;
 } cam;
 
-layout(location = kPayLoadHitValueIdx) rayPayloadEXT vec3 hitValue;
+layout(location = kPayLoadHitValueIdx) rayPayloadEXT vec3 hit_value;
 
 void main() 
 {
@@ -42,5 +42,5 @@ void main()
 		tmax,
 		kPayLoadHitValueIdx);
 
-	imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(hitValue, 0.0));
+	imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(hit_value, 0.0));
 }
