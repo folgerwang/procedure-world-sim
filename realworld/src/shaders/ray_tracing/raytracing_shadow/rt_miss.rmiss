@@ -1,7 +1,9 @@
 #version 460
+#include "..\..\global_definition.glsl.h"
+
 #extension GL_EXT_ray_tracing : require
 
-layout(location = 0) rayPayloadInEXT vec3 hitValue;
+layout(location = kPayLoadHitValueIdx) rayPayloadInEXT vec3 hitValue;
 
 void main()
 {

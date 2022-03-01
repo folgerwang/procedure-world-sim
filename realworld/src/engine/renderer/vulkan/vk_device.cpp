@@ -16,6 +16,16 @@ VulkanDevice::VulkanDevice(
 {
 }
 
+VulkanDevice::~VulkanDevice()
+{
+    for (auto& buf : buffer_list_) {
+        destroyBuffer(buf);
+    }
+    buffer_list_.clear();
+
+    vkDestroyDevice(device_, nullptr);
+}
+
 std::shared_ptr<Buffer> VulkanDevice::createBuffer(uint64_t buf_size, BufferUsageFlags usage, bool sharing/* = false*/) {
     VkBufferCreateInfo buffer_info{};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -28,8 +38,9 @@ std::shared_ptr<Buffer> VulkanDevice::createBuffer(uint64_t buf_size, BufferUsag
         throw std::runtime_error("failed to create buffer!");
     }
 
-    auto result = std::make_shared<VulkanBuffer>();
-    result->set(buffer, static_cast<uint32_t>(buf_size));
+    auto result = std::make_shared<VulkanBuffer>(buffer, static_cast<uint32_t>(buf_size));
+
+    buffer_list_.push_back(result);
 
     return result;
 }
@@ -950,9 +961,13 @@ void VulkanDevice::destroyImage(std::shared_ptr<Image> image) {
 }
 
 void VulkanDevice::destroyBuffer(std::shared_ptr<Buffer> buffer) {
-    auto vk_buffer = RENDER_TYPE_CAST(Buffer, buffer);
-    if (vk_buffer) {
-        vkDestroyBuffer(device_, vk_buffer->get(), nullptr);
+    auto result = std::find(buffer_list_.begin(), buffer_list_.end(), buffer);
+    if (result != buffer_list_.end()) {
+        auto vk_buffer = RENDER_TYPE_CAST(Buffer, buffer);
+        if (vk_buffer) {
+            vkDestroyBuffer(device_, vk_buffer->get(), nullptr);
+        }
+        buffer_list_.erase(result);
     }
 }
 
@@ -985,7 +1000,6 @@ void VulkanDevice::destroyShaderModule(std::shared_ptr<ShaderModule> shader_modu
 }
 
 void VulkanDevice::destroy() {
-    vkDestroyDevice(device_, nullptr);
 }
 
 void VulkanDevice::freeMemory(std::shared_ptr<DeviceMemory> memory) {

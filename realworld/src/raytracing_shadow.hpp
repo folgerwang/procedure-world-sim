@@ -61,7 +61,6 @@ void initBottomLevelDataInfo(
         }
     }
 
-
     // Get size info
     er::AccelerationStructureBuildGeometryInfo as_build_geometry_info{};
     as_build_geometry_info.type = er::AccelerationStructureType::BOTTOM_LEVEL_KHR;
@@ -359,7 +358,8 @@ void createRayTracingPipeline(
     rt_render_info.shader_groups[kClosestHitIndex].type = er::RayTracingShaderGroupType::TRIANGLES_HIT_GROUP_KHR;
     rt_render_info.shader_groups[kClosestHitIndex].closest_hit_shader = kClosestHitIndex;
 
-    rt_render_info.rt_desc_set_layout = createRtDescriptorSetLayout(device);
+    rt_render_info.rt_desc_set_layout =
+        createRtDescriptorSetLayout(device);
     rt_render_info.rt_pipeline_layout =
         device->createPipelineLayout(
             { rt_render_info.rt_desc_set_layout }, { });
@@ -368,7 +368,7 @@ void createRayTracingPipeline(
             rt_render_info.rt_pipeline_layout,
             rt_render_info.shader_modules,
             rt_render_info.shader_groups,
-            2);
+            5);
 }
 
 void createShaderBindingTables(
@@ -583,7 +583,8 @@ er::TextureInfo testRayTracing(
         er::Helper::createBuffer(
             device_info,
             SET_FLAG_BIT(BufferUsage, SHADER_DEVICE_ADDRESS_BIT) |
-            SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR),
+            SET_FLAG_BIT(BufferUsage, ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR) |
+            SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
             SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
             SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
             SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
@@ -625,7 +626,7 @@ er::TextureInfo testRayTracing(
     UniformData uniform_data;
     uniform_data.proj_inverse = glm::inverse(view_params.proj);
     uniform_data.view_inverse = glm::inverse(view);
-    uniform_data.light_pos = vec4(0, 1, 0, 0);
+    uniform_data.light_pos = vec4(0.5, 1, 0, 0);
 
     device_info.device->updateBufferMemory(
         s_rt_render_info.ubo.memory,

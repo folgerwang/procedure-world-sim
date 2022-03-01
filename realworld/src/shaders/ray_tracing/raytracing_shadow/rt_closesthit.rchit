@@ -6,16 +6,15 @@
 #extension GL_EXT_shader_16bit_storage : enable
 #extension GL_EXT_shader_explicit_arithmetic_types : enable
 
-layout(location = 0) rayPayloadInEXT vec3 hitValue;
-layout(location = 2) rayPayloadEXT bool shadowed;
+layout(location = kPayLoadHitValueIdx) rayPayloadInEXT vec3 hitValue;
+layout(location = kPayLoadShadowedIdx) rayPayloadEXT bool shadowed;
 hitAttributeEXT vec2 attribs;
 
 layout(binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
-layout(binding = 2, set = 0) uniform UBO 
-{
-	mat4 viewInverse;
-	mat4 projInverse;
-	vec4 lightPos;
+layout(binding = 2, set = 0) uniform UBO {
+	mat4 view_inverse;
+	mat4 proj_inverse;
+	vec4 light_pos;
 } ubo;
 
 layout(binding = 3, set = 0) buffer Vertices { float v[]; } vertices;
@@ -44,7 +43,14 @@ Vertex unpack(uint16_t index, in VertexBufferInfo geom_info)
 	v.normal.y = dot(vec4(x, y, z, 0.0f), geom_info.matrix[1]);
 	v.normal.z = dot(vec4(x, y, z, 0.0f), geom_info.matrix[2]);
 	v.pos = vec3(0, 0, 0);
-	v.color = vec4(0.8, 0.8, 0.8, 1.0);//vec4(d2.x, d2.y, d2.z, 1.0);
+	float r = 1.0f, g = 1.0f, b = 1.0f;
+	if (geom_info.color_base != 0xffffffff) {
+		const uint color_idx = geom_info.color_base + index * 3;
+		r = vertices.v[color_idx + 0];
+		g = vertices.v[color_idx + 1];
+		b = vertices.v[color_idx + 2];
+	}
+	v.color = vec4(r, g, b, 1.0);
 
 	return v;
 }
@@ -63,17 +69,35 @@ void main()
 	vec3 normal = normalize(v0.normal * barycentricCoords.x + v1.normal * barycentricCoords.y + v2.normal * barycentricCoords.z);
 
 	// Basic lighting
-	vec3 lightVector = normalize(ubo.lightPos.xyz);
-	float dot_product = max(dot(lightVector, normal), 0.2);
+	vec3 light_vector = normalize(ubo.light_pos.xyz);
+	float dot_product = max(dot(light_vector, normal), 0.2);
 	hitValue = v0.color.rgb * dot_product;
  
 	// Shadow casting
-	float tmin = 0.001;
-	float tmax = 10000.0;
-	vec3 origin = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
+	float t_min = 0.001;
+	float t_max = 10000.0;
+	uint ray_flags = gl_RayFlagsTerminateOnFirstHitEXT |
+					 gl_RayFlagsOpaqueEXT |
+					 gl_RayFlagsSkipClosestHitShaderEXT;
+	uint cull_mask = 0xFF;
+	uint sbt_record_offset = 1;
+	uint sbt_record_stride = 0;
+	uint miss_index = 1;
+	vec3 hit_point = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
 	shadowed = true;  
 	// Trace shadow ray and offset indices to match shadow hit/miss shader group indices
-	traceRayEXT(topLevelAS, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT, 0xFF, 1, 0, 1, origin, tmin, lightVector, tmax, 2);
+	traceRayEXT(
+		topLevelAS,
+		ray_flags,
+		cull_mask,
+		sbt_record_offset,
+		sbt_record_stride,
+		miss_index,
+		hit_point,
+		t_min,
+		light_vector,
+		t_max,
+		kPayLoadShadowedIdx);
 	if (shadowed) {
 		hitValue *= 0.3;
 	}

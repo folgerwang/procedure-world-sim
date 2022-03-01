@@ -10,11 +10,14 @@ namespace vk {
 class VulkanDevice : public Device {
     VkDevice        device_;
     const std::shared_ptr<PhysicalDevice>& physical_device_;
+    std::vector<std::shared_ptr<Buffer>>   buffer_list_;
 
 public:
     VulkanDevice(
         const std::shared_ptr<PhysicalDevice>& physical_device,
         const VkDevice& device);
+    virtual ~VulkanDevice() final;
+
     VkDevice get() { return device_; }
     const std::shared_ptr<PhysicalDevice>& getPhysicalDevice() { return physical_device_; }
     virtual std::shared_ptr<DescriptorPool> createDescriptorPool() final;

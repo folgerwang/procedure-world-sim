@@ -210,8 +210,9 @@ class VulkanBuffer : public Buffer {
     VkBuffer         buffer_;
     uint64_t         device_address_ = 0;
 public:
+    VulkanBuffer(const VkBuffer& buffer, uint32_t size) :
+        buffer_(buffer), size_(size) {}
     VkBuffer get() { return buffer_; }
-    void set(const VkBuffer& buffer, uint32_t size) { buffer_ = buffer; size_ = size; }
     void set_device_address(uint64_t device_address) { device_address_ = device_address; }
     virtual uint32_t getSize() final {
         return size_;
