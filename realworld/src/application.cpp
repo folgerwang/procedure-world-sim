@@ -9,6 +9,8 @@
 
 #include "engine/renderer/renderer.h"
 #include "engine/renderer/renderer_helper.h"
+#include "engine/ray_tracing/raytracing_callable.h"
+#include "engine/ray_tracing/raytracing_shadow.h"
 #include "engine/engine_helper.h"
 #include "application.h"
 
@@ -1403,11 +1405,6 @@ void RealWorldApplication::drawScene(
 
     s_dbuf_idx = 1 - s_dbuf_idx;
 }
-#define ENABLE_RAYTRACING_SHADOW
-//#define ENABLE_RAYTRACING_CALLABLE
-
-#include "raytracing_callable.hpp"
-#include "raytracing_shadow.hpp"
 
 void RealWorldApplication::drawFrame() {
     std::vector<std::shared_ptr<er::Fence>> in_flight_fences(1);
@@ -1555,14 +1552,21 @@ void RealWorldApplication::drawFrame() {
 
     if (!menu_->isRayTracingTurnOff()) {
         // ray tracing test.
-        auto result_image =
-            testRayTracing(
+        if (ray_tracing_test_ == nullptr) {
+            ray_tracing_test_ = std::make_shared<engine::ray_tracing::RayTracingShadowTest>();
+            ray_tracing_test_->init(
                 device_info_,
                 descriptor_pool_,
-                command_buffer,
-                view_params_,
                 rt_pipeline_properties_,
-                as_features_);
+                as_features_,
+                glm::uvec2(1920, 1080));
+        }
+
+        auto result_image =
+            ray_tracing_test_->draw(
+                device_info_,
+                command_buffer,
+                view_params_);
 
         er::ImageResourceInfo src_info = {
             er::ImageLayout::GENERAL,

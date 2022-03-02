@@ -64,6 +64,9 @@
     <Filter Include="Source Files\engine\ray_tracing">
       <UniqueIdentifier>{151494d3-4d9b-4031-9834-a684e4e3d322}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\engine\ray_tracing">
+      <UniqueIdentifier>{cfa72f1c-abdb-4a99-ab99-3137ff98a79c}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\engine\renderer\vulkan\vk_command_buffer.cpp">
@@ -138,10 +141,10 @@
     <ClCompile Include="src\engine\game_object\camera.cpp">
       <Filter>Source Files\engine\game_object</Filter>
     </ClCompile>
-    <ClCompile Include="src\raytracing_callable.hpp">
+    <ClCompile Include="src\engine\ray_tracing\raytracing_shadow.cpp">
       <Filter>Source Files\engine\ray_tracing</Filter>
     </ClCompile>
-    <ClCompile Include="src\raytracing_shadow.hpp">
+    <ClCompile Include="src\engine\ray_tracing\raytracing_callable.cpp">
       <Filter>Source Files\engine\ray_tracing</Filter>
     </ClCompile>
   </ItemGroup>
@@ -262,6 +265,15 @@
     </ClInclude>
     <ClInclude Include="src\engine\game_object\camera.h">
       <Filter>Header Files\engine\game_object</Filter>
+    </ClInclude>
+    <ClInclude Include="src\engine\ray_tracing\raytracing_base.h">
+      <Filter>Header Files\engine\ray_tracing</Filter>
+    </ClInclude>
+    <ClInclude Include="src\engine\ray_tracing\raytracing_callable.h">
+      <Filter>Header Files\engine\ray_tracing</Filter>
+    </ClInclude>
+    <ClInclude Include="src\engine\ray_tracing\raytracing_shadow.h">
+      <Filter>Header Files\engine\ray_tracing</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

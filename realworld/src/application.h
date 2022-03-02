@@ -11,6 +11,7 @@
 #include "engine/scene_rendering/menu.h"
 #include "engine/scene_rendering/volume_cloud.h"
 #include "engine/scene_rendering/volume_noise.h"
+#include "engine/ray_tracing/raytracing_base.h"
 
 namespace er = engine::renderer;
 namespace ego = engine::game_object;
@@ -135,6 +136,7 @@ private:
     std::shared_ptr<es::VolumeCloud> volume_cloud_;
     std::shared_ptr<es::VolumeNoise> volume_noise_;
     std::shared_ptr<es::IblCreator> ibl_creator_;
+    std::shared_ptr<engine::ray_tracing::RayTracingBase> ray_tracing_test_;
     std::shared_ptr<es::Menu> menu_;
 
     std::vector<er::ClearValue> clear_values_;

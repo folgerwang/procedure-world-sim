@@ -166,6 +166,8 @@
     <ClCompile Include="src\engine\game_object\debug_draw.cpp" />
     <ClCompile Include="src\engine\game_object\gltf.cpp" />
     <ClCompile Include="src\engine\game_object\terrain.cpp" />
+    <ClCompile Include="src\engine\ray_tracing\raytracing_callable.cpp" />
+    <ClCompile Include="src\engine\ray_tracing\raytracing_shadow.cpp" />
     <ClCompile Include="src\engine\renderer\renderer.cpp" />
     <ClCompile Include="src\engine\renderer\renderer_helper.cpp" />
     <ClCompile Include="src\engine\renderer\vulkan\vk_command_buffer.cpp" />
@@ -178,12 +180,6 @@
     <ClCompile Include="src\engine\scene_rendering\volume_noise.cpp" />
     <ClCompile Include="src\engine\scene_rendering\weather_system.cpp" />
     <ClCompile Include="src\main.cpp" />
-    <ClCompile Include="src\raytracing_callable.hpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="src\raytracing_shadow.hpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
-    </ClCompile>
     <ClCompile Include="src\third_party\imgui\backends\imgui_impl_glfw.cpp" />
     <ClCompile Include="src\third_party\imgui\backends\imgui_impl_vulkan.cpp" />
     <ClCompile Include="src\third_party\imgui\imgui.cpp" />
@@ -198,6 +194,9 @@
     <ClInclude Include="src\engine\game_object\debug_draw.h" />
     <ClInclude Include="src\engine\game_object\gltf.h" />
     <ClInclude Include="src\engine\game_object\terrain.h" />
+    <ClInclude Include="src\engine\ray_tracing\raytracing_base.h" />
+    <ClInclude Include="src\engine\ray_tracing\raytracing_callable.h" />
+    <ClInclude Include="src\engine\ray_tracing\raytracing_shadow.h" />
     <ClInclude Include="src\engine\renderer\command_buffer.h" />
     <ClInclude Include="src\engine\renderer\device.h" />
     <ClInclude Include="src\engine\renderer\physical_device.h" />
