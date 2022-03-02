@@ -737,7 +737,6 @@ void IblCreator::destroy(
 
     rt_envmap_tex_.destroy(device);
     panorama_tex_.destroy(device);
-    rt_envmap_tex_.destroy(device);
     tmp_ibl_diffuse_tex_.destroy(device);
     tmp_ibl_specular_tex_.destroy(device);
     tmp_ibl_sheen_tex_.destroy(device);

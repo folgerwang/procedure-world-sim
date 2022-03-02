@@ -238,6 +238,13 @@ std::shared_ptr<ShaderModule> loadShaderModule(
     return result;
 }
 
+void clearCachedShaderModules(const std::shared_ptr<renderer::Device>& device) {
+    for (auto& shader_module : s_shader_module_list) {
+        device->destroyShaderModule(shader_module.second);
+    }
+    s_shader_module_list.clear();
+}
+
 std::shared_ptr<renderer::PipelineLayout> createComputePipelineLayout(
     const std::shared_ptr<renderer::Device>& device,
     const renderer::DescriptorSetLayoutList& desc_set_layouts,

@@ -238,6 +238,7 @@ void GameCamera::generateDescriptorSet(
 
 void GameCamera::destoryStaticMembers(
     const std::shared_ptr<renderer::Device>& device) {
+    game_camera_buffer_->destroy(device);
     device->destroyDescriptorSetLayout(update_game_camera_desc_set_layout_);
     device->destroyPipelineLayout(update_game_camera_pipeline_layout_);
     device->destroyPipeline(update_game_camera_pipeline_);

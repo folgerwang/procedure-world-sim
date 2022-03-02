@@ -1764,6 +1764,7 @@ void GltfObject::generateDescriptorSet(
 
 void GltfObject::destoryStaticMembers(
     const std::shared_ptr<renderer::Device>& device) {
+    game_objects_buffer_->destroy(device);
     device->destroyDescriptorSetLayout(material_desc_set_layout_);
     device->destroyDescriptorSetLayout(skin_desc_set_layout_);
     device->destroyPipelineLayout(gltf_pipeline_layout_);

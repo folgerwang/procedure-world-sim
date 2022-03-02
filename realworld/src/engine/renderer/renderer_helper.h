@@ -86,6 +86,8 @@ std::shared_ptr<ShaderModule> loadShaderModule(
     const std::string& shader_name,
     const ShaderStageFlagBits& shader_stage);
 
+void clearCachedShaderModules(const std::shared_ptr<renderer::Device>& device);
+
 std::shared_ptr<renderer::PipelineLayout> createComputePipelineLayout(
     const std::shared_ptr<renderer::Device>& device,
     const renderer::DescriptorSetLayoutList& desc_set_layouts,

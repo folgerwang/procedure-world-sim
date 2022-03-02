@@ -747,7 +747,10 @@ void WeatherSystem::destroy(
     for (int i = 0; i < 2; i++) {
         temp_volume_[i].destroy(device);
         moisture_volume_[i].destroy(device);
+        pressure_volume_[i].destroy(device);
     }
+    temp_ground_airflow_info_.destroy(device);
+    ground_airflow_info_.destroy(device);
     airflow_volume_.destroy(device);
     cloud_shadow_volume_.destroy(device);
     device->destroyDescriptorSetLayout(airflow_desc_set_layout_);

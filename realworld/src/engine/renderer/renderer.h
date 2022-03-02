@@ -155,53 +155,53 @@ public:
 class VulkanPipeline : public Pipeline {
     VkPipeline    pipeline_;
 public:
+    VulkanPipeline(const VkPipeline& pipeline) : pipeline_(pipeline) {}
     VkPipeline get() { return pipeline_; }
-    void set(const VkPipeline& pipeline) { pipeline_ = pipeline; }
 };
 
 class VulkanPipelineLayout : public PipelineLayout {
     VkPipelineLayout    pipeline_layout_;
 public:
+    VulkanPipelineLayout(const VkPipelineLayout& layout) : pipeline_layout_(layout) {}
     VkPipelineLayout get() { return pipeline_layout_; }
-    void set(const VkPipelineLayout& layout) { pipeline_layout_ = layout; }
 };
 
 class VulkanRenderPass : public RenderPass {
     VkRenderPass    render_pass_;
 public:
+    VulkanRenderPass(const VkRenderPass& render_pass) : render_pass_(render_pass) {}
     VkRenderPass get() { return render_pass_; }
-    void set(const VkRenderPass& render_pass) { render_pass_ = render_pass; }
 };
 
 class VulkanFramebuffer : public Framebuffer {
     VkFramebuffer    frame_buffer_;
 public:
+    VulkanFramebuffer(const VkFramebuffer frame_buffer) : frame_buffer_(frame_buffer) {}
     VkFramebuffer get() { return frame_buffer_; }
-    void set(const VkFramebuffer frame_buffer) { frame_buffer_ = frame_buffer; }
 };
 
 class VulkanImageView : public ImageView {
     VkImageView     image_view_;
 public:
+    VulkanImageView(const VkImageView& image_view) : image_view_(image_view) {}
     VkImageView get() { return image_view_; }
-    void set(const VkImageView& image_view) { image_view_ = image_view; }
 };
 
 class VulkanSampler : public Sampler {
     VkSampler       sampler_;
 public:
+    VulkanSampler(const VkSampler& sampler) : sampler_(sampler) {}
     VkSampler get() { return sampler_; }
     const VkSampler* getPtr()const { return &sampler_; }
-    void set(const VkSampler& sampler) { sampler_ = sampler; }
 };
 
 class VulkanImage : public Image {
     VkImage         image_;
     ImageLayout     layout_ = ImageLayout::UNDEFINED;
 public:
+    VulkanImage(const VkImage& image) : image_(image) {}
     VkImage get() { return image_; }
     ImageLayout getImageLayout() { return layout_; }
-    void set(VkImage image) { image_ = image; }
     void setImageLayout(ImageLayout layout) { layout_ = layout; }
 };
 
@@ -225,15 +225,15 @@ public:
 class VulkanSemaphore : public Semaphore {
     VkSemaphore      semaphore_;
 public:
+    VulkanSemaphore(const VkSemaphore& semaphore) : semaphore_(semaphore){}
     VkSemaphore get() { return semaphore_; }
-    void set(const VkSemaphore& semaphore) { semaphore_ = semaphore; }
 };
 
 class VulkanFence : public Fence {
     VkFence          fence_;
 public:
+    VulkanFence(const VkFence& fence) : fence_(fence) {}
     VkFence get() { return fence_; }
-    void set(const VkFence& fence) { fence_ = fence; }
 };
 
 class VulkanDeviceMemory : public DeviceMemory {
@@ -248,8 +248,6 @@ class VulkanDescriptorSetLayout : public DescriptorSetLayout {
 public:
     VkDescriptorSetLayout get() { return layout_; }
     void set(const VkDescriptorSetLayout layout) { layout_ = layout; }
-
-    void destroy(const std::shared_ptr<Device>& device);
 };
 
 class VulkanDescriptorSet : public DescriptorSet {
@@ -257,8 +255,6 @@ class VulkanDescriptorSet : public DescriptorSet {
 public:
     VkDescriptorSet get() { return desc_set_; }
     void set(const VkDescriptorSet desc_set) { desc_set_ = desc_set; }
-
-    void destroy(const std::shared_ptr<Device>& device);
 };
     
 
@@ -266,12 +262,11 @@ class VulkanShaderModule : public ShaderModule {
     VkShaderModule          shader_module_;
     ShaderStageFlagBits     shader_stage_;
 public:
-    void set(
+    VulkanShaderModule(
         const VkShaderModule& shader_module,
-        const ShaderStageFlagBits& shader_stage) {
-        shader_module_ = shader_module;
-        shader_stage_ = shader_stage;
-    }
+        const ShaderStageFlagBits& shader_stage) :
+            shader_module_(shader_module),
+            shader_stage_(shader_stage){}
     ShaderStageFlagBits getShaderStage() { return shader_stage_; }
     VkShaderModule get() { return shader_module_; }
 };

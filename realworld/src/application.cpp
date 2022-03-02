@@ -1625,6 +1625,7 @@ void RealWorldApplication::drawFrame() {
 void RealWorldApplication::cleanupSwapChain() {
     assert(device_);
     depth_buffer_.destroy(device_);
+    depth_buffer_copy_.destroy(device_);
     hdr_color_buffer_.destroy(device_);
     hdr_color_buffer_copy_.destroy(device_);
     device_->destroyFramebuffer(hdr_frame_buffer_);
@@ -1668,9 +1669,15 @@ void RealWorldApplication::cleanup() {
     brdf_lut_tex_.destroy(device_);
     charlie_lut_tex_.destroy(device_);
     thin_film_lut_tex_.destroy(device_);
+    map_mask_tex_.destroy(device_);
+    heightmap_tex_.destroy(device_);
     ibl_diffuse_tex_.destroy(device_);
     ibl_specular_tex_.destroy(device_);
     ibl_sheen_tex_.destroy(device_);
+    device_->destroySampler(texture_sampler_);
+    device_->destroySampler(texture_point_sampler_);
+    device_->destroySampler(repeat_texture_sampler_);
+    device_->destroySampler(mirror_repeat_sampler_);
     device_->destroyDescriptorSetLayout(view_desc_set_layout_);
     device_->destroyDescriptorSetLayout(global_tex_desc_set_layout_);
     
@@ -1679,6 +1686,13 @@ void RealWorldApplication::cleanup() {
     gltf_objects_.clear();
     ego::GltfObject::destoryStaticMembers(device_);
     ego::GameCamera::destoryStaticMembers(device_);
+    ego::DebugDrawObject::destoryStaticMembers(device_);
+    ibl_creator_->destroy(device_);
+    weather_system_->destroy(device_);
+    volume_noise_->destroy(device_);
+    volume_cloud_->destroy(device_);
+
+    er::helper::clearCachedShaderModules(device_);
 
     for (uint64_t i = 0; i < kMaxFramesInFlight; i++) {
         device_->destroySemaphore(render_finished_semaphores_[i]);

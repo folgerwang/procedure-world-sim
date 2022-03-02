@@ -18,15 +18,23 @@ VulkanDevice::VulkanDevice(
 
 VulkanDevice::~VulkanDevice()
 {
-    for (auto& buf : buffer_list_) {
-        destroyBuffer(buf);
-    }
-    buffer_list_.clear();
-
-    vkDestroyDevice(device_, nullptr);
+    assert(buffer_list_.size() == 0);
+    assert(image_list_.size() == 0);
+    assert(image_view_list_.size() == 0);
+    assert(shader_list_.size() == 0);
+    assert(sampler_list_.size() == 0);
+    assert(framebuffer_list_.size() == 0);
+    assert(pipeline_layout_list_.size() == 0);
+    assert(pipeline_list_.size() == 0);
+    assert(render_pass_list_.size() == 0);
+    assert(semaphore_list_.size() == 0);
+    assert(fence_list_.size() == 0);
 }
 
-std::shared_ptr<Buffer> VulkanDevice::createBuffer(uint64_t buf_size, BufferUsageFlags usage, bool sharing/* = false*/) {
+std::shared_ptr<Buffer> VulkanDevice::createBuffer(
+    uint64_t buf_size,
+    BufferUsageFlags usage,
+    bool sharing/* = false*/) {
     VkBufferCreateInfo buffer_info{};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     buffer_info.size = buf_size;
@@ -39,7 +47,6 @@ std::shared_ptr<Buffer> VulkanDevice::createBuffer(uint64_t buf_size, BufferUsag
     }
 
     auto result = std::make_shared<VulkanBuffer>(buffer, static_cast<uint32_t>(buf_size));
-
     buffer_list_.push_back(result);
 
     return result;
@@ -102,8 +109,9 @@ std::shared_ptr<Image> VulkanDevice::createImage(
         throw std::runtime_error("failed to create image!");
     }
 
-    auto result = std::make_shared<VulkanImage>();
-    result->set(image);
+    auto result = std::make_shared<VulkanImage>(image);
+    image_list_.push_back(result);
+
     return result;
 }
 
@@ -134,10 +142,10 @@ std::shared_ptr<ImageView> VulkanDevice::createImageView(
         throw std::runtime_error("failed to create texture image view!");
     }
 
-    auto result = std::make_shared<VulkanImageView>();
-    result->set(image_view);
+    auto vk_image_view = std::make_shared<VulkanImageView>(image_view);
+    image_view_list_.push_back(vk_image_view);
 
-    return result;
+    return vk_image_view;
 }
 
 std::shared_ptr<Sampler> VulkanDevice::createSampler(Filter filter, SamplerAddressMode address_mode, SamplerMipmapMode mipmap_mode, float anisotropy) {
@@ -168,8 +176,9 @@ std::shared_ptr<Sampler> VulkanDevice::createSampler(Filter filter, SamplerAddre
         throw std::runtime_error("failed to create texture sampler!");
     }
 
-    auto vk_tex_sampler = std::make_shared<VulkanSampler>();
-    vk_tex_sampler->set(tex_sampler);
+    auto vk_tex_sampler = std::make_shared<VulkanSampler>(tex_sampler);
+    sampler_list_.push_back(vk_tex_sampler);
+
     return vk_tex_sampler;
 }
 
@@ -182,8 +191,9 @@ std::shared_ptr<Semaphore> VulkanDevice::createSemaphore() {
         throw std::runtime_error("failed to create semaphore!");
     }
 
-    auto vk_semaphore = std::make_shared<VulkanSemaphore>();
-    vk_semaphore->set(semaphore);
+    auto vk_semaphore = std::make_shared<VulkanSemaphore>(semaphore);
+    semaphore_list_.push_back(vk_semaphore);
+
     return vk_semaphore;
 }
 
@@ -197,8 +207,9 @@ std::shared_ptr<Fence> VulkanDevice::createFence() {
         throw std::runtime_error("failed to create fence!");
     }
 
-    auto vk_fence = std::make_shared<VulkanFence>();
-    vk_fence->set(fence);
+    auto vk_fence = std::make_shared<VulkanFence>(fence);
+    fence_list_.push_back(vk_fence);
+    
     return vk_fence;
 }
 
@@ -217,8 +228,8 @@ VulkanDevice::createShaderModule(
         throw std::runtime_error("failed to create shader module!");
     }
 
-    auto vk_shader_module = std::make_shared<VulkanShaderModule>();
-    vk_shader_module->set(shader_module, shader_stage);
+    auto vk_shader_module = std::make_shared<VulkanShaderModule>(shader_module, shader_stage);
+    shader_list_.push_back(vk_shader_module);
 
     return vk_shader_module;
 }
@@ -318,8 +329,9 @@ std::shared_ptr<RenderPass> VulkanDevice::createRenderPass(
         throw std::runtime_error("failed to create render pass!");
     }
 
-    auto vk_render_pass = std::make_shared<VulkanRenderPass>();
-    vk_render_pass->set(render_pass);
+    auto vk_render_pass = std::make_shared<VulkanRenderPass>(render_pass);
+    render_pass_list_.push_back(vk_render_pass);
+
     return vk_render_pass;
 }
 
@@ -384,8 +396,8 @@ std::shared_ptr<PipelineLayout> VulkanDevice::createPipelineLayout(
     if (vkCreatePipelineLayout(device_, &pipeline_layout_info, nullptr, &pipeline_layout) != VK_SUCCESS) {
         throw std::runtime_error("failed to create pipeline layout!");
     }
-    auto vk_pipeline_layout = std::make_shared<VulkanPipelineLayout>();
-    vk_pipeline_layout->set(pipeline_layout);
+    auto vk_pipeline_layout = std::make_shared<VulkanPipelineLayout>(pipeline_layout);
+    pipeline_layout_list_.push_back(vk_pipeline_layout);
 
     return vk_pipeline_layout;
 }
@@ -447,8 +459,9 @@ std::shared_ptr<Pipeline> VulkanDevice::createPipeline(
     if (result != VK_SUCCESS) {
         throw std::runtime_error("failed to create graphics pipeline!");
     }
-    auto vk_pipeline = std::make_shared<VulkanPipeline>();
-    vk_pipeline->set(graphics_pipeline);
+    auto vk_pipeline = std::make_shared<VulkanPipeline>(graphics_pipeline);
+    pipeline_list_.push_back(vk_pipeline);
+
     return vk_pipeline;
 }
 
@@ -473,8 +486,8 @@ std::shared_ptr<Pipeline> VulkanDevice::createPipeline(
         throw std::runtime_error("failed to create compute pipeline!");
     }
 
-    auto vk_pipeline = std::make_shared<VulkanPipeline>();
-    vk_pipeline->set(compute_pipeline);
+    auto vk_pipeline = std::make_shared<VulkanPipeline>(compute_pipeline);
+    pipeline_list_.push_back(vk_pipeline);
 
     return vk_pipeline;
 }
@@ -505,8 +518,8 @@ std::shared_ptr<Pipeline> VulkanDevice::createPipeline(
         throw std::runtime_error("failed to create ray tracing pipeline!");
     }
 
-    auto vk_pipeline = std::make_shared<VulkanPipeline>();
-    vk_pipeline->set(rt_pipeline);
+    auto vk_pipeline = std::make_shared<VulkanPipeline>(rt_pipeline);
+    pipeline_list_.push_back(vk_pipeline);
 
     return vk_pipeline;
 }
@@ -580,8 +593,9 @@ std::shared_ptr<Framebuffer> VulkanDevice::createFrameBuffer(
         throw std::runtime_error("failed to create framebuffer!");
     }
 
-    auto vk_frame_buffer = std::make_shared<VulkanFramebuffer>();
-    vk_frame_buffer->set(frame_buffer);
+    auto vk_frame_buffer = std::make_shared<VulkanFramebuffer>(frame_buffer);
+    framebuffer_list_.push_back(vk_frame_buffer);
+
     return vk_frame_buffer;
 }
 
@@ -756,8 +770,7 @@ std::vector<std::shared_ptr<Image>> VulkanDevice::getSwapchainImages(std::shared
 
     std::vector<std::shared_ptr<Image>> vk_swap_chain_images(swap_chain_images.size());
     for (int i = 0; i < swap_chain_images.size(); i++) {
-        auto vk_image = std::make_shared<VulkanImage>();
-        vk_image->set(swap_chain_images[i]);
+        auto vk_image = std::make_shared<VulkanImage>(swap_chain_images[i]);
         vk_swap_chain_images[i] = vk_image;
     }
     return vk_swap_chain_images;
@@ -912,51 +925,79 @@ void VulkanDevice::destroyDescriptorPool(std::shared_ptr<DescriptorPool> descrip
 }
 
 void VulkanDevice::destroyPipeline(std::shared_ptr<Pipeline> pipeline) {
-    auto vk_pipeline = RENDER_TYPE_CAST(Pipeline, pipeline);
-    if (vk_pipeline) {
-        vkDestroyPipeline(device_, vk_pipeline->get(), nullptr);
+    auto result = std::find(pipeline_list_.begin(), pipeline_list_.end(), pipeline);
+    if (result != pipeline_list_.end()) {
+        auto vk_pipeline = RENDER_TYPE_CAST(Pipeline, pipeline);
+        if (vk_pipeline) {
+            vkDestroyPipeline(device_, vk_pipeline->get(), nullptr);
+        }
+        pipeline_list_.erase(result);
     }
 }
 
 void VulkanDevice::destroyPipelineLayout(std::shared_ptr<PipelineLayout> pipeline_layout) {
-    auto vk_pipeline_layout = RENDER_TYPE_CAST(PipelineLayout, pipeline_layout);
-    if (vk_pipeline_layout) {
-        vkDestroyPipelineLayout(device_, vk_pipeline_layout->get(), nullptr);
+    auto result = std::find(pipeline_layout_list_.begin(), pipeline_layout_list_.end(), pipeline_layout);
+    if (result != pipeline_layout_list_.end()) {
+        auto vk_pipeline_layout = RENDER_TYPE_CAST(PipelineLayout, pipeline_layout);
+        if (vk_pipeline_layout) {
+            vkDestroyPipelineLayout(device_, vk_pipeline_layout->get(), nullptr);
+        }
+        pipeline_layout_list_.erase(result);
     }
 }
 
 void VulkanDevice::destroyRenderPass(std::shared_ptr<RenderPass> render_pass) {
-    auto vk_render_pass = RENDER_TYPE_CAST(RenderPass, render_pass);
-    if (vk_render_pass) {
-        vkDestroyRenderPass(device_, vk_render_pass->get(), nullptr);
+    auto result = std::find(render_pass_list_.begin(), render_pass_list_.end(), render_pass);
+    if (result != render_pass_list_.end()) {
+        auto vk_render_pass = RENDER_TYPE_CAST(RenderPass, render_pass);
+        if (vk_render_pass) {
+            vkDestroyRenderPass(device_, vk_render_pass->get(), nullptr);
+        }
+        render_pass_list_.erase(result);
     }
 }
 
 void VulkanDevice::destroyFramebuffer(std::shared_ptr<Framebuffer> frame_buffer) {
-    auto vk_framebuffer = RENDER_TYPE_CAST(Framebuffer, frame_buffer);
-    if (vk_framebuffer) {
-        vkDestroyFramebuffer(device_, vk_framebuffer->get(), nullptr);
+    auto result = std::find(framebuffer_list_.begin(), framebuffer_list_.end(), frame_buffer);
+    if (result != framebuffer_list_.end()) {
+        auto vk_framebuffer = RENDER_TYPE_CAST(Framebuffer, frame_buffer);
+        if (vk_framebuffer) {
+            vkDestroyFramebuffer(device_, vk_framebuffer->get(), nullptr);
+        }
+        framebuffer_list_.erase(result);
     }
 }
 
 void VulkanDevice::destroyImageView(std::shared_ptr<ImageView> image_view) {
-    auto vk_image_view = RENDER_TYPE_CAST(ImageView, image_view);
-    if (vk_image_view) {
-        vkDestroyImageView(device_, vk_image_view->get(), nullptr);
+    auto result = std::find(image_view_list_.begin(), image_view_list_.end(), image_view);
+    if (result != image_view_list_.end()) {
+        auto vk_image_view = RENDER_TYPE_CAST(ImageView, image_view);
+        if (vk_image_view) {
+            vkDestroyImageView(device_, vk_image_view->get(), nullptr);
+        }
+        image_view_list_.erase(result);
     }
 }
 
 void VulkanDevice::destroySampler(std::shared_ptr<Sampler> sampler) {
-    auto vk_sampler = RENDER_TYPE_CAST(Sampler, sampler);
-    if (vk_sampler) {
-        vkDestroySampler(device_, vk_sampler->get(), nullptr);
+    auto result = std::find(sampler_list_.begin(), sampler_list_.end(), sampler);
+    if (result != sampler_list_.end()) {
+        auto vk_sampler = RENDER_TYPE_CAST(Sampler, sampler);
+        if (vk_sampler) {
+            vkDestroySampler(device_, vk_sampler->get(), nullptr);
+        }
+        sampler_list_.erase(result);
     }
 }
 
 void VulkanDevice::destroyImage(std::shared_ptr<Image> image) {
-    auto vk_image = RENDER_TYPE_CAST(Image, image);
-    if (vk_image) {
-        vkDestroyImage(device_, vk_image->get(), nullptr);
+    auto result = std::find(image_list_.begin(), image_list_.end(), image);
+    if (result != image_list_.end()) {
+        auto vk_image = RENDER_TYPE_CAST(Image, image);
+        if (vk_image) {
+            vkDestroyImage(device_, vk_image->get(), nullptr);
+        }
+        image_list_.erase(result);
     }
 }
 
@@ -972,16 +1013,24 @@ void VulkanDevice::destroyBuffer(std::shared_ptr<Buffer> buffer) {
 }
 
 void VulkanDevice::destroySemaphore(std::shared_ptr<Semaphore> semaphore) {
-    auto vk_semaphore = RENDER_TYPE_CAST(Semaphore, semaphore);
-    if (vk_semaphore) {
-        vkDestroySemaphore(device_, vk_semaphore->get(), nullptr);
+    auto result = std::find(semaphore_list_.begin(), semaphore_list_.end(), semaphore);
+    if (result != semaphore_list_.end()) {
+        auto vk_semaphore = RENDER_TYPE_CAST(Semaphore, semaphore);
+        if (vk_semaphore) {
+            vkDestroySemaphore(device_, vk_semaphore->get(), nullptr);
+        }
+        semaphore_list_.erase(result);
     }
 }
 
 void VulkanDevice::destroyFence(std::shared_ptr<Fence> fence) {
-    auto vk_fence = RENDER_TYPE_CAST(Fence, fence);
-    if (vk_fence) {
-        vkDestroyFence(device_, vk_fence->get(), nullptr);
+    auto result = std::find(fence_list_.begin(), fence_list_.end(), fence);
+    if (result != fence_list_.end()) {
+        auto vk_fence = RENDER_TYPE_CAST(Fence, fence);
+        if (vk_fence) {
+            vkDestroyFence(device_, vk_fence->get(), nullptr);
+        }
+        fence_list_.erase(result);
     }
 }
 
@@ -993,13 +1042,18 @@ void VulkanDevice::destroyDescriptorSetLayout(std::shared_ptr<DescriptorSetLayou
 }
 
 void VulkanDevice::destroyShaderModule(std::shared_ptr<ShaderModule> shader_module) {
-    auto vk_shader_module = RENDER_TYPE_CAST(ShaderModule, shader_module);
-    if (vk_shader_module) {
-        vkDestroyShaderModule(device_, vk_shader_module->get(), nullptr);
+    auto result = std::find(shader_list_.begin(), shader_list_.end(), shader_module);
+    if (result != shader_list_.end()) {
+        auto vk_shader_module = RENDER_TYPE_CAST(ShaderModule, shader_module);
+        if (vk_shader_module) {
+            vkDestroyShaderModule(device_, vk_shader_module->get(), nullptr);
+        }
+        shader_list_.erase(result);
     }
 }
 
 void VulkanDevice::destroy() {
+    vkDestroyDevice(device_, nullptr);
 }
 
 void VulkanDevice::freeMemory(std::shared_ptr<DeviceMemory> memory) {

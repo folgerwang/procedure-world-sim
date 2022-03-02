@@ -528,6 +528,8 @@ void VolumeNoise::destroy(
     device->destroyPipelineLayout(cloud_pipeline_layout_);
     device->destroyPipeline(cloud_pipeline_);
 #endif
+    detail_noise_tex_.destroy(device);
+    rough_noise_tex_.destroy(device);
     device->destroyDescriptorSetLayout(noise_init_desc_set_layout_);
     device->destroyPipelineLayout(noise_init_pipeline_layout_);
     device->destroyPipeline(noise_init_pipeline_);

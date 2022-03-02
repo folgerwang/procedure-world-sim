@@ -102,6 +102,12 @@ void Helper::init(const DeviceInfo& device_info) {
 void Helper::destroy(const std::shared_ptr<Device>& device) {
     black_tex_.destroy(device);
     white_tex_.destroy(device);
+    permutation_tex_.destroy(device);
+    permutation_2d_tex_.destroy(device);
+    grad_tex_.destroy(device);
+    perm_grad_tex_.destroy(device);
+    perm_grad_4d_tex_.destroy(device);
+    grad_4d_tex_.destroy(device);
 }
 
 std::shared_ptr<Instance> Helper::createInstance() {

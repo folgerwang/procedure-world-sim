@@ -10,7 +10,17 @@ namespace vk {
 class VulkanDevice : public Device {
     VkDevice        device_;
     const std::shared_ptr<PhysicalDevice>& physical_device_;
-    std::vector<std::shared_ptr<Buffer>>   buffer_list_;
+    std::vector<std::shared_ptr<Buffer>> buffer_list_;
+    std::vector<std::shared_ptr<Image>> image_list_;
+    std::vector<std::shared_ptr<ImageView>> image_view_list_;
+    std::vector<std::shared_ptr<Sampler>> sampler_list_;
+    std::vector<std::shared_ptr<ShaderModule>> shader_list_;
+    std::vector<std::shared_ptr<Framebuffer>> framebuffer_list_;
+    std::vector<std::shared_ptr<PipelineLayout>> pipeline_layout_list_;
+    std::vector<std::shared_ptr<Pipeline>> pipeline_list_;
+    std::vector<std::shared_ptr<RenderPass>> render_pass_list_;
+    std::vector<std::shared_ptr<Semaphore>> semaphore_list_;
+    std::vector<std::shared_ptr<Fence>> fence_list_;
 
 public:
     VulkanDevice(
