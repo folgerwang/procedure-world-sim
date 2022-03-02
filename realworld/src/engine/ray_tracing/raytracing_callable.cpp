@@ -636,5 +636,37 @@ renderer::TextureInfo RayTracingCallableTest::draw(
     return rt_render_info->result_image;
 }
 
+void RayTracingCallableTest::destroy(
+    const std::shared_ptr<renderer::Device>& device) {
+    auto bl_data_info =
+        std::reinterpret_pointer_cast<BottomLevelDataInfo>(bl_data_info_);
+    auto tl_data_info =
+        std::reinterpret_pointer_cast<TopLevelDataInfo>(tl_data_info_);
+    auto rt_render_info =
+        std::reinterpret_pointer_cast<RayTracingRenderingInfo>(rt_render_info_);
+
+    bl_data_info->as_buffer.destroy(device);
+    bl_data_info->vertex_buffer.destroy(device);
+    bl_data_info->index_buffer.destroy(device);
+    bl_data_info->scratch_buffer.destroy(device);
+    bl_data_info->transform_buffer.destroy(device);
+    device->destroyAccelerationStructure(bl_data_info->as_handle);
+
+    tl_data_info->as_buffer.destroy(device);
+    tl_data_info->instance_buffer.destroy(device);
+    tl_data_info->scratch_buffer.destroy(device);
+    device->destroyAccelerationStructure(tl_data_info->as_handle);
+
+    rt_render_info_->callable_shader_binding_table.destroy(device);
+    rt_render_info_->hit_shader_binding_table.destroy(device);
+    rt_render_info_->miss_shader_binding_table.destroy(device);
+    rt_render_info_->raygen_shader_binding_table.destroy(device);
+    rt_render_info_->result_image.destroy(device);
+    device->destroyDescriptorSetLayout(rt_render_info->rt_desc_set_layout);
+    device->destroyPipelineLayout(rt_render_info->rt_pipeline_layout);
+    device->destroyPipeline(rt_render_info->rt_pipeline);
+    rt_render_info->ubo.destroy(device);
+}
+
 } //namespace ray_tracing
 } //namespace engine

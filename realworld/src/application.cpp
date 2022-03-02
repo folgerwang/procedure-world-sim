@@ -1687,7 +1687,13 @@ void RealWorldApplication::cleanup() {
     
     ego::TileObject::destoryAllTiles();
     ego::TileObject::destoryStaticMembers(device_);
+    for (auto& obj : gltf_objects_) {
+        obj->destroy();
+    }
     gltf_objects_.clear();
+    if (ray_tracing_test_) {
+        ray_tracing_test_->destroy(device_);
+    }
     ego::GltfObject::destoryStaticMembers(device_);
     ego::GameCamera::destoryStaticMembers(device_);
     ego::DebugDrawObject::destoryStaticMembers(device_);

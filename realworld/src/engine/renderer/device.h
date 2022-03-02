@@ -145,6 +145,7 @@ public:
     virtual AccelerationStructure createAccelerationStructure(
         const std::shared_ptr<Buffer>& buffer,
         const AccelerationStructureType& as_type) = 0;
+    virtual void destroyAccelerationStructure(const AccelerationStructure& as) = 0;
     virtual DeviceAddress getAccelerationStructureDeviceAddress(
         const AccelerationStructure& as) = 0;
     virtual void getRayTracingShaderGroupHandles(

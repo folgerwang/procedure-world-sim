@@ -146,7 +146,7 @@ struct ObjectData {
 
 public:
     ObjectData(const std::shared_ptr<renderer::Device>& device) : device_(device) {}
-    ~ObjectData() { destroy(); }
+    ~ObjectData() {}
 
     void update(
         const renderer::DeviceInfo& device_info,
@@ -224,6 +224,12 @@ public:
         const renderer::DescriptorSetList& desc_set_list);
 
     void update(const renderer::DeviceInfo& device_info, const float& time);
+
+    void destroy() {
+        if (object_) {
+            object_->destroy();
+        }
+    }
 
     static void createGameObjectUpdateDescSet(
         const std::shared_ptr<renderer::Device>& device,

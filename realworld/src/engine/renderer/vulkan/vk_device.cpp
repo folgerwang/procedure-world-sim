@@ -1041,7 +1041,8 @@ void VulkanDevice::destroyDescriptorSetLayout(std::shared_ptr<DescriptorSetLayou
     }
 }
 
-void VulkanDevice::destroyShaderModule(std::shared_ptr<ShaderModule> shader_module) {
+void VulkanDevice::destroyShaderModule(
+    std::shared_ptr<ShaderModule> shader_module) {
     auto result = std::find(shader_list_.begin(), shader_list_.end(), shader_module);
     if (result != shader_list_.end()) {
         auto vk_shader_module = RENDER_TYPE_CAST(ShaderModule, shader_module);
@@ -1138,6 +1139,12 @@ AccelerationStructure VulkanDevice::createAccelerationStructure(
     VkAccelerationStructureKHR as_handle;
     vkCreateAccelerationStructureKHR(device_, &as_create_info, nullptr, &as_handle);
     return reinterpret_cast<AccelerationStructure>(as_handle);
+}
+
+void VulkanDevice::destroyAccelerationStructure(
+    const AccelerationStructure& as) {
+    auto vk_as = reinterpret_cast<VkAccelerationStructureKHR>(as);
+    vkDestroyAccelerationStructureKHR(device_, vk_as, nullptr);
 }
 
 DeviceAddress VulkanDevice::getAccelerationStructureDeviceAddress(const AccelerationStructure& as) {

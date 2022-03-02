@@ -90,6 +90,9 @@ public:
         const renderer::DeviceInfo& device_info,
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const glsl::ViewParams& view_params) = 0;
+
+    virtual void destroy(
+        const std::shared_ptr<renderer::Device>& device) = 0;
 };
 
 } //namespace ray_tracing

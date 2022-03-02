@@ -1263,6 +1263,9 @@ void ObjectData::destroy() {
     for (auto& buffer : buffers_) {
         buffer.destroy(device_);
     }
+
+    indirect_draw_cmd_.destroy(device_);
+    instance_buffer_.destroy(device_);
 }
 
 struct compare {
@@ -1703,6 +1706,9 @@ void GltfObject::recreateStaticMembers(
 
     createStaticMembers(device, global_desc_set_layouts);
 
+    for (auto& pipeline : gltf_pipeline_list_) {
+        device->destroyPipeline(pipeline.second);
+    }
     gltf_pipeline_list_.clear();
 
     for (auto& object : object_list_) {
@@ -1768,6 +1774,9 @@ void GltfObject::destoryStaticMembers(
     device->destroyDescriptorSetLayout(material_desc_set_layout_);
     device->destroyDescriptorSetLayout(skin_desc_set_layout_);
     device->destroyPipelineLayout(gltf_pipeline_layout_);
+    for (auto& pipeline : gltf_pipeline_list_) {
+        device->destroyPipeline(pipeline.second);
+    }
     gltf_pipeline_list_.clear();
     object_list_.clear();
     device->destroyDescriptorSetLayout(gltf_indirect_draw_desc_set_layout_);
