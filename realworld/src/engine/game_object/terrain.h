@@ -80,6 +80,8 @@ public:
     static const renderer::TextureInfo& getWaterFlow();
     static glm::vec2 getWorldMin();
     static glm::vec2 getWorldRange();
+    glm::vec2 getMin() { return min_; }
+    glm::vec2 getMax() { return max_; }
 
     static std::shared_ptr<TileObject> addOneTile(
         const renderer::DeviceInfo& device_info,

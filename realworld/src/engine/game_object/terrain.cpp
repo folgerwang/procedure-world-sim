@@ -2071,6 +2071,15 @@ std::shared_ptr<TileObject> TileObject::addOneTile(
                     hash_value,
                     block_index);
         }
+        else {
+            assert(0);
+        }
+    }
+    else {
+        auto min_t = result->second->getMin();
+        auto max_t = result->second->getMax();
+
+        assert(min_t.x == min.x && min_t.y == min.y && max_t.x == max.x && max_t.y == max.y);
     }
 
     return tile_meshes_[hash_value];
@@ -2480,7 +2489,7 @@ bool TileObject::validTileBySize(
     const float& tile_size) {
 
     glm::ivec2 tile_index =
-        glm::ivec2((min_ + glm::vec2(tile_size / 2 + 1)) * glm::vec2(1.0f / tile_size));
+        glm::ivec2((min_ + max_) * 0.5f * glm::vec2(1.0f / tile_size));
 
     return
         (tile_index.x >= min_tile_idx.x && tile_index.x <= max_tile_idx.x) &&
