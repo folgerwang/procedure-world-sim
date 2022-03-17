@@ -154,7 +154,8 @@ void GameCamera::initStaticMembers(
         device->createBuffer(
             sizeof(glsl::GameCameraInfo),
             SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
-            SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+            SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+            SET_FLAG_BIT(MemoryProperty, HOST_CACHED_BIT),
             0,
             game_camera_buffer_->buffer,
             game_camera_buffer_->memory);
@@ -269,6 +270,16 @@ void GameCamera::updateGameCameraBuffer(
         { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
         { SET_FLAG_BIT(Access, SHADER_WRITE_BIT), SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) },
         game_camera_buffer_->buffer->getSize());
+}
+
+glsl::GameCameraInfo GameCamera::readCameraInfo(
+    const std::shared_ptr<renderer::Device>& device,
+    const uint32_t& idx) {
+
+    glsl::GameCameraInfo camera_info;
+    device->dumpBufferMemory(game_camera_buffer_->memory, sizeof(glsl::GameCameraInfo), &camera_info);
+
+    return camera_info;
 }
 
 void GameCamera::update(

@@ -2102,8 +2102,7 @@ glm::vec2 TileObject::getWorldMin() {
     return glm::vec2(-kWorldMapSize / 2.0f);
 }
 glm::vec2 TileObject::getWorldRange() {
-    return glm::vec2(kWorldMapSize / 2.0f) - 
-        glm::vec2(-kWorldMapSize / 2.0f);
+    return glm::vec2(kWorldMapSize);
 }
 
 void TileObject::createStaticMembers(
@@ -2508,8 +2507,8 @@ void TileObject::generateTileBuffers(
     auto dispatch_count = static_cast<uint32_t>(TileConst::kWaterlayerSize);
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, tile_creator_pipeline_);
     glsl::TileCreateParams tile_params = {};
-    tile_params.world_min = glm::vec2(-kWorldMapSize / 2.0f);
-    tile_params.world_range = glm::vec2(kWorldMapSize / 2.0f) - tile_params.world_min;
+    tile_params.world_min = getWorldMin();
+    tile_params.world_range = getWorldRange();
     tile_params.width_pixel_count = dispatch_count;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
@@ -2547,8 +2546,8 @@ void TileObject::updateTileBuffers(
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, tile_update_pipeline_);
     glsl::TileUpdateParams tile_params = {};
-    tile_params.world_min = glm::vec2(-kWorldMapSize / 2.0f);
-    tile_params.world_range = glm::vec2(kWorldMapSize / 2.0f) - tile_params.world_min;
+    tile_params.world_min = getWorldMin();
+    tile_params.world_range = getWorldRange();
     tile_params.width_pixel_count = dispatch_count;
     tile_params.inv_width_pixel_count = 1.0f / dispatch_count;
     tile_params.range_per_pixel = tile_params.world_range * tile_params.inv_width_pixel_count;
@@ -2589,8 +2588,8 @@ void TileObject::updateTileFlowBuffers(
 
     cmd_buf->bindPipeline(renderer::PipelineBindPoint::COMPUTE, tile_flow_update_pipeline_);
     glsl::TileUpdateParams tile_params = {};
-    tile_params.world_min = glm::vec2(-kWorldMapSize / 2.0f);
-    tile_params.world_range = glm::vec2(kWorldMapSize / 2.0f) - tile_params.world_min;
+    tile_params.world_min = getWorldMin();
+    tile_params.world_range = getWorldRange();
     tile_params.width_pixel_count = dispatch_count;
     tile_params.inv_width_pixel_count = 1.0f / dispatch_count;
     tile_params.range_per_pixel = tile_params.world_range * tile_params.inv_width_pixel_count;
@@ -2632,15 +2631,17 @@ void TileObject::draw(
     cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, renderer::IndexType::UINT32);
 
     glsl::TileParams tile_params = {};
-    tile_params.world_min = glm::vec2(-kWorldMapSize / 2.0f);
-    tile_params.inv_world_range = 1.0f / (glm::vec2(kWorldMapSize / 2.0f) - tile_params.world_min);
+    tile_params.world_min = getWorldMin();
+    tile_params.inv_world_range = 1.0f / getWorldRange();
     tile_params.min = min_;
     tile_params.range = max_ - min_;
     tile_params.segment_count = segment_count;
+    tile_params.inv_segment_count = 1.0f / segment_count;
     tile_params.offset = 0;
     tile_params.inv_screen_size = glm::vec2(1.0f / display_size.x, 1.0f / display_size.y);
     tile_params.delta_t = delta_t;
     tile_params.time = cur_time;
+    tile_params.tile_index = block_idx_;
     cmd_buf->pushConstants(
         SET_FLAG_BIT(ShaderStage, VERTEX_BIT) | 
         SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
@@ -2703,7 +2704,7 @@ void TileObject::updateAllTiles(
     int32_t visible_tile_size = static_cast<int32_t>(TileConst::kVisibleTileSize);
     int32_t num_cached_blocks = static_cast<int32_t>(TileConst::kNumCachedBlocks);
 
-    glm::ivec2 center_tile_index = camera_pos * (1.0f / tile_size);
+    glm::ivec2 center_tile_index = glm::ivec2(camera_pos / tile_size + glm::vec2(-0.5f, 0.5f));
     glm::ivec2 min_cache_tile_idx = center_tile_index - glm::ivec2(cache_tile_size);
     glm::ivec2 max_cache_tile_idx = center_tile_index + glm::ivec2(cache_tile_size);
     glm::ivec2 min_visi_tile_idx = center_tile_index - glm::ivec2(visible_tile_size);
@@ -2739,8 +2740,8 @@ void TileObject::updateAllTiles(
             auto tile = addOneTile(
                 device_info,
                 descriptor_pool,
-                glm::vec2(-tile_size / 2 + x * tile_size, -tile_size / 2 + y * tile_size),
-                glm::vec2(tile_size / 2 + x * tile_size, tile_size / 2 + y * tile_size));
+                glm::vec2(x, y) * tile_size - tile_size / 2,
+                glm::vec2(x, y) * tile_size + tile_size / 2);
             blocks[tile_idx++] = tile;
         }
     }

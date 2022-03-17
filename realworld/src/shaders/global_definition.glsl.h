@@ -163,8 +163,8 @@
 #define kRayleighScaleHeight                    8e3
 #define kMieScaleHeight                         1.2e3
 
-#define kWorldMapSize 16384.0f                  // meters
-#define kCloudMapSize 131072.0f
+#define kWorldMapSize                           32768.0f                  // meters
+#define kCloudMapSize                           131072.0f
 
 #define kDetailNoiseTextureSize                 256
 #define kRoughNoiseTextureSize                  32
@@ -337,8 +337,10 @@ struct TileParams {
     vec2            inv_screen_size;
     uint            segment_count;
     uint            offset;
+    float           inv_segment_count;
     float           delta_t;
     float           time;
+    uint            tile_index;
 };
 
 struct DebugDrawParams {

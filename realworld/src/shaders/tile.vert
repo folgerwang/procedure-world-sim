@@ -13,6 +13,7 @@ layout(push_constant) uniform TileUniformBufferObject {
 layout(location = 0) out VsPsData {
     vec3 vertex_position;
     vec2 world_map_uv;
+    vec3 test_color;
 } out_data;
 
 layout(set = TILE_PARAMS_SET, binding = ROCK_LAYER_BUFFER_INDEX) uniform sampler2D rock_layer;
@@ -25,14 +26,14 @@ void main() {
     uint col = gl_VertexIndex % tile_size;
     uint row = gl_VertexIndex / tile_size;
 
-    float inv_segment_count = 1.0f / tile_params.segment_count;
-    float factor_x = col * inv_segment_count;
-    float factor_y = row * inv_segment_count;
+    // tile scale factor, range from (0 to 1)
+    vec2 factor_xy = vec2(col, row) * tile_params.inv_segment_count;
 
-    float x = tile_params.min.x + factor_x * tile_params.range.x;
-    float y = tile_params.min.y + factor_y * tile_params.range.y;
+    // tile world position.
+    vec2 pos_xz_ws = tile_params.min + factor_xy * tile_params.range;
 
-    vec2 world_map_uv = (vec2(x, y) - tile_params.world_min) * tile_params.inv_world_range;
+    // convert tile world position to uv coordinate.
+    vec2 world_map_uv = (pos_xz_ws - tile_params.world_min) * tile_params.inv_world_range;
 
     float layer_height = texture(rock_layer, world_map_uv).x;
 #if defined(SOIL_PASS) || defined(WATER_PASS) || defined(SNOW_PASS)
@@ -46,9 +47,14 @@ void main() {
     layer_height += texture(orther_info_layer, world_map_uv).y * SNOW_LAYER_MAX_THICKNESS;
 #endif
 
-    vec4 position_ws = vec4(x, layer_height, y, 1.0);
+    vec4 position_ws = vec4(pos_xz_ws.x, layer_height, pos_xz_ws.y, 1.0);
     gl_Position = camera_info.view_proj * position_ws;
 
     out_data.vertex_position = position_ws.xyz;
     out_data.world_map_uv = world_map_uv;
+
+    uint idx_x = tile_params.tile_index % 0x03;
+    uint idx_y = (tile_params.tile_index >> 2) % 0x03;
+    uint idx_z = (tile_params.tile_index >> 4) % 0x03;
+    out_data.test_color = vec3(idx_x / 3.0f, idx_y / 3.0f, idx_z / 3.0f);
 }

@@ -64,6 +64,11 @@ public:
         const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const glsl::GameCameraParams& game_camera_params,
         int soil_water);
+
+    static glsl::GameCameraInfo readCameraInfo(
+        const std::shared_ptr<renderer::Device>& device,
+        const uint32_t& idx);
+
     static std::shared_ptr<renderer::BufferInfo> getGameCameraBuffer();
 };
 

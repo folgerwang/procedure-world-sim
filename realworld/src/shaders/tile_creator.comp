@@ -21,10 +21,10 @@ void main()
     float inv_segment_count = 1.0f / tile_params.width_pixel_count;
     vec2 tile_step = tile_params.world_range * inv_segment_count;
 
+#if 0
     vec2 map_coords = tile_params.world_min + (pixel_coords + 0.25f) * tile_step;
     vec2 map_coords1 = map_coords + 0.5f * tile_step;
 
-#if 0
     vec2 height_info = terrainMap(map_coords);
     imageStore(rock_layer, pixel_coords * 2, vec4(height_info.x));
     height_info = terrainMap(vec2(map_coords1.x, map_coords.y));
@@ -39,13 +39,13 @@ void main()
     ivec2 scoord_2 = pixel_coords * 2 + ivec2(0, 1);
     ivec2 scoord_3 = pixel_coords * 2 + ivec2(1, 1);
 
-    float height_info = texture(heightmap_tex, (scoord_0 + 0.5f) * inv_segment_count * 0.5f).x * 2000.0f;
+    float height_info = texture(heightmap_tex, (scoord_0 + 0.5f) * inv_segment_count * 0.5f).x * 4000.0f;
     imageStore(rock_layer, scoord_0, vec4(height_info));
-    height_info = texture(heightmap_tex, (scoord_1 + 0.5f) * inv_segment_count * 0.5f).x * 2000.0f;
+    height_info = texture(heightmap_tex, (scoord_1 + 0.5f) * inv_segment_count * 0.5f).x * 4000.0f;
     imageStore(rock_layer, scoord_1, vec4(height_info));
-    height_info = texture(heightmap_tex, (scoord_2 + 0.5f) * inv_segment_count * 0.5f).x * 2000.0f;
+    height_info = texture(heightmap_tex, (scoord_2 + 0.5f) * inv_segment_count * 0.5f).x * 4000.0f;
     imageStore(rock_layer, scoord_2, vec4(height_info));
-    height_info = texture(heightmap_tex, (scoord_3 + 0.5f) * inv_segment_count * 0.5f).x * 2000.0f;
+    height_info = texture(heightmap_tex, (scoord_3 + 0.5f) * inv_segment_count * 0.5f).x * 4000.0f;
     imageStore(rock_layer, scoord_3, vec4(height_info));
 #endif
 
