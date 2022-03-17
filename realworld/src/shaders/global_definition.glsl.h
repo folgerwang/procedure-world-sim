@@ -509,11 +509,11 @@ struct GameObjectInfo {
 struct GameCameraParams {
     vec2            world_min;
     vec2            inv_world_range;
-    vec3            camera_pos;
+    vec3            init_camera_pos;
     int             key;
-    vec3            camera_dir;
+    vec3            init_camera_dir;
     int             frame_count;
-    vec3            camera_up;
+    vec3            init_camera_up;
     float           delta_t;
     vec2            mouse_pos;
     float           camera_speed;

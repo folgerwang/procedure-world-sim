@@ -44,11 +44,9 @@ private:
     void createColorBufferCopy(const glm::uvec2& display_size);
     void recreateRenderBuffer(const glm::uvec2& display_size);
     void createTextureSampler();
-    void createUniformBuffers();
     void createDescriptorSets();
     void createCommandBuffers();
     void createSyncObjects();
-    void updateViewConstBuffer(uint32_t current_image, float near_z = 0.1f);
     er::WriteDescriptorList addGlobalTextures(
         const std::shared_ptr<er::DescriptorSet>& description_set);
     void mainLoop();
@@ -122,7 +120,6 @@ private:
     std::shared_ptr<er::Sampler> repeat_texture_sampler_;
     std::shared_ptr<er::Sampler> mirror_repeat_sampler_;
     std::shared_ptr<er::Sampler> texture_point_sampler_;
-    std::vector<er::BufferInfo> view_const_buffers_;
     std::vector<std::shared_ptr<er::CommandBuffer>> command_buffers_;
     std::vector<std::shared_ptr<er::Semaphore>> image_available_semaphores_;
     std::vector<std::shared_ptr<er::Semaphore>> render_finished_semaphores_;
@@ -140,6 +137,8 @@ private:
     std::shared_ptr<es::Menu> menu_;
 
     std::vector<er::ClearValue> clear_values_;
+
+    glsl::GameCameraInfo gpu_game_camera_info_;
 
     glsl::ViewParams view_params_{};
     std::chrono::high_resolution_clock::time_point last_frame_time_point_;

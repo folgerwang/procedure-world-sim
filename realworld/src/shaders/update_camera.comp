@@ -98,7 +98,7 @@ layout(local_size_x = 1, local_size_y = 1) in;
 void main()
 {
     if (camera_info.status == 0 || params.frame_count == 0) {
-        camera_info.position = params.camera_pos;
+        camera_info.position = params.init_camera_pos;
         camera_info.mouse_pos = params.mouse_pos;
         camera_info.yaw = 0.0f;
         camera_info.pitch = 0.0f;

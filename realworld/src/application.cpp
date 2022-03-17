@@ -157,28 +157,13 @@ static bool s_mouse_init = false;
 static bool s_mouse_right_button_pressed = false;
 static glm::vec2 s_last_mouse_pos;
 static int s_key = 0;
-static float s_yaw = 0.0f;
-static float s_pitch = 0.0f;
 static float s_mouse_wheel_offset = 0.0f;
 const float s_camera_speed = 10.0f;
-static glm::vec3 s_camera_pos = glm::vec3(0, 1000.0f, 0);
-static glm::vec3 s_camera_dir = glm::normalize(glm::vec3(1.0f, 0.0f, 0.0f));
-static glm::vec3 s_camera_up = glm::vec3(0, 1, 0);
 
 static void keyInputCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
-    auto up_vector = abs(s_camera_dir[1]) < glm::min(abs(s_camera_dir[0]), abs(s_camera_dir[2])) ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
-    auto camera_right = glm::normalize(glm::cross(s_camera_dir, s_camera_up));
     s_key = 0;
     if (action != GLFW_RELEASE && !s_camera_paused) {
-        if (key == GLFW_KEY_W)
-            s_camera_pos += s_camera_speed * s_camera_dir;
-        if (key == GLFW_KEY_S)
-            s_camera_pos -= s_camera_speed * s_camera_dir;
-        if (key == GLFW_KEY_A)
-            s_camera_pos -= s_camera_speed * camera_right;
-        if (key == GLFW_KEY_D)
-            s_camera_pos += s_camera_speed * camera_right;
         s_key = key;
     }
 
@@ -200,27 +185,7 @@ void mouseInputCallback(GLFWwindow* window, double xpos, double ypos)
         s_mouse_init = true;
     }
 
-    auto mouse_offset = cur_mouse_pos - s_last_mouse_pos;
     s_last_mouse_pos = cur_mouse_pos;
-
-    float sensitivity = 0.2f;
-    mouse_offset *= sensitivity;
-
-    if (!s_camera_paused && s_mouse_right_button_pressed) {
-        s_yaw += mouse_offset.x;
-        s_pitch += mouse_offset.y;
-
-        if (s_pitch > 89.0f)
-            s_pitch = 89.0f;
-        if (s_pitch < -89.0f)
-            s_pitch = -89.0f;
-
-        glm::vec3 direction;
-        direction.x = cos(glm::radians(-s_yaw)) * cos(glm::radians(s_pitch));
-        direction.y = sin(glm::radians(s_pitch));
-        direction.z = sin(glm::radians(-s_yaw)) * cos(glm::radians(s_pitch));
-        s_camera_dir = glm::normalize(direction);
-    }
 }
 
 void mouseButtonCallback(GLFWwindow* window, int button, int action, int) {
@@ -456,7 +421,6 @@ void RealWorldApplication::initVulkan() {
     engine::helper::createTextureImage(device_info_, "assets/map_mask.png", format, map_mask_tex_);
     engine::helper::createTextureImage(device_info_, "assets/map.png", er::Format::R16_UNORM, heightmap_tex_);
     createTextureSampler();
-    createUniformBuffers();
     descriptor_pool_ = device_->createDescriptorPool();
     createCommandBuffers();
     createSyncObjects();
@@ -654,7 +618,6 @@ void RealWorldApplication::recreateSwapChain() {
         desc_set_layouts,
         swap_chain_info_.extent);
     recreateRenderBuffer(swap_chain_info_.extent);
-    createUniformBuffers();
     descriptor_pool_ = device_->createDescriptorPool();
     createCommandBuffers();
 
@@ -968,48 +931,6 @@ void RealWorldApplication::createDescriptorSetLayout() {
     }
 }
 
-void RealWorldApplication::createUniformBuffers() {
-    uint64_t buffer_size = sizeof(glsl::ViewParams);
-    const auto& images_count = swap_chain_info_.images.size();
-
-    view_const_buffers_.resize(images_count);
-    for (uint64_t i = 0; i < images_count; i++) {
-        device_->createBuffer(
-            buffer_size,
-            SET_FLAG_BIT(BufferUsage, UNIFORM_BUFFER_BIT),
-            SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
-            SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
-            0,
-            view_const_buffers_[i].buffer,
-            view_const_buffers_[i].memory);
-    }
-}
-
-void RealWorldApplication::updateViewConstBuffer(uint32_t current_image, float near_z) {
-    auto aspect = swap_chain_info_.extent.x / (float)swap_chain_info_.extent.y;
-    auto fov = glm::radians(45.0f);
-
-    view_params_.camera_pos = glm::vec4(s_camera_pos, 0);
-    view_params_.view = glm::lookAt(s_camera_pos, s_camera_pos + s_camera_dir, s_camera_up);
-    view_params_.proj = glm::perspective(fov, aspect, near_z, 40000.0f);
-    view_params_.proj[1][1] *= -1;
-    view_params_.view_proj = view_params_.proj * view_params_.view;
-    view_params_.inv_view_proj = glm::inverse(view_params_.view_proj);
-    auto view_relative = glm::lookAt(vec3(0), s_camera_dir, s_camera_up);
-    view_params_.inv_view_proj_relative = glm::inverse(view_params_.proj * view_relative);
-    view_params_.input_features = glm::uvec4(0, 0, 0, 0);
-    view_params_.depth_params = glm::vec4(
-        view_params_.proj[2][2],
-        view_params_.proj[3][2],
-        1.0f / view_params_.proj[0][0],
-        1.0f / view_params_.proj[1][1]);
-
-    device_->updateBufferMemory(
-        view_const_buffers_[current_image].memory,
-        sizeof(view_params_),
-        &view_params_);
-}
-
 er::WriteDescriptorList RealWorldApplication::addGlobalTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set)
 {
@@ -1194,7 +1115,7 @@ void RealWorldApplication::drawScene(
             cmd_buf,
             ego::TileObject::getWorldMin(),
             ego::TileObject::getWorldRange(),
-            s_camera_pos,
+            gpu_game_camera_info_.position,
             menu_->getAirFlowStrength(),
             menu_->getWaterFlowStrength(),
             s_update_frame_count,
@@ -1205,11 +1126,11 @@ void RealWorldApplication::drawScene(
         glsl::GameCameraParams game_camera_params;
         game_camera_params.world_min = ego::TileObject::getWorldMin();
         game_camera_params.inv_world_range = 1.0f / ego::TileObject::getWorldRange();
-        game_camera_params.camera_pos = s_camera_pos;
+        game_camera_params.init_camera_pos = glm::vec3(0, 1000.0f, 0);
         game_camera_params.key = s_key;
-        game_camera_params.camera_dir = s_camera_dir;
+        game_camera_params.init_camera_dir = glm::vec3(1.0f, 0.0f, 0.0f);
         game_camera_params.frame_count = s_update_frame_count;
-        game_camera_params.camera_up = s_camera_up;
+        game_camera_params.init_camera_up = glm::vec3(0, 1, 0);
         game_camera_params.delta_t = delta_t;
         game_camera_params.mouse_pos = s_last_mouse_pos;
         game_camera_params.camera_speed = s_camera_speed;
@@ -1268,7 +1189,7 @@ void RealWorldApplication::drawScene(
             ego::DebugDrawObject::draw(
                 cmd_buf,
                 desc_sets,
-                s_camera_pos,
+                gpu_game_camera_info_.position,
                 menu_->getDebugDrawType());
         }
 
@@ -1431,8 +1352,6 @@ void RealWorldApplication::drawFrame() {
     // Mark the image as now being in use by this frame
     images_in_flight_[image_index] = in_flight_fences_[current_frame_];
 
-    updateViewConstBuffer(image_index);
-
     time_t now = time(0);
     tm localtm;
     gmtime_s(&localtm, &now);
@@ -1444,7 +1363,7 @@ void RealWorldApplication::drawFrame() {
 
     device_->resetFences(in_flight_fences);
 
-    auto camera_info = ego::GameCamera::readCameraInfo(
+    gpu_game_camera_info_ = ego::GameCamera::readCameraInfo(
         device_info_.device,
         0);
 
@@ -1452,7 +1371,7 @@ void RealWorldApplication::drawFrame() {
         device_info_,
         descriptor_pool_,
         1024,
-        glm::vec2(camera_info.position.x, camera_info.position.z));
+        glm::vec2(gpu_game_camera_info_.position.x, gpu_game_camera_info_.position.z));
 
     if (dump_volume_noise_) {
         const auto noise_texture_size = kDetailNoiseTextureSize;
@@ -1653,10 +1572,6 @@ void RealWorldApplication::cleanupSwapChain() {
     }
 
     device_->destroySwapchain(swap_chain_info_.swap_chain);
-
-    for (auto& buffer : view_const_buffers_) {
-        buffer.destroy(device_);
-    }
 
     device_->destroyDescriptorPool(descriptor_pool_);
 }
