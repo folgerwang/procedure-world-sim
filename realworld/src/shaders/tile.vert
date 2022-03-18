@@ -11,9 +11,10 @@ layout(push_constant) uniform TileUniformBufferObject {
 };
 
 layout(location = 0) out VsPsData {
-    vec3 vertex_position;
-    vec2 world_map_uv;
-    vec3 test_color;
+    vec3    vertex_position;
+    vec2    world_map_uv;
+    vec3    test_color;
+    float   water_depth;
 } out_data;
 
 layout(set = TILE_PARAMS_SET, binding = ROCK_LAYER_BUFFER_INDEX) uniform sampler2D rock_layer;
@@ -36,12 +37,14 @@ void main() {
     vec2 world_map_uv = (pos_xz_ws - tile_params.world_min) * tile_params.inv_world_range;
 
     float layer_height = texture(rock_layer, world_map_uv).x;
+    out_data.water_depth = 0.0f;
 #if defined(SOIL_PASS) || defined(WATER_PASS) || defined(SNOW_PASS)
     vec2 soil_water_thickness = texture(soil_water_layer, world_map_uv).xy * SOIL_WATER_LAYER_MAX_THICKNESS;
     layer_height += soil_water_thickness.x;
 #endif
 #if defined(WATER_PASS) || defined(SNOW_PASS)
     layer_height += soil_water_thickness.y;
+    out_data.water_depth = soil_water_thickness.y;
 #endif
 #if defined(SNOW_PASS)
     layer_height += texture(orther_info_layer, world_map_uv).y * SNOW_LAYER_MAX_THICKNESS;

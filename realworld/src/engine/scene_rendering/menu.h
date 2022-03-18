@@ -25,10 +25,10 @@ class Menu {
     float global_flow_dir_ = 85.0f;
     float global_flow_speed_ = 0.5f;
     float cloud_noise_thresold_ = 0.3f;
-    float cloud_noise_scrolling_speed_ = 9.1f;
+    float cloud_noise_scrolling_speed_ = 6.519f;
     float cloud_noise_scale_[2] = { 4.45f, 4.387f };
     float cloud_noise_weight_[2][4] =
-        { {0.2f, 0.4f, 0.7f, 0.9f},
+        { {2.532f, 1.442f, 0.7f, 0.9f},
         {0.2f, 0.2f, 0.2f, 0.2f} };
 
     glsl::WeatherControl weather_controls_;

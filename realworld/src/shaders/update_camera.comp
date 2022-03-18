@@ -197,6 +197,9 @@ void main()
         up_dir = camera_info.up_vector;
     }
 
+    eye_pos += vec3(0, 2, 0);
+    target_pos += vec3(0, 2, 0);
+
     camera_info.view = lookAt(eye_pos, target_pos, up_dir);
     camera_info.proj = perspective(params.fov, params.aspect, params.z_near, params.z_far);
     camera_info.proj[1].y *= -1.0f;

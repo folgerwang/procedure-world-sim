@@ -49,7 +49,7 @@ void main()
     imageStore(rock_layer, scoord_3, vec4(height_info));
 #endif
 
-    const float kWaterInitLevel = 0.5f;
+    const float kWaterInitLevel = 1.0f;
     const float kSoilInitLevel = 5.0f;
 
     imageStore(

@@ -17,8 +17,10 @@ layout(push_constant) uniform TileUniformBufferObject {
 };
 
 layout(location = 0) in VsPsData {
-    vec3 vertex_position;
-    vec2 world_map_uv;
+    vec3    vertex_position;
+    vec2    world_map_uv;
+    vec3    test_color;
+    float   water_depth;
 } in_data;
 
 layout(location = 0) out vec4 outColor;
@@ -87,6 +89,12 @@ float warpedNoise(vec2 p) {
 }
 
 void main() {
+    if (in_data.water_depth < 0.03f) {
+        discard;
+    }
+
+    float transparent_factor = clamp((in_data.water_depth - 0.03f) / 0.03f, 0.0f, 1.0f);
+
     vec3 pos = in_data.vertex_position;
     vec3 tnor = terrainNormal(vec2(pos.x, pos.z), 0.00025f, 2000.0f);
 
@@ -136,7 +144,7 @@ void main() {
     vec3 normal = water_normal;
 
     vec3 albedo = vec3(0.11, 0.115, 0.15)*.75f;
-    albedo = mix(albedo, bg_color, thickness_fade_rate);
+    //albedo = mix(albedo, bg_color, thickness_fade_rate);
 
     MaterialInfo material_info;
     material_info.baseColor = albedo;
