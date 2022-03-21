@@ -60,13 +60,13 @@ Menu::Menu(
     weather_controls_.mix_rate = 0.92f;
     weather_controls_.sea_level_temperature = 30.0f;
     // temperature changes by energy from sun minus energy vapored from land surface.
-    weather_controls_.soil_temp_adj = 0.0436f * 1.0f;
+    weather_controls_.soil_temp_adj = 0.0436f * 0.1f;
     // temperature changes by energy from sun minus energy vapored from water surface.
-    weather_controls_.water_temp_adj = 0.0237f * 1.0f;
+    weather_controls_.water_temp_adj = 0.0237f * 0.1f;
     // temperature changes by energy from sun minus energy vapored from water droplet.
     weather_controls_.moist_temp_convert = 0.00001f;
-    weather_controls_.soil_moist_adj = 0.1124f * 0.125f;
-    weather_controls_.water_moist_adj = 0.3173f * 0.125f;
+    weather_controls_.soil_moist_adj = 0.1124f * 0.0625f;
+    weather_controls_.water_moist_adj = 0.3173f * 0.0625f;
     weather_controls_.transfer_ratio = 0.8f;// 0.8f;
     weather_controls_.transfer_noise_weight = 0.2f;
     weather_controls_.cloud_forming_ratio = 0.5f;

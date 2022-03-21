@@ -1126,7 +1126,7 @@ void RealWorldApplication::drawScene(
         glsl::GameCameraParams game_camera_params;
         game_camera_params.world_min = ego::TileObject::getWorldMin();
         game_camera_params.inv_world_range = 1.0f / ego::TileObject::getWorldRange();
-        game_camera_params.init_camera_pos = glm::vec3(0, 1000.0f, 0);
+        game_camera_params.init_camera_pos = glm::vec3(0, 500.0f, 0);
         game_camera_params.key = s_key;
         game_camera_params.init_camera_dir = glm::vec3(1.0f, 0.0f, 0.0f);
         game_camera_params.frame_count = s_update_frame_count;

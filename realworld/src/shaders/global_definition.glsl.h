@@ -163,7 +163,7 @@
 #define kRayleighScaleHeight                    8e3
 #define kMieScaleHeight                         1.2e3
 
-#define kWorldMapSize                           32768.0f                  // meters
+#define kWorldMapSize                           16384.0f                  // meters
 #define kCloudMapSize                           65536.0f
 
 #define kDetailNoiseTextureSize                 256

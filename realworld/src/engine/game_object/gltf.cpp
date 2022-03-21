@@ -1264,6 +1264,10 @@ void ObjectData::destroy() {
         buffer.destroy(device_);
     }
 
+    for (int i_skin = 0; i_skin < skins_.size(); i_skin++) {
+        skins_[i_skin].joints_buffer_.destroy(device_);
+    }
+
     indirect_draw_cmd_.destroy(device_);
     instance_buffer_.destroy(device_);
 }

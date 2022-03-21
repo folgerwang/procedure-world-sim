@@ -87,7 +87,7 @@ void getMinNeighborPressure(vec3 uvw, ivec3 slc, ivec3 pixel_coords, ivec3 offse
     }
 }
 
-uvec2 packTempDiff(uint u_min_pressure, vec3 uvw, ivec3 slc, ivec3 pixel_coords) {
+uvec2 packTempDiff(uint u_min_pressure, vec3 uvw, ivec3 slc, ivec3 pixel_coords, vec2 noise_value) {
     vec3 center_weather_info = s_ground_weather_info[slc.y][slc.x];
     int center_sample_idx = int(center_weather_info.x);
 
@@ -115,8 +115,8 @@ uvec2 packTempDiff(uint u_min_pressure, vec3 uvw, ivec3 slc, ivec3 pixel_coords)
         float min_temp = texture(src_temperature, min_uvw).x;
         float min_moist = texture(src_moisture, min_uvw).x;
         if (min_pixel_coords.z == min_sample_idx) {
-            min_temp += min_weather_info.y;
-            min_moist += min_weather_info.z;
+            min_temp += min_weather_info.y * (noise_value.x * 0.5f + 0.5f);
+            min_moist += min_weather_info.z * (noise_value.y * 0.5f + 0.5f);
         }
         float min_vapor_pressure = min_moist * params.moist_to_pressure_ratio;
 
@@ -176,7 +176,7 @@ void createTempMoistureFlowBuffer(int pixel_index, ivec3 block_coords) {
     getMinNeighborPressure(uvw, slc, pixel_coords, ivec3(0, 0, 1), kNodeAbove, above_air_pressure, min_pressure);
 
     s_flow_grid[dlc.z][dlc.y][dlc.x] =
-        packTempDiff(min_pressure, uvw, slc, pixel_coords);
+        packTempDiff(min_pressure, uvw, slc, pixel_coords, noise_values.zw);
 }
 
 vec3 gatherTempMoistSamples(ivec3 dlc, out vec3 airflow_dir, float above_ratio, float below_ratio) {
