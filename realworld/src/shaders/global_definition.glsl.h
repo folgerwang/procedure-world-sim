@@ -10,7 +10,8 @@
 
 //#define MATERIAL_UNLIT
 
-#define VINPUT_INSTANCE_BINDING_START     30
+#define VINPUT_VERTEX_BINDING_POINT         30
+#define VINPUT_INSTANCE_BINDING_POINT       31
 
 // Vertex input attribute location.
 #define VINPUT_POSITION             0
@@ -164,7 +165,7 @@
 #define kMieScaleHeight                         1.2e3
 
 #define kWorldMapSize                           16384.0f                  // meters
-#define kCloudMapSize                           65536.0f
+#define kCloudMapSize                           32768.0f
 
 #define kDetailNoiseTextureSize                 256
 #define kRoughNoiseTextureSize                  32
@@ -485,6 +486,13 @@ struct PbrMaterialParams {
 };
 
 struct InstanceDataInfo {
+    vec4            mat_rot_0;
+    vec4            mat_rot_1;
+    vec4            mat_rot_2;
+    vec4            mat_pos_scale;
+};
+
+struct GrassInstanceDataInfo {
     vec4            mat_rot_0;
     vec4            mat_rot_1;
     vec4            mat_rot_2;

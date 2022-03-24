@@ -1264,6 +1264,7 @@ void RealWorldApplication::drawScene(
                     delta_t,
                     current_time,
                     false);
+
                 cmd_buf->endRenderPass();
             }
 

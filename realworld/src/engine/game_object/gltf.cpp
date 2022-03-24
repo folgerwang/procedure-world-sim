@@ -271,7 +271,7 @@ static void setupMesh(
             assert(it->second >= 0);
             const tinygltf::Accessor& accessor = model.accessors[it->second];
 
-            assert(dst_binding < VINPUT_INSTANCE_BINDING_START);
+            assert(dst_binding < VINPUT_INSTANCE_BINDING_POINT);
 
             engine::renderer::VertexInputBindingDescription binding = {};
             binding.binding = dst_binding;
@@ -989,13 +989,13 @@ static std::shared_ptr<renderer::Pipeline> createGltfPipeline(
     auto attribute_descs = primitive.attribute_descs_;
 
     renderer::VertexInputBindingDescription desc;
-    desc.binding = VINPUT_INSTANCE_BINDING_START;
+    desc.binding = VINPUT_INSTANCE_BINDING_POINT;
     desc.input_rate = renderer::VertexInputRate::INSTANCE;
     desc.stride = sizeof(glsl::InstanceDataInfo);
     binding_descs.push_back(desc);
 
     renderer::VertexInputAttributeDescription attr;
-    attr.binding = VINPUT_INSTANCE_BINDING_START;
+    attr.binding = VINPUT_INSTANCE_BINDING_POINT;
     attr.buffer_offset = 0;
     attr.format = renderer::Format::R32G32B32_SFLOAT;
     attr.buffer_view = 0;
@@ -1921,7 +1921,7 @@ void GltfObject::draw(
     std::vector<uint64_t> offsets(1);
     buffers[0] = object_->instance_buffer_.buffer;
     offsets[0] = 0;
-    cmd_buf->bindVertexBuffers(VINPUT_INSTANCE_BINDING_START, buffers, offsets);
+    cmd_buf->bindVertexBuffers(VINPUT_INSTANCE_BINDING_POINT, buffers, offsets);
 
     int32_t root_node = object_->default_scene_ >= 0 ? object_->default_scene_ : 0;
     for (auto node_idx : object_->scenes_[root_node].nodes_) {

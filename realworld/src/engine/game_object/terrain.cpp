@@ -1758,33 +1758,19 @@ renderer::WriteDescriptorList addTileResourceTextures(
 }
 
 static renderer::ShaderModuleList getTileShaderModules(
-    std::shared_ptr<renderer::Device> device) {
+    std::shared_ptr<renderer::Device> device,
+    const std::string& vs_name,
+    const std::string& ps_name) {
     renderer::ShaderModuleList shader_modules(2);
     shader_modules[0] =
         renderer::helper::loadShaderModule(
             device,
-            "tile_soil_vert.spv",
+            vs_name,
             renderer::ShaderStageFlagBits::VERTEX_BIT);
     shader_modules[1] =
         renderer::helper::loadShaderModule(
             device,
-            "tile_frag.spv",
-            renderer::ShaderStageFlagBits::FRAGMENT_BIT);
-    return shader_modules;
-}
-
-static renderer::ShaderModuleList getTileWaterShaderModules(
-    std::shared_ptr<renderer::Device> device) {
-    renderer::ShaderModuleList shader_modules(2);
-    shader_modules[0] =
-        renderer::helper::loadShaderModule(
-            device,
-            "tile_water_vert.spv",
-            renderer::ShaderStageFlagBits::VERTEX_BIT);
-    shader_modules[1] =
-        renderer::helper::loadShaderModule(
-            device,
-            "tile_water_frag.spv",
+            ps_name,
             renderer::ShaderStageFlagBits::FRAGMENT_BIT);
     return shader_modules;
 }
@@ -1940,12 +1926,15 @@ static std::shared_ptr<renderer::Pipeline> createTilePipeline(
     const std::shared_ptr<renderer::RenderPass>& render_pass,
     const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
-    const glm::uvec2& display_size) {
+    const glm::uvec2& display_size,
+    const std::string& vs_name,
+    const std::string& ps_name) {
     renderer::PipelineInputAssemblyStateCreateInfo input_assembly;
     input_assembly.topology = renderer::PrimitiveTopology::TRIANGLE_LIST;
     input_assembly.restart_enable = false;
 
-    auto shader_modules = getTileShaderModules(device);
+    auto shader_modules =
+        getTileShaderModules(device, vs_name, ps_name);
     auto pipeline = device->createPipeline(
         render_pass,
         pipeline_layout,
@@ -1953,32 +1942,6 @@ static std::shared_ptr<renderer::Pipeline> createTilePipeline(
         {},
         input_assembly,
         graphic_pipeline_info,
-        shader_modules,
-        display_size);
-
-    return pipeline;
-}
-
-static std::shared_ptr<renderer::Pipeline> createTileWaterPipeline(
-    const std::shared_ptr<renderer::Device>& device,
-    const std::shared_ptr<renderer::RenderPass>& render_pass,
-    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout,
-    const renderer::GraphicPipelineInfo& graphic_pipeline_info,
-    const glm::uvec2& display_size) {
-    renderer::PipelineInputAssemblyStateCreateInfo input_assembly;
-    input_assembly.topology = renderer::PrimitiveTopology::TRIANGLE_LIST;
-    input_assembly.restart_enable = false;
-
-    renderer::GraphicPipelineInfo new_graphic_pipeline_info = graphic_pipeline_info;
-
-    auto shader_modules = getTileWaterShaderModules(device);
-    auto pipeline = device->createPipeline(
-        render_pass,
-        pipeline_layout,
-        {},
-        {},
-        input_assembly,
-        new_graphic_pipeline_info,
         shader_modules,
         display_size);
 
@@ -1997,6 +1960,77 @@ size_t generateHash(
     hash_combine(hash, segment_count);
     return hash;
 }
+
+static std::shared_ptr<renderer::Pipeline> createGrassPipeline(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::RenderPass>& render_pass,
+    const std::shared_ptr<renderer::PipelineLayout>& pipeline_layout,
+    const renderer::GraphicPipelineInfo& graphic_pipeline_info,
+    const glm::uvec2& display_size) {
+
+    auto shader_modules =
+        getTileShaderModules(device, "grass_vert.spv", "grass_frag.spv");
+
+    renderer::PipelineInputAssemblyStateCreateInfo topology_info;
+    topology_info.restart_enable = false;
+    topology_info.topology = renderer::PrimitiveTopology::TRIANGLE_LIST;
+
+    std::vector<renderer::VertexInputBindingDescription> binding_descs;
+    std::vector<renderer::VertexInputAttributeDescription> attribute_descs;
+
+    renderer::VertexInputBindingDescription vert_desc = {};
+    vert_desc.binding = VINPUT_VERTEX_BINDING_POINT;
+    vert_desc.stride = sizeof(glm::vec3);
+    vert_desc.input_rate = renderer::VertexInputRate::VERTEX;
+    binding_descs.push_back(vert_desc);
+
+    renderer::VertexInputBindingDescription instance_desc;
+    instance_desc.binding = VINPUT_INSTANCE_BINDING_POINT;
+    instance_desc.input_rate = renderer::VertexInputRate::INSTANCE;
+    instance_desc.stride = sizeof(glsl::GrassInstanceDataInfo);
+    binding_descs.push_back(instance_desc);
+
+    renderer::VertexInputAttributeDescription vert_attr;
+    vert_attr.binding = VINPUT_VERTEX_BINDING_POINT;
+    vert_attr.buffer_offset = 0;
+    vert_attr.format = renderer::Format::R32G32B32_SFLOAT;
+    vert_attr.buffer_view = 0;
+    vert_attr.location = VINPUT_POSITION;
+    vert_attr.offset = offsetof(glsl::GrassInstanceDataInfo, mat_rot_0);
+    attribute_descs.push_back(vert_attr);
+
+    renderer::VertexInputAttributeDescription attr;
+    attr.binding = VINPUT_INSTANCE_BINDING_POINT;
+    attr.buffer_offset = 0;
+    attr.format = renderer::Format::R32G32B32_SFLOAT;
+    attr.buffer_view = 0;
+    attr.location = IINPUT_MAT_ROT_0;
+    attr.offset = offsetof(glsl::GrassInstanceDataInfo, mat_rot_0);
+    attribute_descs.push_back(attr);
+    attr.location = IINPUT_MAT_ROT_1;
+    attr.offset = offsetof(glsl::GrassInstanceDataInfo, mat_rot_1);
+    attribute_descs.push_back(attr);
+    attr.location = IINPUT_MAT_ROT_2;
+    attr.offset = offsetof(glsl::GrassInstanceDataInfo, mat_rot_2);
+    attribute_descs.push_back(attr);
+    attr.format = renderer::Format::R32G32B32A32_SFLOAT;
+    attr.location = IINPUT_MAT_POS_SCALE;
+    attr.offset = offsetof(glsl::GrassInstanceDataInfo, mat_pos_scale);
+    attribute_descs.push_back(attr);
+
+    auto grass_pipeline = device->createPipeline(
+        render_pass,
+        pipeline_layout,
+        binding_descs,
+        attribute_descs,
+        topology_info,
+        graphic_pipeline_info,
+        shader_modules,
+        display_size);
+
+    return grass_pipeline;
+}
+
 
 } // namespace
 
@@ -2026,6 +2060,7 @@ std::shared_ptr<renderer::Pipeline> TileObject::tile_pipeline_;
 std::shared_ptr<renderer::DescriptorSetLayout> TileObject::tile_res_desc_set_layout_;
 std::shared_ptr<renderer::DescriptorSet> TileObject::tile_res_desc_set_[2];
 std::shared_ptr<renderer::Pipeline> TileObject::tile_water_pipeline_;
+std::shared_ptr<renderer::Pipeline> TileObject::tile_grass_pipeline_;
 
 TileObject::TileObject(
     const renderer::DeviceInfo& device_info,
@@ -2040,6 +2075,7 @@ TileObject::TileObject(
     hash_(hash_value),
     block_idx_(block_idx){
     createMeshBuffers();
+    createGrassBuffers();
     assert(tile_creator_desc_set_layout_);
     assert(tile_update_desc_set_layout_);
     assert(tile_flow_update_desc_set_layout_);
@@ -2048,6 +2084,10 @@ TileObject::TileObject(
 
 void TileObject::destory() {
     index_buffer_.destroy(device_info_.device);
+    grass_vertex_buffer_.destroy(device_info_.device);
+    grass_index_buffer_.destroy(device_info_.device);
+    grass_indirect_draw_cmd_.destroy(device_info_.device);
+    grass_instance_buffer_.destroy(device_info_.device);
 }
 
 std::shared_ptr<TileObject> TileObject::addOneTile(
@@ -2181,15 +2221,30 @@ void TileObject::createStaticMembers(
                 render_pass,
                 tile_pipeline_layout_,
                 graphic_pipeline_info,
-                display_size);
+                display_size,
+                "tile_soil_vert.spv",
+                "tile_frag.spv");
     }
 
     if (tile_water_pipeline_ == nullptr) {
         assert(tile_pipeline_layout_);
         tile_water_pipeline_ =
-            createTileWaterPipeline(
+            createTilePipeline(
                 device,
                 water_render_pass,
+                tile_pipeline_layout_,
+                graphic_pipeline_info,
+                display_size,
+                "tile_water_vert.spv",
+                "tile_water_frag.spv");
+    }
+
+    if (tile_grass_pipeline_ == nullptr) {
+        assert(tile_pipeline_layout_);
+        tile_grass_pipeline_ =
+            createGrassPipeline(
+                device,
+                render_pass,
                 tile_pipeline_layout_,
                 graphic_pipeline_info,
                 display_size);
@@ -2339,6 +2394,11 @@ void TileObject::recreateStaticMembers(
         tile_water_pipeline_ = nullptr;
     }
 
+    if (tile_grass_pipeline_) {
+        device->destroyPipeline(tile_grass_pipeline_);
+        tile_grass_pipeline_ = nullptr;
+    }
+
     createStaticMembers(
         device,
         render_pass,
@@ -2363,6 +2423,7 @@ void TileObject::destoryStaticMembers(
     device->destroyPipelineLayout(tile_pipeline_layout_);
     device->destroyPipeline(tile_pipeline_);
     device->destroyPipeline(tile_water_pipeline_);
+    device->destroyPipeline(tile_grass_pipeline_);
     rock_layer_.destroy(device);
     soil_water_layer_[0].destroy(device);
     soil_water_layer_[1].destroy(device);
@@ -2385,6 +2446,93 @@ void TileObject::createMeshBuffers() {
         index_buffer_.memory,
         index_buffer_size,
         index_buffer.data());
+}
+
+void addQuadIndex(
+    std::vector<uint16_t>& index_list,
+    uint32_t a,
+    uint32_t b,
+    uint32_t c,
+    uint32_t d) {
+    index_list.push_back(c);
+    index_list.push_back(b);
+    index_list.push_back(a);
+    index_list.push_back(a);
+    index_list.push_back(d);
+    index_list.push_back(c);
+}
+
+void TileObject::createGrassBuffers() {
+    constexpr uint32_t kMaxNumGrass = 4096;
+
+    std::vector<glm::vec3> vertex_pos(8);
+    auto idx = 0;
+    for (auto z = 0; z < 2; z++) {
+        for (auto y = 0; y < 2; y++) {
+            for (auto x = 0; x < 2; x++) {
+                vertex_pos[idx] = glm::vec3(x - 0.5f, y - 0.5f, z - 0.5f);
+                idx ++;
+            }
+        }
+    }
+
+    renderer::Helper::createBuffer(
+        device_info_,
+        SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
+        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
+        grass_vertex_buffer_.buffer,
+        grass_vertex_buffer_.memory,
+        vertex_pos.size() * sizeof(glm::vec3),
+        vertex_pos.data());
+
+    std::vector<uint16_t> index_list;
+    index_list.reserve(36);
+    addQuadIndex(index_list, 0, 1, 3, 2);
+    addQuadIndex(index_list, 4, 6, 7, 5);
+    addQuadIndex(index_list, 0, 2, 6, 4);
+    addQuadIndex(index_list, 2, 3, 7, 6);
+    addQuadIndex(index_list, 3, 1, 5, 7);
+    addQuadIndex(index_list, 1, 0, 4, 5);
+
+    renderer::Helper::createBuffer(
+        device_info_,
+        SET_FLAG_BIT(BufferUsage, INDEX_BUFFER_BIT) |
+        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
+        grass_index_buffer_.buffer,
+        grass_index_buffer_.memory,
+        index_list.size() * sizeof(uint16_t),
+        index_list.data());
+
+    std::vector<renderer::DrawIndexedIndirectCommand> indirect_draw_cmd_buffer(1);
+    indirect_draw_cmd_buffer[0].index_count = 36;
+    indirect_draw_cmd_buffer[0].vertex_offset = 0;
+    indirect_draw_cmd_buffer[0].first_index = 0;
+    indirect_draw_cmd_buffer[0].first_instance = 0;
+    indirect_draw_cmd_buffer[0].instance_count = kMaxNumGrass;
+
+    renderer::Helper::createBuffer(
+        device_info_,
+        SET_FLAG_BIT(BufferUsage, INDIRECT_BUFFER_BIT) |
+        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        0,
+        grass_indirect_draw_cmd_.buffer,
+        grass_indirect_draw_cmd_.memory,
+        indirect_draw_cmd_buffer.size() * sizeof(renderer::DrawIndexedIndirectCommand),
+        indirect_draw_cmd_buffer.data());
+
+    device_info_.device->createBuffer(
+        kMaxNumGrass * sizeof(glsl::GrassInstanceDataInfo),
+        SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
+        SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
+        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        0,
+        grass_instance_buffer_.buffer,
+        grass_instance_buffer_.memory);
 }
 
 void TileObject::generateStaticDescriptorSet(
@@ -2627,7 +2775,9 @@ void TileObject::draw(
     bool is_base_pass) {
     auto segment_count = static_cast<uint32_t>(TileConst::kSegmentCount);
 
-    cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, is_base_pass ? tile_pipeline_ : tile_water_pipeline_);
+    cmd_buf->bindPipeline(
+        renderer::PipelineBindPoint::GRAPHICS,
+        is_base_pass ? tile_pipeline_ : tile_water_pipeline_);
     cmd_buf->bindIndexBuffer(index_buffer_.buffer, 0, renderer::IndexType::UINT32);
 
     glsl::TileParams tile_params = {};
@@ -2660,6 +2810,59 @@ void TileObject::draw(
     cmd_buf->drawIndexed(segment_count * segment_count * 6);
 }
 
+void TileObject::drawGrass(
+    const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+    const renderer::DescriptorSetList& desc_set_list,
+    const glm::uvec2 display_size,
+    int dbuf_idx,
+    float delta_t,
+    float cur_time) {
+    auto segment_count = static_cast<uint32_t>(TileConst::kSegmentCount);
+
+    cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, tile_grass_pipeline_);
+    std::vector<std::shared_ptr<renderer::Buffer>> buffers(1);
+    std::vector<uint64_t> offsets(1);
+    buffers[0] = grass_instance_buffer_.buffer;
+    offsets[0] = 0;
+    cmd_buf->bindVertexBuffers(VINPUT_INSTANCE_BINDING_POINT, buffers, offsets);
+
+    buffers[0] = grass_vertex_buffer_.buffer;
+    cmd_buf->bindVertexBuffers(VINPUT_VERTEX_BINDING_POINT, buffers, offsets);
+
+    cmd_buf->bindIndexBuffer(grass_index_buffer_.buffer, 0, renderer::IndexType::UINT16);
+
+    glsl::TileParams tile_params = {};
+    tile_params.world_min = getWorldMin();
+    tile_params.inv_world_range = 1.0f / getWorldRange();
+    tile_params.min = min_;
+    tile_params.range = max_ - min_;
+    tile_params.segment_count = segment_count;
+    tile_params.inv_segment_count = 1.0f / segment_count;
+    tile_params.offset = 0;
+    tile_params.inv_screen_size = glm::vec2(1.0f / display_size.x, 1.0f / display_size.y);
+    tile_params.delta_t = delta_t;
+    tile_params.time = cur_time;
+    tile_params.tile_index = block_idx_;
+    cmd_buf->pushConstants(
+        SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
+        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
+        tile_pipeline_layout_,
+        &tile_params,
+        sizeof(tile_params));
+
+    auto new_desc_sets = desc_set_list;
+    new_desc_sets.push_back(tile_res_desc_set_[dbuf_idx]);
+
+    cmd_buf->bindDescriptorSets(
+        renderer::PipelineBindPoint::GRAPHICS,
+        tile_pipeline_layout_,
+        new_desc_sets);
+
+    cmd_buf->drawIndexedIndirect(
+        grass_indirect_draw_cmd_,
+        0);
+}
+
 void TileObject::generateAllDescriptorSets(
     const std::shared_ptr<renderer::Device>& device,
     const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
@@ -2690,6 +2893,14 @@ void TileObject::drawAllVisibleTiles(
             delta_t,
             cur_time,
             is_base_pass);
+
+        tile->drawGrass(
+            cmd_buf,
+            desc_set_list,
+            display_size,
+            dbuf_idx,
+            delta_t,
+            cur_time);
     }
 }
 

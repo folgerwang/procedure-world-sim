@@ -27,6 +27,12 @@ class TileObject {
 
     renderer::BufferInfo index_buffer_;
 
+    // grass etc.
+    renderer::BufferInfo grass_vertex_buffer_;
+    renderer::BufferInfo grass_index_buffer_;
+    renderer::BufferInfo grass_indirect_draw_cmd_;
+    renderer::BufferInfo grass_instance_buffer_;
+
     static std::unordered_map<size_t, std::shared_ptr<TileObject>> tile_meshes_;
     static std::vector<std::shared_ptr<TileObject>> visible_tiles_;
     static std::vector<uint32_t> available_block_indexes_;
@@ -52,6 +58,7 @@ class TileObject {
     static std::shared_ptr<renderer::DescriptorSetLayout> tile_res_desc_set_layout_;
     static std::shared_ptr<renderer::DescriptorSet> tile_res_desc_set_[2];
     static std::shared_ptr<renderer::Pipeline> tile_water_pipeline_;
+    static std::shared_ptr<renderer::Pipeline> tile_grass_pipeline_;
 
 public:
     TileObject() = delete;
@@ -177,6 +184,8 @@ public:
         const float& tile_size);
 
     void createMeshBuffers();
+
+    void createGrassBuffers();
         
     void draw(const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
         const renderer::DescriptorSetList& desc_set_list,
@@ -185,6 +194,14 @@ public:
         float delta_t,
         float cur_time,
         bool is_base_pass);
+
+    void drawGrass(
+        const std::shared_ptr<renderer::CommandBuffer>& cmd_buf,
+        const renderer::DescriptorSetList& desc_set_list,
+        const glm::uvec2 display_size,
+        int dbuf_idx,
+        float delta_t,
+        float cur_time);
 };
 
 } // namespace game_object
