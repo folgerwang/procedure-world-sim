@@ -1760,7 +1760,8 @@ renderer::WriteDescriptorList addTileResourceTextures(
 static renderer::ShaderModuleList getTileShaderModules(
     std::shared_ptr<renderer::Device> device,
     const std::string& vs_name,
-    const std::string& ps_name) {
+    const std::string& ps_name,
+    const std::string& gs_name = "") {
     renderer::ShaderModuleList shader_modules(2);
     shader_modules[0] =
         renderer::helper::loadShaderModule(
@@ -1772,6 +1773,14 @@ static renderer::ShaderModuleList getTileShaderModules(
             device,
             ps_name,
             renderer::ShaderStageFlagBits::FRAGMENT_BIT);
+
+    if (gs_name.size() > 0) {
+        shader_modules.push_back(
+            renderer::helper::loadShaderModule(
+                device,
+                gs_name,
+                renderer::ShaderStageFlagBits::GEOMETRY_BIT));
+    }
     return shader_modules;
 }
 
@@ -1969,7 +1978,7 @@ static std::shared_ptr<renderer::Pipeline> createGrassPipeline(
     const glm::uvec2& display_size) {
 
     auto shader_modules =
-        getTileShaderModules(device, "grass_vert.spv", "grass_frag.spv");
+        getTileShaderModules(device, "grass_vert.spv", "grass_frag.spv", "grass_geom.spv");
 
     renderer::PipelineInputAssemblyStateCreateInfo topology_info;
     topology_info.restart_enable = false;
@@ -2463,7 +2472,7 @@ void addQuadIndex(
 }
 
 void TileObject::createGrassBuffers() {
-    constexpr uint32_t kMaxNumGrass = 4096;
+    constexpr uint32_t kMaxNumGrass = 65536;
 
     std::vector<glm::vec3> vertex_pos(8);
     auto idx = 0;

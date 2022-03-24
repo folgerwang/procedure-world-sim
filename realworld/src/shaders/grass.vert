@@ -46,7 +46,7 @@ void main() {
 
     vec3 position_ws =
         //local_world_rot_mat *
-        in_position * 10.0f +
+        in_position * 1.0f + vec3(0, 0.5f, 0) +
         vec3(pos_xz_ws.x, ground_height, pos_xz_ws.y); //in_loc_pos_scale.xyz;
 
     gl_Position = camera_info.view_proj * vec4(position_ws, 1.0);
