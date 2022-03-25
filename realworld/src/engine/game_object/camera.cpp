@@ -140,15 +140,8 @@ void GameCamera::createGameCameraUpdateDescSet(
     }
 }
 
-void GameCamera::initStaticMembers(
-    const std::shared_ptr<renderer::Device>& device,
-    const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
-    const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
-    const std::shared_ptr<renderer::Sampler>& texture_sampler,
-    const renderer::TextureInfo& rock_layer,
-    const renderer::TextureInfo& soil_water_layer_0,
-    const renderer::TextureInfo& soil_water_layer_1,
-    const renderer::BufferInfo& game_objects_buffer) {
+void GameCamera::initGameCameraBuffer(
+    const std::shared_ptr<renderer::Device>& device) {
     if (!game_camera_buffer_) {
         game_camera_buffer_ = std::make_shared<renderer::BufferInfo>();
         device->createBuffer(
@@ -160,6 +153,17 @@ void GameCamera::initStaticMembers(
             game_camera_buffer_->buffer,
             game_camera_buffer_->memory);
     }
+}
+
+void GameCamera::initStaticMembers(
+    const std::shared_ptr<renderer::Device>& device,
+    const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
+    const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
+    const std::shared_ptr<renderer::Sampler>& texture_sampler,
+    const renderer::TextureInfo& rock_layer,
+    const renderer::TextureInfo& soil_water_layer_0,
+    const renderer::TextureInfo& soil_water_layer_1,
+    const renderer::BufferInfo& game_objects_buffer) {
 
     if (update_game_camera_desc_set_layout_ == nullptr) {
         update_game_camera_desc_set_layout_ =

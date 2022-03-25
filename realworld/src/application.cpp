@@ -479,18 +479,23 @@ void RealWorldApplication::initVulkan() {
         ego::TileObject::getRockLayer().view,
         soil_water_texes);
 
+    ego::GltfObject::initGameObjectBuffer(device_);
+    ego::GameCamera::initGameCameraBuffer(device_);
+    assert(ego::GltfObject::getGameObjectsBuffer());
+    assert(ego::GameCamera::getGameCameraBuffer());
+
     ego::GltfObject::initStaticMembers(
         device_,
         descriptor_pool_,
         desc_set_layouts,
         texture_sampler_,
+        ego::GameCamera::getGameCameraBuffer(),
         ego::TileObject::getRockLayer(),
         ego::TileObject::getSoilWaterLayer(0),
         ego::TileObject::getSoilWaterLayer(1),
         ego::TileObject::getWaterFlow(),
         weather_system_->getAirflowTex());
 
-    assert(ego::GltfObject::getGameObjectsBuffer());
     ego::GameCamera::initStaticMembers(
         device_,
         descriptor_pool_,
@@ -674,6 +679,7 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         texture_sampler_,
+        ego::GameCamera::getGameCameraBuffer(),
         thin_film_lut_tex_,
         ego::TileObject::getRockLayer(),
         ego::TileObject::getSoilWaterLayer(0),

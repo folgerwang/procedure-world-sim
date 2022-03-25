@@ -7,7 +7,7 @@ layout(push_constant) uniform TileUniformBufferObject {
   InstanceBufferUpdateParams params;
 };
 
-layout(std430, set = 0, binding = GAME_OBJECTS_BUFFER_INDEX) buffer GameObjectsBuffer {
+layout(std430, set = 0, binding = GAME_OBJECTS_BUFFER_INDEX) readonly buffer GameObjectsBuffer {
   GameObjectInfo items[];
 };
 

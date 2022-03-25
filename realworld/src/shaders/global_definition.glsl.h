@@ -411,8 +411,6 @@ struct CloudParams {
 };
 
 struct GameObjectsUpdateParams {
-    vec3            camera_pos;
-    uint            num_objects;
     vec2            world_min;
     vec2            inv_world_range;
     float           delta_t;
@@ -420,7 +418,8 @@ struct GameObjectsUpdateParams {
     int             enble_airflow;
     float           water_flow_strength;
     float           air_flow_strength;
-    vec3            pad;
+    uint            num_objects;
+    vec2            pad;
 };
 
 struct InstanceBufferUpdateParams {

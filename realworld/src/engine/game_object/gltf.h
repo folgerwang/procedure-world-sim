@@ -235,17 +235,22 @@ public:
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
+        const std::shared_ptr<renderer::BufferInfo>& game_camera_buffer,
         const renderer::TextureInfo& rock_layer,
         const renderer::TextureInfo& soil_water_layer_0,
         const renderer::TextureInfo& soil_water_layer_1,
         const renderer::TextureInfo& water_flow,
         const std::shared_ptr<renderer::ImageView>& airflow_tex);
 
+    static void initGameObjectBuffer(
+        const std::shared_ptr<renderer::Device>& device);
+
     static void initStaticMembers(
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
         const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
+        const std::shared_ptr<renderer::BufferInfo>& game_camera_buffer,
         const renderer::TextureInfo& rock_layer,
         const renderer::TextureInfo& soil_water_layer_0,
         const renderer::TextureInfo& soil_water_layer_1,
@@ -267,6 +272,7 @@ public:
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
         const std::shared_ptr<renderer::Sampler>& texture_sampler,
+        const std::shared_ptr<renderer::BufferInfo>& game_camera_buffer,
         const renderer::TextureInfo& thin_film_lut_tex,
         const renderer::TextureInfo& rock_layer,
         const renderer::TextureInfo& soil_water_layer_0,

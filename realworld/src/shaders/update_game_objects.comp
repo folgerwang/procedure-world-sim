@@ -12,6 +12,10 @@ layout(std430, set = 0, binding = GAME_OBJECTS_BUFFER_INDEX) buffer GameObjectsB
   GameObjectInfo items[];
 };
 
+layout(std430, set = 0, binding = CAMERA_OBJECT_BUFFER_INDEX) readonly buffer CameraInfoBuffer {
+	GameCameraInfo camera_info;
+};
+
 layout(set = 0, binding = ROCK_LAYER_BUFFER_INDEX) uniform sampler2D rock_layer;
 layout(set = 0, binding = SOIL_WATER_LAYER_BUFFER_INDEX) uniform sampler2D soil_water_layer;
 layout(set = 0, binding = WATER_FLOW_BUFFER_INDEX) uniform sampler2D water_flow;
@@ -103,9 +107,9 @@ void main()
 
     if (info.status == 0 || params.frame_count == 0) {
 #if kNumGltfInstance == 1
-        info.position = params.camera_pos;
+        info.position = camera_info.position;
 #else
-        info.position = params.camera_pos + 
+        info.position = camera_info.position +
                         vec3((nx * 2.0f - 1.0f) * 400.0f,
                              200.0f,
                              (nz * 2.0f - 1.0f) * 400.0f);

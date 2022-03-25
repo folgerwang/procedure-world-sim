@@ -32,6 +32,9 @@ public:
         const renderer::TextureInfo& soil_water_layer_1,
         const renderer::BufferInfo& game_objects_buffer);
 
+    static void initGameCameraBuffer(
+        const std::shared_ptr<renderer::Device>& device);
+
     static void initStaticMembers(
         const std::shared_ptr<renderer::Device>& device,
         const std::shared_ptr<renderer::DescriptorPool>& descriptor_pool,
