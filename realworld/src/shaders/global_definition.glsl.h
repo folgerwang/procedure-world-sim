@@ -182,7 +182,7 @@
 #define kNodeWaterBack                          0x02      // -y
 #define kNodeWaterFront                         0x03      // +y
 
-#define kNumGltfInstance                        1 // 4096
+#define kNumGltfInstance                        4096
 
 #define kPayLoadHitValueIdx                     0
 #define kPayLoadShadowedIdx                     1

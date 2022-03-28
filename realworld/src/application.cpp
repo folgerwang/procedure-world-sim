@@ -1156,6 +1156,10 @@ void RealWorldApplication::drawScene(
             game_camera_params,
             s_dbuf_idx);
 
+        if (player_object_) {
+            player_object_->updateBuffers(cmd_buf);
+        }
+
         for (auto& gltf_obj : gltf_objects_) {
             gltf_obj->updateBuffers(cmd_buf);
         }
@@ -1177,6 +1181,10 @@ void RealWorldApplication::drawScene(
             for (auto& gltf_obj : gltf_objects_) {
                 gltf_obj->draw(cmd_buf, desc_sets);
             }
+        }
+
+        if (player_object_) {
+            player_object_->draw(cmd_buf, desc_sets);
         }
 
         // render terrain opaque pass.
@@ -1465,6 +1473,28 @@ void RealWorldApplication::drawFrame() {
         gltf_objects_.push_back(gltf_obj);
     }
 
+    auto to_load_player_name = menu_->getToLoadPlayerNameAndClear();
+    if (to_load_player_name != "") {
+        if (player_object_) {
+            player_object_->destroy();
+            player_object_ = nullptr;
+        }
+        player_object_ = std::make_shared<ego::GltfObject>(
+            device_info_,
+            descriptor_pool_,
+            hdr_render_pass_,
+            graphic_pipeline_info_,
+            texture_sampler_,
+            thin_film_lut_tex_,
+            to_load_player_name,
+            swap_chain_info_.extent,
+            glm::inverse(view_params_.view));
+    }
+
+    if (player_object_) {
+        player_object_->update(device_info_, current_time_);
+    }
+
     for (auto& gltf_obj : gltf_objects_) {
         gltf_obj->update(device_info_, current_time_);
     }
@@ -1613,6 +1643,10 @@ void RealWorldApplication::cleanup() {
     
     ego::TileObject::destoryAllTiles();
     ego::TileObject::destoryStaticMembers(device_);
+    if (player_object_) {
+        player_object_->destroy();
+        player_object_ = nullptr;
+    }
     for (auto& obj : gltf_objects_) {
         obj->destroy();
     }

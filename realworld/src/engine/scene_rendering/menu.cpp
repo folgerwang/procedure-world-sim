@@ -120,6 +120,7 @@ bool Menu::draw(
         screen_size,
         clear_values);
 
+    static bool s_spawn_player = false;
     static bool s_select_load_gltf = false;
     static bool s_show_skydome = false;
     static bool s_show_weather = false;
@@ -149,6 +150,10 @@ bool Menu::draw(
 
         if (ImGui::BeginMenu("Game Objects"))
         {
+            if (ImGui::MenuItem("Spawn player", NULL)) {
+                s_spawn_player = true;
+            }
+
             if (ImGui::MenuItem("Load gltf", NULL)) {
                 s_select_load_gltf = true;
             }
@@ -289,6 +294,11 @@ bool Menu::draw(
         if (!s_select_load_gltf) {
             ImGui::CloseCurrentPopup();
         }
+    }
+
+    if (s_spawn_player) {
+        spawn_gltf_name_ = "assets/CesiumMan.gltf";
+        s_spawn_player = false;
     }
 
     if (compile_shaders) {

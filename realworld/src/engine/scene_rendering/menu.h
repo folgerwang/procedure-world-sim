@@ -9,6 +9,7 @@ namespace scene_rendering {
 class Menu {
     std::vector<std::string> gltf_file_names_;
     std::vector<std::string> to_load_gltf_names_;
+    std::string spawn_gltf_name_;
     bool turn_off_water_pass_ = false;
     bool turn_off_ray_tracing_ = true;
     bool turn_off_volume_moist_ = false;
@@ -48,6 +49,12 @@ public:
     std::vector<std::string> getToLoadGltfNamesAndClear() {
         auto result = to_load_gltf_names_;
         to_load_gltf_names_.clear();
+        return result;
+    }
+
+    std::string getToLoadPlayerNameAndClear() {
+        auto result = spawn_gltf_name_;
+        spawn_gltf_name_ = "";
         return result;
     }
 
