@@ -2159,6 +2159,7 @@ void TileObject::createStaticMembers(
     const std::shared_ptr<renderer::RenderPass>& render_pass,
     const std::shared_ptr<renderer::RenderPass>& water_render_pass,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
+    const renderer::GraphicPipelineInfo& graphic_double_face_pipeline_info,
     const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
     const glm::uvec2& display_size) {
     if (tile_creator_pipeline_layout_ == nullptr) {
@@ -2255,7 +2256,7 @@ void TileObject::createStaticMembers(
                 device,
                 render_pass,
                 tile_pipeline_layout_,
-                graphic_pipeline_info,
+                graphic_double_face_pipeline_info,
                 display_size);
     }
 }
@@ -2265,6 +2266,7 @@ void TileObject::initStaticMembers(
     const std::shared_ptr<renderer::RenderPass>& render_pass,
     const std::shared_ptr<renderer::RenderPass>& water_render_pass,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
+    const renderer::GraphicPipelineInfo& graphic_double_face_pipeline_info,
     const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
     const glm::uvec2& display_size) {
     auto& device = device_info.device;
@@ -2347,6 +2349,7 @@ void TileObject::initStaticMembers(
         render_pass,
         water_render_pass,
         graphic_pipeline_info,
+        graphic_double_face_pipeline_info,
         global_desc_set_layouts,
         display_size);
 }
@@ -2356,6 +2359,7 @@ void TileObject::recreateStaticMembers(
     const std::shared_ptr<renderer::RenderPass>& render_pass,
     const std::shared_ptr<renderer::RenderPass>& water_render_pass,
     const renderer::GraphicPipelineInfo& graphic_pipeline_info,
+    const renderer::GraphicPipelineInfo& graphic_double_face_pipeline_info,
     const renderer::DescriptorSetLayoutList& global_desc_set_layouts,
     const glm::uvec2& display_size) {
     if (tile_creator_pipeline_layout_) {
@@ -2413,6 +2417,7 @@ void TileObject::recreateStaticMembers(
         render_pass,
         water_render_pass,
         graphic_pipeline_info,
+        graphic_double_face_pipeline_info,
         global_desc_set_layouts,
         display_size);
 }

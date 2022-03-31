@@ -6,10 +6,6 @@
 
 layout(location = VINPUT_POSITION) in vec3 in_position;
 
-layout(std430, set = VIEW_PARAMS_SET, binding = VIEW_CAMERA_BUFFER_INDEX) readonly buffer CameraInfoBuffer {
-	GameCameraInfo camera_info;
-};
-
 layout(push_constant) uniform TileUniformBufferObject {
     TileParams tile_params;
 };
@@ -23,7 +19,7 @@ layout(location = IINPUT_MAT_ROT_2) in vec3 in_loc_rot_mat_2;
 layout(location = IINPUT_MAT_POS_SCALE) in vec4 in_loc_pos_scale;
 
 layout(location = 0) out VsPsData {
-    vec3 vertex_position;
+    vec3 position_ws;
 } out_data;
 
 void main() {
@@ -44,10 +40,8 @@ void main() {
                in_loc_rot_mat_1,
                in_loc_rot_mat_2);
 
-    vec3 position_ws =
+    out_data.position_ws =
         //local_world_rot_mat *
         in_position * 1.0f + vec3(0, 0.5f, 0) +
         vec3(pos_xz_ws.x, ground_height, pos_xz_ws.y); //in_loc_pos_scale.xyz;
-
-    gl_Position = camera_info.view_proj * vec4(position_ws, 1.0);
 }

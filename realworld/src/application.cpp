@@ -344,6 +344,11 @@ void RealWorldApplication::initVulkan() {
     graphic_pipeline_info_.ms_info = ms_info;
     graphic_pipeline_info_.depth_stencil_info = depth_stencil_info;
 
+    graphic_double_face_pipeline_info_.blend_state_info = single_no_blend_state_info;
+    graphic_double_face_pipeline_info_.rasterization_info = no_cull_rasterization_info;
+    graphic_double_face_pipeline_info_.ms_info = ms_info;
+    graphic_double_face_pipeline_info_.depth_stencil_info = depth_stencil_info;
+
     graphic_no_depth_write_pipeline_info_.blend_state_info = single_no_blend_state_info;
     graphic_no_depth_write_pipeline_info_.rasterization_info = cull_rasterization_info;
     graphic_no_depth_write_pipeline_info_.ms_info = ms_info;
@@ -465,6 +470,7 @@ void RealWorldApplication::initVulkan() {
         hdr_render_pass_,
         hdr_water_render_pass_,
         graphic_pipeline_info_,
+        graphic_double_face_pipeline_info_,
         desc_set_layouts,
         swap_chain_info_.extent);
 
@@ -606,6 +612,7 @@ void RealWorldApplication::recreateSwapChain() {
         hdr_render_pass_,
         hdr_water_render_pass_,
         graphic_pipeline_info_,
+        graphic_double_face_pipeline_info_,
         desc_set_layouts,
         swap_chain_info_.extent);
     ego::GltfObject::recreateStaticMembers(
@@ -930,6 +937,7 @@ void RealWorldApplication::createDescriptorSetLayout() {
         bindings[0].stage_flags =
             SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
             SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) |
+            SET_FLAG_BIT(ShaderStage, GEOMETRY_BIT) |
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
         bindings[0].immutable_samplers = nullptr; // Optional
 

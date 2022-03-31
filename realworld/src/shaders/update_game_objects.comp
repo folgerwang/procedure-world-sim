@@ -111,7 +111,7 @@ void main()
 #else
         info.position = camera_info.position +
                         vec3((nx * 2.0f - 1.0f) * 400.0f,
-                             200.0f,
+                             400.0f,
                              (nz * 2.0f - 1.0f) * 400.0f);
 #endif
         info.moving_dir = vec3(0, 0, 0);
