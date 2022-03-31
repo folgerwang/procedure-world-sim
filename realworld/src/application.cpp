@@ -1393,7 +1393,7 @@ void RealWorldApplication::drawFrame() {
     ego::TileObject::updateAllTiles(
         device_info_,
         descriptor_pool_,
-        1024,
+        256,
         glm::vec2(gpu_game_camera_info_.position.x, gpu_game_camera_info_.position.z));
 
     if (dump_volume_noise_) {

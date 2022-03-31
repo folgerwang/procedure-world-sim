@@ -1982,7 +1982,7 @@ static std::shared_ptr<renderer::Pipeline> createGrassPipeline(
 
     renderer::PipelineInputAssemblyStateCreateInfo topology_info;
     topology_info.restart_enable = false;
-    topology_info.topology = renderer::PrimitiveTopology::TRIANGLE_LIST;
+    topology_info.topology = renderer::PrimitiveTopology::POINT_LIST;
 
     std::vector<renderer::VertexInputBindingDescription> binding_descs;
     std::vector<renderer::VertexInputAttributeDescription> attribute_descs;
@@ -2152,6 +2152,11 @@ glm::vec2 TileObject::getWorldMin() {
 }
 glm::vec2 TileObject::getWorldRange() {
     return glm::vec2(kWorldMapSize);
+}
+
+float TileObject::getMinDistToCamera(const glm::vec2& camera_pos) {
+    auto center = (getMin() + getMax()) * 0.5f;
+    return glm::length(center - camera_pos);
 }
 
 void TileObject::createStaticMembers(
@@ -2477,19 +2482,8 @@ void addQuadIndex(
 }
 
 void TileObject::createGrassBuffers() {
-    constexpr uint32_t kMaxNumGrass = 65536;
 
-    std::vector<glm::vec3> vertex_pos(8);
-    auto idx = 0;
-    for (auto z = 0; z < 2; z++) {
-        for (auto y = 0; y < 2; y++) {
-            for (auto x = 0; x < 2; x++) {
-                vertex_pos[idx] = glm::vec3(x - 0.5f, y - 0.5f, z - 0.5f);
-                idx ++;
-            }
-        }
-    }
-
+    glm::vec3 vertex_pos = glm::vec3(0);
     renderer::Helper::createBuffer(
         device_info_,
         SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
@@ -2498,17 +2492,10 @@ void TileObject::createGrassBuffers() {
         SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
         grass_vertex_buffer_.buffer,
         grass_vertex_buffer_.memory,
-        vertex_pos.size() * sizeof(glm::vec3),
-        vertex_pos.data());
+        sizeof(glm::vec3),
+        &vertex_pos);
 
-    std::vector<uint16_t> index_list;
-    index_list.reserve(36);
-    addQuadIndex(index_list, 0, 1, 3, 2);
-    addQuadIndex(index_list, 4, 6, 7, 5);
-    addQuadIndex(index_list, 0, 2, 6, 4);
-    addQuadIndex(index_list, 2, 3, 7, 6);
-    addQuadIndex(index_list, 3, 1, 5, 7);
-    addQuadIndex(index_list, 1, 0, 4, 5);
+    uint16_t index_list = 0;
 
     renderer::Helper::createBuffer(
         device_info_,
@@ -2518,21 +2505,22 @@ void TileObject::createGrassBuffers() {
         SET_FLAG_BIT(MemoryAllocate, DEVICE_ADDRESS_BIT),
         grass_index_buffer_.buffer,
         grass_index_buffer_.memory,
-        index_list.size() * sizeof(uint16_t),
-        index_list.data());
+        sizeof(uint16_t),
+        &index_list);
 
     std::vector<renderer::DrawIndexedIndirectCommand> indirect_draw_cmd_buffer(1);
-    indirect_draw_cmd_buffer[0].index_count = 36;
+    indirect_draw_cmd_buffer[0].index_count = 1;
     indirect_draw_cmd_buffer[0].vertex_offset = 0;
     indirect_draw_cmd_buffer[0].first_index = 0;
     indirect_draw_cmd_buffer[0].first_instance = 0;
-    indirect_draw_cmd_buffer[0].instance_count = kMaxNumGrass;
+    indirect_draw_cmd_buffer[0].instance_count = static_cast<uint32_t>(TileConst::kMaxNumGrass);
 
     renderer::Helper::createBuffer(
         device_info_,
         SET_FLAG_BIT(BufferUsage, INDIRECT_BUFFER_BIT) |
         SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
-        SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+        SET_FLAG_BIT(MemoryProperty, HOST_VISIBLE_BIT) |
+        SET_FLAG_BIT(MemoryProperty, HOST_COHERENT_BIT),
         0,
         grass_indirect_draw_cmd_.buffer,
         grass_indirect_draw_cmd_.memory,
@@ -2540,7 +2528,7 @@ void TileObject::createGrassBuffers() {
         indirect_draw_cmd_buffer.data());
 
     device_info_.device->createBuffer(
-        kMaxNumGrass * sizeof(glsl::GrassInstanceDataInfo),
+        static_cast<uint32_t>(TileConst::kMaxNumGrass) * sizeof(glsl::GrassInstanceDataInfo),
         SET_FLAG_BIT(BufferUsage, VERTEX_BUFFER_BIT) |
         SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
         SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
@@ -2998,6 +2986,24 @@ void TileObject::updateAllTiles(
                 visible_tiles_.push_back(tile.second);
             }
         }
+    }
+
+    for (auto& tile : visible_tiles_) {
+        renderer::DrawIndexedIndirectCommand indirect_draw_cmd_buffer;
+        auto ratio = glm::clamp((tile->getMinDistToCamera(camera_pos) - 256.0f) / 1024.0f, 0.0f, 1.0f);
+        auto max_num_grass = static_cast<float>(TileConst::kMaxNumGrass);
+        auto min_num_grass = 4096.0f;
+        auto num_grass = max_num_grass * (1.0f - ratio) + min_num_grass * ratio;
+
+        indirect_draw_cmd_buffer.index_count = 1;
+        indirect_draw_cmd_buffer.vertex_offset = 0;
+        indirect_draw_cmd_buffer.first_index = 0;
+        indirect_draw_cmd_buffer.first_instance = 0;
+        indirect_draw_cmd_buffer.instance_count = int(num_grass);
+        device_info.device->updateBufferMemory(
+            tile->grass_indirect_draw_cmd_.memory,
+            sizeof(renderer::DrawIndexedIndirectCommand),
+            &indirect_draw_cmd_buffer);
     }
 }
 

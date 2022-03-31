@@ -12,9 +12,10 @@ class TileObject {
         kSoilLayerSize = 4096,
         kWaterlayerSize = 4096,
         kGrassSnowLayerSize = 2048,
-        kCacheTileSize = 3,
-        kVisibleTileSize = 2,
-        kSegmentCount = 256 - 1,
+        kCacheTileSize = 9,
+        kVisibleTileSize = 7,
+        kMaxNumGrass = 65536,
+        kSegmentCount = 64 - 1,
         kNumCachedBlocks = (kCacheTileSize * 2 + 1) * (kCacheTileSize * 2 + 1)
     };
 
@@ -89,6 +90,8 @@ public:
     static glm::vec2 getWorldRange();
     glm::vec2 getMin() { return min_; }
     glm::vec2 getMax() { return max_; }
+
+    float getMinDistToCamera(const glm::vec2& camera_pos);
 
     static std::shared_ptr<TileObject> addOneTile(
         const renderer::DeviceInfo& device_info,

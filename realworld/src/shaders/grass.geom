@@ -19,7 +19,7 @@ void main() {
     gl_Position = camera_info.view_proj * vec4(in_data[0].position_ws + vec3(0.1, 0.0, 0.0), 1.0);
     EmitVertex();
 
-    gl_Position = camera_info.view_proj * vec4(in_data[0].position_ws + vec3(0.0, 1.0, 0.0), 1.0);
+    gl_Position = camera_info.view_proj * vec4(in_data[0].position_ws + vec3(0.0, 2.0, 0.0), 1.0);
     EmitVertex();
     
     EndPrimitive();
