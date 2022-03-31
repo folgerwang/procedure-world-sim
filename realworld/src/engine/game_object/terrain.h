@@ -12,10 +12,11 @@ class TileObject {
         kSoilLayerSize = 4096,
         kWaterlayerSize = 4096,
         kGrassSnowLayerSize = 2048,
-        kCacheTileSize = 9,
-        kVisibleTileSize = 7,
-        kMaxNumGrass = 65536,
-        kSegmentCount = 64 - 1,
+        kCacheTileSize = 12,
+        kVisibleTileSize = 10,
+        kMinNumGrass = 1024,
+        kMaxNumGrass = 8192,
+        kSegmentCount = 32 - 1,
         kNumCachedBlocks = (kCacheTileSize * 2 + 1) * (kCacheTileSize * 2 + 1)
     };
 

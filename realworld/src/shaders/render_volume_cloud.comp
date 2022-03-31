@@ -84,8 +84,8 @@ void main()
         vec3 noise_uvw = vec3(sample_pos.x, sample_pos.y + params.time * params.noise_speed_scale, sample_pos.z);
         vec4 perlin_noise_value_0 = texture(src_detail_noise_tex, noise_uvw * params.noise_scale.x);
         vec4 perlin_noise_value_1 = texture(src_rough_noise_tex, noise_uvw * params.noise_scale.y);
-        float noise_value = dot(max(perlin_noise_value_0 - params.noise_thresold, 0.0f), params.noise_weight_0);
-        noise_value += dot(max(perlin_noise_value_1 - params.noise_thresold, 0.0f), params.noise_weight_1);
+        float noise_value = dot(max(perlin_noise_value_0 - params.noise_thresold, 0.0f) / (1.0f - params.noise_thresold), params.noise_weight_0);
+        noise_value += dot(max(perlin_noise_value_1 - params.noise_thresold, 0.0f) / (1.0f - params.noise_thresold), params.noise_weight_1);
         noise_value -= 0.55f;
         float cur_temp = texture(src_temperature, uvw).x;
         float saturate_vapor_moisture = getBuckSaturatedVaporPressure(cur_temp) * params.pressure_to_moist_ratio;

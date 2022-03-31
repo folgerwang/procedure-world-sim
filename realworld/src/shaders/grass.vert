@@ -42,8 +42,7 @@ void main() {
 
     out_data.position_ws.xyz =
         //local_world_rot_mat *
-        in_position * 1.0f + vec3(0, 0.5f, 0) +
-        vec3(pos_xz_ws.x, ground_height, pos_xz_ws.y); //in_loc_pos_scale.xyz;
+        in_position * 1.0f + vec3(pos_xz_ws.x, ground_height, pos_xz_ws.y); //in_loc_pos_scale.xyz;
 
     out_data.position_ws.w = hash_values.z;
 }

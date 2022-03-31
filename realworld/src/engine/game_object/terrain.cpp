@@ -2991,8 +2991,8 @@ void TileObject::updateAllTiles(
     for (auto& tile : visible_tiles_) {
         renderer::DrawIndexedIndirectCommand indirect_draw_cmd_buffer;
         auto ratio = glm::clamp((tile->getMinDistToCamera(camera_pos) - 256.0f) / 1024.0f, 0.0f, 1.0f);
+        auto min_num_grass = static_cast<float>(TileConst::kMinNumGrass);
         auto max_num_grass = static_cast<float>(TileConst::kMaxNumGrass);
-        auto min_num_grass = 4096.0f;
         auto num_grass = max_num_grass * (1.0f - ratio) + min_num_grass * ratio;
 
         indirect_draw_cmd_buffer.index_count = 1;
