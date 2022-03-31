@@ -118,16 +118,16 @@ void main() {
     float view_dist = length(view_vec);
     vec3 view = normalize(view_vec);
 
-    float water_ray_dist = bg_view_dist - view_dist;
+    float water_ray_dist = max(bg_view_dist - view_dist, 0.0f);
     float distorted_water_ray_dist = water_ray_dist + noise * 0.5f;
     vec3 refract_ray = refract(-view, water_normal, 1.0 / 1.33);
     vec3 refract_pos = in_data.vertex_position + refract_ray * water_ray_dist;
 
-    vec4 refracted_screen_pos = camera_info.proj * camera_info.view * vec4(refract_pos, 1.0f);
+    vec4 refracted_screen_pos = camera_info.view_proj * vec4(refract_pos, 1.0f);
     refracted_screen_pos.xy /= refracted_screen_pos.w;
 
-    float fade_dist_1 = max(water_ray_dist / 10.0f, 0);
-    float fade_dist_2 = max(distorted_water_ray_dist / 10.0f, 0);
+    float fade_dist_1 = max(water_ray_dist / 15.0f, 0);
+    float fade_dist_2 = max(distorted_water_ray_dist / 15.0f, 0);
 
     float fade_rate = exp(-fade_dist_1 * fade_dist_1);
     float thickness_fade_rate = exp(-fade_dist_2 * fade_dist_2);
@@ -144,7 +144,7 @@ void main() {
     vec3 normal = water_normal;
 
     vec3 albedo = vec3(0.11, 0.115, 0.15)*.75f;
-    //albedo = mix(albedo, bg_color, thickness_fade_rate);
+    albedo = mix(albedo, bg_color, thickness_fade_rate);
 
     MaterialInfo material_info;
     material_info.baseColor = albedo;

@@ -19,7 +19,7 @@ layout(location = IINPUT_MAT_ROT_2) in vec3 in_loc_rot_mat_2;
 layout(location = IINPUT_MAT_POS_SCALE) in vec4 in_loc_pos_scale;
 
 layout(location = 0) out VsPsData {
-    vec3 position_ws;
+    vec4 position_ws;
 } out_data;
 
 void main() {
@@ -40,8 +40,10 @@ void main() {
                in_loc_rot_mat_1,
                in_loc_rot_mat_2);
 
-    out_data.position_ws =
+    out_data.position_ws.xyz =
         //local_world_rot_mat *
         in_position * 1.0f + vec3(0, 0.5f, 0) +
         vec3(pos_xz_ws.x, ground_height, pos_xz_ws.y); //in_loc_pos_scale.xyz;
+
+    out_data.position_ws.w = hash_values.z;
 }
