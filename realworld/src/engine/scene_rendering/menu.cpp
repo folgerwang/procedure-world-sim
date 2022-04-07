@@ -128,6 +128,18 @@ bool Menu::draw(
     static std::string s_shader_error_message;
     bool compile_shaders = false;
 
+    bool test_true = true;
+    ImGui::Begin("fps", &test_true, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoInputs);
+    ImGui::SetWindowPos(ImVec2(float(screen_size.x) - 128.0f, 20.0f));
+    ImGui::SetWindowSize(ImVec2((float)128, (float)12));
+//    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 1);
+    ImGui::BeginChild("fps", ImVec2(0, 0), false);
+    float fps = 30.0f;
+    ImGui::Text("fps : %8.5f", fps);
+    ImGui::EndChild();
+//    ImGui::PopStyleVar(1);
+    ImGui::End();
+
     if (ImGui::BeginMainMenuBar())
     {
         if (ImGui::BeginMenu("Raytracing"))
