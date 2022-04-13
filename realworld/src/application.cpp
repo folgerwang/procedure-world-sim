@@ -1204,7 +1204,8 @@ void RealWorldApplication::drawScene(
                 s_dbuf_idx,
                 delta_t,
                 current_time,
-                true);
+                true,
+                !menu_->isGrassPassTurnOff());
         }
 
         if (menu_->getDebugDrawType() != NO_DEBUG_DRAW) {
@@ -1566,7 +1567,8 @@ void RealWorldApplication::drawFrame() {
         swap_chain_info_.extent,
         skydome_,
         image_index,
-        dump_volume_noise_);
+        dump_volume_noise_,
+        delta_t_);
 
     command_buffer->endCommandBuffer();
 

@@ -2884,7 +2884,8 @@ void TileObject::drawAllVisibleTiles(
     int dbuf_idx,
     float delta_t,
     float cur_time,
-    bool is_base_pass) {
+    bool is_base_pass,
+    bool render_grass) {
 
     for (auto& tile : visible_tiles_) {
         tile->draw(
@@ -2896,13 +2897,15 @@ void TileObject::drawAllVisibleTiles(
             cur_time,
             is_base_pass);
 
-        tile->drawGrass(
-            cmd_buf,
-            desc_set_list,
-            display_size,
-            dbuf_idx,
-            delta_t,
-            cur_time);
+        if (is_base_pass && render_grass) {
+            tile->drawGrass(
+                cmd_buf,
+                desc_set_list,
+                display_size,
+                dbuf_idx,
+                delta_t,
+                cur_time);
+        }
     }
 }
 

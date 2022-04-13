@@ -175,7 +175,8 @@ public:
         int dbuf_idx,
         float delta_t,
         float cur_time,
-        bool is_base_pass);
+        bool is_base_pass,
+        bool render_grass = false);
 
     static void updateAllTiles(
         const renderer::DeviceInfo& device_info,

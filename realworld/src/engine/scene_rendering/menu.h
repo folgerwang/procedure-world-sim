@@ -11,6 +11,7 @@ class Menu {
     std::vector<std::string> to_load_gltf_names_;
     std::string spawn_gltf_name_;
     bool turn_off_water_pass_ = false;
+    bool turn_off_grass_pass_ = false;
     bool turn_off_ray_tracing_ = true;
     bool turn_off_volume_moist_ = false;
     bool turn_on_airflow_ = false;
@@ -60,6 +61,10 @@ public:
 
     inline bool isWaterPassTurnOff() {
         return turn_off_water_pass_; 
+    }
+
+    inline bool isGrassPassTurnOff() {
+        return turn_off_grass_pass_;
     }
 
     inline bool isRayTracingTurnOff() {
@@ -160,7 +165,8 @@ public:
         const glm::uvec2& screen_size,
         const std::shared_ptr<scene_rendering::Skydome>& skydome,
         uint32_t image_index,
-        bool& dump_volume_noise);
+        bool& dump_volume_noise,
+        const float& delta_t);
 
     void destroy();
 };

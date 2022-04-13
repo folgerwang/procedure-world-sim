@@ -104,7 +104,8 @@ bool Menu::draw(
     const glm::uvec2& screen_size,
     const std::shared_ptr<scene_rendering::Skydome>& skydome,
     uint32_t image_index,
-    bool& dump_volume_noise) {
+    bool& dump_volume_noise,
+    const float& delta_t) {
 
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
@@ -134,7 +135,7 @@ bool Menu::draw(
     ImGui::SetWindowSize(ImVec2((float)128, (float)12));
 //    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, 1);
     ImGui::BeginChild("fps", ImVec2(0, 0), false);
-    float fps = 30.0f;
+    float fps = delta_t > 0.0f ? 1.0f / delta_t : 0.0f;
     ImGui::Text("fps : %8.5f", fps);
     ImGui::EndChild();
 //    ImGui::PopStyleVar(1);
@@ -155,6 +156,10 @@ bool Menu::draw(
         {
             if (ImGui::MenuItem("Turn off water pass", NULL, turn_off_water_pass_)) {
                 turn_off_water_pass_ = !turn_off_water_pass_;
+            }
+
+            if (ImGui::MenuItem("Turn off grass pass", NULL, turn_off_grass_pass_)) {
+                turn_off_grass_pass_ = !turn_off_grass_pass_;
             }
 
             ImGui::EndMenu();
