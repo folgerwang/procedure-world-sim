@@ -7,11 +7,11 @@
 #include <filesystem>
 #include "Windows.h"
 
-#include "engine/renderer/renderer.h"
-#include "engine/renderer/renderer_helper.h"
-#include "engine/ray_tracing/raytracing_callable.h"
-#include "engine/ray_tracing/raytracing_shadow.h"
-#include "engine/engine_helper.h"
+#include "renderer/renderer.h"
+#include "renderer/renderer_helper.h"
+#include "ray_tracing/raytracing_callable.h"
+#include "ray_tracing/raytracing_shadow.h"
+#include "engine_helper.h"
 #include "application.h"
 
 namespace er = engine::renderer;
@@ -135,7 +135,11 @@ namespace work {
 namespace app {
 
 void RealWorldApplication::run() {
-    auto error_strings = engine::helper::initCompileGlobalShaders();
+    auto error_strings =
+        engine::helper::initCompileGlobalShaders(
+            "src\\sim_engine\\shaders",
+            "lib\\shaders",
+            "src\\sim_engine\\third_parties\\vulkan_lib");
     if (error_strings.length() > 0) {
         MessageBoxA(NULL, error_strings.c_str(), "Shader Error!", MB_OK);
     }

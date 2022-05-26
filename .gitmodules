@@ -13,3 +13,6 @@
 [submodule "realworld/src/third_party/imgui"]
 	path = realworld/src/third_party/imgui
 	url = git@github.com:ocornut/imgui.git
+[submodule "realworld/src/sim_engine"]
+	path = realworld/src/sim_engine
+	url = git@github.com:folgerwang/sim_engine.git

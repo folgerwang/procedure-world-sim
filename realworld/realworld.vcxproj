@@ -103,14 +103,14 @@
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)src\third_party\imgui;$(ProjectDir)src\third_party\glfw\include;$(ProjectDir)src\third_party\glm;$(ProjectDir)src\third_party\Vulkan-Headers\Include;$(ProjectDir)src\third_party\tinygltf;$(ProjectDir)src\third_party\imgui\backends;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src\sim_engine\third_parties\imgui;$(ProjectDir)src\sim_engine\third_parties\glfw\include;$(ProjectDir)src\sim_engine\third_parties\glm;$(ProjectDir)src\sim_engine\third_parties\Vulkan-Headers\Include;$(ProjectDir)src\sim_engine\third_parties\tinygltf;$(ProjectDir)src\sim_engine\third_parties\imgui\backends;$(ProjectDir)src\sim_engine;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Console</SubSystem>
-      <AdditionalLibraryDirectories>$(ProjectDir)src\third_party\vulkan_lib;$(ProjectDir)lib\$(IntDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>glfw3.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)src\sim_engine\third_parties\vulkan_lib;$(ProjectDir)src\lib\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>glfw3_$(TargetedSDKConfiguration).lib;engine_$(TargetedSDKConfiguration).lib;imgui_$(TargetedSDKConfiguration).lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>
@@ -143,7 +143,7 @@
       <SDLCheck>false</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)src\third_party\imgui;$(ProjectDir)src\third_party\glfw\include;$(ProjectDir)src\third_party\glm;$(ProjectDir)src\third_party\Vulkan-Headers\Include;$(ProjectDir)src\third_party\tinygltf;$(ProjectDir)src\third_party\imgui\backends;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)src\sim_engine\third_parties\imgui;$(ProjectDir)src\sim_engine\third_parties\glfw\include;$(ProjectDir)src\sim_engine\third_parties\glm;$(ProjectDir)src\sim_engine\third_parties\Vulkan-Headers\Include;$(ProjectDir)src\sim_engine\third_parties\tinygltf;$(ProjectDir)src\sim_engine\third_parties\imgui\backends;$(ProjectDir)src\sim_engine;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -151,8 +151,8 @@
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Console</SubSystem>
-      <AdditionalLibraryDirectories>$(ProjectDir)src\third_party\vulkan_lib;$(ProjectDir)lib\$(IntDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>glfw3.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)src\sim_engine\third_parties\vulkan_lib;$(ProjectDir)src\lib\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>glfw3_$(TargetedSDKConfiguration).lib;engine_$(TargetedSDKConfiguration).lib;imgui_$(TargetedSDKConfiguration).lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>
@@ -161,60 +161,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\application.cpp" />
-    <ClCompile Include="src\engine\engine_helper.cpp" />
-    <ClCompile Include="src\engine\game_object\camera.cpp" />
-    <ClCompile Include="src\engine\game_object\debug_draw.cpp" />
-    <ClCompile Include="src\engine\game_object\gltf.cpp" />
-    <ClCompile Include="src\engine\game_object\terrain.cpp" />
-    <ClCompile Include="src\engine\ray_tracing\raytracing_callable.cpp" />
-    <ClCompile Include="src\engine\ray_tracing\raytracing_shadow.cpp" />
-    <ClCompile Include="src\engine\renderer\renderer.cpp" />
-    <ClCompile Include="src\engine\renderer\renderer_helper.cpp" />
-    <ClCompile Include="src\engine\renderer\vulkan\vk_command_buffer.cpp" />
-    <ClCompile Include="src\engine\renderer\vulkan\vk_device.cpp" />
-    <ClCompile Include="src\engine\renderer\vulkan\vk_renderer_helper.cpp" />
-    <ClCompile Include="src\engine\scene_rendering\ibl_creator.cpp" />
-    <ClCompile Include="src\engine\scene_rendering\menu.cpp" />
-    <ClCompile Include="src\engine\scene_rendering\skydome.cpp" />
-    <ClCompile Include="src\engine\scene_rendering\volume_cloud.cpp" />
-    <ClCompile Include="src\engine\scene_rendering\volume_noise.cpp" />
-    <ClCompile Include="src\engine\scene_rendering\weather_system.cpp" />
     <ClCompile Include="src\main.cpp" />
-    <ClCompile Include="src\third_party\imgui\backends\imgui_impl_glfw.cpp" />
-    <ClCompile Include="src\third_party\imgui\backends\imgui_impl_vulkan.cpp" />
-    <ClCompile Include="src\third_party\imgui\imgui.cpp" />
-    <ClCompile Include="src\third_party\imgui\imgui_draw.cpp" />
-    <ClCompile Include="src\third_party\imgui\imgui_tables.cpp" />
-    <ClCompile Include="src\third_party\imgui\imgui_widgets.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\application.h" />
-    <ClInclude Include="src\engine\engine_helper.h" />
-    <ClInclude Include="src\engine\game_object\camera.h" />
-    <ClInclude Include="src\engine\game_object\debug_draw.h" />
-    <ClInclude Include="src\engine\game_object\gltf.h" />
-    <ClInclude Include="src\engine\game_object\terrain.h" />
-    <ClInclude Include="src\engine\ray_tracing\raytracing_base.h" />
-    <ClInclude Include="src\engine\ray_tracing\raytracing_callable.h" />
-    <ClInclude Include="src\engine\ray_tracing\raytracing_shadow.h" />
-    <ClInclude Include="src\engine\renderer\command_buffer.h" />
-    <ClInclude Include="src\engine\renderer\device.h" />
-    <ClInclude Include="src\engine\renderer\physical_device.h" />
-    <ClInclude Include="src\engine\renderer\renderer.h" />
-    <ClInclude Include="src\engine\renderer\renderer_definition.h" />
-    <ClInclude Include="src\engine\renderer\renderer_helper.h" />
-    <ClInclude Include="src\engine\renderer\renderer_structs.h" />
-    <ClInclude Include="src\engine\renderer\vulkan\vk_command_buffer.h" />
-    <ClInclude Include="src\engine\renderer\vulkan\vk_device.h" />
-    <ClInclude Include="src\engine\renderer\vulkan\vk_physical_device.h" />
-    <ClInclude Include="src\engine\renderer\vulkan\vk_renderer_helper.h" />
-    <ClInclude Include="src\engine\scene_rendering\ibl_creator.h" />
-    <ClInclude Include="src\engine\scene_rendering\menu.h" />
-    <ClInclude Include="src\engine\scene_rendering\weather_system.h" />
-    <ClInclude Include="src\engine\scene_rendering\skydome.h" />
-    <ClInclude Include="src\engine\scene_rendering\volume_cloud.h" />
-    <ClInclude Include="src\engine\scene_rendering\volume_noise.h" />
-    <ClInclude Include="src\engine\tiny_mtx2.h" />
     <ClInclude Include="src\shaders\brdf.glsl.h" />
     <ClInclude Include="src\shaders\functions.glsl.h" />
     <ClInclude Include="src\shaders\global_definition.glsl.h" />
@@ -227,9 +177,6 @@
     <ClInclude Include="src\shaders\sunlight_scattering.glsl.h" />
     <ClInclude Include="src\shaders\tile_common.glsl.h" />
     <ClInclude Include="src\shaders\weather_common.glsl.h" />
-    <ClInclude Include="src\third_party\imgui\imconfig.h" />
-    <ClInclude Include="src\third_party\imgui\imgui.h" />
-    <ClInclude Include="src\third_party\imgui\imgui_internal.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="src\shaders\airflow_update.comp" />
