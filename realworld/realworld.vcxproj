@@ -165,65 +165,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\application.h" />
-    <ClInclude Include="src\shaders\brdf.glsl.h" />
-    <ClInclude Include="src\shaders\functions.glsl.h" />
-    <ClInclude Include="src\shaders\global_definition.glsl.h" />
-    <ClInclude Include="src\shaders\ibl.glsl.h" />
-    <ClInclude Include="src\shaders\inoise.glsl.h" />
-    <ClInclude Include="src\shaders\noise.glsl.h" />
-    <ClInclude Include="src\shaders\punctual.glsl.h" />
-    <ClInclude Include="src\shaders\sky_scattering_lut_common.glsl.h" />
-    <ClInclude Include="src\shaders\sun.glsl.h" />
-    <ClInclude Include="src\shaders\sunlight_scattering.glsl.h" />
-    <ClInclude Include="src\shaders\tile_common.glsl.h" />
-    <ClInclude Include="src\shaders\weather_common.glsl.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="src\shaders\airflow_update.comp" />
-    <None Include="src\shaders\base.frag" />
-    <None Include="src\shaders\base.vert" />
-    <None Include="src\shaders\blur_image_x.comp" />
-    <None Include="src\shaders\blur_image_y_merge.comp" />
-    <None Include="src\shaders\cloud_shadow_merge.comp" />
-    <None Include="src\shaders\cloud_shadow_init.comp" />
-    <None Include="src\shaders\cube_skybox.frag" />
-    <None Include="src\shaders\debug_draw.frag" />
-    <None Include="src\shaders\debug_draw.vert" />
-    <None Include="src\shaders\cube_ibl.frag" />
-    <None Include="src\shaders\full_screen.vert" />
-    <None Include="src\shaders\grass.comp" />
-    <None Include="src\shaders\grass.frag" />
-    <None Include="src\shaders\grass.geom" />
-    <None Include="src\shaders\grass.vert" />
-    <None Include="src\shaders\ibl_smooth.comp" />
-    <None Include="src\shaders\perlin_noise_init.comp" />
-    <None Include="src\shaders\ray_tracing\callable_test\rt_callable1.rcall" />
-    <None Include="src\shaders\ray_tracing\callable_test\rt_callable2.rcall" />
-    <None Include="src\shaders\ray_tracing\callable_test\rt_callable3.rcall" />
-    <None Include="src\shaders\ray_tracing\callable_test\rt_closesthit.rchit" />
-    <None Include="src\shaders\ray_tracing\callable_test\rt_miss.rmiss" />
-    <None Include="src\shaders\ray_tracing\callable_test\rt_raygen.rgen" />
-    <None Include="src\shaders\ray_tracing\raytracing_shadow\rt_closesthit.rchit" />
-    <None Include="src\shaders\ray_tracing\raytracing_shadow\rt_miss.rmiss" />
-    <None Include="src\shaders\ray_tracing\raytracing_shadow\rt_raygen.rgen" />
-    <None Include="src\shaders\ray_tracing\raytracing_shadow\rt_shadow.rmiss" />
-    <None Include="src\shaders\render_volume_cloud.comp" />
-    <None Include="src\shaders\skybox.frag" />
-    <None Include="src\shaders\skybox.vert" />
-    <None Include="src\shaders\sky_scattering_lut_final_pass.comp" />
-    <None Include="src\shaders\sky_scattering_lut_first_pass.comp" />
-    <None Include="src\shaders\sky_scattering_lut_sum_pass.comp" />
-    <None Include="src\shaders\temperature_init.comp" />
-    <None Include="src\shaders\tile.frag" />
-    <None Include="src\shaders\tile.vert" />
-    <None Include="src\shaders\tile_creator.comp" />
-    <None Include="src\shaders\tile_flow_update.comp" />
-    <None Include="src\shaders\tile_update.comp" />
-    <None Include="src\shaders\tile_water.frag" />
-    <None Include="src\shaders\update_camera.comp" />
-    <None Include="src\shaders\update_game_objects.comp" />
-    <None Include="src\shaders\update_gltf_indirect_draw.comp" />
-    <None Include="src\shaders\update_instance_buffer.comp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
