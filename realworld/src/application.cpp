@@ -940,6 +940,7 @@ void RealWorldApplication::createDescriptorSetLayout() {
         bindings[0].descriptor_type = er::DescriptorType::STORAGE_BUFFER;
         bindings[0].stage_flags =
             SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
+            SET_FLAG_BIT(ShaderStage, MESH_BIT_NV) |
             SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) |
             SET_FLAG_BIT(ShaderStage, GEOMETRY_BIT) |
             SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
