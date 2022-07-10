@@ -1208,6 +1208,7 @@ void RealWorldApplication::drawScene(
             ego::TileObject::drawAllVisibleTiles(
                 cmd_buf,
                 desc_sets,
+                glm::vec2(gpu_game_camera_info_.position.x, gpu_game_camera_info_.position.z),
                 screen_size,
                 s_dbuf_idx,
                 delta_t,
@@ -1290,6 +1291,7 @@ void RealWorldApplication::drawScene(
                 ego::TileObject::drawAllVisibleTiles(
                     cmd_buf,
                     desc_sets,
+                    glm::vec2(gpu_game_camera_info_.position.x, gpu_game_camera_info_.position.z),
                     screen_size,
                     s_dbuf_idx,
                     delta_t,
