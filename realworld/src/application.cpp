@@ -489,15 +489,12 @@ void RealWorldApplication::initVulkan() {
         ego::TileObject::getRockLayer().view,
         soil_water_texes);
 
-    ego::GltfObject::initGameObjectBuffer(device_);
     ego::GameCamera::initGameCameraBuffer(device_);
-    assert(ego::GltfObject::getGameObjectsBuffer());
     assert(ego::GameCamera::getGameCameraBuffer());
 
-    ego::GltfObject::initStaticMembers(
-        device_,
+    game_objects_list_ = std::make_shared<ego::GameObjectsList>(
+        device_info_,
         descriptor_pool_,
-        desc_set_layouts,
         texture_sampler_,
         ego::GameCamera::getGameCameraBuffer(),
         ego::TileObject::getRockLayer(),
@@ -505,6 +502,14 @@ void RealWorldApplication::initVulkan() {
         ego::TileObject::getSoilWaterLayer(1),
         ego::TileObject::getWaterFlow(),
         weather_system_->getAirflowTex());
+    assert(game_objects_list_);
+
+    ego::GltfObject::initStaticMembers(
+        device_,
+        descriptor_pool_,
+        desc_set_layouts,
+        game_objects_list_->getGameObjectsDescSetLayout(),
+        texture_sampler_);
 
     ego::GameCamera::initStaticMembers(
         device_,
@@ -514,7 +519,7 @@ void RealWorldApplication::initVulkan() {
         ego::TileObject::getRockLayer(),
         ego::TileObject::getSoilWaterLayer(0),
         ego::TileObject::getSoilWaterLayer(1),
-        *ego::GltfObject::getGameObjectsBuffer());
+        *game_objects_list_->getGameObjectsBuffer());
 
     ego::DebugDrawObject::initStaticMembers(
         device_info_,
@@ -624,6 +629,7 @@ void RealWorldApplication::recreateSwapChain() {
         hdr_render_pass_,
         graphic_pipeline_info_,
         desc_set_layouts,
+        game_objects_list_->getGameObjectsDescSetLayout(),
         swap_chain_info_.extent);
     ego::GameCamera::recreateStaticMembers(
         device_);
@@ -690,15 +696,9 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         texture_sampler_,
-        ego::GameCamera::getGameCameraBuffer(),
-        thin_film_lut_tex_,
-        ego::TileObject::getRockLayer(),
-        ego::TileObject::getSoilWaterLayer(0),
-        ego::TileObject::getSoilWaterLayer(1),
-        ego::TileObject::getWaterFlow(),
-        weather_system_->getAirflowTex());
+        thin_film_lut_tex_);
 
-    assert(ego::GltfObject::getGameObjectsBuffer());
+    assert(game_objects_list_ && game_objects_list_->getGameObjectsInstanceBuffer());
     ego::GameCamera::generateDescriptorSet(
         device_,
         descriptor_pool_,
@@ -706,7 +706,7 @@ void RealWorldApplication::recreateSwapChain() {
         ego::TileObject::getRockLayer(),
         ego::TileObject::getSoilWaterLayer(0),
         ego::TileObject::getSoilWaterLayer(1),
-        *ego::GltfObject::getGameObjectsBuffer());
+        *game_objects_list_->getGameObjectsInstanceBuffer());
 
     ego::TileObject::updateStaticDescriptorSet(
         device_,
@@ -1130,17 +1130,19 @@ void RealWorldApplication::drawScene(
         auto delta_t = static_cast<float>(elapsed_seconds.count());
         s_last_time = cur_time;
 
-        ego::GltfObject::updateGameObjectsBuffer(
-            cmd_buf,
-            ego::TileObject::getWorldMin(),
-            ego::TileObject::getWorldRange(),
-            gpu_game_camera_info_.position,
-            menu_->getAirFlowStrength(),
-            menu_->getWaterFlowStrength(),
-            s_update_frame_count,
-            s_dbuf_idx,
-            delta_t,
-            menu_->isAirfowOn());
+        if (game_objects_list_) {
+            game_objects_list_->updateGameObjectsBuffer(
+                cmd_buf,
+                ego::TileObject::getWorldMin(),
+                ego::TileObject::getWorldRange(),
+                gpu_game_camera_info_.position,
+                menu_->getAirFlowStrength(),
+                menu_->getWaterFlowStrength(),
+                s_update_frame_count,
+                s_dbuf_idx,
+                delta_t,
+                menu_->isAirfowOn());
+        }
 
         glsl::GameCameraParams game_camera_params;
         game_camera_params.world_min = ego::TileObject::getWorldMin();
@@ -1173,11 +1175,11 @@ void RealWorldApplication::drawScene(
             s_dbuf_idx);
 
         if (player_object_) {
-            player_object_->updateBuffers(cmd_buf);
+            player_object_->updateBuffers(cmd_buf, 1);
         }
 
         for (auto& gltf_obj : gltf_objects_) {
-            gltf_obj->updateBuffers(cmd_buf);
+            gltf_obj->updateBuffers(cmd_buf, kNumGltfInstance);
         }
 
         if (s_update_frame_count >= 0) {
@@ -1195,12 +1197,18 @@ void RealWorldApplication::drawScene(
         // render gltf.
         {
             for (auto& gltf_obj : gltf_objects_) {
-                gltf_obj->draw(cmd_buf, desc_sets);
+                gltf_obj->draw(
+                    cmd_buf,
+                    desc_sets,
+                    game_objects_list_->getGameObjectsDescSet());
             }
         }
 
         if (player_object_) {
-            player_object_->draw(cmd_buf, desc_sets);
+            player_object_->draw(
+                cmd_buf,
+                desc_sets,
+                game_objects_list_->getGameObjectsDescSet());
         }
 
         // render terrain opaque pass.
@@ -1486,7 +1494,7 @@ void RealWorldApplication::drawFrame() {
             thin_film_lut_tex_,
             gltf_name,
             swap_chain_info_.extent,
-            glm::inverse(view_params_.view));
+            kNumGltfInstance);
 
         s_update_frame_count = -1;
         gltf_objects_.push_back(gltf_obj);
@@ -1507,7 +1515,7 @@ void RealWorldApplication::drawFrame() {
             thin_film_lut_tex_,
             to_load_player_name,
             swap_chain_info_.extent,
-            glm::inverse(view_params_.view));
+            1);
     }
 
     if (player_object_) {
@@ -1661,12 +1669,17 @@ void RealWorldApplication::cleanup() {
     device_->destroyDescriptorSetLayout(view_desc_set_layout_);
     device_->destroyDescriptorSetLayout(global_tex_desc_set_layout_);
     
-    ego::TileObject::destoryAllTiles();
-    ego::TileObject::destoryStaticMembers(device_);
+    ego::TileObject::destroyAllTiles();
+    ego::TileObject::destroyStaticMembers(device_);
     if (player_object_) {
         player_object_->destroy();
         player_object_ = nullptr;
     }
+    if (game_objects_list_) {
+        game_objects_list_->destroy(device_);
+        game_objects_list_ = nullptr;
+    }
+
     for (auto& obj : gltf_objects_) {
         obj->destroy();
     }
@@ -1674,9 +1687,9 @@ void RealWorldApplication::cleanup() {
     if (ray_tracing_test_) {
         ray_tracing_test_->destroy(device_);
     }
-    ego::GltfObject::destoryStaticMembers(device_);
-    ego::GameCamera::destoryStaticMembers(device_);
-    ego::DebugDrawObject::destoryStaticMembers(device_);
+    ego::GltfObject::destroyStaticMembers(device_);
+    ego::GameCamera::destroyStaticMembers(device_);
+    ego::DebugDrawObject::destroyStaticMembers(device_);
     ibl_creator_->destroy(device_);
     weather_system_->destroy(device_);
     volume_noise_->destroy(device_);

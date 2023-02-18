@@ -3,6 +3,7 @@
 #include "shaders/global_definition.glsl.h"
 #include "game_object/camera.h"
 #include "game_object/gltf.h"
+#include "game_object/game_objects_list.h"
 #include "game_object/terrain.h"
 #include "game_object/debug_draw.h"
 #include "scene_rendering/skydome.h"
@@ -130,6 +131,7 @@ private:
     std::shared_ptr<ego::GameCamera> game_camera_;
     std::vector<std::shared_ptr<ego::GltfObject>> gltf_objects_;
     std::shared_ptr<ego::GltfObject> player_object_;
+    std::shared_ptr<ego::GameObjectsList> game_objects_list_;
     std::shared_ptr<es::Skydome> skydome_;
     std::shared_ptr<es::WeatherSystem> weather_system_;
     std::shared_ptr<es::VolumeCloud> volume_cloud_;
