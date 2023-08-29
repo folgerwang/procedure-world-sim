@@ -5,6 +5,7 @@
 #include "game_object/gltf.h"
 #include "game_object/terrain.h"
 #include "game_object/debug_draw.h"
+#include "game_object/plane.h"
 #include "scene_rendering/skydome.h"
 #include "scene_rendering/weather_system.h"
 #include "scene_rendering/ibl_creator.h"
@@ -12,10 +13,12 @@
 #include "scene_rendering/volume_cloud.h"
 #include "scene_rendering/volume_noise.h"
 #include "ray_tracing/raytracing_base.h"
+#include "engine_helper.h"
 
 namespace er = engine::renderer;
 namespace ego = engine::game_object;
 namespace es = engine::scene_rendering;
+namespace eh = engine::helper;
 
 struct GLFWwindow;
 namespace work {
@@ -135,6 +138,7 @@ private:
     std::shared_ptr<es::VolumeCloud> volume_cloud_;
     std::shared_ptr<es::VolumeNoise> volume_noise_;
     std::shared_ptr<es::IblCreator> ibl_creator_;
+    std::shared_ptr<ego::Plane> unit_plane_;
     std::shared_ptr<engine::ray_tracing::RayTracingBase> ray_tracing_test_;
     std::shared_ptr<es::Menu> menu_;
 

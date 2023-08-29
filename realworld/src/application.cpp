@@ -136,7 +136,7 @@ namespace app {
 
 void RealWorldApplication::run() {
     auto error_strings =
-        engine::helper::initCompileGlobalShaders(
+        eh::initCompileGlobalShaders(
             "src\\sim_engine\\shaders",
             "lib\\shaders",
             "src\\sim_engine\\third_parties\\vulkan_lib");
@@ -405,34 +405,36 @@ void RealWorldApplication::initVulkan() {
     device_info_.cmd_pool = command_pool_;
     er::Helper::init(device_info_);
 
-    engine::helper::loadMtx2Texture(
+    eh::loadMtx2Texture(
         device_info_,
         cubemap_render_pass_,
         "assets/environments/doge2/lambertian/diffuse.ktx2",
         ibl_diffuse_tex_);
-    engine::helper::loadMtx2Texture(
+    eh::loadMtx2Texture(
         device_info_,
         cubemap_render_pass_,
         "assets/environments/doge2/ggx/specular.ktx2",
         ibl_specular_tex_);
-    engine::helper::loadMtx2Texture(
+    eh::loadMtx2Texture(
         device_info_,
         cubemap_render_pass_,
         "assets/environments/doge2/charlie/sheen.ktx2",
         ibl_sheen_tex_);
     recreateRenderBuffer(swap_chain_info_.extent);
     auto format = er::Format::R8G8B8A8_UNORM;
-    engine::helper::createTextureImage(device_info_, "assets/statue.jpg", format, sample_tex_);
-    engine::helper::createTextureImage(device_info_, "assets/brdfLUT.png", format, brdf_lut_tex_);
-    engine::helper::createTextureImage(device_info_, "assets/lut_ggx.png", format, ggx_lut_tex_);
-    engine::helper::createTextureImage(device_info_, "assets/lut_charlie.png", format, charlie_lut_tex_);
-    engine::helper::createTextureImage(device_info_, "assets/lut_thin_film.png", format, thin_film_lut_tex_);
-    engine::helper::createTextureImage(device_info_, "assets/map_mask.png", format, map_mask_tex_);
-    engine::helper::createTextureImage(device_info_, "assets/map.png", er::Format::R16_UNORM, heightmap_tex_);
+    eh::createTextureImage(device_info_, "assets/statue.jpg", format, sample_tex_);
+    eh::createTextureImage(device_info_, "assets/brdfLUT.png", format, brdf_lut_tex_);
+    eh::createTextureImage(device_info_, "assets/lut_ggx.png", format, ggx_lut_tex_);
+    eh::createTextureImage(device_info_, "assets/lut_charlie.png", format, charlie_lut_tex_);
+    eh::createTextureImage(device_info_, "assets/lut_thin_film.png", format, thin_film_lut_tex_);
+    eh::createTextureImage(device_info_, "assets/map_mask.png", format, map_mask_tex_);
+    eh::createTextureImage(device_info_, "assets/map.png", er::Format::R16_UNORM, heightmap_tex_);
     createTextureSampler();
     descriptor_pool_ = device_->createDescriptorPool();
     createCommandBuffers();
     createSyncObjects();
+
+    unit_plane_ = std::make_shared<ego::Plane>(device_info_);
 
     clear_values_.resize(2);
     clear_values_[0].color = { 50.0f / 255.0f, 50.0f / 255.0f, 50.0f / 255.0f, 1.0f };
@@ -1421,7 +1423,7 @@ void RealWorldApplication::drawFrame() {
             4,
             temp_buffer.data());
         
-        engine::helper::saveDdsTexture(
+        eh::saveDdsTexture(
             glm::uvec3(noise_texture_size, noise_texture_size, noise_texture_size),
             temp_buffer.data(),
             "volume_noise.dds");
@@ -1438,7 +1440,7 @@ void RealWorldApplication::drawFrame() {
             temp_buffer.data());
 
         // flatten 3d texture to 2d texture.
-        uint32_t h = 1 << (31 - engine::helper::clz(static_cast<uint32_t>(std::sqrt(noise_texture_size))));
+        uint32_t h = 1 << (31 - eh::clz(static_cast<uint32_t>(std::sqrt(noise_texture_size))));
         uint32_t w = noise_texture_size / h;
         std::vector<uint32_t> flattened_buffer;
         flattened_buffer.resize(pixel_count);
@@ -1453,7 +1455,7 @@ void RealWorldApplication::drawFrame() {
                 flattened_buffer[dst_idx] = temp_buffer[src_idx];
             }
         }
-        engine::helper::saveDdsTexture(
+        eh::saveDdsTexture(
             glm::uvec3(w * noise_texture_size, h * noise_texture_size, 1),
             flattened_buffer.data(),
             "volume_noise.dds");
