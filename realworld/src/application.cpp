@@ -429,12 +429,26 @@ void RealWorldApplication::initVulkan() {
     eh::createTextureImage(device_info_, "assets/lut_thin_film.png", format, thin_film_lut_tex_);
     eh::createTextureImage(device_info_, "assets/map_mask.png", format, map_mask_tex_);
     eh::createTextureImage(device_info_, "assets/map.png", er::Format::R16_UNORM, heightmap_tex_);
+    eh::createTextureImage(device_info_, "assets/tile1.jpg", format, prt_base_tex_);
+    eh::createTextureImage(device_info_, "assets/tile1.tga", format, prt_bump_tex_);
     createTextureSampler();
     descriptor_pool_ = device_->createDescriptorPool();
     createCommandBuffers();
     createSyncObjects();
 
+    auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
+
     unit_plane_ = std::make_shared<ego::Plane>(device_info_);
+    prt_test_ = std::make_shared<ego::Prt>(device_info_,
+        descriptor_pool_,
+        texture_sampler_,
+        hdr_render_pass_,
+        graphic_pipeline_info_,
+        desc_set_layouts,
+        swap_chain_info_.extent,
+        unit_plane_,
+        prt_base_tex_,
+        prt_bump_tex_);
 
     clear_values_.resize(2);
     clear_values_[0].color = { 50.0f / 255.0f, 50.0f / 255.0f, 50.0f / 255.0f, 1.0f };
@@ -470,7 +484,6 @@ void RealWorldApplication::initVulkan() {
             er::ImageLayout::PRESENT_SRC_KHR);
     }
 
-    auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
     ego::TileObject::initStaticMembers(
         device_info_,
         hdr_render_pass_,
@@ -1054,6 +1067,7 @@ void RealWorldApplication::drawScene(
     auto& cmd_buf = command_buffer;
 
     static int s_dbuf_idx = 0;
+    bool render_prt_test = true;
 
     if (0)
     {
@@ -1147,9 +1161,18 @@ void RealWorldApplication::drawScene(
         glsl::GameCameraParams game_camera_params;
         game_camera_params.world_min = ego::TileObject::getWorldMin();
         game_camera_params.inv_world_range = 1.0f / ego::TileObject::getWorldRange();
-        game_camera_params.init_camera_pos = glm::vec3(0, 500.0f, 0);
-        game_camera_params.init_camera_dir = glm::vec3(1.0f, 0.0f, 0.0f);
-        game_camera_params.camera_speed = s_camera_speed;
+        if (render_prt_test) {
+            game_camera_params.init_camera_pos = glm::vec3(0, 5.0f, 0);
+            game_camera_params.init_camera_dir = glm::vec3(0.0f, -1.0f, 0.0f);
+            game_camera_params.init_camera_up = glm::vec3(1, 0, 0);
+            game_camera_params.camera_speed = 0.1f;
+        }
+        else {
+            game_camera_params.init_camera_pos = glm::vec3(0, 500.0f, 0);
+            game_camera_params.init_camera_dir = glm::vec3(1.0f, 0.0f, 0.0f);
+            game_camera_params.init_camera_up = glm::vec3(0, 1, 0);
+            game_camera_params.camera_speed = s_camera_speed;
+        }
         game_camera_params.z_near = 0.1f;
         game_camera_params.z_far = 40000.0f;
         game_camera_params.yaw = 0.0f;
@@ -1157,7 +1180,6 @@ void RealWorldApplication::drawScene(
         game_camera_params.camera_follow_dist = 5.0f;
         game_camera_params.key = s_key;
         game_camera_params.frame_count = s_update_frame_count;
-        game_camera_params.init_camera_up = glm::vec3(0, 1, 0);
         game_camera_params.delta_t = delta_t;
         game_camera_params.mouse_pos = s_last_mouse_pos;
         game_camera_params.fov = glm::radians(45.0f);
@@ -1194,42 +1216,47 @@ void RealWorldApplication::drawScene(
             screen_size,
             clear_values_);
 
-        // render gltf.
-        {
-            for (auto& gltf_obj : gltf_objects_) {
-                gltf_obj->draw(cmd_buf, desc_sets);
+        if (render_prt_test) {
+            prt_test_->draw(cmd_buf, desc_sets, unit_plane_);
+        }
+        else {
+            // render gltf.
+            {
+                for (auto& gltf_obj : gltf_objects_) {
+                    gltf_obj->draw(cmd_buf, desc_sets);
+                }
             }
-        }
 
-        if (player_object_) {
-            player_object_->draw(cmd_buf, desc_sets);
-        }
+            if (player_object_) {
+                player_object_->draw(cmd_buf, desc_sets);
+            }
 
-        // render terrain opaque pass.
-        {
-            ego::TileObject::drawAllVisibleTiles(
-                cmd_buf,
-                desc_sets,
-                glm::vec2(gpu_game_camera_info_.position.x, gpu_game_camera_info_.position.z),
-                screen_size,
-                s_dbuf_idx,
-                delta_t,
-                current_time,
-                true,
-                !menu_->isGrassPassTurnOff());
-        }
+            // render terrain opaque pass.
+            {
+                ego::TileObject::drawAllVisibleTiles(
+                    cmd_buf,
+                    desc_sets,
+                    glm::vec2(gpu_game_camera_info_.position.x, gpu_game_camera_info_.position.z),
+                    screen_size,
+                    s_dbuf_idx,
+                    delta_t,
+                    current_time,
+                    true,
+                    !menu_->isGrassPassTurnOff());
+            }
 
-        if (menu_->getDebugDrawType() != NO_DEBUG_DRAW) {
-            ego::DebugDrawObject::draw(
-                cmd_buf,
-                desc_sets,
-                gpu_game_camera_info_.position,
-                menu_->getDebugDrawType());
-        }
+            if (menu_->getDebugDrawType() != NO_DEBUG_DRAW) {
+                ego::DebugDrawObject::draw(
+                    cmd_buf,
+                    desc_sets,
+                    gpu_game_camera_info_.position,
+                    menu_->getDebugDrawType());
+            }
 
-        // render skybox.
-        {
-            skydome_->draw(cmd_buf, view_desc_set);
+            // render skybox.
+            {
+                skydome_->draw(cmd_buf, view_desc_set);
+            }
         }
 
         cmd_buf->endRenderPass();
@@ -1254,33 +1281,33 @@ void RealWorldApplication::drawScene(
             SET_FLAG_BIT(Access, SHADER_READ_BIT),
             SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
 
-        if (!menu_->isWaterPassTurnOff()) {
-            er::Helper::blitImage(
-                cmd_buf,
-                hdr_color_buffer_.image,
-                hdr_color_buffer_copy_.image,
-                color_src_info,
-                color_src_info,
-                color_dst_info,
-                color_dst_info,
-                SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-                SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-                glm::ivec3(screen_size.x, screen_size.y, 1));
+        if (!render_prt_test) {
+            if (!menu_->isWaterPassTurnOff()) {
+                er::Helper::blitImage(
+                    cmd_buf,
+                    hdr_color_buffer_.image,
+                    hdr_color_buffer_copy_.image,
+                    color_src_info,
+                    color_src_info,
+                    color_dst_info,
+                    color_dst_info,
+                    SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+                    SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+                    glm::ivec3(screen_size.x, screen_size.y, 1));
 
-            er::Helper::blitImage(
-                cmd_buf,
-                depth_buffer_.image,
-                depth_buffer_copy_.image,
-                depth_src_info,
-                depth_src_info,
-                depth_dst_info,
-                depth_dst_info,
-                SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
-                SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
-                glm::ivec3(screen_size.x, screen_size.y, 1));
-        }
+                er::Helper::blitImage(
+                    cmd_buf,
+                    depth_buffer_.image,
+                    depth_buffer_copy_.image,
+                    depth_src_info,
+                    depth_src_info,
+                    depth_dst_info,
+                    depth_dst_info,
+                    SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
+                    SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
+                    glm::ivec3(screen_size.x, screen_size.y, 1));
+            }
 
-        {
             // render terrain water pass.
             if (!menu_->isWaterPassTurnOff())
             {
@@ -1653,6 +1680,8 @@ void RealWorldApplication::cleanup() {
     thin_film_lut_tex_.destroy(device_);
     map_mask_tex_.destroy(device_);
     heightmap_tex_.destroy(device_);
+    prt_base_tex_.destroy(device_);
+    prt_bump_tex_.destroy(device_);
     ibl_diffuse_tex_.destroy(device_);
     ibl_specular_tex_.destroy(device_);
     ibl_sheen_tex_.destroy(device_);
@@ -1683,6 +1712,8 @@ void RealWorldApplication::cleanup() {
     weather_system_->destroy(device_);
     volume_noise_->destroy(device_);
     volume_cloud_->destroy(device_);
+    unit_plane_->destroy(device_);
+    prt_test_->destroy(device_);
 
     er::helper::clearCachedShaderModules(device_);
 

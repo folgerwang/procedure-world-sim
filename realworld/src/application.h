@@ -5,7 +5,7 @@
 #include "game_object/gltf.h"
 #include "game_object/terrain.h"
 #include "game_object/debug_draw.h"
-#include "game_object/plane.h"
+#include "game_object/prt.h"
 #include "scene_rendering/skydome.h"
 #include "scene_rendering/weather_system.h"
 #include "scene_rendering/ibl_creator.h"
@@ -119,6 +119,8 @@ private:
     er::TextureInfo thin_film_lut_tex_;
     er::TextureInfo heightmap_tex_;
     er::TextureInfo map_mask_tex_;
+    er::TextureInfo prt_base_tex_;
+    er::TextureInfo prt_bump_tex_;
     std::vector<uint32_t> binding_list_;
     std::shared_ptr<er::Sampler> texture_sampler_;
     std::shared_ptr<er::Sampler> repeat_texture_sampler_;
@@ -139,6 +141,7 @@ private:
     std::shared_ptr<es::VolumeNoise> volume_noise_;
     std::shared_ptr<es::IblCreator> ibl_creator_;
     std::shared_ptr<ego::Plane> unit_plane_;
+    std::shared_ptr<ego::Prt> prt_test_;
     std::shared_ptr<engine::ray_tracing::RayTracingBase> ray_tracing_test_;
     std::shared_ptr<es::Menu> menu_;
 
