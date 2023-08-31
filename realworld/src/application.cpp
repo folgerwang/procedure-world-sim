@@ -439,7 +439,7 @@ void RealWorldApplication::initVulkan() {
     auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
 
     unit_plane_ = std::make_shared<ego::Plane>(device_info_);
-    prt_test_ = std::make_shared<ego::Prt>(device_info_,
+    prt_test_ = std::make_shared<ego::PrtTest>(device_info_,
         descriptor_pool_,
         texture_sampler_,
         hdr_render_pass_,

@@ -5,7 +5,7 @@
 #include "game_object/gltf.h"
 #include "game_object/terrain.h"
 #include "game_object/debug_draw.h"
-#include "game_object/prt.h"
+#include "game_object/prt_test.h"
 #include "scene_rendering/skydome.h"
 #include "scene_rendering/weather_system.h"
 #include "scene_rendering/ibl_creator.h"
@@ -141,7 +141,7 @@ private:
     std::shared_ptr<es::VolumeNoise> volume_noise_;
     std::shared_ptr<es::IblCreator> ibl_creator_;
     std::shared_ptr<ego::Plane> unit_plane_;
-    std::shared_ptr<ego::Prt> prt_test_;
+    std::shared_ptr<ego::PrtTest> prt_test_;
     std::shared_ptr<engine::ray_tracing::RayTracingBase> ray_tracing_test_;
     std::shared_ptr<es::Menu> menu_;
 
