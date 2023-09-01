@@ -473,7 +473,8 @@ void RealWorldApplication::initVulkan() {
             *prt_test_->getPrtTex(2),
             *prt_test_->getPrtTex(3),
             *prt_test_->getPrtTex(4),
-            *prt_test_->getPrtTex(5));
+            *prt_test_->getPrtTex(5),
+            *prt_test_->getPrtTex(6));
 
     ibl_creator_ = std::make_shared<es::IblCreator>(
         device_info_,
@@ -1245,7 +1246,8 @@ void RealWorldApplication::drawScene(
             *prt_test_->getPrtTex(2),
             *prt_test_->getPrtTex(3),
             *prt_test_->getPrtTex(4),
-            *prt_test_->getPrtTex(5));
+            *prt_test_->getPrtTex(5),
+            *prt_test_->getPrtTex(6));
         prt_update_ = true;
     }
 
