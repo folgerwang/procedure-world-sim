@@ -12,6 +12,8 @@
 #include "scene_rendering/menu.h"
 #include "scene_rendering/volume_cloud.h"
 #include "scene_rendering/volume_noise.h"
+#include "scene_rendering/cone_map.h"
+#include "scene_rendering/prt.h"
 #include "ray_tracing/raytracing_base.h"
 #include "engine_helper.h"
 
@@ -142,6 +144,10 @@ private:
     std::shared_ptr<es::IblCreator> ibl_creator_;
     std::shared_ptr<ego::Plane> unit_plane_;
     std::shared_ptr<ego::PrtTest> prt_test_;
+    bool cone_map_update_ = false;
+    std::shared_ptr<es::ConeMap> cone_map_gen_;
+    bool prt_update_ = false;
+    std::shared_ptr<es::Prt> prt_gen_;
     std::shared_ptr<engine::ray_tracing::RayTracingBase> ray_tracing_test_;
     std::shared_ptr<es::Menu> menu_;
 

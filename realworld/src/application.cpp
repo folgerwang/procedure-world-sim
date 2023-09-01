@@ -454,6 +454,27 @@ void RealWorldApplication::initVulkan() {
     clear_values_[0].color = { 50.0f / 255.0f, 50.0f / 255.0f, 50.0f / 255.0f, 1.0f };
     clear_values_[1].depth_stencil = { 1.0f, 0 };
 
+    cone_map_gen_ =
+        std::make_shared<es::ConeMap>(
+            device_info_,
+            descriptor_pool_,
+            texture_sampler_,
+            prt_bump_tex_,
+            *prt_test_->getConemapTex());
+
+    prt_gen_ =
+        std::make_shared<es::Prt>(
+            device_info_,
+            descriptor_pool_,
+            texture_sampler_,
+            prt_bump_tex_,
+            *prt_test_->getPrtTex(0),
+            *prt_test_->getPrtTex(1),
+            *prt_test_->getPrtTex(2),
+            *prt_test_->getPrtTex(3),
+            *prt_test_->getPrtTex(4),
+            *prt_test_->getPrtTex(5));
+
     ibl_creator_ = std::make_shared<es::IblCreator>(
         device_info_,
         descriptor_pool_,
@@ -1209,6 +1230,25 @@ void RealWorldApplication::drawScene(
         }
     }
 
+    if (!cone_map_update_) {
+        cone_map_gen_->update(
+            cmd_buf,
+            *prt_test_->getConemapTex());
+        cone_map_update_ = true;
+    }
+
+    if (!prt_update_) {
+        prt_gen_->update(
+            cmd_buf,
+            *prt_test_->getPrtTex(0),
+            *prt_test_->getPrtTex(1),
+            *prt_test_->getPrtTex(2),
+            *prt_test_->getPrtTex(3),
+            *prt_test_->getPrtTex(4),
+            *prt_test_->getPrtTex(5));
+        prt_update_ = true;
+    }
+
     {
         cmd_buf->beginRenderPass(
             hdr_render_pass_,
@@ -1714,6 +1754,8 @@ void RealWorldApplication::cleanup() {
     volume_cloud_->destroy(device_);
     unit_plane_->destroy(device_);
     prt_test_->destroy(device_);
+    cone_map_gen_->destroy(device_);
+    prt_gen_->destroy(device_);
 
     er::helper::clearCachedShaderModules(device_);
 
