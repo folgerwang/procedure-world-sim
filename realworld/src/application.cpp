@@ -468,13 +468,7 @@ void RealWorldApplication::initVulkan() {
             descriptor_pool_,
             texture_sampler_,
             prt_bump_tex_,
-            *prt_test_->getPrtTex(0),
-            *prt_test_->getPrtTex(1),
-            *prt_test_->getPrtTex(2),
-            *prt_test_->getPrtTex(3),
-            *prt_test_->getPrtTex(4),
-            *prt_test_->getPrtTex(5),
-            *prt_test_->getPrtTex(6));
+            prt_test_->getPrtTexes());
 
     ibl_creator_ = std::make_shared<es::IblCreator>(
         device_info_,
@@ -1241,13 +1235,7 @@ void RealWorldApplication::drawScene(
     if (!prt_update_) {
         prt_gen_->update(
             cmd_buf,
-            *prt_test_->getPrtTex(0),
-            *prt_test_->getPrtTex(1),
-            *prt_test_->getPrtTex(2),
-            *prt_test_->getPrtTex(3),
-            *prt_test_->getPrtTex(4),
-            *prt_test_->getPrtTex(5),
-            *prt_test_->getPrtTex(6));
+            prt_test_->getPrtTexes());
         prt_update_ = true;
     }
 
