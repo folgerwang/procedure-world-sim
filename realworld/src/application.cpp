@@ -441,14 +441,12 @@ void RealWorldApplication::initVulkan() {
     unit_plane_ = std::make_shared<ego::Plane>(device_info_);
     prt_test_ = std::make_shared<ego::PrtTest>(device_info_,
         descriptor_pool_,
-        texture_sampler_,
         hdr_render_pass_,
         graphic_pipeline_info_,
         desc_set_layouts,
         swap_chain_info_.extent,
-        unit_plane_,
-        prt_base_tex_,
-        prt_bump_tex_);
+        prt_bump_tex_.size,
+        unit_plane_);
 
     clear_values_.resize(2);
     clear_values_[0].color = { 50.0f / 255.0f, 50.0f / 255.0f, 50.0f / 255.0f, 1.0f };
@@ -466,9 +464,7 @@ void RealWorldApplication::initVulkan() {
         std::make_shared<es::Prt>(
             device_info_,
             descriptor_pool_,
-            texture_sampler_,
-            prt_bump_tex_,
-            prt_test_->getPrtTexes());
+            prt_bump_tex_.size);
 
     ibl_creator_ = std::make_shared<es::IblCreator>(
         device_info_,
@@ -1234,8 +1230,10 @@ void RealWorldApplication::drawScene(
 
     if (!prt_update_) {
         prt_gen_->update(
+            device_,
             cmd_buf,
-            prt_test_->getPrtTexes());
+            texture_sampler_,
+            prt_bump_tex_);
         prt_update_ = true;
     }
 
@@ -1247,7 +1245,16 @@ void RealWorldApplication::drawScene(
             clear_values_);
 
         if (render_prt_test) {
-            prt_test_->draw(cmd_buf, desc_sets, unit_plane_);
+            prt_test_->draw(
+                device_,
+                cmd_buf,
+                desc_sets,
+                texture_sampler_,
+                unit_plane_,
+                prt_base_tex_,
+                prt_bump_tex_,
+                prt_gen_->getPrtTexes());
+            
         }
         else {
             // render gltf.
