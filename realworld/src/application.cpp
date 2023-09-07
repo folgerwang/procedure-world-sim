@@ -1253,7 +1253,8 @@ void RealWorldApplication::drawScene(
                 unit_plane_,
                 prt_base_tex_,
                 prt_bump_tex_,
-                prt_gen_->getPrtTexes());
+                prt_gen_->getPackedPrtTexture(),
+                prt_gen_->getPrtMinMaxBuffer());
             
         }
         else {
