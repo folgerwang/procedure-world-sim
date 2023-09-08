@@ -145,6 +145,7 @@ void RealWorldApplication::run() {
     }
     initWindow();
     initVulkan();
+    initDrawFrame();
     mainLoop();
     cleanup();
 }
@@ -431,6 +432,8 @@ void RealWorldApplication::initVulkan() {
     eh::createTextureImage(device_info_, "assets/map.png", er::Format::R16_UNORM, heightmap_tex_);
     eh::createTextureImage(device_info_, "assets/tile1.jpg", format, prt_base_tex_);
     eh::createTextureImage(device_info_, "assets/tile1.tga", format, prt_bump_tex_);
+//    eh::createTextureImage(device_info_, "assets/T_Mat4Mural_C.PNG", format, prt_base_tex_);
+//    eh::createTextureImage(device_info_, "assets/T_Mat4Mural_H.PNG", format, prt_bump_tex_);
     createTextureSampler();
     descriptor_pool_ = device_->createDescriptorPool();
     createCommandBuffers();
@@ -438,14 +441,35 @@ void RealWorldApplication::initVulkan() {
 
     auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
 
+    prt_gen_ =
+        std::make_shared<es::Prt>(
+            device_info_,
+            descriptor_pool_,
+            texture_sampler_);
+
+    cone_map_obj_ =
+        std::make_shared<ego::ConeMapObj>(
+            device_info_,
+            descriptor_pool_,
+            texture_sampler_,
+            prt_bump_tex_,
+            prt_gen_,
+            3,
+            0.1f,
+            0.3f);
+
     unit_plane_ = std::make_shared<ego::Plane>(device_info_);
-    prt_test_ = std::make_shared<ego::PrtTest>(device_info_,
+    prt_test_ = std::make_shared<ego::PrtTest>(
+        device_info_,
         descriptor_pool_,
         hdr_render_pass_,
         graphic_pipeline_info_,
         desc_set_layouts,
+        texture_sampler_,
+        prt_base_tex_,
+        prt_bump_tex_,
+        cone_map_obj_,
         swap_chain_info_.extent,
-        prt_bump_tex_.size,
         unit_plane_);
 
     clear_values_.resize(2);
@@ -458,13 +482,7 @@ void RealWorldApplication::initVulkan() {
             descriptor_pool_,
             texture_sampler_,
             prt_bump_tex_,
-            *prt_test_->getConemapTex());
-
-    prt_gen_ =
-        std::make_shared<es::Prt>(
-            device_info_,
-            descriptor_pool_,
-            prt_bump_tex_.size);
+            *cone_map_obj_->getConemapTexture());
 
     ibl_creator_ = std::make_shared<es::IblCreator>(
         device_info_,
@@ -869,9 +887,15 @@ void RealWorldApplication::createCommandPool() {
 }
 
 void RealWorldApplication::createCommandBuffers() {
-    command_buffers_ = device_->allocateCommandBuffers(
-        command_pool_,
-        static_cast<uint32_t>(swap_chain_info_.framebuffers.size()));
+    init_command_buffers_ =
+        device_->allocateCommandBuffers(
+            command_pool_,
+            1);
+
+    command_buffers_ = 
+        device_->allocateCommandBuffers(
+            command_pool_,
+            static_cast<uint32_t>(swap_chain_info_.framebuffers.size()));
 
 /*    std::vector<renderer::ClearValue> clear_values;
     clear_values.resize(2);
@@ -926,12 +950,14 @@ void RealWorldApplication::createSyncObjects() {
     render_finished_semaphores_.resize(kMaxFramesInFlight);
     in_flight_fences_.resize(kMaxFramesInFlight);
     images_in_flight_.resize(swap_chain_info_.images.size(), VK_NULL_HANDLE);
+    init_fence_ = device_->createFence();
+    init_semaphore_ = device_->createSemaphore();
 
     assert(device_);
     for (uint64_t i = 0; i < kMaxFramesInFlight; i++) {
         image_available_semaphores_[i] = device_->createSemaphore();
         render_finished_semaphores_[i] = device_->createSemaphore();
-        in_flight_fences_[i] = device_->createFence();
+        in_flight_fences_[i] = device_->createFence(true);
     }
 }
 
@@ -1221,22 +1247,6 @@ void RealWorldApplication::drawScene(
         }
     }
 
-    if (!cone_map_update_) {
-        cone_map_gen_->update(
-            cmd_buf,
-            *prt_test_->getConemapTex());
-        cone_map_update_ = true;
-    }
-
-    if (!prt_update_) {
-        prt_gen_->update(
-            device_,
-            cmd_buf,
-            texture_sampler_,
-            prt_bump_tex_);
-        prt_update_ = true;
-    }
-
     {
         cmd_buf->beginRenderPass(
             hdr_render_pass_,
@@ -1246,15 +1256,10 @@ void RealWorldApplication::drawScene(
 
         if (render_prt_test) {
             prt_test_->draw(
-                device_,
                 cmd_buf,
                 desc_sets,
-                texture_sampler_,
                 unit_plane_,
-                prt_base_tex_,
-                prt_bump_tex_,
-                prt_gen_->getPackedPrtTexture(),
-                prt_gen_->getPrtMinMaxBuffer());
+                cone_map_obj_);
             
         }
         else {
@@ -1428,10 +1433,38 @@ void RealWorldApplication::drawScene(
     s_dbuf_idx = 1 - s_dbuf_idx;
 }
 
+void RealWorldApplication::initDrawFrame() {
+    auto& command_buffer = init_command_buffers_[0];
+
+    command_buffer->reset(0);
+    command_buffer->beginCommandBuffer(
+        SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
+
+    cone_map_gen_->update(
+        command_buffer,
+        cone_map_obj_);
+
+    prt_gen_->update(
+        command_buffer,
+        cone_map_obj_);
+
+    command_buffer->endCommandBuffer();
+
+    er::Helper::submitQueue(
+        graphics_queue_,
+        init_fence_,
+        { },
+        { command_buffer },
+        { },
+        { });
+
+    device_->waitForFences({ init_fence_ });
+    device_->resetFences({ init_fence_ });
+}
+
 void RealWorldApplication::drawFrame() {
-    std::vector<std::shared_ptr<er::Fence>> in_flight_fences(1);
-    in_flight_fences[0] = in_flight_fences_[current_frame_];
-    device_->waitForFences(in_flight_fences);
+    device_->waitForFences({ in_flight_fences_[current_frame_] });
+    device_->resetFences({ in_flight_fences_[current_frame_] });
 
     uint32_t image_index = 0;
     bool need_recreate_swap_chain = er::Helper::acquireNextImage(
@@ -1446,9 +1479,7 @@ void RealWorldApplication::drawFrame() {
     }
 
     if (images_in_flight_[image_index] != VK_NULL_HANDLE) {
-        std::vector<std::shared_ptr<er::Fence>> images_in_flight(1);
-        images_in_flight[0] = images_in_flight_[image_index];
-        device_->waitForFences(images_in_flight);
+        device_->waitForFences({ images_in_flight_[image_index] });
     }
     // Mark the image as now being in use by this frame
     images_in_flight_[image_index] = in_flight_fences_[current_frame_];
@@ -1461,8 +1492,6 @@ void RealWorldApplication::drawFrame() {
     float longtitude = -122.1430f; // west.
 
     skydome_->update(latitude, longtitude, localtm.tm_yday, 22/*localtm->tm_hour*/, localtm.tm_min, localtm.tm_sec);
-
-    device_->resetFences(in_flight_fences);
 
     gpu_game_camera_info_ = ego::GameCamera::readCameraInfo(
         device_info_.device,
@@ -1654,7 +1683,8 @@ void RealWorldApplication::drawFrame() {
         in_flight_fences_[current_frame_],
         { image_available_semaphores_[current_frame_] },
         { command_buffer },
-        { render_finished_semaphores_[current_frame_] });
+        { render_finished_semaphores_[current_frame_] },
+        { });
 
     need_recreate_swap_chain = er::Helper::presentQueue(
         present_queue_,
@@ -1687,6 +1717,7 @@ void RealWorldApplication::cleanupSwapChain() {
     }
 
     device_->freeCommandBuffers(command_pool_, command_buffers_);
+    device_->freeCommandBuffers(command_pool_, init_command_buffers_);
     device_->destroyRenderPass(final_render_pass_);
     device_->destroyRenderPass(hdr_render_pass_);
     device_->destroyRenderPass(hdr_water_render_pass_);
@@ -1751,11 +1782,15 @@ void RealWorldApplication::cleanup() {
     volume_noise_->destroy(device_);
     volume_cloud_->destroy(device_);
     unit_plane_->destroy(device_);
-    prt_test_->destroy(device_);
+    cone_map_obj_->destroy(device_);
     cone_map_gen_->destroy(device_);
+    prt_test_->destroy(device_);
     prt_gen_->destroy(device_);
 
     er::helper::clearCachedShaderModules(device_);
+
+    device_->destroyFence(init_fence_);
+    device_->destroySemaphore(init_semaphore_);
 
     for (uint64_t i = 0; i < kMaxFramesInFlight; i++) {
         device_->destroySemaphore(render_finished_semaphores_[i]);

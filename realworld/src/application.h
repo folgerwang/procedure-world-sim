@@ -5,6 +5,7 @@
 #include "game_object/gltf.h"
 #include "game_object/terrain.h"
 #include "game_object/debug_draw.h"
+#include "game_object/cone_map_obj.h"
 #include "game_object/prt_test.h"
 #include "scene_rendering/skydome.h"
 #include "scene_rendering/weather_system.h"
@@ -63,6 +64,7 @@ private:
         uint32_t image_index,
         float delta_t,
         float current_time);
+    void initDrawFrame();
     void drawFrame();
     void cleanup();
     void cleanupSwapChain();
@@ -129,10 +131,13 @@ private:
     std::shared_ptr<er::Sampler> mirror_repeat_sampler_;
     std::shared_ptr<er::Sampler> texture_point_sampler_;
     std::vector<std::shared_ptr<er::CommandBuffer>> command_buffers_;
+    std::vector<std::shared_ptr<er::CommandBuffer>> init_command_buffers_;
     std::vector<std::shared_ptr<er::Semaphore>> image_available_semaphores_;
     std::vector<std::shared_ptr<er::Semaphore>> render_finished_semaphores_;
     std::vector<std::shared_ptr<er::Fence>> in_flight_fences_;
     std::vector<std::shared_ptr<er::Fence>> images_in_flight_;
+    std::shared_ptr<er::Fence> init_fence_;
+    std::shared_ptr<er::Semaphore> init_semaphore_;
 
     std::shared_ptr<ego::GameCamera> game_camera_;
     std::vector<std::shared_ptr<ego::GltfObject>> gltf_objects_;
@@ -142,11 +147,10 @@ private:
     std::shared_ptr<es::VolumeCloud> volume_cloud_;
     std::shared_ptr<es::VolumeNoise> volume_noise_;
     std::shared_ptr<es::IblCreator> ibl_creator_;
+    std::shared_ptr<ego::ConeMapObj> cone_map_obj_;
     std::shared_ptr<ego::Plane> unit_plane_;
     std::shared_ptr<ego::PrtTest> prt_test_;
-    bool cone_map_update_ = false;
     std::shared_ptr<es::ConeMap> cone_map_gen_;
-    bool prt_update_ = false;
     std::shared_ptr<es::Prt> prt_gen_;
     std::shared_ptr<engine::ray_tracing::RayTracingBase> ray_tracing_test_;
     std::shared_ptr<es::Menu> menu_;
