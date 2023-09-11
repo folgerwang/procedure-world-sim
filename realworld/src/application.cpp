@@ -430,10 +430,12 @@ void RealWorldApplication::initVulkan() {
     eh::createTextureImage(device_info_, "assets/lut_thin_film.png", format, thin_film_lut_tex_);
     eh::createTextureImage(device_info_, "assets/map_mask.png", format, map_mask_tex_);
     eh::createTextureImage(device_info_, "assets/map.png", er::Format::R16_UNORM, heightmap_tex_);
-    eh::createTextureImage(device_info_, "assets/tile1.jpg", format, prt_base_tex_);
-    eh::createTextureImage(device_info_, "assets/tile1.tga", format, prt_bump_tex_);
+//    eh::createTextureImage(device_info_, "assets/tile1.jpg", format, prt_base_tex_);
+//    eh::createTextureImage(device_info_, "assets/tile1.tga", format, prt_bump_tex_);
 //    eh::createTextureImage(device_info_, "assets/T_Mat4Mural_C.PNG", format, prt_base_tex_);
 //    eh::createTextureImage(device_info_, "assets/T_Mat4Mural_H.PNG", format, prt_bump_tex_);
+    eh::createTextureImage(device_info_, "assets/T_Mat2Mountains_C.jpg", format, prt_base_tex_);
+    eh::createTextureImage(device_info_, "assets/T_Mat2Mountains_ORH.jpg", format, prt_bump_tex_);
     createTextureSampler();
     descriptor_pool_ = device_->createDescriptorPool();
     createCommandBuffers();
@@ -454,9 +456,9 @@ void RealWorldApplication::initVulkan() {
             texture_sampler_,
             prt_bump_tex_,
             prt_gen_,
-            3,
-            0.1f,
-            0.3f);
+            2,
+            0.05f,
+            0.15f);
 
     unit_plane_ = std::make_shared<ego::Plane>(device_info_);
     prt_test_ = std::make_shared<ego::PrtTest>(
@@ -1460,6 +1462,8 @@ void RealWorldApplication::initDrawFrame() {
 
     device_->waitForFences({ init_fence_ });
     device_->resetFences({ init_fence_ });
+
+    prt_gen_->destroy(device_);
 }
 
 void RealWorldApplication::drawFrame() {
@@ -1785,7 +1789,6 @@ void RealWorldApplication::cleanup() {
     cone_map_obj_->destroy(device_);
     cone_map_gen_->destroy(device_);
     prt_test_->destroy(device_);
-    prt_gen_->destroy(device_);
 
     er::helper::clearCachedShaderModules(device_);
 
