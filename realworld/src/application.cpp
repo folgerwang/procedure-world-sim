@@ -434,6 +434,8 @@ void RealWorldApplication::initVulkan() {
 //    eh::createTextureImage(device_info_, "assets/tile1.tga", format, prt_bump_tex_);
 //    eh::createTextureImage(device_info_, "assets/T_Mat4Mural_C.PNG", format, prt_base_tex_);
 //    eh::createTextureImage(device_info_, "assets/T_Mat4Mural_H.PNG", format, prt_bump_tex_);
+//    eh::createTextureImage(device_info_, "assets/T_Mat1Ground_C.jpg", format, prt_base_tex_);
+//    eh::createTextureImage(device_info_, "assets/T_Mat1Ground_ORH.jpg", format, prt_bump_tex_);
     eh::createTextureImage(device_info_, "assets/T_Mat2Mountains_C.jpg", format, prt_base_tex_);
     eh::createTextureImage(device_info_, "assets/T_Mat2Mountains_ORH.jpg", format, prt_bump_tex_);
     createTextureSampler();
@@ -457,8 +459,10 @@ void RealWorldApplication::initVulkan() {
             prt_bump_tex_,
             prt_gen_,
             2,
-            0.05f,
-            0.15f);
+            true,
+            0.025f,
+            0.1f,
+            8.0f / 256.0f);
 
     unit_plane_ = std::make_shared<ego::Plane>(device_info_);
     prt_test_ = std::make_shared<ego::PrtTest>(
@@ -1205,7 +1209,7 @@ void RealWorldApplication::drawScene(
             game_camera_params.init_camera_pos = glm::vec3(0, 5.0f, 0);
             game_camera_params.init_camera_dir = glm::vec3(0.0f, -1.0f, 0.0f);
             game_camera_params.init_camera_up = glm::vec3(1, 0, 0);
-            game_camera_params.camera_speed = 0.1f;
+            game_camera_params.camera_speed = 0.01f;
         }
         else {
             game_camera_params.init_camera_pos = glm::vec3(0, 500.0f, 0);
