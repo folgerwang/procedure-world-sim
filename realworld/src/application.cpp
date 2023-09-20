@@ -21,7 +21,7 @@ namespace {
 constexpr int kWindowSizeX = 2560;
 constexpr int kWindowSizeY = 1440;
 static int s_update_frame_count = -1;
-static bool s_render_prt_test = true;
+static bool s_render_prt_test = false;
 
 er::AttachmentDescription FillAttachmentDescription(
     er::Format format,
