@@ -147,10 +147,10 @@ private:
     std::shared_ptr<es::VolumeCloud> volume_cloud_;
     std::shared_ptr<es::VolumeNoise> volume_noise_;
     std::shared_ptr<es::IblCreator> ibl_creator_;
-    std::shared_ptr<ego::ConeMapObj> cone_map_obj_;
+    std::shared_ptr<ego::ConeMapObj> conemap_obj_;
     std::shared_ptr<ego::Plane> unit_plane_;
     std::shared_ptr<ego::PrtTest> prt_test_;
-    std::shared_ptr<es::ConeMap> cone_map_gen_;
+    std::shared_ptr<es::ConeMap> conemap_gen_;
     std::shared_ptr<es::Prt> prt_gen_;
     std::shared_ptr<engine::ray_tracing::RayTracingBase> ray_tracing_test_;
     std::shared_ptr<es::Menu> menu_;

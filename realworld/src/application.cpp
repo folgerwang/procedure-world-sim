@@ -21,6 +21,7 @@ namespace {
 constexpr int kWindowSizeX = 2560;
 constexpr int kWindowSizeY = 1440;
 static int s_update_frame_count = -1;
+static bool s_render_prt_test = true;
 
 er::AttachmentDescription FillAttachmentDescription(
     er::Format format,
@@ -451,7 +452,7 @@ void RealWorldApplication::initVulkan() {
             descriptor_pool_,
             texture_sampler_);
 
-    cone_map_obj_ =
+    conemap_obj_ =
         std::make_shared<ego::ConeMapObj>(
             device_info_,
             descriptor_pool_,
@@ -474,7 +475,7 @@ void RealWorldApplication::initVulkan() {
         texture_sampler_,
         prt_base_tex_,
         prt_bump_tex_,
-        cone_map_obj_,
+        conemap_obj_,
         swap_chain_info_.extent,
         unit_plane_);
 
@@ -482,13 +483,13 @@ void RealWorldApplication::initVulkan() {
     clear_values_[0].color = { 50.0f / 255.0f, 50.0f / 255.0f, 50.0f / 255.0f, 1.0f };
     clear_values_[1].depth_stencil = { 1.0f, 0 };
 
-    cone_map_gen_ =
+    conemap_gen_ =
         std::make_shared<es::ConeMap>(
             device_info_,
             descriptor_pool_,
             texture_sampler_,
             prt_bump_tex_,
-            *cone_map_obj_->getConemapTexture());
+            *conemap_obj_->getConemapTexture());
 
     ibl_creator_ = std::make_shared<es::IblCreator>(
         device_info_,
@@ -1111,7 +1112,6 @@ void RealWorldApplication::drawScene(
     auto& cmd_buf = command_buffer;
 
     static int s_dbuf_idx = 0;
-    bool render_prt_test = true;
 
     if (0)
     {
@@ -1205,7 +1205,7 @@ void RealWorldApplication::drawScene(
         glsl::GameCameraParams game_camera_params;
         game_camera_params.world_min = ego::TileObject::getWorldMin();
         game_camera_params.inv_world_range = 1.0f / ego::TileObject::getWorldRange();
-        if (render_prt_test) {
+        if (s_render_prt_test) {
             game_camera_params.init_camera_pos = glm::vec3(0, 5.0f, 0);
             game_camera_params.init_camera_dir = glm::vec3(0.0f, -1.0f, 0.0f);
             game_camera_params.init_camera_up = glm::vec3(1, 0, 0);
@@ -1260,12 +1260,12 @@ void RealWorldApplication::drawScene(
             screen_size,
             clear_values_);
 
-        if (render_prt_test) {
+        if (s_render_prt_test) {
             prt_test_->draw(
                 cmd_buf,
                 desc_sets,
                 unit_plane_,
-                cone_map_obj_);
+                conemap_obj_);
             
         }
         else {
@@ -1330,7 +1330,7 @@ void RealWorldApplication::drawScene(
             SET_FLAG_BIT(Access, SHADER_READ_BIT),
             SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
 
-        if (!render_prt_test) {
+        if (!s_render_prt_test) {
             if (!menu_->isWaterPassTurnOff()) {
                 er::Helper::blitImage(
                     cmd_buf,
@@ -1446,13 +1446,15 @@ void RealWorldApplication::initDrawFrame() {
     command_buffer->beginCommandBuffer(
         SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
 
-    cone_map_gen_->update(
-        command_buffer,
-        cone_map_obj_);
+    if (s_render_prt_test) {
+        conemap_gen_->update(
+            command_buffer,
+            conemap_obj_);
 
-    prt_gen_->update(
-        command_buffer,
-        cone_map_obj_);
+        prt_gen_->update(
+            command_buffer,
+            conemap_obj_);
+    }
 
     command_buffer->endCommandBuffer();
 
@@ -1790,8 +1792,8 @@ void RealWorldApplication::cleanup() {
     volume_noise_->destroy(device_);
     volume_cloud_->destroy(device_);
     unit_plane_->destroy(device_);
-    cone_map_obj_->destroy(device_);
-    cone_map_gen_->destroy(device_);
+    conemap_obj_->destroy(device_);
+    conemap_gen_->destroy(device_);
     prt_test_->destroy(device_);
 
     er::helper::clearCachedShaderModules(device_);
