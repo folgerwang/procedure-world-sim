@@ -124,7 +124,8 @@ private:
     er::TextureInfo heightmap_tex_;
     er::TextureInfo map_mask_tex_;
     er::TextureInfo prt_base_tex_;
-    er::TextureInfo prt_bump_tex_;
+    er::TextureInfo prt_normal_tex_;
+    er::TextureInfo prt_orh_tex_;
     std::vector<uint32_t> binding_list_;
     std::shared_ptr<er::Sampler> texture_sampler_;
     std::shared_ptr<er::Sampler> repeat_texture_sampler_;

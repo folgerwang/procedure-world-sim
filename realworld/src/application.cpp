@@ -438,7 +438,8 @@ void RealWorldApplication::initVulkan() {
 //    eh::createTextureImage(device_info_, "assets/T_Mat1Ground_C.jpg", format, prt_base_tex_);
 //    eh::createTextureImage(device_info_, "assets/T_Mat1Ground_ORH.jpg", format, prt_bump_tex_);
     eh::createTextureImage(device_info_, "assets/T_Mat2Mountains_C.jpg", format, prt_base_tex_);
-    eh::createTextureImage(device_info_, "assets/T_Mat2Mountains_ORH.jpg", format, prt_bump_tex_);
+    eh::createTextureImage(device_info_, "assets/T_Mat2Mountains_N.jpg", format, prt_normal_tex_);
+    eh::createTextureImage(device_info_, "assets/T_Mat2Mountains_ORH.jpg", format, prt_orh_tex_);
     createTextureSampler();
     descriptor_pool_ = device_->createDescriptorPool();
     createCommandBuffers();
@@ -457,7 +458,7 @@ void RealWorldApplication::initVulkan() {
             device_info_,
             descriptor_pool_,
             texture_sampler_,
-            prt_bump_tex_,
+            prt_orh_tex_,
             prt_gen_,
             2,
             true,
@@ -474,7 +475,8 @@ void RealWorldApplication::initVulkan() {
         desc_set_layouts,
         texture_sampler_,
         prt_base_tex_,
-        prt_bump_tex_,
+        prt_normal_tex_,
+        prt_orh_tex_,
         conemap_obj_,
         swap_chain_info_.extent,
         unit_plane_);
@@ -488,7 +490,7 @@ void RealWorldApplication::initVulkan() {
             device_info_,
             descriptor_pool_,
             texture_sampler_,
-            prt_bump_tex_,
+            prt_orh_tex_,
             *conemap_obj_->getConemapTexture());
 
     ibl_creator_ = std::make_shared<es::IblCreator>(
@@ -1760,7 +1762,8 @@ void RealWorldApplication::cleanup() {
     map_mask_tex_.destroy(device_);
     heightmap_tex_.destroy(device_);
     prt_base_tex_.destroy(device_);
-    prt_bump_tex_.destroy(device_);
+    prt_normal_tex_.destroy(device_);
+    prt_orh_tex_.destroy(device_);
     ibl_diffuse_tex_.destroy(device_);
     ibl_specular_tex_.destroy(device_);
     ibl_sheen_tex_.destroy(device_);
