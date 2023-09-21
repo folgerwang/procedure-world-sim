@@ -21,7 +21,7 @@ namespace {
 constexpr int kWindowSizeX = 2560;
 constexpr int kWindowSizeY = 1440;
 static int s_update_frame_count = -1;
-static bool s_render_prt_test = false;
+static bool s_render_prt_test = true;
 
 er::AttachmentDescription FillAttachmentDescription(
     er::Format format,
@@ -434,7 +434,9 @@ void RealWorldApplication::initVulkan() {
 //    eh::createTextureImage(device_info_, "assets/tile1.jpg", format, prt_base_tex_);
 //    eh::createTextureImage(device_info_, "assets/tile1.tga", format, prt_bump_tex_);
 //    eh::createTextureImage(device_info_, "assets/T_Mat4Mural_C.PNG", format, prt_base_tex_);
-//    eh::createTextureImage(device_info_, "assets/T_Mat4Mural_H.PNG", format, prt_bump_tex_);
+//    eh::createTextureImage(device_info_, "assets/T_Mat4Mural_H.PNG", format, prt_height_tex_);
+//    eh::createTextureImage(device_info_, "assets/T_Mat4Mural_N.PNG", format, prt_normal_tex_);
+//    eh::createTextureImage(device_info_, "assets/T_Mat4Mural_TRA.PNG", format, prt_orh_tex_);
 //    eh::createTextureImage(device_info_, "assets/T_Mat1Ground_C.jpg", format, prt_base_tex_);
 //    eh::createTextureImage(device_info_, "assets/T_Mat1Ground_ORH.jpg", format, prt_bump_tex_);
     eh::createTextureImage(device_info_, "assets/T_Mat2Mountains_C.jpg", format, prt_base_tex_);
@@ -454,20 +456,20 @@ void RealWorldApplication::initVulkan() {
             texture_sampler_);
 
     conemap_obj_ =
-        std::make_shared<ego::ConeMapObj>(
+        std::make_shared<ego::ConemapObj>(
             device_info_,
             descriptor_pool_,
             texture_sampler_,
-            prt_orh_tex_,
+            prt_orh_tex_,//prt_height_tex_,
             prt_gen_,
-            2,
+            2,//0,
             true,
             0.025f,
             0.1f,
             8.0f / 256.0f);
 
     unit_plane_ = std::make_shared<ego::Plane>(device_info_);
-    prt_test_ = std::make_shared<ego::PrtTest>(
+    conemap_test_ = std::make_shared<ego::ConemapTest>(
         device_info_,
         descriptor_pool_,
         hdr_render_pass_,
@@ -486,11 +488,11 @@ void RealWorldApplication::initVulkan() {
     clear_values_[1].depth_stencil = { 1.0f, 0 };
 
     conemap_gen_ =
-        std::make_shared<es::ConeMap>(
+        std::make_shared<es::Conemap>(
             device_info_,
             descriptor_pool_,
             texture_sampler_,
-            prt_orh_tex_,
+            prt_orh_tex_,//prt_height_tex_,
             *conemap_obj_->getConemapTexture());
 
     ibl_creator_ = std::make_shared<es::IblCreator>(
@@ -1263,7 +1265,8 @@ void RealWorldApplication::drawScene(
             clear_values_);
 
         if (s_render_prt_test) {
-            prt_test_->draw(
+            conemap_test_->draw(
+                device_,
                 cmd_buf,
                 desc_sets,
                 unit_plane_,
@@ -1763,6 +1766,7 @@ void RealWorldApplication::cleanup() {
     heightmap_tex_.destroy(device_);
     prt_base_tex_.destroy(device_);
     prt_normal_tex_.destroy(device_);
+    prt_height_tex_.destroy(device_);
     prt_orh_tex_.destroy(device_);
     ibl_diffuse_tex_.destroy(device_);
     ibl_specular_tex_.destroy(device_);
@@ -1797,7 +1801,7 @@ void RealWorldApplication::cleanup() {
     unit_plane_->destroy(device_);
     conemap_obj_->destroy(device_);
     conemap_gen_->destroy(device_);
-    prt_test_->destroy(device_);
+    conemap_test_->destroy(device_);
 
     er::helper::clearCachedShaderModules(device_);
 
