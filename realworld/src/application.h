@@ -40,9 +40,7 @@ private:
     void initWindow();
     void initVulkan();
     void createImageViews();
-    void createDescriptorSetLayout();
     void createRenderPasses();
-    void createCubemapRenderPass();
     void createFramebuffers(const glm::uvec2& display_size);
     void createCommandPool();
     void createDepthResources(const glm::uvec2& display_size);
@@ -93,8 +91,8 @@ private:
     std::shared_ptr<er::DescriptorPool> descriptor_pool_;
     std::shared_ptr<er::DescriptorSet> view_desc_set_;
     std::shared_ptr<er::DescriptorSetLayout> view_desc_set_layout_;
-    std::shared_ptr<er::DescriptorSetLayout> global_tex_desc_set_layout_;
-    std::shared_ptr<er::DescriptorSet> global_tex_desc_set_;
+    std::shared_ptr<er::DescriptorSetLayout> pbr_lighting_desc_set_layout_;
+    std::shared_ptr<er::DescriptorSet> pbr_lighting_desc_set_;
     er::TextureInfo ibl_diffuse_tex_;
     er::TextureInfo ibl_specular_tex_;
     er::TextureInfo ibl_sheen_tex_;

@@ -21,115 +21,50 @@ namespace {
 constexpr int kWindowSizeX = 2560;
 constexpr int kWindowSizeY = 1440;
 static int s_update_frame_count = -1;
-static bool s_render_prt_test = false;
+static bool s_render_prt_test = true;
 
-er::AttachmentDescription FillAttachmentDescription(
-    er::Format format,
-    er::SampleCountFlagBits samples,
-    er::ImageLayout initial_layout,
-    er::ImageLayout final_layout,
-    er::AttachmentLoadOp load_op = er::AttachmentLoadOp::CLEAR,
-    er::AttachmentStoreOp store_op = er::AttachmentStoreOp::STORE,
-    er::AttachmentLoadOp stencil_load_op = er::AttachmentLoadOp::DONT_CARE,
-    er::AttachmentStoreOp stencil_store_op = er::AttachmentStoreOp::DONT_CARE) {
+// global pbr texture descriptor set layout.
+std::shared_ptr<er::DescriptorSetLayout> createPbrLightingDescriptorSetLayout(
+    const std::shared_ptr<er::Device>& device) {
+    std::vector<er::DescriptorSetLayoutBinding> bindings;
+    bindings.reserve(5);
 
-    er::AttachmentDescription attachment{};
-    attachment.format = format;
-    attachment.samples = samples;
-    attachment.initial_layout = initial_layout;
-    attachment.final_layout = final_layout;
-    attachment.load_op = load_op;
-    attachment.store_op = store_op;
-    attachment.stencil_load_op = stencil_load_op;
-    attachment.stencil_store_op = stencil_store_op;
+    bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        GGX_LUT_INDEX,
+        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
+    bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        CHARLIE_LUT_INDEX,
+        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
+    bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        LAMBERTIAN_ENV_TEX_INDEX,
+        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
+    bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        GGX_ENV_TEX_INDEX,
+        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
+    bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        CHARLIE_ENV_TEX_INDEX,
+        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
 
-    return attachment;
+    return device->createDescriptorSetLayout(bindings);
 }
 
-er::SubpassDescription FillSubpassDescription(
-    er::PipelineBindPoint pipeline_bind_point,
-    const std::vector<er::AttachmentReference>& color_attachments,
-    const er::AttachmentReference* depth_stencil_attachment,
-    er::SubpassDescriptionFlags flags = static_cast<er::SubpassDescriptionFlags>(0),
-    const std::vector<er::AttachmentReference>& input_attachments = {},
-    const std::vector<er::AttachmentReference>& resolve_attachments = {}) {
-    er::SubpassDescription desc{};
-    desc.flags = flags;
-    desc.input_attachments = input_attachments;
-    desc.color_attachments = color_attachments;
-    desc.resolve_attachments = resolve_attachments;
-    if (depth_stencil_attachment) {
-        desc.depth_stencil_attachment.resize(1);
-        desc.depth_stencil_attachment[0] = *depth_stencil_attachment;
-    }
-    desc.preserve_attachment_count = 0;
-    desc.preserve_attachments = nullptr;
+std::shared_ptr<er::DescriptorSetLayout> createViewCameraDescriptorSetLayout(
+    const std::shared_ptr<er::Device>& device) {
+    std::vector<er::DescriptorSetLayoutBinding> bindings(1);
+    bindings[0].binding = VIEW_CAMERA_BUFFER_INDEX;
+    bindings[0].descriptor_count = 1;
+    bindings[0].descriptor_type = er::DescriptorType::STORAGE_BUFFER;
+    bindings[0].stage_flags =
+        SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
+        SET_FLAG_BIT(ShaderStage, MESH_BIT_NV) |
+        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) |
+        SET_FLAG_BIT(ShaderStage, GEOMETRY_BIT) |
+        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
+    bindings[0].immutable_samplers = nullptr; // Optional
 
-    return desc;
+    return device->createDescriptorSetLayout(bindings);
 }
 
-er::SubpassDependency FillSubpassDependency(
-    uint32_t src_subpass,
-    uint32_t dst_subpass,
-    er::PipelineStageFlags src_stage_mask,
-    er::PipelineStageFlags dst_stage_mask,
-    er::AccessFlags src_access_mask,
-    er::AccessFlags dst_access_mask,
-    er::DependencyFlags dependency_flags = 0) {
-    er::SubpassDependency dependency{};
-    dependency.src_subpass = src_subpass;
-    dependency.dst_subpass = dst_subpass;
-    dependency.src_stage_mask = src_stage_mask;
-    dependency.dst_stage_mask = dst_stage_mask;
-    dependency.src_access_mask = src_access_mask;
-    dependency.dst_access_mask = dst_access_mask;
-    dependency.dependency_flags = dependency_flags;
-    return dependency;
-}
-
-std::shared_ptr<er::RenderPass> createRenderPass(
-    std::shared_ptr<er::Device> device,
-    er::Format format,
-    er::Format depth_format,
-    bool clear = false,
-    er::SampleCountFlagBits sample_count = er::SampleCountFlagBits::SC_1_BIT,
-    er::ImageLayout color_image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL) {
-    auto color_attachment = FillAttachmentDescription(
-        format,
-        sample_count,
-        clear ? er::ImageLayout::UNDEFINED : color_image_layout,
-        color_image_layout,
-        clear ? er::AttachmentLoadOp::CLEAR : er::AttachmentLoadOp::LOAD);
-
-    er::AttachmentReference color_attachment_ref(0, er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-
-    auto depth_attachment = FillAttachmentDescription(
-        depth_format,
-        sample_count,
-        clear ? er::ImageLayout::UNDEFINED : er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        clear ? er::AttachmentLoadOp::CLEAR : er::AttachmentLoadOp::LOAD);
-
-    er::AttachmentReference depth_attachment_ref(1, er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-
-    auto subpass = FillSubpassDescription(
-        er::PipelineBindPoint::GRAPHICS,
-        { color_attachment_ref },
-        &depth_attachment_ref);
-
-    auto depency = FillSubpassDependency(~0U, 0,
-        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT),
-        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT),
-        0,
-        SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT) |
-        SET_FLAG_BIT(Access, COLOR_ATTACHMENT_READ_BIT));
-
-    std::vector<er::AttachmentDescription> attachments(2);
-    attachments[0] = color_attachment;
-    attachments[1] = depth_attachment;
-
-    return device->createRenderPass(attachments, { subpass }, { depency });
-}
 }
 
 namespace work {
@@ -275,15 +210,15 @@ void RealWorldApplication::recreateRenderBuffer(const glm::uvec2& display_size) 
 
 void RealWorldApplication::createRenderPasses() {
     assert(device_);
-    final_render_pass_ = createRenderPass(
+    final_render_pass_ = er::helper::createRenderPass(
         device_,
         swap_chain_info_.format,
         depth_format_,
         false,
         er::SampleCountFlagBits::SC_1_BIT,
         er::ImageLayout::PRESENT_SRC_KHR);
-    hdr_render_pass_ = createRenderPass(device_, hdr_format_, depth_format_, true);
-    hdr_water_render_pass_ = createRenderPass(device_, hdr_format_, depth_format_, false);
+    hdr_render_pass_ = er::helper::createRenderPass(device_, hdr_format_, depth_format_, true);
+    hdr_water_render_pass_ = er::helper::createRenderPass(device_, hdr_format_, depth_format_, false);
 }
 
 void RealWorldApplication::initVulkan() {
@@ -400,8 +335,14 @@ void RealWorldApplication::initVulkan() {
         SET_FLAG_BIT(ImageUsage, TRANSFER_DST_BIT));
     createRenderPasses();
     createImageViews();
-    createCubemapRenderPass();
-    createDescriptorSetLayout();
+    cubemap_render_pass_ =
+        er::helper::createCubemapRenderPass(device_);
+
+    pbr_lighting_desc_set_layout_ =
+        createPbrLightingDescriptorSetLayout(device_);
+    view_desc_set_layout_ =
+        createViewCameraDescriptorSetLayout(device_);
+
     createCommandPool();
     assert(command_pool_);
     device_info_.cmd_pool = command_pool_;
@@ -447,7 +388,9 @@ void RealWorldApplication::initVulkan() {
     createCommandBuffers();
     createSyncObjects();
 
-    auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
+    auto desc_set_layouts = {
+        pbr_lighting_desc_set_layout_,
+        view_desc_set_layout_ };
 
     prt_gen_ =
         std::make_shared<es::Prt>(
@@ -586,7 +529,7 @@ void RealWorldApplication::initVulkan() {
         descriptor_pool_,
         hdr_render_pass_,
         view_desc_set_layout_,
-        global_tex_desc_set_layout_,
+        pbr_lighting_desc_set_layout_,
         graphic_pipeline_info_,
         texture_sampler_,
         texture_point_sampler_,
@@ -630,15 +573,17 @@ void RealWorldApplication::initVulkan() {
         weather_system_->getAirflowTex());
 
     menu_ = std::make_shared<es::Menu>(
+        window_,
         device_info_,
         instance_,
-        window_, 
         queue_indices_,
         swap_chain_info_,
         graphics_queue_,
         descriptor_pool_,
         final_render_pass_,
-        command_buffers_[0]);
+        init_command_buffers_[0],
+        texture_sampler_,
+        prt_base_tex_.view);
 }
 
 void RealWorldApplication::recreateSwapChain() {
@@ -666,7 +611,9 @@ void RealWorldApplication::recreateSwapChain() {
 
     createRenderPasses();
     createImageViews();
-    auto desc_set_layouts = { global_tex_desc_set_layout_, view_desc_set_layout_ };
+    auto desc_set_layouts = {
+        pbr_lighting_desc_set_layout_,
+        view_desc_set_layout_ };
     ego::TileObject::recreateStaticMembers(
         device_,
         hdr_render_pass_,
@@ -812,15 +759,15 @@ void RealWorldApplication::recreateSwapChain() {
         swap_chain_info_.extent);
 
     menu_->init(
+        window_,
         device_info_,
         instance_,
-        window_,
         queue_indices_,
         swap_chain_info_,
         graphics_queue_,
         descriptor_pool_,
         final_render_pass_,
-        command_buffers_[0]);
+        init_command_buffers_[0]);
 }
 
 void RealWorldApplication::createImageViews() {
@@ -832,35 +779,6 @@ void RealWorldApplication::createImageViews() {
             swap_chain_info_.format,
             SET_FLAG_BIT(ImageAspect, COLOR_BIT));
     }
-}
-
-void RealWorldApplication::createCubemapRenderPass() {
-    auto color_attachment = FillAttachmentDescription(
-        er::Format::R16G16B16A16_SFLOAT,
-        er::SampleCountFlagBits::SC_1_BIT,
-        er::ImageLayout::UNDEFINED,
-        er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
-
-    std::vector<er::AttachmentReference> color_attachment_refs(6);
-    for (uint32_t i = 0; i < 6; i++) {
-        color_attachment_refs[i].attachment_ = i;
-        color_attachment_refs[i].layout_ = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
-    }
-
-    auto subpass = FillSubpassDescription(
-        er::PipelineBindPoint::GRAPHICS,
-        color_attachment_refs,
-        nullptr);
-
-    auto depency = FillSubpassDependency(~0U, 0,
-        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT),
-        SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT),
-        0,
-        SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT));
-
-    std::vector<er::AttachmentDescription> attachments = {6, color_attachment};
-
-    cubemap_render_pass_ = device_->createRenderPass(attachments, { subpass }, { depency });
 }
 
 void RealWorldApplication::createFramebuffers(const glm::uvec2& display_size) {
@@ -972,48 +890,6 @@ void RealWorldApplication::createSyncObjects() {
     }
 }
 
-void RealWorldApplication::createDescriptorSetLayout() {
-    // global texture descriptor set layout.
-    {
-        std::vector<er::DescriptorSetLayoutBinding> bindings;
-        bindings.reserve(5);
-
-        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
-            GGX_LUT_INDEX,
-            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
-        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
-            CHARLIE_LUT_INDEX,
-            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
-        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
-            LAMBERTIAN_ENV_TEX_INDEX,
-            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
-        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
-            GGX_ENV_TEX_INDEX,
-            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
-        bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
-            CHARLIE_ENV_TEX_INDEX,
-            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
-
-        global_tex_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
-    }
-
-    {
-        std::vector<er::DescriptorSetLayoutBinding> bindings(1);
-        bindings[0].binding = VIEW_CAMERA_BUFFER_INDEX;
-        bindings[0].descriptor_count = 1;
-        bindings[0].descriptor_type = er::DescriptorType::STORAGE_BUFFER;
-        bindings[0].stage_flags =
-            SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
-            SET_FLAG_BIT(ShaderStage, MESH_BIT_NV) |
-            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) |
-            SET_FLAG_BIT(ShaderStage, GEOMETRY_BIT) |
-            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
-        bindings[0].immutable_samplers = nullptr; // Optional
-
-        view_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
-    }
-}
-
 er::WriteDescriptorList RealWorldApplication::addGlobalTextures(
     const std::shared_ptr<er::DescriptorSet>& description_set)
 {
@@ -1048,11 +924,15 @@ void RealWorldApplication::createDescriptorSets() {
     auto buffer_count = swap_chain_info_.images.size();
 
     {
-        global_tex_desc_set_ = device_->createDescriptorSets(descriptor_pool_, global_tex_desc_set_layout_, 1)[0];
+        pbr_lighting_desc_set_ =
+            device_->createDescriptorSets(
+                descriptor_pool_,
+                pbr_lighting_desc_set_layout_,
+                1)[0];
 
         // create a global ibl texture descriptor set.
-        auto global_texture_descs = addGlobalTextures(global_tex_desc_set_);
-        device_->updateDescriptorSets(global_texture_descs);
+        auto pbr_lighting_descs = addGlobalTextures(pbr_lighting_desc_set_);
+        device_->updateDescriptorSets(pbr_lighting_descs);
     }
 
     {
@@ -1152,7 +1032,7 @@ void RealWorldApplication::drawScene(
         clear_values_,
         kCubemapSize);
  
-    er::DescriptorSetList desc_sets{ global_tex_desc_set_, view_desc_set };
+    er::DescriptorSetList desc_sets{ pbr_lighting_desc_set_, view_desc_set };
 
     {
         // only init one time.
@@ -1506,7 +1386,13 @@ void RealWorldApplication::drawFrame() {
     float latitude = 37.4419f;
     float longtitude = -122.1430f; // west.
 
-    skydome_->update(latitude, longtitude, localtm.tm_yday, 22/*localtm->tm_hour*/, localtm.tm_min, localtm.tm_sec);
+    skydome_->update(
+        latitude,
+        longtitude,
+        localtm.tm_yday,
+        22/*localtm->tm_hour*/,
+        localtm.tm_min,
+        localtm.tm_sec);
 
     gpu_game_camera_info_ = ego::GameCamera::readCameraInfo(
         device_info_.device,
@@ -1681,13 +1567,14 @@ void RealWorldApplication::drawFrame() {
             glm::ivec3(1920, 1080, 1));
     }
 
+    //
+
     s_camera_paused = menu_->draw(
         command_buffer,
         final_render_pass_,
-        swap_chain_info_,
+        swap_chain_info_.framebuffers[image_index],
         swap_chain_info_.extent,
         skydome_,
-        image_index,
         dump_volume_noise_,
         delta_t_);
 
@@ -1776,7 +1663,7 @@ void RealWorldApplication::cleanup() {
     device_->destroySampler(repeat_texture_sampler_);
     device_->destroySampler(mirror_repeat_sampler_);
     device_->destroyDescriptorSetLayout(view_desc_set_layout_);
-    device_->destroyDescriptorSetLayout(global_tex_desc_set_layout_);
+    device_->destroyDescriptorSetLayout(pbr_lighting_desc_set_layout_);
     
     ego::TileObject::destoryAllTiles();
     ego::TileObject::destoryStaticMembers(device_);
