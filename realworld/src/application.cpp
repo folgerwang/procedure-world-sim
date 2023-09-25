@@ -315,21 +315,22 @@ void RealWorldApplication::initVulkan() {
     physical_devices_ = er::Helper::collectPhysicalDevices(instance_);
     surface_ = er::Helper::createSurface(instance_, window_);
     physical_device_ = er::Helper::pickPhysicalDevice(physical_devices_, surface_);
-    queue_indices_ = er::Helper::findQueueFamilies(physical_device_, surface_);
-    device_ = er::Helper::createLogicalDevice(physical_device_, surface_, queue_indices_);
+    queue_list_ = er::Helper::findQueueFamilies(physical_device_, surface_);
+    device_ = er::Helper::createLogicalDevice(physical_device_, surface_, queue_list_);
     er::Helper::initRayTracingProperties(physical_device_, device_, rt_pipeline_properties_, as_features_);
+    auto queue_list = queue_list_.getGraphicAndPresentFamilyIndex();
     assert(device_);
     depth_format_ = er::Helper::findDepthFormat(device_);
     device_info_.device = device_;
-    graphics_queue_ = device_->getDeviceQueue(queue_indices_.graphics_family_.value());
+    graphics_queue_ = device_->getDeviceQueue(queue_list[0]);
     assert(graphics_queue_);
     device_info_.cmd_queue = graphics_queue_;
-    present_queue_ = device_->getDeviceQueue(queue_indices_.present_family_.value());
+    present_queue_ = device_->getDeviceQueue(queue_list.back());
     er::Helper::createSwapChain(
         window_,
         device_,
         surface_,
-        queue_indices_,
+        queue_list_,
         swap_chain_info_,
         SET_FLAG_BIT(ImageUsage, COLOR_ATTACHMENT_BIT)|
         SET_FLAG_BIT(ImageUsage, TRANSFER_DST_BIT));
@@ -576,7 +577,7 @@ void RealWorldApplication::initVulkan() {
         window_,
         device_info_,
         instance_,
-        queue_indices_,
+        queue_list_,
         swap_chain_info_,
         graphics_queue_,
         descriptor_pool_,
@@ -604,7 +605,7 @@ void RealWorldApplication::recreateSwapChain() {
         window_,
         device_,
         surface_,
-        queue_indices_,
+        queue_list_,
         swap_chain_info_,
         SET_FLAG_BIT(ImageUsage, COLOR_ATTACHMENT_BIT) |
         SET_FLAG_BIT(ImageUsage, TRANSFER_DST_BIT));
@@ -762,7 +763,7 @@ void RealWorldApplication::recreateSwapChain() {
         window_,
         device_info_,
         instance_,
-        queue_indices_,
+        queue_list_,
         swap_chain_info_,
         graphics_queue_,
         descriptor_pool_,
@@ -811,7 +812,7 @@ void RealWorldApplication::createFramebuffers(const glm::uvec2& display_size) {
 
 void RealWorldApplication::createCommandPool() {
     command_pool_ = device_->createCommandPool(
-        queue_indices_.graphics_family_.value(),
+        queue_list_.getGraphicAndPresentFamilyIndex()[0],
         SET_FLAG_BIT(CommandPoolCreate, RESET_COMMAND_BUFFER_BIT));
 }
 

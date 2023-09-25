@@ -72,7 +72,7 @@ private:
     GLFWwindow* window_ = nullptr;
 
     er::DeviceInfo device_info_;
-    er::QueueFamilyIndices queue_indices_;
+    er::QueueFamilyList queue_list_;
     er::GraphicPipelineInfo graphic_pipeline_info_;
     er::GraphicPipelineInfo graphic_double_face_pipeline_info_;
     er::GraphicPipelineInfo graphic_no_depth_write_pipeline_info_;
