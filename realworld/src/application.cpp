@@ -1509,11 +1509,11 @@ void RealWorldApplication::drawFrame() {
     }
 
     if (player_object_) {
-        player_object_->update(device_info_, current_time_);
+        player_object_->update(device_, current_time_);
     }
 
     for (auto& gltf_obj : gltf_objects_) {
-        gltf_obj->update(device_info_, current_time_);
+        gltf_obj->update(device_, current_time_);
     }
 
     command_buffer->reset(0);
