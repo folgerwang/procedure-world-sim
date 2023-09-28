@@ -828,7 +828,6 @@ void RealWorldApplication::createSyncObjects() {
     render_finished_semaphores_.resize(kMaxFramesInFlight);
     in_flight_fences_.resize(kMaxFramesInFlight);
     images_in_flight_.resize(swap_chain_info_.images.size(), VK_NULL_HANDLE);
-    init_fence_ = device_->createFence();
     init_semaphore_ = device_->createSemaphore();
 
     assert(device_);
@@ -1274,11 +1273,7 @@ void RealWorldApplication::drawScene(
 }
 
 void RealWorldApplication::initDrawFrame() {
-    const auto& cmd_buf = device_->getIntransitCommandBuffer();
-    const auto& compute_queue = device_->getIntransitComputeQueue();
-
-    cmd_buf->beginCommandBuffer(
-        SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
+    const auto& cmd_buf = device_->setupTransientCommandBuffer();
 
     if (s_render_prt_test) {
         conemap_gen_->update(
@@ -1290,19 +1285,7 @@ void RealWorldApplication::initDrawFrame() {
             conemap_obj_);
     }
 
-    cmd_buf->endCommandBuffer();
-
-    er::Helper::submitQueue(
-        compute_queue,
-        init_fence_,
-        { },
-        { cmd_buf },
-        { },
-        { });
-
-    device_->waitForFences({ init_fence_ });
-    device_->resetFences({ init_fence_ });
-    cmd_buf->reset(0);
+    device_->submitAndWaitTransientCommandBuffer();
 
     prt_gen_->destroy(device_);
 }
@@ -1642,7 +1625,6 @@ void RealWorldApplication::cleanup() {
 
     er::helper::clearCachedShaderModules(device_);
 
-    device_->destroyFence(init_fence_);
     device_->destroySemaphore(init_semaphore_);
 
     for (uint64_t i = 0; i < kMaxFramesInFlight; i++) {

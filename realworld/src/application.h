@@ -134,7 +134,6 @@ private:
     std::vector<std::shared_ptr<er::Semaphore>> render_finished_semaphores_;
     std::vector<std::shared_ptr<er::Fence>> in_flight_fences_;
     std::vector<std::shared_ptr<er::Fence>> images_in_flight_;
-    std::shared_ptr<er::Fence> init_fence_;
     std::shared_ptr<er::Semaphore> init_semaphore_;
 
     std::shared_ptr<ego::GameCamera> game_camera_;
