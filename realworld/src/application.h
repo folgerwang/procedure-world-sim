@@ -71,7 +71,6 @@ private:
 private:
     GLFWwindow* window_ = nullptr;
 
-    er::DeviceInfo device_info_;
     er::QueueFamilyList queue_list_;
     er::GraphicPipelineInfo graphic_pipeline_info_;
     er::GraphicPipelineInfo graphic_double_face_pipeline_info_;
@@ -131,7 +130,6 @@ private:
     std::shared_ptr<er::Sampler> mirror_repeat_sampler_;
     std::shared_ptr<er::Sampler> texture_point_sampler_;
     std::vector<std::shared_ptr<er::CommandBuffer>> command_buffers_;
-    std::vector<std::shared_ptr<er::CommandBuffer>> init_command_buffers_;
     std::vector<std::shared_ptr<er::Semaphore>> image_available_semaphores_;
     std::vector<std::shared_ptr<er::Semaphore>> render_finished_semaphores_;
     std::vector<std::shared_ptr<er::Fence>> in_flight_fences_;

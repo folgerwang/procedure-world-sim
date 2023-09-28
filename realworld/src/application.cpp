@@ -159,15 +159,17 @@ void RealWorldApplication::initWindow() {
 }
 
 void RealWorldApplication::createDepthResources(const glm::uvec2& display_size) {
-    auto depth_format = er::Helper::findDepthFormat(device_info_.device);
+    auto depth_format =
+        er::Helper::findDepthFormat(device_);
+
     er::Helper::createDepthResources(
-        device_info_,
+        device_,
         depth_format,
         display_size,
         depth_buffer_);
 
     er::Helper::create2DTextureImage(
-        device_info_,
+        device_,
         er::Format::D32_SFLOAT,
         display_size,
         depth_buffer_copy_,
@@ -179,7 +181,7 @@ void RealWorldApplication::createDepthResources(const glm::uvec2& display_size) 
 
 void RealWorldApplication::createHdrColorBuffer(const glm::uvec2& display_size) {
     er::Helper::create2DTextureImage(
-        device_info_,
+        device_,
         hdr_format_,
         display_size,
         hdr_color_buffer_,
@@ -192,7 +194,7 @@ void RealWorldApplication::createHdrColorBuffer(const glm::uvec2& display_size) 
 
 void RealWorldApplication::createColorBufferCopy(const glm::uvec2& display_size) {
     er::Helper::create2DTextureImage(
-        device_info_,
+        device_,
         hdr_format_,
         display_size,
         hdr_color_buffer_copy_,
@@ -321,10 +323,8 @@ void RealWorldApplication::initVulkan() {
     auto queue_list = queue_list_.getGraphicAndPresentFamilyIndex();
     assert(device_);
     depth_format_ = er::Helper::findDepthFormat(device_);
-    device_info_.device = device_;
     graphics_queue_ = device_->getDeviceQueue(queue_list[0]);
     assert(graphics_queue_);
-    device_info_.cmd_queue = graphics_queue_;
     present_queue_ = device_->getDeviceQueue(queue_list.back());
     er::Helper::createSwapChain(
         window_,
@@ -346,44 +346,43 @@ void RealWorldApplication::initVulkan() {
 
     createCommandPool();
     assert(command_pool_);
-    device_info_.cmd_pool = command_pool_;
-    er::Helper::init(device_info_);
+    er::Helper::init(device_);
 
     eh::loadMtx2Texture(
-        device_info_,
+        device_,
         cubemap_render_pass_,
         "assets/environments/doge2/lambertian/diffuse.ktx2",
         ibl_diffuse_tex_);
     eh::loadMtx2Texture(
-        device_info_,
+        device_,
         cubemap_render_pass_,
         "assets/environments/doge2/ggx/specular.ktx2",
         ibl_specular_tex_);
     eh::loadMtx2Texture(
-        device_info_,
+        device_,
         cubemap_render_pass_,
         "assets/environments/doge2/charlie/sheen.ktx2",
         ibl_sheen_tex_);
     recreateRenderBuffer(swap_chain_info_.extent);
     auto format = er::Format::R8G8B8A8_UNORM;
-    eh::createTextureImage(device_info_, "assets/statue.jpg", format, sample_tex_);
-    eh::createTextureImage(device_info_, "assets/brdfLUT.png", format, brdf_lut_tex_);
-    eh::createTextureImage(device_info_, "assets/lut_ggx.png", format, ggx_lut_tex_);
-    eh::createTextureImage(device_info_, "assets/lut_charlie.png", format, charlie_lut_tex_);
-    eh::createTextureImage(device_info_, "assets/lut_thin_film.png", format, thin_film_lut_tex_);
-    eh::createTextureImage(device_info_, "assets/map_mask.png", format, map_mask_tex_);
-    eh::createTextureImage(device_info_, "assets/map.png", er::Format::R16_UNORM, heightmap_tex_);
-//    eh::createTextureImage(device_info_, "assets/tile1.jpg", format, prt_base_tex_);
-//    eh::createTextureImage(device_info_, "assets/tile1.tga", format, prt_bump_tex_);
-//    eh::createTextureImage(device_info_, "assets/T_Mat4Mural_C.PNG", format, prt_base_tex_);
-//    eh::createTextureImage(device_info_, "assets/T_Mat4Mural_H.PNG", format, prt_height_tex_);
-//    eh::createTextureImage(device_info_, "assets/T_Mat4Mural_N.PNG", format, prt_normal_tex_);
-//    eh::createTextureImage(device_info_, "assets/T_Mat4Mural_TRA.PNG", format, prt_orh_tex_);
-//    eh::createTextureImage(device_info_, "assets/T_Mat1Ground_C.jpg", format, prt_base_tex_);
-//    eh::createTextureImage(device_info_, "assets/T_Mat1Ground_ORH.jpg", format, prt_bump_tex_);
-    eh::createTextureImage(device_info_, "assets/T_Mat2Mountains_C.jpg", format, prt_base_tex_);
-    eh::createTextureImage(device_info_, "assets/T_Mat2Mountains_N.jpg", format, prt_normal_tex_);
-    eh::createTextureImage(device_info_, "assets/T_Mat2Mountains_ORH.jpg", format, prt_orh_tex_);
+    eh::createTextureImage(device_, "assets/statue.jpg", format, sample_tex_);
+    eh::createTextureImage(device_, "assets/brdfLUT.png", format, brdf_lut_tex_);
+    eh::createTextureImage(device_, "assets/lut_ggx.png", format, ggx_lut_tex_);
+    eh::createTextureImage(device_, "assets/lut_charlie.png", format, charlie_lut_tex_);
+    eh::createTextureImage(device_, "assets/lut_thin_film.png", format, thin_film_lut_tex_);
+    eh::createTextureImage(device_, "assets/map_mask.png", format, map_mask_tex_);
+    eh::createTextureImage(device_, "assets/map.png", er::Format::R16_UNORM, heightmap_tex_);
+//    eh::createTextureImage(device_, "assets/tile1.jpg", format, prt_base_tex_);
+//    eh::createTextureImage(device_, "assets/tile1.tga", format, prt_bump_tex_);
+//    eh::createTextureImage(device_, "assets/T_Mat4Mural_C.PNG", format, prt_base_tex_);
+//    eh::createTextureImage(device_, "assets/T_Mat4Mural_H.PNG", format, prt_height_tex_);
+//    eh::createTextureImage(device_, "assets/T_Mat4Mural_N.PNG", format, prt_normal_tex_);
+//    eh::createTextureImage(device_, "assets/T_Mat4Mural_TRA.PNG", format, prt_orh_tex_);
+//    eh::createTextureImage(device_, "assets/T_Mat1Ground_C.jpg", format, prt_base_tex_);
+//    eh::createTextureImage(device_, "assets/T_Mat1Ground_ORH.jpg", format, prt_bump_tex_);
+    eh::createTextureImage(device_, "assets/T_Mat2Mountains_C.jpg", format, prt_base_tex_);
+    eh::createTextureImage(device_, "assets/T_Mat2Mountains_N.jpg", format, prt_normal_tex_);
+    eh::createTextureImage(device_, "assets/T_Mat2Mountains_ORH.jpg", format, prt_orh_tex_);
     createTextureSampler();
     descriptor_pool_ = device_->createDescriptorPool();
     createCommandBuffers();
@@ -395,13 +394,13 @@ void RealWorldApplication::initVulkan() {
 
     prt_gen_ =
         std::make_shared<es::Prt>(
-            device_info_,
+            device_,
             descriptor_pool_,
             texture_sampler_);
 
     conemap_obj_ =
         std::make_shared<ego::ConemapObj>(
-            device_info_,
+            device_,
             descriptor_pool_,
             texture_sampler_,
             prt_orh_tex_,//prt_height_tex_,
@@ -412,20 +411,23 @@ void RealWorldApplication::initVulkan() {
             0.1f,
             8.0f / 256.0f);
 
-    unit_plane_ = std::make_shared<ego::Plane>(device_info_);
-    conemap_test_ = std::make_shared<ego::ConemapTest>(
-        device_info_,
-        descriptor_pool_,
-        hdr_render_pass_,
-        graphic_pipeline_info_,
-        desc_set_layouts,
-        texture_sampler_,
-        prt_base_tex_,
-        prt_normal_tex_,
-        prt_orh_tex_,
-        conemap_obj_,
-        swap_chain_info_.extent,
-        unit_plane_);
+    unit_plane_ =
+        std::make_shared<ego::Plane>(device_);
+
+    conemap_test_ =
+        std::make_shared<ego::ConemapTest>(
+            device_,
+            descriptor_pool_,
+            hdr_render_pass_,
+            graphic_pipeline_info_,
+            desc_set_layouts,
+            texture_sampler_,
+            prt_base_tex_,
+            prt_normal_tex_,
+            prt_orh_tex_,
+            conemap_obj_,
+            swap_chain_info_.extent,
+            unit_plane_);
 
     clear_values_.resize(2);
     clear_values_[0].color = { 50.0f / 255.0f, 50.0f / 255.0f, 50.0f / 255.0f, 1.0f };
@@ -433,14 +435,14 @@ void RealWorldApplication::initVulkan() {
 
     conemap_gen_ =
         std::make_shared<es::Conemap>(
-            device_info_,
+            device_,
             descriptor_pool_,
             texture_sampler_,
             prt_orh_tex_,//prt_height_tex_,
             *conemap_obj_->getConemapTexture());
 
     ibl_creator_ = std::make_shared<es::IblCreator>(
-        device_info_,
+        device_,
         descriptor_pool_,
         cubemap_render_pass_,
         graphic_cubemap_pipeline_info_,
@@ -448,7 +450,7 @@ void RealWorldApplication::initVulkan() {
         kCubemapSize);
 
     skydome_ = std::make_shared<es::Skydome>(
-        device_info_,
+        device_,
         descriptor_pool_,
         hdr_render_pass_,
         cubemap_render_pass_,
@@ -462,7 +464,7 @@ void RealWorldApplication::initVulkan() {
 
     for (auto& image : swap_chain_info_.images) {
         er::Helper::transitionImageLayout(
-            device_info_,
+            device_,
             image,
             swap_chain_info_.format,
             er::ImageLayout::UNDEFINED,
@@ -470,7 +472,7 @@ void RealWorldApplication::initVulkan() {
     }
 
     ego::TileObject::initStaticMembers(
-        device_info_,
+        device_,
         hdr_render_pass_,
         hdr_water_render_pass_,
         graphic_pipeline_info_,
@@ -482,7 +484,7 @@ void RealWorldApplication::initVulkan() {
     soil_water_texes[0] = ego::TileObject::getSoilWaterLayer(0).view;
     soil_water_texes[1] = ego::TileObject::getSoilWaterLayer(1).view;
     weather_system_ = std::make_shared<es::WeatherSystem>(
-        device_info_,
+        device_,
         descriptor_pool_,
         desc_set_layouts,
         mirror_repeat_sampler_,
@@ -517,7 +519,7 @@ void RealWorldApplication::initVulkan() {
         *ego::GltfObject::getGameObjectsBuffer());
 
     ego::DebugDrawObject::initStaticMembers(
-        device_info_,
+        device_,
         hdr_render_pass_,
         graphic_pipeline_info_,
         desc_set_layouts,
@@ -526,7 +528,7 @@ void RealWorldApplication::initVulkan() {
     createDescriptorSets();
 
     volume_noise_ = std::make_shared<es::VolumeNoise>(
-        device_info_,
+        device_,
         descriptor_pool_,
         hdr_render_pass_,
         view_desc_set_layout_,
@@ -550,7 +552,7 @@ void RealWorldApplication::initVulkan() {
         volume_noise_->getRoughNoiseTexture().view);
 
     volume_cloud_ = std::make_shared<es::VolumeCloud>(
-        device_info_,
+        device_,
         descriptor_pool_,
         view_desc_set_layout_,
         mirror_repeat_sampler_,
@@ -575,14 +577,13 @@ void RealWorldApplication::initVulkan() {
 
     menu_ = std::make_shared<es::Menu>(
         window_,
-        device_info_,
+        device_,
         instance_,
         queue_list_,
         swap_chain_info_,
         graphics_queue_,
         descriptor_pool_,
         final_render_pass_,
-        init_command_buffers_[0],
         texture_sampler_,
         prt_base_tex_.view);
 }
@@ -669,7 +670,7 @@ void RealWorldApplication::recreateSwapChain() {
 
     for (auto& image : swap_chain_info_.images) {
         er::Helper::transitionImageLayout(
-            device_info_,
+            device_,
             image,
             swap_chain_info_.format,
             er::ImageLayout::UNDEFINED,
@@ -744,7 +745,7 @@ void RealWorldApplication::recreateSwapChain() {
         swap_chain_info_.extent);
 
     volume_cloud_->recreate(
-        device_info_,
+        device_,
         descriptor_pool_,
         view_desc_set_layout_,
         mirror_repeat_sampler_,
@@ -761,14 +762,13 @@ void RealWorldApplication::recreateSwapChain() {
 
     menu_->init(
         window_,
-        device_info_,
+        device_,
         instance_,
         queue_list_,
         swap_chain_info_,
         graphics_queue_,
         descriptor_pool_,
-        final_render_pass_,
-        init_command_buffers_[0]);
+        final_render_pass_);
 }
 
 void RealWorldApplication::createImageViews() {
@@ -817,62 +817,10 @@ void RealWorldApplication::createCommandPool() {
 }
 
 void RealWorldApplication::createCommandBuffers() {
-    init_command_buffers_ =
-        device_->allocateCommandBuffers(
-            command_pool_,
-            1);
-
     command_buffers_ = 
         device_->allocateCommandBuffers(
             command_pool_,
             static_cast<uint32_t>(swap_chain_info_.framebuffers.size()));
-
-/*    std::vector<renderer::ClearValue> clear_values;
-    clear_values.resize(2);
-    clear_values[0].color = { 0.0f, 0.0f, 0.0f, 1.0f };
-    clear_values[1].depth_stencil = { 1.0f, 0 };
-
-    for (uint64_t i = 0; i < command_buffers_.size(); i++) {
-        auto& cmd_buf = command_buffers_[i];
-
-        cmd_buf->beginCommandBuffer(0);
-        cmd_buf->beginRenderPass(render_pass_, swap_chain_info_.framebuffers[i], swap_chain_info_.extent, clear_values);
-        cmd_buf->bindPipeline(renderer::PipelineBindPoint::GRAPHICS, gltf_pipeline_);
-
-        for (const auto& mesh : gltf_object_->meshes_) {
-            for (const auto& prim : mesh.primitives_) {
-                const auto& attrib_list = prim.attribute_descs_;
-
-                const auto& material = gltf_object_->materials_[prim.material_idx_];
-
-                std::vector<std::shared_ptr<renderer::Buffer>> buffers(attrib_list.size());
-                std::vector<uint64_t> offsets(attrib_list.size());
-                for (int i_attrib = 0; i_attrib < attrib_list.size(); i_attrib++) {
-                    const auto& buffer_view = gltf_object_->buffer_views_[attrib_list[i_attrib].buffer_view];
-                    buffers[i_attrib] = gltf_object_->buffers_[buffer_view.buffer_idx].buffer;
-                    offsets[i_attrib] = attrib_list[i_attrib].buffer_offset;
-                }
-                cmd_buf->bindVertexBuffers(0, buffers, offsets);
-                const auto& index_buffer_view = gltf_object_->buffer_views_[prim.index_desc_.binding];
-                cmd_buf->bindIndexBuffer(gltf_object_->buffers_[index_buffer_view.buffer_idx].buffer,
-                    prim.index_desc_.offset + index_buffer_view.offset,
-                    prim.index_desc_.index_type);
-
-                // todo.
-                auto vk_cmd_buf = RENDER_TYPE_CAST(CommandBuffer, cmd_buf);
-                auto vk_pipeline_layout = RENDER_TYPE_CAST(PipelineLayout, pipeline_layout_);
-                VkDescriptorSet desc_sets[] = {
-                    RENDER_TYPE_CAST(DescriptorSet, global_tex_desc_set_)->get(),
-                    RENDER_TYPE_CAST(DescriptorSet, desc_sets_[i])->get(),
-                    RENDER_TYPE_CAST(DescriptorSet, material.desc_set_)->get() };
-                vkCmdBindDescriptorSets(vk_cmd_buf->get(), VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline_layout->get(), 0, 3, desc_sets, 0, nullptr);
-
-                cmd_buf->drawIndexed(static_cast<uint32_t>(prim.index_desc_.index_count));
-            }
-        }
-        cmd_buf->endRenderPass();
-        cmd_buf->endCommandBuffer();
-    }*/
 }
 
 void RealWorldApplication::createSyncObjects() {
@@ -1326,34 +1274,35 @@ void RealWorldApplication::drawScene(
 }
 
 void RealWorldApplication::initDrawFrame() {
-    auto& command_buffer = init_command_buffers_[0];
+    const auto& cmd_buf = device_->getIntransitCommandBuffer();
+    const auto& compute_queue = device_->getIntransitComputeQueue();
 
-    command_buffer->reset(0);
-    command_buffer->beginCommandBuffer(
+    cmd_buf->beginCommandBuffer(
         SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
 
     if (s_render_prt_test) {
         conemap_gen_->update(
-            command_buffer,
+            cmd_buf,
             conemap_obj_);
 
         prt_gen_->update(
-            command_buffer,
+            cmd_buf,
             conemap_obj_);
     }
 
-    command_buffer->endCommandBuffer();
+    cmd_buf->endCommandBuffer();
 
     er::Helper::submitQueue(
-        graphics_queue_,
+        compute_queue,
         init_fence_,
         { },
-        { command_buffer },
+        { cmd_buf },
         { },
         { });
 
     device_->waitForFences({ init_fence_ });
     device_->resetFences({ init_fence_ });
+    cmd_buf->reset(0);
 
     prt_gen_->destroy(device_);
 }
@@ -1395,12 +1344,13 @@ void RealWorldApplication::drawFrame() {
         localtm.tm_min,
         localtm.tm_sec);
 
-    gpu_game_camera_info_ = ego::GameCamera::readCameraInfo(
-        device_info_.device,
-        0);
+    gpu_game_camera_info_ =
+        ego::GameCamera::readCameraInfo(
+            device_,
+            0);
 
     ego::TileObject::updateAllTiles(
-        device_info_,
+        device_,
         descriptor_pool_,
         128,
         glm::vec2(gpu_game_camera_info_.position.x, gpu_game_camera_info_.position.z));
@@ -1412,7 +1362,7 @@ void RealWorldApplication::drawFrame() {
         std::vector<uint32_t> temp_buffer;
         temp_buffer.resize(pixel_count);
         er::Helper::dumpTextureImage(
-            device_info_,
+            device_,
             volume_noise_->getDetailNoiseTexture().image,
             er::Format::R8G8B8A8_UNORM,
             glm::uvec3(noise_texture_size, noise_texture_size, noise_texture_size),
@@ -1428,7 +1378,7 @@ void RealWorldApplication::drawFrame() {
         std::vector<uint32_t> temp_buffer;
         temp_buffer.resize(pixel_count);
         er::Helper::dumpTextureImage(
-            device_info_,
+            device_,
             volume_noise_->getDetailNoiseTexture().image,
             er::Format::R8G8B8A8_UNORM,
             glm::uvec3(noise_texture_size, noise_texture_size, noise_texture_size),
@@ -1476,7 +1426,7 @@ void RealWorldApplication::drawFrame() {
     auto to_load_gltf_names = menu_->getToLoadGltfNamesAndClear();
     for (auto& gltf_name : to_load_gltf_names) {
         auto gltf_obj = std::make_shared<ego::GltfObject>(
-            device_info_,
+            device_,
             descriptor_pool_,
             hdr_render_pass_,
             graphic_pipeline_info_,
@@ -1493,11 +1443,11 @@ void RealWorldApplication::drawFrame() {
     auto to_load_player_name = menu_->getToLoadPlayerNameAndClear();
     if (to_load_player_name != "") {
         if (player_object_) {
-            player_object_->destroy();
+            player_object_->destroy(device_);
             player_object_ = nullptr;
         }
         player_object_ = std::make_shared<ego::GltfObject>(
-            device_info_,
+            device_,
             descriptor_pool_,
             hdr_render_pass_,
             graphic_pipeline_info_,
@@ -1532,7 +1482,7 @@ void RealWorldApplication::drawFrame() {
         if (ray_tracing_test_ == nullptr) {
             ray_tracing_test_ = std::make_shared<engine::ray_tracing::RayTracingShadowTest>();
             ray_tracing_test_->init(
-                device_info_,
+                device_,
                 descriptor_pool_,
                 rt_pipeline_properties_,
                 as_features_,
@@ -1541,7 +1491,7 @@ void RealWorldApplication::drawFrame() {
 
         auto result_image =
             ray_tracing_test_->draw(
-                device_info_,
+                device_,
                 command_buffer,
                 view_params_);
 
@@ -1620,7 +1570,6 @@ void RealWorldApplication::cleanupSwapChain() {
     }
 
     device_->freeCommandBuffers(command_pool_, command_buffers_);
-    device_->freeCommandBuffers(command_pool_, init_command_buffers_);
     device_->destroyRenderPass(final_render_pass_);
     device_->destroyRenderPass(hdr_render_pass_);
     device_->destroyRenderPass(hdr_water_render_pass_);
@@ -1666,22 +1615,22 @@ void RealWorldApplication::cleanup() {
     device_->destroyDescriptorSetLayout(view_desc_set_layout_);
     device_->destroyDescriptorSetLayout(pbr_lighting_desc_set_layout_);
     
-    ego::TileObject::destoryAllTiles();
-    ego::TileObject::destoryStaticMembers(device_);
+    ego::TileObject::destroyAllTiles(device_);
+    ego::TileObject::destroyStaticMembers(device_);
     if (player_object_) {
-        player_object_->destroy();
+        player_object_->destroy(device_);
         player_object_ = nullptr;
     }
     for (auto& obj : gltf_objects_) {
-        obj->destroy();
+        obj->destroy(device_);
     }
     gltf_objects_.clear();
     if (ray_tracing_test_) {
         ray_tracing_test_->destroy(device_);
     }
-    ego::GltfObject::destoryStaticMembers(device_);
-    ego::GameCamera::destoryStaticMembers(device_);
-    ego::DebugDrawObject::destoryStaticMembers(device_);
+    ego::GltfObject::destroyStaticMembers(device_);
+    ego::GameCamera::destroyStaticMembers(device_);
+    ego::DebugDrawObject::destroyStaticMembers(device_);
     ibl_creator_->destroy(device_);
     weather_system_->destroy(device_);
     volume_noise_->destroy(device_);
