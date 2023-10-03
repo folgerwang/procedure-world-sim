@@ -1273,19 +1273,37 @@ void RealWorldApplication::drawScene(
 }
 
 void RealWorldApplication::initDrawFrame() {
-    const auto& cmd_buf = device_->setupTransientCommandBuffer();
-
     if (s_render_prt_test) {
+        auto conemap_start_point_ =
+            std::chrono::high_resolution_clock::now();
+        const auto& conemap_gen_cmd_buf =
+            device_->setupTransientCommandBuffer();
         conemap_gen_->update(
-            cmd_buf,
+            conemap_gen_cmd_buf,
             conemap_obj_);
+        device_->submitAndWaitTransientCommandBuffer();
+        auto conemap_end_point_ =
+            std::chrono::high_resolution_clock::now();
+        float delta_t_ =
+            std::chrono::duration<float, std::chrono::seconds::period>(
+                conemap_end_point_ - conemap_start_point_).count();
+        std::cout << "conemap generation time: " << delta_t_ << "s" << std::endl;
 
+        auto prt_start_point_ =
+            std::chrono::high_resolution_clock::now();
+        const auto& prt_gen_cmd_buf =
+            device_->setupTransientCommandBuffer();
         prt_gen_->update(
-            cmd_buf,
+            prt_gen_cmd_buf,
             conemap_obj_);
+        device_->submitAndWaitTransientCommandBuffer();
+        auto prt_end_point_ =
+            std::chrono::high_resolution_clock::now();
+        delta_t_ =
+            std::chrono::duration<float, std::chrono::seconds::period>(
+                prt_end_point_ - prt_start_point_).count();
+        std::cout << "prt generation time: " << delta_t_ << "s" << std::endl;
     }
-
-    device_->submitAndWaitTransientCommandBuffer();
 
     prt_gen_->destroy(device_);
 }
