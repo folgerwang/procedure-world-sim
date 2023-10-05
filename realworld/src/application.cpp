@@ -439,7 +439,7 @@ void RealWorldApplication::initVulkan() {
             descriptor_pool_,
             texture_sampler_,
             prt_orh_tex_,//prt_height_tex_,
-            *conemap_obj_->getConemapTexture());
+            conemap_obj_);
 
     ibl_creator_ = std::make_shared<es::IblCreator>(
         device_,
@@ -1278,6 +1278,9 @@ void RealWorldApplication::initDrawFrame() {
             std::chrono::high_resolution_clock::now();
         const auto& conemap_gen_cmd_buf =
             device_->setupTransientCommandBuffer();
+        conemap_obj_->update(
+            conemap_gen_cmd_buf,
+            conemap_obj_->getConemapTexture()->size);
         conemap_gen_->update(
             conemap_gen_cmd_buf,
             conemap_obj_);
