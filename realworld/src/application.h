@@ -14,7 +14,7 @@
 #include "scene_rendering/volume_cloud.h"
 #include "scene_rendering/volume_noise.h"
 #include "scene_rendering/conemap.h"
-#include "scene_rendering/prt.h"
+#include "scene_rendering/prt_shadow.h"
 #include "ray_tracing/raytracing_base.h"
 #include "engine_helper.h"
 
@@ -148,7 +148,7 @@ private:
     std::shared_ptr<ego::Plane> unit_plane_;
     std::shared_ptr<ego::ConemapTest> conemap_test_;
     std::shared_ptr<es::Conemap> conemap_gen_;
-    std::shared_ptr<es::Prt> prt_gen_;
+    std::shared_ptr<es::PrtShadow> prt_shadow_gen_;
     std::shared_ptr<engine::ray_tracing::RayTracingBase> ray_tracing_test_;
     std::shared_ptr<es::Menu> menu_;
 

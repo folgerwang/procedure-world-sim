@@ -392,8 +392,8 @@ void RealWorldApplication::initVulkan() {
         pbr_lighting_desc_set_layout_,
         view_desc_set_layout_ };
 
-    prt_gen_ =
-        std::make_shared<es::Prt>(
+    prt_shadow_gen_ =
+        std::make_shared<es::PrtShadow>(
             device_,
             descriptor_pool_,
             texture_sampler_);
@@ -404,7 +404,7 @@ void RealWorldApplication::initVulkan() {
             descriptor_pool_,
             texture_sampler_,
             prt_orh_tex_,//prt_height_tex_,
-            prt_gen_,
+            prt_shadow_gen_,
             2,//0,
             true,
             0.05f,
@@ -1296,7 +1296,7 @@ void RealWorldApplication::initDrawFrame() {
             std::chrono::high_resolution_clock::now();
         const auto& prt_gen_cmd_buf =
             device_->setupTransientCommandBuffer();
-        prt_gen_->update(
+        prt_shadow_gen_->update(
             prt_gen_cmd_buf,
             conemap_obj_);
         device_->submitAndWaitTransientCommandBuffer();
@@ -1308,7 +1308,7 @@ void RealWorldApplication::initDrawFrame() {
         std::cout << "prt generation time: " << delta_t_ << "s" << std::endl;
     }
 
-    prt_gen_->destroy(device_);
+    prt_shadow_gen_->destroy(device_);
 }
 
 void RealWorldApplication::drawFrame() {
