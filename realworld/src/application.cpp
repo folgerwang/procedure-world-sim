@@ -407,7 +407,7 @@ void RealWorldApplication::initVulkan() {
             prt_gen_,
             2,//0,
             true,
-            0.025f,
+            0.05f,
             0.1f,
             8.0f / 256.0f);
 
