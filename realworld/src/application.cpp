@@ -1274,38 +1274,69 @@ void RealWorldApplication::drawScene(
 
 void RealWorldApplication::initDrawFrame() {
     if (s_render_prt_test) {
-        auto conemap_start_point_ =
-            std::chrono::high_resolution_clock::now();
-        const auto& conemap_gen_cmd_buf =
-            device_->setupTransientCommandBuffer();
-        conemap_obj_->update(
-            conemap_gen_cmd_buf,
-            conemap_obj_->getConemapTexture()->size);
-        conemap_gen_->update(
-            conemap_gen_cmd_buf,
-            conemap_obj_);
-        device_->submitAndWaitTransientCommandBuffer();
-        auto conemap_end_point_ =
-            std::chrono::high_resolution_clock::now();
-        float delta_t_ =
-            std::chrono::duration<float, std::chrono::seconds::period>(
-                conemap_end_point_ - conemap_start_point_).count();
-        std::cout << "conemap generation time: " << delta_t_ << "s" << std::endl;
+        const auto full_buffer_size =
+            conemap_obj_->getConemapTexture()->size;
 
-        auto prt_start_point_ =
-            std::chrono::high_resolution_clock::now();
-        const auto& prt_gen_cmd_buf =
-            device_->setupTransientCommandBuffer();
-        prt_shadow_gen_->update(
-            prt_gen_cmd_buf,
-            conemap_obj_);
-        device_->submitAndWaitTransientCommandBuffer();
-        auto prt_end_point_ =
-            std::chrono::high_resolution_clock::now();
-        delta_t_ =
-            std::chrono::duration<float, std::chrono::seconds::period>(
-                prt_end_point_ - prt_start_point_).count();
-        std::cout << "prt generation time: " << delta_t_ << "s" << std::endl;
+        // generate minmax depth buffer.
+        {
+            const auto& cmd_buf =
+                device_->setupTransientCommandBuffer();
+            conemap_obj_->update(
+                cmd_buf,
+                conemap_obj_->getConemapTexture()->size);
+            device_->submitAndWaitTransientCommandBuffer();
+        }
+
+        // conemap generation.
+        {
+            auto conemap_start_point_ =
+                std::chrono::high_resolution_clock::now();
+
+            auto dispatch_block_size =
+                glm::uvec2(kConemapGenBlockSizeX, kConemapGenBlockSizeY);
+
+            auto dispatch_block_count =
+                (glm::uvec2(full_buffer_size) + dispatch_block_size - glm::uvec2(1)) / dispatch_block_size;
+
+            auto num_passes =
+                dispatch_block_count.x * dispatch_block_count.y;
+
+            for (uint32_t i_pass = 0; i_pass < num_passes; i_pass+=16) {
+                const auto& cmd_buf =
+                    device_->setupTransientCommandBuffer();
+                conemap_gen_->update(
+                    cmd_buf,
+                    conemap_obj_,
+                    i_pass,
+                    std::min(i_pass + 16, num_passes));
+                device_->submitAndWaitTransientCommandBuffer();
+            }
+
+            auto conemap_end_point_ =
+                std::chrono::high_resolution_clock::now();
+            float delta_t_ =
+                std::chrono::duration<float, std::chrono::seconds::period>(
+                    conemap_end_point_ - conemap_start_point_).count();
+            std::cout << "conemap generation time: " << delta_t_ << "s" << std::endl;
+        }
+
+        // prt shadow generation.
+        {
+            auto prt_start_point_ =
+                std::chrono::high_resolution_clock::now();
+            const auto& prt_gen_cmd_buf =
+                device_->setupTransientCommandBuffer();
+            prt_shadow_gen_->update(
+                prt_gen_cmd_buf,
+                conemap_obj_);
+            device_->submitAndWaitTransientCommandBuffer();
+            auto prt_end_point_ =
+                std::chrono::high_resolution_clock::now();
+            delta_t_ =
+                std::chrono::duration<float, std::chrono::seconds::period>(
+                    prt_end_point_ - prt_start_point_).count();
+            std::cout << "prt generation time: " << delta_t_ << "s" << std::endl;
+        }
     }
 
     prt_shadow_gen_->destroy(device_);
