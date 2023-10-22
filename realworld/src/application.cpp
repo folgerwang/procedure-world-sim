@@ -21,7 +21,8 @@ namespace {
 constexpr int kWindowSizeX = 2560;
 constexpr int kWindowSizeY = 1440;
 static int s_update_frame_count = -1;
-static bool s_render_prt_test = true;
+static bool s_render_prt_test = false;
+static bool s_render_hair_test = true;
 
 // global pbr texture descriptor set layout.
 std::shared_ptr<er::DescriptorSetLayout> createPbrLightingDescriptorSetLayout(
@@ -426,6 +427,17 @@ void RealWorldApplication::initVulkan() {
             prt_normal_tex_,
             prt_orh_tex_,
             conemap_obj_,
+            swap_chain_info_.extent,
+            unit_plane_);
+
+    hair_test_ =
+        std::make_shared<ego::HairTest>(
+            device_,
+            descriptor_pool_,
+            hdr_render_pass_,
+            graphic_pipeline_info_,
+            desc_set_layouts,
+            texture_sampler_,
             swap_chain_info_.extent,
             unit_plane_);
 
@@ -1037,7 +1049,7 @@ void RealWorldApplication::drawScene(
         glsl::GameCameraParams game_camera_params;
         game_camera_params.world_min = ego::TileObject::getWorldMin();
         game_camera_params.inv_world_range = 1.0f / ego::TileObject::getWorldRange();
-        if (s_render_prt_test) {
+        if (s_render_prt_test || s_render_hair_test) {
             game_camera_params.init_camera_pos = glm::vec3(0, 5.0f, 0);
             game_camera_params.init_camera_dir = glm::vec3(0.0f, -1.0f, 0.0f);
             game_camera_params.init_camera_up = glm::vec3(1, 0, 0);
@@ -1099,7 +1111,13 @@ void RealWorldApplication::drawScene(
                 desc_sets,
                 unit_plane_,
                 conemap_obj_);
-            
+        }
+        else if (s_render_hair_test) {
+            hair_test_->draw(
+                device_,
+                cmd_buf,
+                desc_sets,
+                unit_plane_);
         }
         else {
             // render gltf.
@@ -1163,7 +1181,7 @@ void RealWorldApplication::drawScene(
             SET_FLAG_BIT(Access, SHADER_READ_BIT),
             SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
 
-        if (!s_render_prt_test) {
+        if (!s_render_prt_test && !s_render_hair_test) {
             if (!menu_->isWaterPassTurnOff()) {
                 er::Helper::blitImage(
                     cmd_buf,
@@ -1304,12 +1322,12 @@ void RealWorldApplication::initDrawFrame() {
             const uint32_t pass_step = 8;
             for (uint32_t i_pass = 0; i_pass < num_passes; i_pass+= pass_step) {
                 auto pass_end = std::min(i_pass + pass_step, num_passes);
-                std::cout <<
+/*                std::cout <<
                     "conemap generation pass: " <<
                     i_pass <<
                     ", " <<
                     pass_end <<
-                    std::endl;
+                    std::endl;*/
                 const auto& cmd_buf =
                     device_->setupTransientCommandBuffer();
                 conemap_gen_->update(
@@ -1679,9 +1697,10 @@ void RealWorldApplication::cleanup() {
     volume_noise_->destroy(device_);
     volume_cloud_->destroy(device_);
     unit_plane_->destroy(device_);
-    conemap_obj_->destroy(device_);
+    conemap_obj_->destroy(device_); 
     conemap_gen_->destroy(device_);
     conemap_test_->destroy(device_);
+    hair_test_->destroy(device_);
 
     er::helper::clearCachedShaderModules(device_);
 
