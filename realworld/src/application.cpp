@@ -66,6 +66,14 @@ std::shared_ptr<er::DescriptorSetLayout> createViewCameraDescriptorSetLayout(
     return device->createDescriptorSetLayout(bindings);
 }
 
+glm::vec3 getDirectionByYawAndPitch(float yaw, float pitch) {
+    glm::vec3 direction;
+    direction.x = cos(radians(-yaw)) * cos(radians(pitch));
+    direction.y = sin(radians(pitch));
+    direction.z = sin(radians(-yaw)) * cos(radians(pitch));
+    return normalize(direction);
+}
+
 }
 
 namespace work {
@@ -413,7 +421,10 @@ void RealWorldApplication::initVulkan() {
             8.0f / 256.0f);
 
     unit_plane_ =
-        std::make_shared<ego::Plane>(device_);
+        std::make_shared<ego::Plane>(
+            device_,
+            10,
+            10);
 
     conemap_test_ =
         std::make_shared<ego::ConemapTest>(
@@ -1061,10 +1072,20 @@ void RealWorldApplication::drawScene(
             game_camera_params.init_camera_up = glm::vec3(0, 1, 0);
             game_camera_params.camera_speed = s_camera_speed;
         }
+
+        game_camera_params.yaw = 0.0f;
+        game_camera_params.pitch = -90.0f;
+        game_camera_params.init_camera_dir =
+            normalize(getDirectionByYawAndPitch(
+                game_camera_params.yaw,
+                game_camera_params.pitch));
+        game_camera_params.init_camera_up =
+            abs(game_camera_params.init_camera_dir.y) < 0.99f ?
+            vec3(0, 1, 0) :
+            vec3(1, 0, 0);
+
         game_camera_params.z_near = 0.1f;
         game_camera_params.z_far = 40000.0f;
-        game_camera_params.yaw = 0.0f;
-        game_camera_params.pitch = 0.0f;
         game_camera_params.camera_follow_dist = 5.0f;
         game_camera_params.key = s_key;
         game_camera_params.frame_count = s_update_frame_count;
