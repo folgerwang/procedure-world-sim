@@ -7,6 +7,7 @@
 #include "game_object/debug_draw.h"
 #include "game_object/conemap_obj.h"
 #include "game_object/conemap_test.h"
+#include "game_object/hair_patch.h"
 #include "game_object/hair_test.h"
 #include "scene_rendering/skydome.h"
 #include "scene_rendering/weather_system.h"
@@ -147,7 +148,9 @@ private:
     std::shared_ptr<es::IblCreator> ibl_creator_;
     std::shared_ptr<ego::ConemapObj> conemap_obj_;
     std::shared_ptr<ego::Plane> unit_plane_;
+    std::shared_ptr<ego::Box> unit_box_;
     std::shared_ptr<ego::ConemapTest> conemap_test_;
+    std::shared_ptr<ego::HairPatch> hair_patch_;
     std::shared_ptr<ego::HairTest> hair_test_;
     std::shared_ptr<es::Conemap> conemap_gen_;
     std::shared_ptr<es::PrtShadow> prt_shadow_gen_;

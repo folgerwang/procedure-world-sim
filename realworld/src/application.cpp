@@ -423,7 +423,26 @@ void RealWorldApplication::initVulkan() {
     unit_plane_ =
         std::make_shared<ego::Plane>(
             device_,
+            nullptr,
             10,
+            10);
+
+    auto v = std::make_shared<std::array<glm::vec3, 8>>();
+    (*v)[0] = glm::vec3(-1.0f, -5.0f, -1.0f);
+    (*v)[1] = glm::vec3(1.0f, -5.0f, -1.0f);
+    (*v)[2] = glm::vec3(1.0f, -5.0f, 1.0f);
+    (*v)[3] = glm::vec3(-1.0f, -5.0f, 1.0f);
+    (*v)[4] = glm::vec3(-1.0f, 0.0f, -1.0f);
+    (*v)[5] = glm::vec3(1.0f, 0.0f, -1.0f);
+    (*v)[6] = glm::vec3(1.0f, 0.0f, 1.0f);
+    (*v)[7] = glm::vec3(-1.0f, 0.0f, 1.0f);
+
+    unit_box_ =
+        std::make_shared<ego::Box>(
+            device_,
+            v,
+            10,
+            30,
             10);
 
     conemap_test_ =
@@ -441,6 +460,14 @@ void RealWorldApplication::initVulkan() {
             swap_chain_info_.extent,
             unit_plane_);
 
+    hair_patch_ =
+        std::make_shared<ego::HairPatch>(
+            device_,
+            descriptor_pool_,
+            desc_set_layouts,
+            texture_sampler_,
+            glm::uvec2(1024, 1024));
+
     hair_test_ =
         std::make_shared<ego::HairTest>(
             device_,
@@ -449,6 +476,7 @@ void RealWorldApplication::initVulkan() {
             graphic_pipeline_info_,
             desc_set_layouts,
             texture_sampler_,
+            hair_patch_->getHairPatchTexture(),
             swap_chain_info_.extent,
             unit_plane_);
 
@@ -1134,11 +1162,18 @@ void RealWorldApplication::drawScene(
                 conemap_obj_);
         }
         else if (s_render_hair_test) {
+            hair_patch_->update(
+                device_,
+                cmd_buf,
+                desc_sets
+            );
+
             hair_test_->draw(
                 device_,
                 cmd_buf,
                 desc_sets,
-                unit_plane_);
+                unit_plane_,
+                unit_box_);
         }
         else {
             // render gltf.
@@ -1718,9 +1753,11 @@ void RealWorldApplication::cleanup() {
     volume_noise_->destroy(device_);
     volume_cloud_->destroy(device_);
     unit_plane_->destroy(device_);
+    unit_box_->destroy(device_);
     conemap_obj_->destroy(device_); 
     conemap_gen_->destroy(device_);
     conemap_test_->destroy(device_);
+    hair_patch_->destroy(device_);
     hair_test_->destroy(device_);
 
     er::helper::clearCachedShaderModules(device_);
