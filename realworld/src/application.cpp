@@ -476,7 +476,8 @@ void RealWorldApplication::initVulkan() {
             graphic_pipeline_info_,
             desc_set_layouts,
             texture_sampler_,
-            hair_patch_->getHairPatchTexture(),
+            hair_patch_->getHairPatchColorTexture(),
+            hair_patch_->getHairPatchWeightTexture(),
             swap_chain_info_.extent,
             unit_plane_);
 
