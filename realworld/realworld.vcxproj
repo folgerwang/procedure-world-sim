@@ -104,7 +104,7 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>$(ProjectDir)src\sim_engine\third_parties\imgui;$(ProjectDir)src\sim_engine\third_parties\glfw\include;$(ProjectDir)src\sim_engine\third_parties\glm;$(ProjectDir)src\sim_engine\third_parties\Vulkan-Headers\Include;$(ProjectDir)src\sim_engine\third_parties\tinygltf;$(ProjectDir)src\sim_engine\third_parties\imgui\backends;$(ProjectDir)src\sim_engine;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -144,7 +144,7 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>$(ProjectDir)src\sim_engine\third_parties\imgui;$(ProjectDir)src\sim_engine\third_parties\glfw\include;$(ProjectDir)src\sim_engine\third_parties\glm;$(ProjectDir)src\sim_engine\third_parties\Vulkan-Headers\Include;$(ProjectDir)src\sim_engine\third_parties\tinygltf;$(ProjectDir)src\sim_engine\third_parties\imgui\backends;$(ProjectDir)src\sim_engine;$(ProjectDir)src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>

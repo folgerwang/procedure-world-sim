@@ -22,7 +22,8 @@ constexpr int kWindowSizeX = 2560;
 constexpr int kWindowSizeY = 1440;
 static int s_update_frame_count = -1;
 static bool s_render_prt_test = false;
-static bool s_render_hair_test = true;
+static bool s_render_hair_test = false;
+static bool s_render_lbm_test = true;
 
 // global pbr texture descriptor set layout.
 std::shared_ptr<er::DescriptorSetLayout> createPbrLightingDescriptorSetLayout(
@@ -175,7 +176,8 @@ void RealWorldApplication::createDepthResources(const glm::uvec2& display_size) 
         device_,
         depth_format,
         display_size,
-        depth_buffer_);
+        depth_buffer_,
+        std::source_location::current());
 
     er::Helper::create2DTextureImage(
         device_,
@@ -185,7 +187,8 @@ void RealWorldApplication::createDepthResources(const glm::uvec2& display_size) 
         SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
         SET_FLAG_BIT(ImageUsage, DEPTH_STENCIL_ATTACHMENT_BIT) |
         SET_FLAG_BIT(ImageUsage, TRANSFER_DST_BIT),
-        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        std::source_location::current());
 }
 
 void RealWorldApplication::createHdrColorBuffer(const glm::uvec2& display_size) {
@@ -198,7 +201,8 @@ void RealWorldApplication::createHdrColorBuffer(const glm::uvec2& display_size) 
         SET_FLAG_BIT(ImageUsage, STORAGE_BIT) |
         SET_FLAG_BIT(ImageUsage, COLOR_ATTACHMENT_BIT) |
         SET_FLAG_BIT(ImageUsage, TRANSFER_SRC_BIT),
-        er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+        er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        std::source_location::current());
 }
 
 void RealWorldApplication::createColorBufferCopy(const glm::uvec2& display_size) {
@@ -209,7 +213,8 @@ void RealWorldApplication::createColorBufferCopy(const glm::uvec2& display_size)
         hdr_color_buffer_copy_,
         SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
         SET_FLAG_BIT(ImageUsage, TRANSFER_DST_BIT),
-        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        std::source_location::current());
 }
 
 void RealWorldApplication::recreateRenderBuffer(const glm::uvec2& display_size) {
@@ -225,11 +230,24 @@ void RealWorldApplication::createRenderPasses() {
         device_,
         swap_chain_info_.format,
         depth_format_,
+        std::source_location::current(),
         false,
         er::SampleCountFlagBits::SC_1_BIT,
         er::ImageLayout::PRESENT_SRC_KHR);
-    hdr_render_pass_ = er::helper::createRenderPass(device_, hdr_format_, depth_format_, true);
-    hdr_water_render_pass_ = er::helper::createRenderPass(device_, hdr_format_, depth_format_, false);
+    hdr_render_pass_ =
+        er::helper::createRenderPass(
+            device_,
+            hdr_format_,
+            depth_format_,
+            std::source_location::current(),
+            true);
+    hdr_water_render_pass_ =
+        er::helper::createRenderPass(
+            device_,
+            hdr_format_,
+            depth_format_,
+            std::source_location::current(),
+            false);
 }
 
 void RealWorldApplication::initVulkan() {
@@ -346,7 +364,9 @@ void RealWorldApplication::initVulkan() {
     createRenderPasses();
     createImageViews();
     cubemap_render_pass_ =
-        er::helper::createCubemapRenderPass(device_);
+        er::helper::createCubemapRenderPass(
+            device_,
+            std::source_location::current());
 
     pbr_lighting_desc_set_layout_ =
         createPbrLightingDescriptorSetLayout(device_);
@@ -361,37 +381,40 @@ void RealWorldApplication::initVulkan() {
         device_,
         cubemap_render_pass_,
         "assets/environments/doge2/lambertian/diffuse.ktx2",
-        ibl_diffuse_tex_);
+        ibl_diffuse_tex_,
+        std::source_location::current());
     eh::loadMtx2Texture(
         device_,
         cubemap_render_pass_,
         "assets/environments/doge2/ggx/specular.ktx2",
-        ibl_specular_tex_);
+        ibl_specular_tex_,
+        std::source_location::current());
     eh::loadMtx2Texture(
         device_,
         cubemap_render_pass_,
         "assets/environments/doge2/charlie/sheen.ktx2",
-        ibl_sheen_tex_);
+        ibl_sheen_tex_,
+        std::source_location::current());
     recreateRenderBuffer(swap_chain_info_.extent);
     auto format = er::Format::R8G8B8A8_UNORM;
-    eh::createTextureImage(device_, "assets/statue.jpg", format, sample_tex_);
-    eh::createTextureImage(device_, "assets/brdfLUT.png", format, brdf_lut_tex_);
-    eh::createTextureImage(device_, "assets/lut_ggx.png", format, ggx_lut_tex_);
-    eh::createTextureImage(device_, "assets/lut_charlie.png", format, charlie_lut_tex_);
-    eh::createTextureImage(device_, "assets/lut_thin_film.png", format, thin_film_lut_tex_);
-    eh::createTextureImage(device_, "assets/map_mask.png", format, map_mask_tex_);
-    eh::createTextureImage(device_, "assets/map.png", er::Format::R16_UNORM, heightmap_tex_);
-//    eh::createTextureImage(device_, "assets/tile1.jpg", format, prt_base_tex_);
-//    eh::createTextureImage(device_, "assets/tile1.tga", format, prt_bump_tex_);
-//    eh::createTextureImage(device_, "assets/T_Mat4Mural_C.PNG", format, prt_base_tex_);
-//    eh::createTextureImage(device_, "assets/T_Mat4Mural_H.PNG", format, prt_height_tex_);
-//    eh::createTextureImage(device_, "assets/T_Mat4Mural_N.PNG", format, prt_normal_tex_);
-//    eh::createTextureImage(device_, "assets/T_Mat4Mural_TRA.PNG", format, prt_orh_tex_);
-//    eh::createTextureImage(device_, "assets/T_Mat1Ground_C.jpg", format, prt_base_tex_);
-//    eh::createTextureImage(device_, "assets/T_Mat1Ground_ORH.jpg", format, prt_bump_tex_);
-    eh::createTextureImage(device_, "assets/T_Mat2Mountains_C.jpg", format, prt_base_tex_);
-    eh::createTextureImage(device_, "assets/T_Mat2Mountains_N.jpg", format, prt_normal_tex_);
-    eh::createTextureImage(device_, "assets/T_Mat2Mountains_ORH.jpg", format, prt_orh_tex_);
+    eh::createTextureImage(device_, "assets/statue.jpg", format, sample_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/brdfLUT.png", format, brdf_lut_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/lut_ggx.png", format, ggx_lut_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/lut_charlie.png", format, charlie_lut_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/lut_thin_film.png", format, thin_film_lut_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/map_mask.png", format, map_mask_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/map.png", er::Format::R16_UNORM, heightmap_tex_, std::source_location::current());
+//    eh::createTextureImage(device_, "assets/tile1.jpg", format, prt_base_tex_, std::source_location::current());
+//    eh::createTextureImage(device_, "assets/tile1.tga", format, prt_bump_tex_, std::source_location::current());
+//    eh::createTextureImage(device_, "assets/T_Mat4Mural_C.PNG", format, prt_base_tex_, std::source_location::current());
+//    eh::createTextureImage(device_, "assets/T_Mat4Mural_H.PNG", format, prt_height_tex_, std::source_location::current());
+//    eh::createTextureImage(device_, "assets/T_Mat4Mural_N.PNG", format, prt_normal_tex_, std::source_location::current());
+//    eh::createTextureImage(device_, "assets/T_Mat4Mural_TRA.PNG", format, prt_orh_tex_, std::source_location::current());
+//    eh::createTextureImage(device_, "assets/T_Mat1Ground_C.jpg", format, prt_base_tex_, std::source_location::current());
+//    eh::createTextureImage(device_, "assets/T_Mat1Ground_ORH.jpg", format, prt_bump_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/T_Mat2Mountains_C.jpg", format, prt_base_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/T_Mat2Mountains_N.jpg", format, prt_normal_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/T_Mat2Mountains_ORH.jpg", format, prt_orh_tex_, std::source_location::current());
     createTextureSampler();
     descriptor_pool_ = device_->createDescriptorPool();
     createCommandBuffers();
@@ -425,7 +448,8 @@ void RealWorldApplication::initVulkan() {
             device_,
             nullptr,
             10,
-            10);
+            10,
+            std::source_location::current());
 
     auto v = std::make_shared<std::array<glm::vec3, 8>>();
     (*v)[0] = glm::vec3(-1.0f, -5.0f, -1.0f);
@@ -443,7 +467,8 @@ void RealWorldApplication::initVulkan() {
             v,
             10,
             30,
-            10);
+            10,
+            std::source_location::current());
 
     conemap_test_ =
         std::make_shared<ego::ConemapTest>(
@@ -478,6 +503,26 @@ void RealWorldApplication::initVulkan() {
             texture_sampler_,
             hair_patch_->getHairPatchColorTexture(),
             hair_patch_->getHairPatchWeightTexture(),
+            swap_chain_info_.extent,
+            unit_plane_);
+
+    lbm_patch_ =
+        std::make_shared<ego::LbmPatch>(
+            device_,
+            descriptor_pool_,
+            desc_set_layouts,
+            texture_sampler_,
+            glm::uvec2(1024, 1024));
+
+    lbm_test_ =
+        std::make_shared<ego::LbmTest>(
+            device_,
+            descriptor_pool_,
+            hdr_render_pass_,
+            graphic_pipeline_info_,
+            desc_set_layouts,
+            texture_sampler_,
+            lbm_patch_->getLbmPatchTexture(),
             swap_chain_info_.extent,
             unit_plane_);
 
@@ -830,7 +875,8 @@ void RealWorldApplication::createImageViews() {
             swap_chain_info_.images[i_img],
             er::ImageViewType::VIEW_2D,
             swap_chain_info_.format,
-            SET_FLAG_BIT(ImageAspect, COLOR_BIT));
+            SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+            std::source_location::current());
     }
 }
 
@@ -845,7 +891,11 @@ void RealWorldApplication::createFramebuffers(const glm::uvec2& display_size) {
         attachments[1] = depth_buffer_.view;
 
         swap_chain_info_.framebuffers[i] =
-            device_->createFrameBuffer(final_render_pass_, attachments, display_size);
+            device_->createFrameBuffer(
+                final_render_pass_,
+                attachments,
+                display_size,
+                std::source_location::current());
     }
 
     assert(hdr_render_pass_);
@@ -855,11 +905,19 @@ void RealWorldApplication::createFramebuffers(const glm::uvec2& display_size) {
     attachments[1] = depth_buffer_.view;
 
     hdr_frame_buffer_ =
-        device_->createFrameBuffer(hdr_render_pass_, attachments, display_size);
+        device_->createFrameBuffer(
+            hdr_render_pass_,
+            attachments,
+            display_size,
+            std::source_location::current());
 
     assert(hdr_water_render_pass_);
     hdr_water_frame_buffer_ =
-        device_->createFrameBuffer(hdr_water_render_pass_, attachments, display_size);
+        device_->createFrameBuffer(
+            hdr_water_render_pass_,
+            attachments,
+            display_size,
+            std::source_location::current());
 }
 
 void RealWorldApplication::createCommandPool() {
@@ -880,13 +938,22 @@ void RealWorldApplication::createSyncObjects() {
     render_finished_semaphores_.resize(kMaxFramesInFlight);
     in_flight_fences_.resize(kMaxFramesInFlight);
     images_in_flight_.resize(swap_chain_info_.images.size(), VK_NULL_HANDLE);
-    init_semaphore_ = device_->createSemaphore();
+    init_semaphore_ =
+        device_->createSemaphore(
+            std::source_location::current());
 
     assert(device_);
     for (uint64_t i = 0; i < kMaxFramesInFlight; i++) {
-        image_available_semaphores_[i] = device_->createSemaphore();
-        render_finished_semaphores_[i] = device_->createSemaphore();
-        in_flight_fences_[i] = device_->createFence(true);
+        image_available_semaphores_[i] =
+            device_->createSemaphore(
+                std::source_location::current());
+        render_finished_semaphores_[i] =
+            device_->createSemaphore(
+                std::source_location::current());
+        in_flight_fences_[i] =
+            device_->createFence(
+                std::source_location::current(),
+                true);
     }
 }
 
@@ -954,22 +1021,26 @@ void RealWorldApplication::createTextureSampler() {
     texture_sampler_ = device_->createSampler(
         er::Filter::LINEAR,
         er::SamplerAddressMode::CLAMP_TO_EDGE,
-        er::SamplerMipmapMode::LINEAR, 16.0f);
+        er::SamplerMipmapMode::LINEAR, 16.0f,
+        std::source_location::current());
 
     texture_point_sampler_ = device_->createSampler(
         er::Filter::NEAREST,
         er::SamplerAddressMode::REPEAT,
-        er::SamplerMipmapMode::LINEAR, 16.0f);
+        er::SamplerMipmapMode::LINEAR, 16.0f,
+        std::source_location::current());
 
     repeat_texture_sampler_ = device_->createSampler(
         er::Filter::LINEAR,
         er::SamplerAddressMode::REPEAT,
-        er::SamplerMipmapMode::LINEAR, 16.0f);
+        er::SamplerMipmapMode::LINEAR, 16.0f,
+        std::source_location::current());
 
     mirror_repeat_sampler_ = device_->createSampler(
         er::Filter::LINEAR,
         er::SamplerAddressMode::MIRRORED_REPEAT,
-        er::SamplerMipmapMode::LINEAR, 16.0f);
+        er::SamplerMipmapMode::LINEAR, 16.0f,
+        std::source_location::current());
 }
 
 void RealWorldApplication::mainLoop() {
@@ -1089,7 +1160,7 @@ void RealWorldApplication::drawScene(
         glsl::GameCameraParams game_camera_params;
         game_camera_params.world_min = ego::TileObject::getWorldMin();
         game_camera_params.inv_world_range = 1.0f / ego::TileObject::getWorldRange();
-        if (s_render_prt_test || s_render_hair_test) {
+        if (s_render_prt_test || s_render_hair_test || s_render_lbm_test) {
             game_camera_params.init_camera_pos = glm::vec3(0, 5.0f, 0);
             game_camera_params.init_camera_dir = glm::vec3(0.0f, -1.0f, 0.0f);
             game_camera_params.init_camera_up = glm::vec3(1, 0, 0);
@@ -1148,6 +1219,21 @@ void RealWorldApplication::drawScene(
     }
 
     {
+        if (s_render_hair_test) {
+            hair_patch_->update(
+                device_,
+                cmd_buf,
+                desc_sets
+            );
+        }
+        else if (s_render_lbm_test) {
+            lbm_patch_->update(
+                device_,
+                cmd_buf,
+                desc_sets
+            );
+        }
+
         cmd_buf->beginRenderPass(
             hdr_render_pass_,
             hdr_frame_buffer_,
@@ -1163,13 +1249,15 @@ void RealWorldApplication::drawScene(
                 conemap_obj_);
         }
         else if (s_render_hair_test) {
-            hair_patch_->update(
+            hair_test_->draw(
                 device_,
                 cmd_buf,
-                desc_sets
-            );
-
-            hair_test_->draw(
+                desc_sets,
+                unit_plane_,
+                unit_box_);
+        }
+        else if (s_render_lbm_test) {
+            lbm_test_->draw(
                 device_,
                 cmd_buf,
                 desc_sets,
@@ -1238,7 +1326,7 @@ void RealWorldApplication::drawScene(
             SET_FLAG_BIT(Access, SHADER_READ_BIT),
             SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
 
-        if (!s_render_prt_test && !s_render_hair_test) {
+        if (!s_render_prt_test && !s_render_hair_test && !s_render_lbm_test) {
             if (!menu_->isWaterPassTurnOff()) {
                 er::Helper::blitImage(
                     cmd_buf,
@@ -1485,7 +1573,8 @@ void RealWorldApplication::drawFrame() {
             er::Format::R8G8B8A8_UNORM,
             glm::uvec3(noise_texture_size, noise_texture_size, noise_texture_size),
             4,
-            temp_buffer.data());
+            temp_buffer.data(),
+            std::source_location::current());
         
         eh::saveDdsTexture(
             glm::uvec3(noise_texture_size, noise_texture_size, noise_texture_size),
@@ -1760,6 +1849,8 @@ void RealWorldApplication::cleanup() {
     conemap_test_->destroy(device_);
     hair_patch_->destroy(device_);
     hair_test_->destroy(device_);
+    lbm_patch_->destroy(device_);
+    lbm_test_->destroy(device_);
 
     er::helper::clearCachedShaderModules(device_);
 

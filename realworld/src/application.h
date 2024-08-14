@@ -9,6 +9,8 @@
 #include "game_object/conemap_test.h"
 #include "game_object/hair_patch.h"
 #include "game_object/hair_test.h"
+#include "game_object/lbm_patch.h"
+#include "game_object/lbm_test.h"
 #include "scene_rendering/skydome.h"
 #include "scene_rendering/weather_system.h"
 #include "scene_rendering/ibl_creator.h"
@@ -152,6 +154,8 @@ private:
     std::shared_ptr<ego::ConemapTest> conemap_test_;
     std::shared_ptr<ego::HairPatch> hair_patch_;
     std::shared_ptr<ego::HairTest> hair_test_;
+    std::shared_ptr<ego::LbmPatch> lbm_patch_;
+    std::shared_ptr<ego::LbmTest> lbm_test_;
     std::shared_ptr<es::Conemap> conemap_gen_;
     std::shared_ptr<es::PrtShadow> prt_shadow_gen_;
     std::shared_ptr<engine::ray_tracing::RayTracingBase> ray_tracing_test_;
