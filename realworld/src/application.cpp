@@ -1691,6 +1691,7 @@ void RealWorldApplication::drawFrame() {
             ray_tracing_test_->init(
                 device_,
                 descriptor_pool_,
+                ego::GameCamera::getGameCameraBuffer(),
                 rt_pipeline_properties_,
                 as_features_,
                 glm::uvec2(1920, 1080));
