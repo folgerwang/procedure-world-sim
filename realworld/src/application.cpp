@@ -346,8 +346,13 @@ void RealWorldApplication::initVulkan() {
     physical_device_ = er::Helper::pickPhysicalDevice(physical_devices_, surface_);
     queue_list_ = er::Helper::findQueueFamilies(physical_device_, surface_);
     device_ = er::Helper::createLogicalDevice(physical_device_, surface_, queue_list_);
-    er::Helper::initRayTracingProperties(physical_device_, device_, rt_pipeline_properties_, as_features_);
-    auto queue_list = queue_list_.getGraphicAndPresentFamilyIndex();
+    er::Helper::initRayTracingProperties(
+        physical_device_,
+        device_,
+        rt_pipeline_properties_,
+        as_features_);
+    auto queue_list =
+        queue_list_.getGraphicAndPresentFamilyIndex();
     assert(device_);
     depth_format_ = er::Helper::findDepthFormat(device_);
     graphics_queue_ = device_->getDeviceQueue(queue_list[0]);
@@ -672,6 +677,16 @@ void RealWorldApplication::initVulkan() {
         weather_system_->getMoistureTex(0),
         weather_system_->getAirflowTex());
 
+    // ray tracing test.
+    ray_tracing_test_ = std::make_shared<engine::ray_tracing::RayTracingShadowTest>();
+    ray_tracing_test_->init(
+        device_,
+        descriptor_pool_,
+        ego::GameCamera::getGameCameraBuffer(),
+        rt_pipeline_properties_,
+        as_features_,
+        glm::uvec2(1920, 1080));
+
     menu_ = std::make_shared<es::Menu>(
         window_,
         device_,
@@ -682,7 +697,7 @@ void RealWorldApplication::initVulkan() {
         descriptor_pool_,
         final_render_pass_,
         texture_sampler_,
-        prt_base_tex_.view);
+        ray_tracing_test_->getFinalImage().view);
 }
 
 void RealWorldApplication::recreateSwapChain() {
@@ -1685,24 +1700,14 @@ void RealWorldApplication::drawFrame() {
         current_time_);
 
     if (!menu_->isRayTracingTurnOff()) {
-        // ray tracing test.
-        if (ray_tracing_test_ == nullptr) {
-            ray_tracing_test_ = std::make_shared<engine::ray_tracing::RayTracingShadowTest>();
-            ray_tracing_test_->init(
-                device_,
-                descriptor_pool_,
-                ego::GameCamera::getGameCameraBuffer(),
-                rt_pipeline_properties_,
-                as_features_,
-                glm::uvec2(1920, 1080));
-        }
+        ray_tracing_test_->draw(
+            device_,
+            command_buffer,
+            view_params_);
 
         auto result_image =
-            ray_tracing_test_->draw(
-                device_,
-                command_buffer,
-                view_params_);
-
+            ray_tracing_test_->getFinalImage();
+#if 1
         er::ImageResourceInfo src_info = {
             er::ImageLayout::GENERAL,
             SET_FLAG_BIT(Access, SHADER_WRITE_BIT),
@@ -1724,6 +1729,23 @@ void RealWorldApplication::drawFrame() {
             SET_FLAG_BIT(ImageAspect, COLOR_BIT),
             SET_FLAG_BIT(ImageAspect, COLOR_BIT),
             glm::ivec3(1920, 1080, 1));
+#else
+        er::BarrierList barrier_list;
+        barrier_list.image_barriers.reserve(1);
+
+        er::helper::addTexturesToBarrierList(
+            barrier_list,
+            { result_image.image },
+            er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            SET_FLAG_BIT(Access, SHADER_READ_BIT) |
+            SET_FLAG_BIT(Access, SHADER_WRITE_BIT),
+            SET_FLAG_BIT(Access, SHADER_READ_BIT));
+
+        command_buffer->addBarriers(
+            barrier_list,
+            SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT),
+            SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT));
+#endif
     }
 
     //
