@@ -1700,14 +1700,33 @@ void RealWorldApplication::drawFrame() {
         current_time_);
 
     if (!menu_->isRayTracingTurnOff()) {
+        auto result_image =
+            ray_tracing_test_->getFinalImage();
+#define OUTPUT_IMAGE 0
+
+#if !OUTPUT_IMAGE
+        er::BarrierList barrier_list;
+        barrier_list.image_barriers.reserve(1);
+
+        er::helper::addTexturesToBarrierList(
+            barrier_list,
+            { result_image.image },
+            er::ImageLayout::GENERAL,
+            SET_FLAG_BIT(Access, SHADER_READ_BIT),
+            SET_FLAG_BIT(ImageUsage, TRANSFER_SRC_BIT) |
+            SET_FLAG_BIT(ImageUsage, STORAGE_BIT));
+
+        command_buffer->addBarriers(
+            barrier_list,
+            SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT),
+            SET_FLAG_BIT(PipelineStage, RAY_TRACING_SHADER_BIT_KHR));
+#endif
         ray_tracing_test_->draw(
             device_,
             command_buffer,
             view_params_);
 
-        auto result_image =
-            ray_tracing_test_->getFinalImage();
-#if 1
+#if OUTPUT_IMAGE
         er::ImageResourceInfo src_info = {
             er::ImageLayout::GENERAL,
             SET_FLAG_BIT(Access, SHADER_WRITE_BIT),
@@ -1730,11 +1749,11 @@ void RealWorldApplication::drawFrame() {
             SET_FLAG_BIT(ImageAspect, COLOR_BIT),
             glm::ivec3(1920, 1080, 1));
 #else
-        er::BarrierList barrier_list;
-        barrier_list.image_barriers.reserve(1);
+        er::BarrierList barrier_list_final;
+        barrier_list_final.image_barriers.reserve(1);
 
         er::helper::addTexturesToBarrierList(
-            barrier_list,
+            barrier_list_final,
             { result_image.image },
             er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             SET_FLAG_BIT(Access, SHADER_READ_BIT) |
@@ -1742,14 +1761,13 @@ void RealWorldApplication::drawFrame() {
             SET_FLAG_BIT(Access, SHADER_READ_BIT));
 
         command_buffer->addBarriers(
-            barrier_list,
-            SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT),
+            barrier_list_final,
+            SET_FLAG_BIT(PipelineStage, RAY_TRACING_SHADER_BIT_KHR),
             SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT));
 #endif
     }
 
     //
-
     s_camera_paused = menu_->draw(
         command_buffer,
         final_render_pass_,
