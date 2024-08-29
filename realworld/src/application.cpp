@@ -33,19 +33,19 @@ std::shared_ptr<er::DescriptorSetLayout> createPbrLightingDescriptorSetLayout(
 
     bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
         GGX_LUT_INDEX,
-        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
+        SET_2_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT)));
     bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
         CHARLIE_LUT_INDEX,
-        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
+        SET_2_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT)));
     bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
         LAMBERTIAN_ENV_TEX_INDEX,
-        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
+        SET_2_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT)));
     bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
         GGX_ENV_TEX_INDEX,
-        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
+        SET_2_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT)));
     bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
         CHARLIE_ENV_TEX_INDEX,
-        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) | SET_FLAG_BIT(ShaderStage, COMPUTE_BIT)));
+        SET_2_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT)));
 
     return device->createDescriptorSetLayout(bindings);
 }
@@ -184,9 +184,7 @@ void RealWorldApplication::createDepthResources(const glm::uvec2& display_size) 
         er::Format::D32_SFLOAT,
         display_size,
         depth_buffer_copy_,
-        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
-        SET_FLAG_BIT(ImageUsage, DEPTH_STENCIL_ATTACHMENT_BIT) |
-        SET_FLAG_BIT(ImageUsage, TRANSFER_DST_BIT),
+        SET_3_FLAG_BITS(ImageUsage, SAMPLED_BIT, DEPTH_STENCIL_ATTACHMENT_BIT, TRANSFER_DST_BIT),
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         std::source_location::current());
 }
@@ -197,10 +195,7 @@ void RealWorldApplication::createHdrColorBuffer(const glm::uvec2& display_size) 
         hdr_format_,
         display_size,
         hdr_color_buffer_,
-        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
-        SET_FLAG_BIT(ImageUsage, STORAGE_BIT) |
-        SET_FLAG_BIT(ImageUsage, COLOR_ATTACHMENT_BIT) |
-        SET_FLAG_BIT(ImageUsage, TRANSFER_SRC_BIT),
+        SET_4_FLAG_BITS(ImageUsage, SAMPLED_BIT, STORAGE_BIT, COLOR_ATTACHMENT_BIT, TRANSFER_SRC_BIT),
         er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         std::source_location::current());
 }
@@ -211,8 +206,7 @@ void RealWorldApplication::createColorBufferCopy(const glm::uvec2& display_size)
         hdr_format_,
         display_size,
         hdr_color_buffer_copy_,
-        SET_FLAG_BIT(ImageUsage, SAMPLED_BIT) |
-        SET_FLAG_BIT(ImageUsage, TRANSFER_DST_BIT),
+        SET_2_FLAG_BITS(ImageUsage, SAMPLED_BIT, TRANSFER_DST_BIT),
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         std::source_location::current());
 }
@@ -364,8 +358,7 @@ void RealWorldApplication::initVulkan() {
         surface_,
         queue_list_,
         swap_chain_info_,
-        SET_FLAG_BIT(ImageUsage, COLOR_ATTACHMENT_BIT)|
-        SET_FLAG_BIT(ImageUsage, TRANSFER_DST_BIT));
+        SET_2_FLAG_BITS(ImageUsage, COLOR_ATTACHMENT_BIT, TRANSFER_DST_BIT));
     createRenderPasses();
     createImageViews();
     cubemap_render_pass_ =
@@ -720,8 +713,7 @@ void RealWorldApplication::recreateSwapChain() {
         surface_,
         queue_list_,
         swap_chain_info_,
-        SET_FLAG_BIT(ImageUsage, COLOR_ATTACHMENT_BIT) |
-        SET_FLAG_BIT(ImageUsage, TRANSFER_DST_BIT));
+        SET_2_FLAG_BITS(ImageUsage, COLOR_ATTACHMENT_BIT, TRANSFER_DST_BIT));
 
     createRenderPasses();
     createImageViews();
@@ -1704,7 +1696,6 @@ void RealWorldApplication::drawFrame() {
             ray_tracing_test_->getFinalImage();
 #define OUTPUT_IMAGE 0
 
-#if !OUTPUT_IMAGE
         er::BarrierList barrier_list;
         barrier_list.image_barriers.reserve(1);
 
@@ -1712,15 +1703,14 @@ void RealWorldApplication::drawFrame() {
             barrier_list,
             { result_image.image },
             er::ImageLayout::GENERAL,
-            SET_FLAG_BIT(Access, SHADER_READ_BIT),
-            SET_FLAG_BIT(ImageUsage, TRANSFER_SRC_BIT) |
-            SET_FLAG_BIT(ImageUsage, STORAGE_BIT));
+            SET_FLAG_BIT(ImageUsage, SAMPLED_BIT),
+            SET_2_FLAG_BITS(ImageUsage, TRANSFER_SRC_BIT, STORAGE_BIT));
 
         command_buffer->addBarriers(
             barrier_list,
             SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT),
             SET_FLAG_BIT(PipelineStage, RAY_TRACING_SHADER_BIT_KHR));
-#endif
+
         ray_tracing_test_->draw(
             device_,
             command_buffer,
