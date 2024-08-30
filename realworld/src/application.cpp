@@ -57,11 +57,13 @@ std::shared_ptr<er::DescriptorSetLayout> createViewCameraDescriptorSetLayout(
     bindings[0].descriptor_count = 1;
     bindings[0].descriptor_type = er::DescriptorType::STORAGE_BUFFER;
     bindings[0].stage_flags =
-        SET_FLAG_BIT(ShaderStage, VERTEX_BIT) |
-        SET_FLAG_BIT(ShaderStage, MESH_BIT_EXT) |
-        SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT) |
-        SET_FLAG_BIT(ShaderStage, GEOMETRY_BIT) |
-        SET_FLAG_BIT(ShaderStage, COMPUTE_BIT);
+        SET_5_FLAG_BITS(
+            ShaderStage,
+            VERTEX_BIT,
+            MESH_BIT_EXT,
+            FRAGMENT_BIT,
+            GEOMETRY_BIT,
+            COMPUTE_BIT);
     bindings[0].immutable_samplers = nullptr; // Optional
 
     return device->createDescriptorSetLayout(bindings);
@@ -1746,8 +1748,7 @@ void RealWorldApplication::drawFrame() {
             barrier_list_final,
             { result_image.image },
             er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            SET_FLAG_BIT(Access, SHADER_READ_BIT) |
-            SET_FLAG_BIT(Access, SHADER_WRITE_BIT),
+            SET_2_FLAG_BITS(Access, SHADER_READ_BIT, SHADER_WRITE_BIT),
             SET_FLAG_BIT(Access, SHADER_READ_BIT));
 
         command_buffer->addBarriers(
