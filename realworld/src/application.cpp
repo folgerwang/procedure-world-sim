@@ -680,7 +680,7 @@ void RealWorldApplication::initVulkan() {
         ego::GameCamera::getGameCameraBuffer(),
         rt_pipeline_properties_,
         as_features_,
-        glm::uvec2(1920, 1080));
+        glm::uvec2(1024, 768));
 
     menu_ = std::make_shared<es::Menu>(
         window_,
@@ -1696,20 +1696,20 @@ void RealWorldApplication::drawFrame() {
     if (!menu_->isRayTracingTurnOff()) {
         auto result_image =
             ray_tracing_test_->getFinalImage();
-#define OUTPUT_IMAGE 0
+#define BLIT_IMAGE_TO_DISPLAY 0
 
-        er::BarrierList barrier_list;
-        barrier_list.image_barriers.reserve(1);
+        er::BarrierList ray_tracing_start;
+        ray_tracing_start.image_barriers.reserve(1);
 
         er::helper::addTexturesToBarrierList(
-            barrier_list,
+            ray_tracing_start,
             { result_image.image },
             er::ImageLayout::GENERAL,
-            SET_FLAG_BIT(ImageUsage, SAMPLED_BIT),
-            SET_2_FLAG_BITS(ImageUsage, TRANSFER_SRC_BIT, STORAGE_BIT));
+            SET_FLAG_BIT(Access, SHADER_READ_BIT),
+            SET_2_FLAG_BITS(Access, SHADER_READ_BIT, SHADER_WRITE_BIT));
 
         command_buffer->addBarriers(
-            barrier_list,
+            ray_tracing_start,
             SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT),
             SET_FLAG_BIT(PipelineStage, RAY_TRACING_SHADER_BIT_KHR));
 
@@ -1718,7 +1718,7 @@ void RealWorldApplication::drawFrame() {
             command_buffer,
             view_params_);
 
-#if OUTPUT_IMAGE
+#if BLIT_IMAGE_TO_DISPLAY
         er::ImageResourceInfo src_info = {
             er::ImageLayout::GENERAL,
             SET_FLAG_BIT(Access, SHADER_WRITE_BIT),
@@ -1739,20 +1739,20 @@ void RealWorldApplication::drawFrame() {
             dst_info,
             SET_FLAG_BIT(ImageAspect, COLOR_BIT),
             SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-            glm::ivec3(1920, 1080, 1));
+            result_image.size);
 #else
-        er::BarrierList barrier_list_final;
-        barrier_list_final.image_barriers.reserve(1);
+        er::BarrierList ray_tracing_end;
+        ray_tracing_end.image_barriers.reserve(1);
 
         er::helper::addTexturesToBarrierList(
-            barrier_list_final,
+            ray_tracing_end,
             { result_image.image },
             er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             SET_2_FLAG_BITS(Access, SHADER_READ_BIT, SHADER_WRITE_BIT),
             SET_FLAG_BIT(Access, SHADER_READ_BIT));
 
         command_buffer->addBarriers(
-            barrier_list_final,
+            ray_tracing_end,
             SET_FLAG_BIT(PipelineStage, RAY_TRACING_SHADER_BIT_KHR),
             SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT));
 #endif
