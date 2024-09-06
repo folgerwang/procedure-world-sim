@@ -1698,18 +1698,18 @@ void RealWorldApplication::drawFrame() {
             ray_tracing_test_->getFinalImage();
 #define BLIT_IMAGE_TO_DISPLAY 0
 
-        er::BarrierList ray_tracing_start;
-        ray_tracing_start.image_barriers.reserve(1);
+        er::BarrierList raytracing_barrier_list_start;
+        raytracing_barrier_list_start.image_barriers.reserve(1);
 
         er::helper::addTexturesToBarrierList(
-            ray_tracing_start,
+            raytracing_barrier_list_start,
             { result_image.image },
             er::ImageLayout::GENERAL,
             SET_FLAG_BIT(Access, SHADER_READ_BIT),
             SET_2_FLAG_BITS(Access, SHADER_READ_BIT, SHADER_WRITE_BIT));
 
         command_buffer->addBarriers(
-            ray_tracing_start,
+            raytracing_barrier_list_start,
             SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT),
             SET_FLAG_BIT(PipelineStage, RAY_TRACING_SHADER_BIT_KHR));
 
@@ -1741,18 +1741,18 @@ void RealWorldApplication::drawFrame() {
             SET_FLAG_BIT(ImageAspect, COLOR_BIT),
             result_image.size);
 #else
-        er::BarrierList ray_tracing_end;
-        ray_tracing_end.image_barriers.reserve(1);
+        er::BarrierList raytracing_barrier_list_end;
+        raytracing_barrier_list_end.image_barriers.reserve(1);
 
         er::helper::addTexturesToBarrierList(
-            ray_tracing_end,
+            raytracing_barrier_list_end,
             { result_image.image },
             er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             SET_2_FLAG_BITS(Access, SHADER_READ_BIT, SHADER_WRITE_BIT),
             SET_FLAG_BIT(Access, SHADER_READ_BIT));
 
         command_buffer->addBarriers(
-            ray_tracing_end,
+            raytracing_barrier_list_end,
             SET_FLAG_BIT(PipelineStage, RAY_TRACING_SHADER_BIT_KHR),
             SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT));
 #endif
