@@ -1823,10 +1823,10 @@ void RealWorldApplication::cleanupSwapChain() {
 }
 
 void RealWorldApplication::cleanup() {
+    menu_->destroy();
     cleanupSwapChain();
 
     skydome_->destroy(device_);
-    menu_->destroy();
     device_->destroyRenderPass(cubemap_render_pass_);
 
     assert(device_);
