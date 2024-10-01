@@ -692,7 +692,8 @@ void RealWorldApplication::initVulkan() {
         descriptor_pool_,
         final_render_pass_,
         texture_sampler_,
-        ray_tracing_test_->getFinalImage().view);
+        ray_tracing_test_->getFinalImage().view,
+        nullptr);
 }
 
 void RealWorldApplication::recreateSwapChain() {
