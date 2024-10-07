@@ -14,8 +14,6 @@
 #include "engine_helper.h"
 #include "application.h"
 
-#include "third_parties/fbx/ufbx.h"
-
 namespace er = engine::renderer;
 namespace ego = engine::game_object;
 
@@ -379,17 +377,10 @@ void RealWorldApplication::initVulkan() {
     assert(command_pool_);
     er::Helper::init(device_);
 
-    ufbx_load_opts opts = { 0 };
-    ufbx_error error;
-    ufbx_abi ufbx_scene* fbx_result = 
-        ufbx_load_file(
-            "assets/Bistro_v5_2/BistroExterior.fbx",
-            &opts, &error);
-
-    for (int i_node = 0; i_node < fbx_result->nodes.count; i_node++) {
-        const auto node = fbx_result->nodes[i_node];
-        int hit = 1;
-    }
+    auto test_object =
+        ego::DrawableObject::loadFbxModel(
+            device_,
+            "assets/Bistro_v5_2/BistroExterior.fbx");
 
     eh::loadMtx2Texture(
         device_,
