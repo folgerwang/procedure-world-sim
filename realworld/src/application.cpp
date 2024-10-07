@@ -14,6 +14,8 @@
 #include "engine_helper.h"
 #include "application.h"
 
+#include "third_parties/fbx/ufbx.h"
+
 namespace er = engine::renderer;
 namespace ego = engine::game_object;
 
@@ -377,6 +379,18 @@ void RealWorldApplication::initVulkan() {
     assert(command_pool_);
     er::Helper::init(device_);
 
+    ufbx_load_opts opts = { 0 };
+    ufbx_error error;
+    ufbx_abi ufbx_scene* fbx_result = 
+        ufbx_load_file(
+            "assets/Bistro_v5_2/BistroExterior.fbx",
+            &opts, &error);
+
+    for (int i_node = 0; i_node < fbx_result->nodes.count; i_node++) {
+        const auto node = fbx_result->nodes[i_node];
+        int hit = 1;
+    }
+
     eh::loadMtx2Texture(
         device_,
         cubemap_render_pass_,
@@ -588,12 +602,12 @@ void RealWorldApplication::initVulkan() {
         ego::TileObject::getRockLayer().view,
         soil_water_texes);
 
-    ego::GltfObject::initGameObjectBuffer(device_);
+    ego::DrawableObject::initGameObjectBuffer(device_);
     ego::GameCamera::initGameCameraBuffer(device_);
-    assert(ego::GltfObject::getGameObjectsBuffer());
+    assert(ego::DrawableObject::getGameObjectsBuffer());
     assert(ego::GameCamera::getGameCameraBuffer());
 
-    ego::GltfObject::initStaticMembers(
+    ego::DrawableObject::initStaticMembers(
         device_,
         descriptor_pool_,
         desc_set_layouts,
@@ -613,7 +627,7 @@ void RealWorldApplication::initVulkan() {
         ego::TileObject::getRockLayer(),
         ego::TileObject::getSoilWaterLayer(0),
         ego::TileObject::getSoilWaterLayer(1),
-        *ego::GltfObject::getGameObjectsBuffer());
+        *ego::DrawableObject::getGameObjectsBuffer());
 
     ego::DebugDrawObject::initStaticMembers(
         device_,
@@ -731,7 +745,7 @@ void RealWorldApplication::recreateSwapChain() {
         graphic_double_face_pipeline_info_,
         desc_set_layouts,
         swap_chain_info_.extent);
-    ego::GltfObject::recreateStaticMembers(
+    ego::DrawableObject::recreateStaticMembers(
         device_,
         hdr_render_pass_,
         graphic_pipeline_info_,
@@ -798,7 +812,7 @@ void RealWorldApplication::recreateSwapChain() {
         weather_system_->getMoistureTex(0),
         weather_system_->getAirflowTex());
 
-    ego::GltfObject::generateDescriptorSet(
+    ego::DrawableObject::generateDescriptorSet(
         device_,
         descriptor_pool_,
         texture_sampler_,
@@ -810,7 +824,7 @@ void RealWorldApplication::recreateSwapChain() {
         ego::TileObject::getWaterFlow(),
         weather_system_->getAirflowTex());
 
-    assert(ego::GltfObject::getGameObjectsBuffer());
+    assert(ego::DrawableObject::getGameObjectsBuffer());
     ego::GameCamera::generateDescriptorSet(
         device_,
         descriptor_pool_,
@@ -818,7 +832,7 @@ void RealWorldApplication::recreateSwapChain() {
         ego::TileObject::getRockLayer(),
         ego::TileObject::getSoilWaterLayer(0),
         ego::TileObject::getSoilWaterLayer(1),
-        *ego::GltfObject::getGameObjectsBuffer());
+        *ego::DrawableObject::getGameObjectsBuffer());
 
     ego::TileObject::updateStaticDescriptorSet(
         device_,
@@ -1155,7 +1169,7 @@ void RealWorldApplication::drawScene(
         auto delta_t = static_cast<float>(elapsed_seconds.count());
         s_last_time = cur_time;
 
-        ego::GltfObject::updateGameObjectsBuffer(
+        ego::DrawableObject::updateGameObjectsBuffer(
             cmd_buf,
             ego::TileObject::getWorldMin(),
             ego::TileObject::getWorldRange(),
@@ -1204,7 +1218,7 @@ void RealWorldApplication::drawScene(
         game_camera_params.fov = glm::radians(45.0f);
         game_camera_params.aspect = swap_chain_info_.extent.x / (float)swap_chain_info_.extent.y;
         game_camera_params.sensitivity = 0.2f;
-        game_camera_params.num_game_objs = static_cast<int32_t>(gltf_objects_.size());
+        game_camera_params.num_game_objs = static_cast<int32_t>(drawable_objects_.size());
         game_camera_params.game_obj_idx = 0;
         game_camera_params.camera_rot_update = (!s_camera_paused && s_mouse_right_button_pressed) ? 1 : 0;
         game_camera_params.mouse_wheel_offset = s_mouse_wheel_offset;
@@ -1219,8 +1233,8 @@ void RealWorldApplication::drawScene(
             player_object_->updateBuffers(cmd_buf);
         }
 
-        for (auto& gltf_obj : gltf_objects_) {
-            gltf_obj->updateBuffers(cmd_buf);
+        for (auto& drawable_obj : drawable_objects_) {
+            drawable_obj->updateBuffers(cmd_buf);
         }
 
         if (s_update_frame_count >= 0) {
@@ -1275,10 +1289,10 @@ void RealWorldApplication::drawScene(
                 unit_box_);
         }
         else {
-            // render gltf.
+            // render drawable.
             {
-                for (auto& gltf_obj : gltf_objects_) {
-                    gltf_obj->draw(cmd_buf, desc_sets);
+                for (auto& drawable_obj : drawable_objects_) {
+                    drawable_obj->draw(cmd_buf, desc_sets);
                 }
             }
 
@@ -1640,21 +1654,21 @@ void RealWorldApplication::drawFrame() {
     current_time_ += delta_t_;
     last_frame_time_point_ = current_time_point;
 
-    auto to_load_gltf_names = menu_->getToLoadGltfNamesAndClear();
-    for (auto& gltf_name : to_load_gltf_names) {
-        auto gltf_obj = std::make_shared<ego::GltfObject>(
+    auto to_load_drawable_names = menu_->getToLoadGltfNamesAndClear();
+    for (auto& drawable_name : to_load_drawable_names) {
+        auto drawable_obj = std::make_shared<ego::DrawableObject>(
             device_,
             descriptor_pool_,
             hdr_render_pass_,
             graphic_pipeline_info_,
             texture_sampler_,
             thin_film_lut_tex_,
-            gltf_name,
+            drawable_name,
             swap_chain_info_.extent,
             glm::inverse(view_params_.view));
 
         s_update_frame_count = -1;
-        gltf_objects_.push_back(gltf_obj);
+        drawable_objects_.push_back(drawable_obj);
     }
 
     auto to_load_player_name = menu_->getToLoadPlayerNameAndClear();
@@ -1663,7 +1677,7 @@ void RealWorldApplication::drawFrame() {
             player_object_->destroy(device_);
             player_object_ = nullptr;
         }
-        player_object_ = std::make_shared<ego::GltfObject>(
+        player_object_ = std::make_shared<ego::DrawableObject>(
             device_,
             descriptor_pool_,
             hdr_render_pass_,
@@ -1679,8 +1693,8 @@ void RealWorldApplication::drawFrame() {
         player_object_->update(device_, current_time_);
     }
 
-    for (auto& gltf_obj : gltf_objects_) {
-        gltf_obj->update(device_, current_time_);
+    for (auto& drawable_obj : drawable_objects_) {
+        drawable_obj->update(device_, current_time_);
     }
 
     command_buffer->reset(0);
@@ -1861,14 +1875,14 @@ void RealWorldApplication::cleanup() {
         player_object_->destroy(device_);
         player_object_ = nullptr;
     }
-    for (auto& obj : gltf_objects_) {
+    for (auto& obj : drawable_objects_) {
         obj->destroy(device_);
     }
-    gltf_objects_.clear();
+    drawable_objects_.clear();
     if (ray_tracing_test_) {
         ray_tracing_test_->destroy(device_);
     }
-    ego::GltfObject::destroyStaticMembers(device_);
+    ego::DrawableObject::destroyStaticMembers(device_);
     ego::GameCamera::destroyStaticMembers(device_);
     ego::DebugDrawObject::destroyStaticMembers(device_);
     ibl_creator_->destroy(device_);
