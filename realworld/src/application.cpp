@@ -377,7 +377,7 @@ void RealWorldApplication::initVulkan() {
     assert(command_pool_);
     er::Helper::init(device_);
 
-    auto test_object =
+    bistro_exterior_scene_ =
         ego::DrawableObject::loadFbxModel(
             device_,
             "assets/Bistro_v5_2/BistroExterior.fbx");
@@ -1866,6 +1866,12 @@ void RealWorldApplication::cleanup() {
         player_object_->destroy(device_);
         player_object_ = nullptr;
     }
+
+    if (bistro_exterior_scene_) {
+        bistro_exterior_scene_->destroy(device_);
+        bistro_exterior_scene_ = nullptr;
+    }
+
     for (auto& obj : drawable_objects_) {
         obj->destroy(device_);
     }
