@@ -143,7 +143,7 @@ private:
     std::shared_ptr<ego::GameCamera> game_camera_;
     std::vector<std::shared_ptr<ego::DrawableObject>> drawable_objects_;
     std::shared_ptr<ego::DrawableObject> player_object_;
-    std::shared_ptr<ego::DrawableData> bistro_exterior_scene_;
+    std::shared_ptr<ego::DrawableObject> bistro_exterior_scene_;
     std::shared_ptr<es::Skydome> skydome_;
     std::shared_ptr<es::WeatherSystem> weather_system_;
     std::shared_ptr<es::VolumeCloud> volume_cloud_;

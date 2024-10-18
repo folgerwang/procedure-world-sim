@@ -378,9 +378,16 @@ void RealWorldApplication::initVulkan() {
     er::Helper::init(device_);
 
     bistro_exterior_scene_ =
-        ego::DrawableObject::loadFbxModel(
+        std::make_shared<ego::DrawableObject>(
             device_,
-            "assets/Bistro_v5_2/BistroExterior.fbx");
+            descriptor_pool_,
+            hdr_render_pass_,
+            graphic_pipeline_info_,
+            texture_sampler_,
+            thin_film_lut_tex_,
+            "assets/Bistro_v5_2/BistroExterior.fbx",
+            swap_chain_info_.extent,
+            glm::inverse(view_params_.view));
 
     eh::loadMtx2Texture(
         device_,
@@ -1289,6 +1296,10 @@ void RealWorldApplication::drawScene(
 
             if (player_object_) {
                 player_object_->draw(cmd_buf, desc_sets);
+            }
+
+            if (bistro_exterior_scene_) {
+                bistro_exterior_scene_->draw(cmd_buf, desc_sets);
             }
 
             // render terrain opaque pass.
