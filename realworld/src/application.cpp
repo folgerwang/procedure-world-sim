@@ -377,18 +377,6 @@ void RealWorldApplication::initVulkan() {
     assert(command_pool_);
     er::Helper::init(device_);
 
-    bistro_exterior_scene_ =
-        std::make_shared<ego::DrawableObject>(
-            device_,
-            descriptor_pool_,
-            hdr_render_pass_,
-            graphic_pipeline_info_,
-            texture_sampler_,
-            thin_film_lut_tex_,
-            "assets/Bistro_v5_2/BistroExterior.fbx",
-            swap_chain_info_.extent,
-            glm::inverse(view_params_.view));
-
     eh::loadMtx2Texture(
         device_,
         cubemap_render_pass_,
@@ -693,6 +681,18 @@ void RealWorldApplication::initVulkan() {
         rt_pipeline_properties_,
         as_features_,
         glm::uvec2(1024, 768));
+
+    bistro_exterior_scene_ =
+        std::make_shared<ego::DrawableObject>(
+            device_,
+            descriptor_pool_,
+            hdr_render_pass_,
+            graphic_pipeline_info_,
+            texture_sampler_,
+            thin_film_lut_tex_,
+            "assets/Bistro_v5_2/BistroExterior.fbx",
+            swap_chain_info_.extent,
+            glm::inverse(view_params_.view));
 
     menu_ = std::make_shared<es::Menu>(
         window_,
