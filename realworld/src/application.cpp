@@ -23,7 +23,8 @@ constexpr int kWindowSizeY = 1440;
 static int s_update_frame_count = -1;
 static bool s_render_prt_test = false;
 static bool s_render_hair_test = false;
-static bool s_render_lbm_test = true;
+static bool s_render_lbm_test = false;
+static bool s_bistro_scene_test = true;
 
 // global pbr texture descriptor set layout.
 std::shared_ptr<er::DescriptorSetLayout> createPbrLightingDescriptorSetLayout(
@@ -1286,6 +1287,11 @@ void RealWorldApplication::drawScene(
                 unit_plane_,
                 unit_box_);
         }
+        else if (s_bistro_scene_test) {
+            if (bistro_exterior_scene_) {
+                bistro_exterior_scene_->draw(cmd_buf, desc_sets);
+            }
+        }
         else {
             // render drawable.
             {
@@ -1296,10 +1302,6 @@ void RealWorldApplication::drawScene(
 
             if (player_object_) {
                 player_object_->draw(cmd_buf, desc_sets);
-            }
-
-            if (bistro_exterior_scene_) {
-                bistro_exterior_scene_->draw(cmd_buf, desc_sets);
             }
 
             // render terrain opaque pass.
