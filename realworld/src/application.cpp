@@ -1354,7 +1354,10 @@ void RealWorldApplication::drawScene(
             SET_FLAG_BIT(Access, SHADER_READ_BIT),
             SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
 
-        if (!s_render_prt_test && !s_render_hair_test && !s_render_lbm_test) {
+        if (!s_render_prt_test &&
+            !s_render_hair_test &&
+            !s_render_lbm_test &&
+            !s_bistro_scene_test) {
             if (!menu_->isWaterPassTurnOff()) {
                 er::Helper::blitImage(
                     cmd_buf,
