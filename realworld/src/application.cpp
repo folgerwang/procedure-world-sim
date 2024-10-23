@@ -590,23 +590,21 @@ void RealWorldApplication::initVulkan() {
         soil_water_texes);
 
     ego::DrawableObject::initGameObjectBuffer(device_);
-    ego::GameCamera::initGameCameraBuffer(device_);
     assert(ego::DrawableObject::getGameObjectsBuffer());
-    assert(ego::GameCamera::getGameCameraBuffer());
 
     ego::DrawableObject::initStaticMembers(
         device_,
         descriptor_pool_,
         desc_set_layouts,
         texture_sampler_,
-        ego::GameCamera::getGameCameraBuffer(),
+//        ego::ViewCamera::getViewCameraBuffer(),
         ego::TileObject::getRockLayer(),
         ego::TileObject::getSoilWaterLayer(0),
         ego::TileObject::getSoilWaterLayer(1),
         ego::TileObject::getWaterFlow(),
         weather_system_->getAirflowTex());
 
-    ego::GameCamera::initStaticMembers(
+    ego::ViewCamera::initStaticMembers(
         device_,
         descriptor_pool_,
         desc_set_layouts,
@@ -678,7 +676,7 @@ void RealWorldApplication::initVulkan() {
     ray_tracing_test_->init(
         device_,
         descriptor_pool_,
-        ego::GameCamera::getGameCameraBuffer(),
+        nullptr,//ego::ViewCamera::getViewCameraBuffer(),
         rt_pipeline_properties_,
         as_features_,
         glm::uvec2(1024, 768));
@@ -750,7 +748,7 @@ void RealWorldApplication::recreateSwapChain() {
         graphic_pipeline_info_,
         desc_set_layouts,
         swap_chain_info_.extent);
-    ego::GameCamera::recreateStaticMembers(
+    ego::ViewCamera::recreateStaticMembers(
         device_);
     ego::DebugDrawObject::recreateStaticMembers(
         device_,
@@ -815,7 +813,7 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         texture_sampler_,
-        ego::GameCamera::getGameCameraBuffer(),
+//        ego::ViewCamera::getViewCameraBuffer(),
         thin_film_lut_tex_,
         ego::TileObject::getRockLayer(),
         ego::TileObject::getSoilWaterLayer(0),
@@ -823,15 +821,15 @@ void RealWorldApplication::recreateSwapChain() {
         ego::TileObject::getWaterFlow(),
         weather_system_->getAirflowTex());
 
-    assert(ego::DrawableObject::getGameObjectsBuffer());
-    ego::GameCamera::generateDescriptorSet(
+/*    assert(ego::DrawableObject::getGameObjectsBuffer());
+    ego::ViewCamera::generateDescriptorSet(
         device_,
         descriptor_pool_,
         texture_sampler_,
         ego::TileObject::getRockLayer(),
         ego::TileObject::getSoilWaterLayer(0),
         ego::TileObject::getSoilWaterLayer(1),
-        *ego::DrawableObject::getGameObjectsBuffer());
+        *ego::DrawableObject::getGameObjectsBuffer());*/
 
     ego::TileObject::updateStaticDescriptorSet(
         device_,
@@ -1025,6 +1023,7 @@ void RealWorldApplication::createDescriptorSets() {
         device_->updateDescriptorSets(pbr_lighting_descs);
     }
 
+#if 0 // todo
     {
         view_desc_set_ = device_->createDescriptorSets(descriptor_pool_, view_desc_set_layout_, 1)[0];
         er::WriteDescriptorList buffer_descs;
@@ -1034,10 +1033,11 @@ void RealWorldApplication::createDescriptorSets() {
             view_desc_set_,
             er::DescriptorType::STORAGE_BUFFER,
             VIEW_CAMERA_BUFFER_INDEX,
-            ego::GameCamera::getGameCameraBuffer()->buffer,
-            sizeof(glsl::GameCameraInfo));
+            ego::ViewCamera::getViewCameraBuffer()->buffer,
+            sizeof(glsl::ViewCameraInfo));
         device_->updateDescriptorSets(buffer_descs);
     }
+#endif
 }
 
 void RealWorldApplication::createTextureSampler() {
@@ -1180,53 +1180,56 @@ void RealWorldApplication::drawScene(
             delta_t,
             menu_->isAirfowOn());
 
-        glsl::GameCameraParams game_camera_params;
-        game_camera_params.world_min = ego::TileObject::getWorldMin();
-        game_camera_params.inv_world_range = 1.0f / ego::TileObject::getWorldRange();
+        glsl::ViewCameraParams view_camera_params;
+        view_camera_params.world_min = ego::TileObject::getWorldMin();
+        view_camera_params.inv_world_range = 1.0f / ego::TileObject::getWorldRange();
         if (s_render_prt_test || s_render_hair_test || s_render_lbm_test) {
-            game_camera_params.init_camera_pos = glm::vec3(0, 5.0f, 0);
-            game_camera_params.init_camera_dir = glm::vec3(0.0f, -1.0f, 0.0f);
-            game_camera_params.init_camera_up = glm::vec3(1, 0, 0);
-            game_camera_params.camera_speed = 0.01f;
+            view_camera_params.init_camera_pos = glm::vec3(0, 5.0f, 0);
+            view_camera_params.init_camera_dir = glm::vec3(0.0f, -1.0f, 0.0f);
+            view_camera_params.init_camera_up = glm::vec3(1, 0, 0);
+            view_camera_params.camera_speed = 0.01f;
         }
         else {
-            game_camera_params.init_camera_pos = glm::vec3(0, 500.0f, 0);
-            game_camera_params.init_camera_dir = glm::vec3(1.0f, 0.0f, 0.0f);
-            game_camera_params.init_camera_up = glm::vec3(0, 1, 0);
-            game_camera_params.camera_speed = s_camera_speed;
+            view_camera_params.init_camera_pos = glm::vec3(0, 500.0f, 0);
+            view_camera_params.init_camera_dir = glm::vec3(1.0f, 0.0f, 0.0f);
+            view_camera_params.init_camera_up = glm::vec3(0, 1, 0);
+            view_camera_params.camera_speed = s_camera_speed;
         }
 
-        game_camera_params.yaw = 0.0f;
-        game_camera_params.pitch = -90.0f;
-        game_camera_params.init_camera_dir =
+        view_camera_params.yaw = 0.0f;
+        view_camera_params.pitch = -90.0f;
+        view_camera_params.init_camera_dir =
             normalize(getDirectionByYawAndPitch(
-                game_camera_params.yaw,
-                game_camera_params.pitch));
-        game_camera_params.init_camera_up =
-            abs(game_camera_params.init_camera_dir.y) < 0.99f ?
+                view_camera_params.yaw,
+                view_camera_params.pitch));
+        view_camera_params.init_camera_up =
+            abs(view_camera_params.init_camera_dir.y) < 0.99f ?
             vec3(0, 1, 0) :
             vec3(1, 0, 0);
 
-        game_camera_params.z_near = 0.1f;
-        game_camera_params.z_far = 40000.0f;
-        game_camera_params.camera_follow_dist = 5.0f;
-        game_camera_params.key = s_key;
-        game_camera_params.frame_count = s_update_frame_count;
-        game_camera_params.delta_t = delta_t;
-        game_camera_params.mouse_pos = s_last_mouse_pos;
-        game_camera_params.fov = glm::radians(45.0f);
-        game_camera_params.aspect = swap_chain_info_.extent.x / (float)swap_chain_info_.extent.y;
-        game_camera_params.sensitivity = 0.2f;
-        game_camera_params.num_game_objs = static_cast<int32_t>(drawable_objects_.size());
-        game_camera_params.game_obj_idx = 0;
-        game_camera_params.camera_rot_update = (!s_camera_paused && s_mouse_right_button_pressed) ? 1 : 0;
-        game_camera_params.mouse_wheel_offset = s_mouse_wheel_offset;
+        view_camera_params.z_near = 0.1f;
+        view_camera_params.z_far = 40000.0f;
+        view_camera_params.camera_follow_dist = 5.0f;
+        view_camera_params.key = s_key;
+        view_camera_params.frame_count = s_update_frame_count;
+        view_camera_params.delta_t = delta_t;
+        view_camera_params.mouse_pos = s_last_mouse_pos;
+        view_camera_params.fov = glm::radians(45.0f);
+        view_camera_params.aspect = swap_chain_info_.extent.x / (float)swap_chain_info_.extent.y;
+        view_camera_params.sensitivity = 0.2f;
+        view_camera_params.num_game_objs = static_cast<int32_t>(drawable_objects_.size());
+        view_camera_params.game_obj_idx = 0;
+        view_camera_params.camera_rot_update = (!s_camera_paused && s_mouse_right_button_pressed) ? 1 : 0;
+        view_camera_params.mouse_wheel_offset = s_mouse_wheel_offset;
         s_mouse_wheel_offset = 0;
 
-        ego::GameCamera::updateGameCameraBuffer(
+// todo
+#if 0
+        ego::ViewCamera::updateViewCameraBuffer(
             cmd_buf,
-            game_camera_params,
+            view_camera_params,
             s_dbuf_idx);
+#endif
 
         if (player_object_) {
             player_object_->updateBuffers(cmd_buf);
@@ -1581,10 +1584,13 @@ void RealWorldApplication::drawFrame() {
         localtm.tm_min,
         localtm.tm_sec);
 
+// todo
+#if 0
     gpu_game_camera_info_ =
-        ego::GameCamera::readCameraInfo(
+        ego::ViewCamera::readCameraInfo(
             device_,
             0);
+#endif
 
     ego::TileObject::updateAllTiles(
         device_,
@@ -1896,7 +1902,7 @@ void RealWorldApplication::cleanup() {
         ray_tracing_test_->destroy(device_);
     }
     ego::DrawableObject::destroyStaticMembers(device_);
-    ego::GameCamera::destroyStaticMembers(device_);
+    ego::ViewCamera::destroyStaticMembers(device_);
     ego::DebugDrawObject::destroyStaticMembers(device_);
     ibl_creator_->destroy(device_);
     weather_system_->destroy(device_);

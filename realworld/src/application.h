@@ -1,7 +1,6 @@
 #pragma once
 #include "renderer/renderer.h"
 #include "shaders/global_definition.glsl.h"
-#include "game_object/camera.h"
 #include "game_object/drawable_object.h"
 #include "game_object/terrain.h"
 #include "game_object/debug_draw.h"
@@ -11,6 +10,7 @@
 #include "game_object/hair_test.h"
 #include "game_object/lbm_patch.h"
 #include "game_object/lbm_test.h"
+#include "game_object/camera.h"
 #include "scene_rendering/skydome.h"
 #include "scene_rendering/weather_system.h"
 #include "scene_rendering/ibl_creator.h"
@@ -140,7 +140,6 @@ private:
     std::vector<std::shared_ptr<er::Fence>> images_in_flight_;
     std::shared_ptr<er::Semaphore> init_semaphore_;
 
-    std::shared_ptr<ego::GameCamera> game_camera_;
     std::vector<std::shared_ptr<ego::DrawableObject>> drawable_objects_;
     std::shared_ptr<ego::DrawableObject> player_object_;
     std::shared_ptr<ego::DrawableObject> bistro_exterior_scene_;
@@ -164,7 +163,7 @@ private:
 
     std::vector<er::ClearValue> clear_values_;
 
-    glsl::GameCameraInfo gpu_game_camera_info_;
+    glsl::ViewCameraInfo gpu_game_camera_info_;
 
     glsl::ViewParams view_params_{};
     std::chrono::high_resolution_clock::time_point last_frame_time_point_;
