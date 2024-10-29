@@ -393,7 +393,9 @@ void RealWorldApplication::initVulkan() {
     terrain_scene_view_ =
         std::make_shared<es::TerrainSceneView>(
             device_,
-            descriptor_pool_);
+            descriptor_pool_,
+            nullptr,
+            nullptr);
 
     prt_shadow_gen_ =
         std::make_shared<es::PrtShadow>(
@@ -1183,18 +1185,18 @@ void RealWorldApplication::drawScene(
             );
         }
 
-        cmd_buf->beginRenderPass(
-            hdr_render_pass_,
-            hdr_frame_buffer_,
-            screen_size,
-            clear_values_);
-
         terrain_scene_view_->draw(
             cmd_buf,
             desc_sets,
             s_dbuf_idx,
             delta_t,
             current_time);
+
+        cmd_buf->beginRenderPass(
+            hdr_render_pass_,
+            hdr_frame_buffer_,
+            screen_size,
+            clear_values_);
 
         if (s_render_prt_test) {
             conemap_test_->draw(
