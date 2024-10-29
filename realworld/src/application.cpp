@@ -50,34 +50,6 @@ std::shared_ptr<er::DescriptorSetLayout> createPbrLightingDescriptorSetLayout(
 
     return device->createDescriptorSetLayout(bindings);
 }
-
-std::shared_ptr<er::DescriptorSetLayout> createViewCameraDescriptorSetLayout(
-    const std::shared_ptr<er::Device>& device) {
-    std::vector<er::DescriptorSetLayoutBinding> bindings(1);
-    bindings[0].binding = VIEW_CAMERA_BUFFER_INDEX;
-    bindings[0].descriptor_count = 1;
-    bindings[0].descriptor_type = er::DescriptorType::STORAGE_BUFFER;
-    bindings[0].stage_flags =
-        SET_5_FLAG_BITS(
-            ShaderStage,
-            VERTEX_BIT,
-            MESH_BIT_EXT,
-            FRAGMENT_BIT,
-            GEOMETRY_BIT,
-            COMPUTE_BIT);
-    bindings[0].immutable_samplers = nullptr; // Optional
-
-    return device->createDescriptorSetLayout(bindings);
-}
-
-glm::vec3 getDirectionByYawAndPitch(float yaw, float pitch) {
-    glm::vec3 direction;
-    direction.x = cos(radians(-yaw)) * cos(radians(pitch));
-    direction.y = sin(radians(pitch));
-    direction.z = sin(radians(-yaw)) * cos(radians(pitch));
-    return normalize(direction);
-}
-
 }
 
 namespace work {
@@ -110,9 +82,8 @@ static bool s_camera_paused = false;
 static bool s_mouse_init = false;
 static bool s_mouse_right_button_pressed = false;
 static glm::vec2 s_last_mouse_pos;
-static int s_key = 0;
 static float s_mouse_wheel_offset = 0.0f;
-const float s_camera_speed = 10.0f;
+static int s_key = 0;
 
 static void keyInputCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
@@ -371,8 +342,6 @@ void RealWorldApplication::initVulkan() {
 
     pbr_lighting_desc_set_layout_ =
         createPbrLightingDescriptorSetLayout(device_);
-    view_desc_set_layout_ =
-        createViewCameraDescriptorSetLayout(device_);
 
     createCommandPool();
     assert(command_pool_);
@@ -421,9 +390,10 @@ void RealWorldApplication::initVulkan() {
     createCommandBuffers();
     createSyncObjects();
 
-    auto desc_set_layouts = {
-        pbr_lighting_desc_set_layout_,
-        view_desc_set_layout_ };
+    terrain_scene_view_ =
+        std::make_shared<es::TerrainSceneView>(
+            device_,
+            descriptor_pool_);
 
     prt_shadow_gen_ =
         std::make_shared<es::PrtShadow>(
@@ -470,6 +440,10 @@ void RealWorldApplication::initVulkan() {
             30,
             10,
             std::source_location::current());
+
+    auto desc_set_layouts = {
+        pbr_lighting_desc_set_layout_,
+        terrain_scene_view_->getViewCameraDescriptorSetLayout() };
 
     conemap_test_ =
         std::make_shared<ego::ConemapTest>(
@@ -552,7 +526,7 @@ void RealWorldApplication::initVulkan() {
         descriptor_pool_,
         hdr_render_pass_,
         cubemap_render_pass_,
-        view_desc_set_layout_,
+        terrain_scene_view_->getViewCameraDescriptorSetLayout(),
         graphic_no_depth_write_pipeline_info_,
         graphic_cubemap_pipeline_info_,
         ibl_creator_->getEnvmapTexture(),
@@ -607,7 +581,9 @@ void RealWorldApplication::initVulkan() {
     ego::ViewCamera::initStaticMembers(
         device_,
         descriptor_pool_,
-        desc_set_layouts,
+        desc_set_layouts);
+
+    terrain_scene_view_->createCameraDescSetWithTerrain(
         texture_sampler_,
         ego::TileObject::getRockLayer(),
         ego::TileObject::getSoilWaterLayer(0),
@@ -627,7 +603,7 @@ void RealWorldApplication::initVulkan() {
         device_,
         descriptor_pool_,
         hdr_render_pass_,
-        view_desc_set_layout_,
+        terrain_scene_view_->getViewCameraDescriptorSetLayout(),
         pbr_lighting_desc_set_layout_,
         graphic_pipeline_info_,
         texture_sampler_,
@@ -650,7 +626,7 @@ void RealWorldApplication::initVulkan() {
     volume_cloud_ = std::make_shared<es::VolumeCloud>(
         device_,
         descriptor_pool_,
-        view_desc_set_layout_,
+        terrain_scene_view_->getViewCameraDescriptorSetLayout(),
         mirror_repeat_sampler_,
         texture_point_sampler_,
         depth_buffer_copy_.view,
@@ -676,7 +652,7 @@ void RealWorldApplication::initVulkan() {
     ray_tracing_test_->init(
         device_,
         descriptor_pool_,
-        nullptr,//ego::ViewCamera::getViewCameraBuffer(),
+        terrain_scene_view_->getViewCameraBuffer(),
         rt_pipeline_properties_,
         as_features_,
         glm::uvec2(1024, 768));
@@ -731,9 +707,11 @@ void RealWorldApplication::recreateSwapChain() {
 
     createRenderPasses();
     createImageViews();
+
     auto desc_set_layouts = {
         pbr_lighting_desc_set_layout_,
-        view_desc_set_layout_ };
+        terrain_scene_view_->getViewCameraDescriptorSetLayout() };
+
     ego::TileObject::recreateStaticMembers(
         device_,
         hdr_render_pass_,
@@ -764,7 +742,7 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         hdr_render_pass_,
-        view_desc_set_layout_,
+        terrain_scene_view_->getViewCameraDescriptorSetLayout(),
         graphic_no_depth_write_pipeline_info_,
         ibl_creator_->getEnvmapTexture(),
         texture_sampler_,
@@ -856,7 +834,7 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         hdr_render_pass_,
-        view_desc_set_layout_,
+        terrain_scene_view_->getViewCameraDescriptorSetLayout(),
         graphic_pipeline_info_,
         texture_sampler_,
         texture_point_sampler_,
@@ -865,7 +843,7 @@ void RealWorldApplication::recreateSwapChain() {
     volume_cloud_->recreate(
         device_,
         descriptor_pool_,
-        view_desc_set_layout_,
+        terrain_scene_view_->getViewCameraDescriptorSetLayout(),
         mirror_repeat_sampler_,
         texture_point_sampler_,
         depth_buffer_copy_.view,
@@ -1022,22 +1000,6 @@ void RealWorldApplication::createDescriptorSets() {
         auto pbr_lighting_descs = addGlobalTextures(pbr_lighting_desc_set_);
         device_->updateDescriptorSets(pbr_lighting_descs);
     }
-
-#if 0 // todo
-    {
-        view_desc_set_ = device_->createDescriptorSets(descriptor_pool_, view_desc_set_layout_, 1)[0];
-        er::WriteDescriptorList buffer_descs;
-        buffer_descs.reserve(1);
-        er::Helper::addOneBuffer(
-            buffer_descs,
-            view_desc_set_,
-            er::DescriptorType::STORAGE_BUFFER,
-            VIEW_CAMERA_BUFFER_INDEX,
-            ego::ViewCamera::getViewCameraBuffer()->buffer,
-            sizeof(glsl::ViewCameraInfo));
-        device_->updateDescriptorSets(buffer_descs);
-    }
-#endif
 }
 
 void RealWorldApplication::createTextureSampler() {
@@ -1180,56 +1142,17 @@ void RealWorldApplication::drawScene(
             delta_t,
             menu_->isAirfowOn());
 
-        glsl::ViewCameraParams view_camera_params;
-        view_camera_params.world_min = ego::TileObject::getWorldMin();
-        view_camera_params.inv_world_range = 1.0f / ego::TileObject::getWorldRange();
-        if (s_render_prt_test || s_render_hair_test || s_render_lbm_test) {
-            view_camera_params.init_camera_pos = glm::vec3(0, 5.0f, 0);
-            view_camera_params.init_camera_dir = glm::vec3(0.0f, -1.0f, 0.0f);
-            view_camera_params.init_camera_up = glm::vec3(1, 0, 0);
-            view_camera_params.camera_speed = 0.01f;
-        }
-        else {
-            view_camera_params.init_camera_pos = glm::vec3(0, 500.0f, 0);
-            view_camera_params.init_camera_dir = glm::vec3(1.0f, 0.0f, 0.0f);
-            view_camera_params.init_camera_up = glm::vec3(0, 1, 0);
-            view_camera_params.camera_speed = s_camera_speed;
-        }
-
-        view_camera_params.yaw = 0.0f;
-        view_camera_params.pitch = -90.0f;
-        view_camera_params.init_camera_dir =
-            normalize(getDirectionByYawAndPitch(
-                view_camera_params.yaw,
-                view_camera_params.pitch));
-        view_camera_params.init_camera_up =
-            abs(view_camera_params.init_camera_dir.y) < 0.99f ?
-            vec3(0, 1, 0) :
-            vec3(1, 0, 0);
-
-        view_camera_params.z_near = 0.1f;
-        view_camera_params.z_far = 40000.0f;
-        view_camera_params.camera_follow_dist = 5.0f;
-        view_camera_params.key = s_key;
-        view_camera_params.frame_count = s_update_frame_count;
-        view_camera_params.delta_t = delta_t;
-        view_camera_params.mouse_pos = s_last_mouse_pos;
-        view_camera_params.fov = glm::radians(45.0f);
-        view_camera_params.aspect = swap_chain_info_.extent.x / (float)swap_chain_info_.extent.y;
-        view_camera_params.sensitivity = 0.2f;
-        view_camera_params.num_game_objs = static_cast<int32_t>(drawable_objects_.size());
-        view_camera_params.game_obj_idx = 0;
-        view_camera_params.camera_rot_update = (!s_camera_paused && s_mouse_right_button_pressed) ? 1 : 0;
-        view_camera_params.mouse_wheel_offset = s_mouse_wheel_offset;
-        s_mouse_wheel_offset = 0;
-
-// todo
-#if 0
-        ego::ViewCamera::updateViewCameraBuffer(
+        terrain_scene_view_->updateCamera(
             cmd_buf,
-            view_camera_params,
-            s_dbuf_idx);
-#endif
+            s_dbuf_idx,
+            s_key,
+            s_update_frame_count,
+            delta_t,
+            s_last_mouse_pos,
+            s_mouse_wheel_offset,
+            !s_camera_paused && s_mouse_right_button_pressed);
+
+        s_mouse_wheel_offset = 0;
 
         if (player_object_) {
             player_object_->updateBuffers(cmd_buf);
@@ -1265,6 +1188,13 @@ void RealWorldApplication::drawScene(
             hdr_frame_buffer_,
             screen_size,
             clear_values_);
+
+        terrain_scene_view_->draw(
+            cmd_buf,
+            desc_sets,
+            s_dbuf_idx,
+            delta_t,
+            current_time);
 
         if (s_render_prt_test) {
             conemap_test_->draw(
@@ -1715,7 +1645,7 @@ void RealWorldApplication::drawFrame() {
 
     drawScene(command_buffer,
         swap_chain_info_,
-        view_desc_set_,
+        terrain_scene_view_->getViewCameraDescriptorSet(),
         swap_chain_info_.extent,
         image_index,
         delta_t_,
@@ -1879,7 +1809,6 @@ void RealWorldApplication::cleanup() {
     device_->destroySampler(texture_point_sampler_);
     device_->destroySampler(repeat_texture_sampler_);
     device_->destroySampler(mirror_repeat_sampler_);
-    device_->destroyDescriptorSetLayout(view_desc_set_layout_);
     device_->destroyDescriptorSetLayout(pbr_lighting_desc_set_layout_);
     
     ego::TileObject::destroyAllTiles(device_);

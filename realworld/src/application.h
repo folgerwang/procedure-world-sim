@@ -19,6 +19,7 @@
 #include "scene_rendering/volume_noise.h"
 #include "scene_rendering/conemap.h"
 #include "scene_rendering/prt_shadow.h"
+#include "scene_rendering/terrain_scene_view.h"
 #include "ray_tracing/raytracing_base.h"
 #include "engine_helper.h"
 
@@ -92,8 +93,6 @@ private:
     std::shared_ptr<er::Surface> surface_;
     er::SwapChainInfo swap_chain_info_;
     std::shared_ptr<er::DescriptorPool> descriptor_pool_;
-    std::shared_ptr<er::DescriptorSet> view_desc_set_;
-    std::shared_ptr<er::DescriptorSetLayout> view_desc_set_layout_;
     std::shared_ptr<er::DescriptorSetLayout> pbr_lighting_desc_set_layout_;
     std::shared_ptr<er::DescriptorSet> pbr_lighting_desc_set_;
     er::TextureInfo ibl_diffuse_tex_;
@@ -160,6 +159,8 @@ private:
     std::shared_ptr<es::PrtShadow> prt_shadow_gen_;
     std::shared_ptr<engine::ray_tracing::RayTracingBase> ray_tracing_test_;
     std::shared_ptr<es::Menu> menu_;
+
+    std::shared_ptr<es::TerrainSceneView> terrain_scene_view_;
 
     std::vector<er::ClearValue> clear_values_;
 
