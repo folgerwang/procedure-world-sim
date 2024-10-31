@@ -390,12 +390,7 @@ void RealWorldApplication::initVulkan() {
     createCommandBuffers();
     createSyncObjects();
 
-    terrain_scene_view_ =
-        std::make_shared<es::TerrainSceneView>(
-            device_,
-            descriptor_pool_,
-            nullptr,
-            nullptr);
+    ego::ViewObject::createViewCameraDescriptorSetLayout(device_);
 
     prt_shadow_gen_ =
         std::make_shared<es::PrtShadow>(
@@ -445,7 +440,7 @@ void RealWorldApplication::initVulkan() {
 
     auto desc_set_layouts = {
         pbr_lighting_desc_set_layout_,
-        terrain_scene_view_->getViewCameraDescriptorSetLayout() };
+        ego::ViewObject::getViewCameraDescriptorSetLayout() };
 
     conemap_test_ =
         std::make_shared<ego::ConemapTest>(
@@ -528,7 +523,7 @@ void RealWorldApplication::initVulkan() {
         descriptor_pool_,
         hdr_render_pass_,
         cubemap_render_pass_,
-        terrain_scene_view_->getViewCameraDescriptorSetLayout(),
+        ego::ViewObject::getViewCameraDescriptorSetLayout(),
         graphic_no_depth_write_pipeline_info_,
         graphic_cubemap_pipeline_info_,
         ibl_creator_->getEnvmapTexture(),
@@ -545,14 +540,7 @@ void RealWorldApplication::initVulkan() {
             er::ImageLayout::PRESENT_SRC_KHR);
     }
 
-    ego::TileObject::initStaticMembers(
-        device_,
-        hdr_render_pass_,
-        hdr_water_render_pass_,
-        graphic_pipeline_info_,
-        graphic_double_face_pipeline_info_,
-        desc_set_layouts,
-        swap_chain_info_.extent);
+    ego::TileObject::initStaticMembers(device_);
 
     std::vector<std::shared_ptr<er::ImageView>> soil_water_texes(2);
     soil_water_texes[0] = ego::TileObject::getSoilWaterLayer(0).view;
@@ -585,6 +573,14 @@ void RealWorldApplication::initVulkan() {
         descriptor_pool_,
         desc_set_layouts);
 
+    terrain_scene_view_ =
+        std::make_shared<es::TerrainSceneView>(
+            device_,
+            descriptor_pool_,
+            desc_set_layouts,
+            nullptr,
+            nullptr);
+
     terrain_scene_view_->createCameraDescSetWithTerrain(
         texture_sampler_,
         ego::TileObject::getRockLayer(),
@@ -605,7 +601,7 @@ void RealWorldApplication::initVulkan() {
         device_,
         descriptor_pool_,
         hdr_render_pass_,
-        terrain_scene_view_->getViewCameraDescriptorSetLayout(),
+        ego::ViewObject::getViewCameraDescriptorSetLayout(),
         pbr_lighting_desc_set_layout_,
         graphic_pipeline_info_,
         texture_sampler_,
@@ -628,7 +624,7 @@ void RealWorldApplication::initVulkan() {
     volume_cloud_ = std::make_shared<es::VolumeCloud>(
         device_,
         descriptor_pool_,
-        terrain_scene_view_->getViewCameraDescriptorSetLayout(),
+        ego::ViewObject::getViewCameraDescriptorSetLayout(),
         mirror_repeat_sampler_,
         texture_point_sampler_,
         depth_buffer_copy_.view,
@@ -712,16 +708,9 @@ void RealWorldApplication::recreateSwapChain() {
 
     auto desc_set_layouts = {
         pbr_lighting_desc_set_layout_,
-        terrain_scene_view_->getViewCameraDescriptorSetLayout() };
+        ego::ViewObject::getViewCameraDescriptorSetLayout() };
 
-    ego::TileObject::recreateStaticMembers(
-        device_,
-        hdr_render_pass_,
-        hdr_water_render_pass_,
-        graphic_pipeline_info_,
-        graphic_double_face_pipeline_info_,
-        desc_set_layouts,
-        swap_chain_info_.extent);
+    ego::TileObject::recreateStaticMembers(device_);
     ego::DrawableObject::recreateStaticMembers(
         device_,
         hdr_render_pass_,
@@ -744,7 +733,7 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         hdr_render_pass_,
-        terrain_scene_view_->getViewCameraDescriptorSetLayout(),
+        ego::ViewObject::getViewCameraDescriptorSetLayout(),
         graphic_no_depth_write_pipeline_info_,
         ibl_creator_->getEnvmapTexture(),
         texture_sampler_,
@@ -836,7 +825,7 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         hdr_render_pass_,
-        terrain_scene_view_->getViewCameraDescriptorSetLayout(),
+        ego::ViewObject::getViewCameraDescriptorSetLayout(),
         graphic_pipeline_info_,
         texture_sampler_,
         texture_point_sampler_,
@@ -845,7 +834,7 @@ void RealWorldApplication::recreateSwapChain() {
     volume_cloud_->recreate(
         device_,
         descriptor_pool_,
-        terrain_scene_view_->getViewCameraDescriptorSetLayout(),
+        ego::ViewObject::getViewCameraDescriptorSetLayout(),
         mirror_repeat_sampler_,
         texture_point_sampler_,
         depth_buffer_copy_.view,
@@ -1192,6 +1181,7 @@ void RealWorldApplication::drawScene(
             delta_t,
             current_time);
 
+#if 0
         cmd_buf->beginRenderPass(
             hdr_render_pass_,
             hdr_frame_buffer_,
@@ -1268,7 +1258,7 @@ void RealWorldApplication::drawScene(
         }
 
         cmd_buf->endRenderPass();
-
+#endif
         er::ImageResourceInfo color_src_info = {
             er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
@@ -1524,11 +1514,12 @@ void RealWorldApplication::drawFrame() {
             0);
 #endif
 
-    ego::TileObject::updateAllTiles(
-        device_,
-        descriptor_pool_,
-        128,
-        glm::vec2(gpu_game_camera_info_.position.x, gpu_game_camera_info_.position.z));
+    auto visible_tiles =
+        ego::TileObject::updateAllTiles(
+            device_,
+            descriptor_pool_,
+            128,
+            glm::vec2(gpu_game_camera_info_.position.x, gpu_game_camera_info_.position.z));
 
     if (dump_volume_noise_) {
         const auto noise_texture_size = kDetailNoiseTextureSize;
@@ -1645,6 +1636,7 @@ void RealWorldApplication::drawFrame() {
     command_buffer->reset(0);
     command_buffer->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
 
+    terrain_scene_view_->setVisibleTiles(visible_tiles);
     drawScene(command_buffer,
         swap_chain_info_,
         terrain_scene_view_->getViewCameraDescriptorSet(),
