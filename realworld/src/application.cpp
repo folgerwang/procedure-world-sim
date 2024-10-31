@@ -1294,7 +1294,8 @@ void RealWorldApplication::drawScene(
                     color_dst_info,
                     SET_FLAG_BIT(ImageAspect, COLOR_BIT),
                     SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-                    glm::ivec3(screen_size.x, screen_size.y, 1));
+                    hdr_color_buffer_.size,
+                    hdr_color_buffer_copy_.size);
 
                 er::Helper::blitImage(
                     cmd_buf,
@@ -1306,7 +1307,8 @@ void RealWorldApplication::drawScene(
                     depth_dst_info,
                     SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
                     SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
-                    glm::ivec3(screen_size.x, screen_size.y, 1));
+                    depth_buffer_.size,
+                    depth_buffer_copy_.size);
             }
 
             // render terrain water pass.
@@ -1341,7 +1343,8 @@ void RealWorldApplication::drawScene(
                 depth_dst_info,
                 SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
                 SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
-                glm::ivec3(screen_size.x, screen_size.y, 1));
+                depth_buffer_.size,
+                depth_buffer_copy_.size);
 
             if (!menu_->isVolumeMoistTurnOff()) {
                 volume_cloud_->renderVolumeCloud(
@@ -1378,7 +1381,7 @@ void RealWorldApplication::drawScene(
 
     er::Helper::blitImage(
         cmd_buf,
-        hdr_color_buffer_.image,
+        terrain_scene_view_->getColorBuffer()->image,
         swap_chain_info.images[image_index],
         src_info,
         src_info,
@@ -1386,6 +1389,7 @@ void RealWorldApplication::drawScene(
         dst_info,
         SET_FLAG_BIT(ImageAspect, COLOR_BIT),
         SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+        terrain_scene_view_->getColorBuffer()->size,
         glm::ivec3(screen_size.x, screen_size.y, 1));
 
     s_dbuf_idx = 1 - s_dbuf_idx;
