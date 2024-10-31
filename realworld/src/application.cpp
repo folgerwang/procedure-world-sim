@@ -608,18 +608,22 @@ void RealWorldApplication::initVulkan() {
         texture_point_sampler_,
         swap_chain_info_.extent);
 
-    ego::TileObject::updateStaticDescriptorSet(
+    assert(volume_noise_);
+    terrain_scene_view_->updateTileResDescriptorSet(
         device_,
         descriptor_pool_,
         texture_sampler_,
         repeat_texture_sampler_,
-        hdr_color_buffer_copy_.view,
-        depth_buffer_copy_.view,
         weather_system_->getTempTexes(),
-        heightmap_tex_.view,
         map_mask_tex_.view,
         volume_noise_->getDetailNoiseTexture().view,
         volume_noise_->getRoughNoiseTexture().view);
+
+    ego::TileObject::updateStaticDescriptorSet(
+        device_,
+        descriptor_pool_,
+        texture_sampler_,
+        heightmap_tex_.view);
 
     volume_cloud_ = std::make_shared<es::VolumeCloud>(
         device_,
@@ -804,14 +808,7 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         texture_sampler_,
-        repeat_texture_sampler_,
-        hdr_color_buffer_copy_.view,
-        depth_buffer_copy_.view,
-        weather_system_->getTempTexes(),
-        heightmap_tex_.view,
-        map_mask_tex_.view,
-        volume_noise_->getDetailNoiseTexture().view,
-        volume_noise_->getRoughNoiseTexture().view);
+        heightmap_tex_.view);
 
     ego::DebugDrawObject::updateStaticDescriptorSet(
         device_,
@@ -1229,20 +1226,7 @@ void RealWorldApplication::drawScene(
                 player_object_->draw(cmd_buf, desc_sets);
             }
 
-            // render terrain opaque pass.
-            {
-                ego::TileObject::drawAllVisibleTiles(
-                    cmd_buf,
-                    desc_sets,
-                    glm::vec2(gpu_game_camera_info_.position.x, gpu_game_camera_info_.position.z),
-                    screen_size,
-                    s_dbuf_idx,
-                    delta_t,
-                    current_time,
-                    true,
-                    !menu_->isGrassPassTurnOff());
-            }
-
+            // render debug draw.
             if (menu_->getDebugDrawType() != NO_DEBUG_DRAW) {
                 ego::DebugDrawObject::draw(
                     cmd_buf,
