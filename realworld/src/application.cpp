@@ -1243,16 +1243,6 @@ void RealWorldApplication::drawScene(
 
         cmd_buf->endRenderPass();
 #endif
-        er::ImageResourceInfo color_src_info = {
-            er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
-            SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
-
-        er::ImageResourceInfo color_dst_info = {
-            er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            SET_FLAG_BIT(Access, SHADER_READ_BIT),
-            SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
-
         er::ImageResourceInfo depth_src_info = {
             er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             SET_FLAG_BIT(Access, DEPTH_STENCIL_ATTACHMENT_WRITE_BIT),
@@ -1263,93 +1253,38 @@ void RealWorldApplication::drawScene(
             SET_FLAG_BIT(Access, SHADER_READ_BIT),
             SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
 
-        if (!s_render_prt_test &&
-            !s_render_hair_test &&
-            !s_render_lbm_test &&
-            !s_bistro_scene_test) {
-            if (!menu_->isWaterPassTurnOff()) {
-                er::Helper::blitImage(
-                    cmd_buf,
-                    hdr_color_buffer_.image,
-                    hdr_color_buffer_copy_.image,
-                    color_src_info,
-                    color_src_info,
-                    color_dst_info,
-                    color_dst_info,
-                    SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-                    SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-                    hdr_color_buffer_.size,
-                    hdr_color_buffer_copy_.size);
+        er::Helper::blitImage(
+            cmd_buf,
+            depth_buffer_.image,
+            depth_buffer_copy_.image,
+            depth_src_info,
+            depth_src_info,
+            depth_dst_info,
+            depth_dst_info,
+            SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
+            SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
+            depth_buffer_.size,
+            depth_buffer_copy_.size);
 
-                er::Helper::blitImage(
-                    cmd_buf,
-                    depth_buffer_.image,
-                    depth_buffer_copy_.image,
-                    depth_src_info,
-                    depth_src_info,
-                    depth_dst_info,
-                    depth_dst_info,
-                    SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
-                    SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
-                    depth_buffer_.size,
-                    depth_buffer_copy_.size);
-            }
-
-            // render terrain water pass.
-            if (!menu_->isWaterPassTurnOff())
-            {
-                cmd_buf->beginRenderPass(
-                    hdr_water_render_pass_,
-                    hdr_water_frame_buffer_,
-                    screen_size,
-                    clear_values_);
-
-                ego::TileObject::drawAllVisibleTiles(
-                    cmd_buf,
-                    desc_sets,
-                    glm::vec2(gpu_game_camera_info_.position.x, gpu_game_camera_info_.position.z),
-                    screen_size,
-                    s_dbuf_idx,
-                    delta_t,
-                    current_time,
-                    false);
-
-                cmd_buf->endRenderPass();
-            }
-
-            er::Helper::blitImage(
+        if (!menu_->isVolumeMoistTurnOff()) {
+            volume_cloud_->renderVolumeCloud(
                 cmd_buf,
-                depth_buffer_.image,
-                depth_buffer_copy_.image,
-                depth_src_info,
-                depth_src_info,
-                depth_dst_info,
-                depth_dst_info,
-                SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
-                SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
-                depth_buffer_.size,
-                depth_buffer_copy_.size);
-
-            if (!menu_->isVolumeMoistTurnOff()) {
-                volume_cloud_->renderVolumeCloud(
-                    cmd_buf,
-                    view_desc_set,
-                    hdr_color_buffer_.image,
-                    skydome_,
-                    menu_->getViewExtFactor(),
-                    menu_->getViewExtExponent(),
-                    menu_->getCloudAmbientIntensity(),
-                    menu_->getCloudPhaseIntensity(),
-                    menu_->getCloudMoistToPressureRatio(),
-                    menu_->getCloudNoiseWeight(0),
-                    menu_->getCloudNoiseWeight(1),
-                    menu_->getCloudNoiseThresold(),
-                    menu_->getCloudNoiseScrollingSpeed(),
-                    menu_->getCloudNoiseScale(),
-                    screen_size,
-                    s_dbuf_idx,
-                    current_time);
-            }
+                view_desc_set,
+                hdr_color_buffer_.image,
+                skydome_,
+                menu_->getViewExtFactor(),
+                menu_->getViewExtExponent(),
+                menu_->getCloudAmbientIntensity(),
+                menu_->getCloudPhaseIntensity(),
+                menu_->getCloudMoistToPressureRatio(),
+                menu_->getCloudNoiseWeight(0),
+                menu_->getCloudNoiseWeight(1),
+                menu_->getCloudNoiseThresold(),
+                menu_->getCloudNoiseScrollingSpeed(),
+                menu_->getCloudNoiseScale(),
+                screen_size,
+                s_dbuf_idx,
+                current_time);
         }
     }
 
