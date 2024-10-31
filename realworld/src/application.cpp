@@ -366,25 +366,26 @@ void RealWorldApplication::initVulkan() {
         ibl_sheen_tex_,
         std::source_location::current());
     recreateRenderBuffer(swap_chain_info_.extent);
-    auto format = er::Format::R8G8B8A8_UNORM;
-    eh::createTextureImage(device_, "assets/statue.jpg", format, sample_tex_, std::source_location::current());
-    eh::createTextureImage(device_, "assets/brdfLUT.png", format, brdf_lut_tex_, std::source_location::current());
-    eh::createTextureImage(device_, "assets/lut_ggx.png", format, ggx_lut_tex_, std::source_location::current());
-    eh::createTextureImage(device_, "assets/lut_charlie.png", format, charlie_lut_tex_, std::source_location::current());
-    eh::createTextureImage(device_, "assets/lut_thin_film.png", format, thin_film_lut_tex_, std::source_location::current());
-    eh::createTextureImage(device_, "assets/map_mask.png", format, map_mask_tex_, std::source_location::current());
-    eh::createTextureImage(device_, "assets/map.png", er::Format::R16_UNORM, heightmap_tex_, std::source_location::current());
-//    eh::createTextureImage(device_, "assets/tile1.jpg", format, prt_base_tex_, std::source_location::current());
-//    eh::createTextureImage(device_, "assets/tile1.tga", format, prt_bump_tex_, std::source_location::current());
-//    eh::createTextureImage(device_, "assets/T_Mat4Mural_C.PNG", format, prt_base_tex_, std::source_location::current());
-//    eh::createTextureImage(device_, "assets/T_Mat4Mural_H.PNG", format, prt_height_tex_, std::source_location::current());
-//    eh::createTextureImage(device_, "assets/T_Mat4Mural_N.PNG", format, prt_normal_tex_, std::source_location::current());
-//    eh::createTextureImage(device_, "assets/T_Mat4Mural_TRA.PNG", format, prt_orh_tex_, std::source_location::current());
-//    eh::createTextureImage(device_, "assets/T_Mat1Ground_C.jpg", format, prt_base_tex_, std::source_location::current());
-//    eh::createTextureImage(device_, "assets/T_Mat1Ground_ORH.jpg", format, prt_bump_tex_, std::source_location::current());
-    eh::createTextureImage(device_, "assets/T_Mat2Mountains_C.jpg", format, prt_base_tex_, std::source_location::current());
-    eh::createTextureImage(device_, "assets/T_Mat2Mountains_N.jpg", format, prt_normal_tex_, std::source_location::current());
-    eh::createTextureImage(device_, "assets/T_Mat2Mountains_ORH.jpg", format, prt_orh_tex_, std::source_location::current());
+    auto default_color_format = er::Format::R8G8B8A8_UNORM;
+    auto height_map_format = er::Format::R16_UNORM;
+    eh::createTextureImage(device_, "assets/statue.jpg", default_color_format, sample_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/brdfLUT.png", default_color_format, brdf_lut_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/lut_ggx.png", default_color_format, ggx_lut_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/lut_charlie.png", default_color_format, charlie_lut_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/lut_thin_film.png", default_color_format, thin_film_lut_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/map_mask.png", default_color_format, map_mask_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/map.png", height_map_format, heightmap_tex_, std::source_location::current());
+//    eh::createTextureImage(device_, "assets/tile1.jpg", default_color_format, prt_base_tex_, std::source_location::current());
+//    eh::createTextureImage(device_, "assets/tile1.tga", default_color_format, prt_bump_tex_, std::source_location::current());
+//    eh::createTextureImage(device_, "assets/T_Mat4Mural_C.PNG", default_color_format, prt_base_tex_, std::source_location::current());
+//    eh::createTextureImage(device_, "assets/T_Mat4Mural_H.PNG", default_color_format, prt_height_tex_, std::source_location::current());
+//    eh::createTextureImage(device_, "assets/T_Mat4Mural_N.PNG", default_color_format, prt_normal_tex_, std::source_location::current());
+//    eh::createTextureImage(device_, "assets/T_Mat4Mural_TRA.PNG", default_color_format, prt_orh_tex_, std::source_location::current());
+//    eh::createTextureImage(device_, "assets/T_Mat1Ground_C.jpg", default_color_format, prt_base_tex_, std::source_location::current());
+//    eh::createTextureImage(device_, "assets/T_Mat1Ground_ORH.jpg", default_color_format, prt_bump_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/T_Mat2Mountains_C.jpg", default_color_format, prt_base_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/T_Mat2Mountains_N.jpg", default_color_format, prt_normal_tex_, std::source_location::current());
+    eh::createTextureImage(device_, "assets/T_Mat2Mountains_ORH.jpg", default_color_format, prt_orh_tex_, std::source_location::current());
     createTextureSampler();
     descriptor_pool_ = device_->createDescriptorPool();
     createCommandBuffers();
@@ -1396,9 +1397,6 @@ void RealWorldApplication::drawFrame() {
     device_->waitForFences({ in_flight_fences_[current_frame_] });
     device_->resetFences({ in_flight_fences_[current_frame_] });
 
-// todo
-    //terrain_scene_view_->readCameraInfo();
-
     uint32_t image_index = 0;
     bool need_recreate_swap_chain = er::Helper::acquireNextImage(
         device_,
@@ -1431,6 +1429,8 @@ void RealWorldApplication::drawFrame() {
         22/*localtm->tm_hour*/,
         localtm.tm_min,
         localtm.tm_sec);
+
+    terrain_scene_view_->readCameraInfo();
 
     auto visible_tiles =
         ego::TileObject::updateAllTiles(
