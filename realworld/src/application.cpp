@@ -1122,7 +1122,7 @@ void RealWorldApplication::drawScene(
             cmd_buf,
             ego::TileObject::getWorldMin(),
             ego::TileObject::getWorldRange(),
-            gpu_game_camera_info_.position,
+            terrain_scene_view_->getCameraPosition(),
             menu_->getAirFlowStrength(),
             menu_->getWaterFlowStrength(),
             s_update_frame_count,
@@ -1396,6 +1396,9 @@ void RealWorldApplication::drawFrame() {
     device_->waitForFences({ in_flight_fences_[current_frame_] });
     device_->resetFences({ in_flight_fences_[current_frame_] });
 
+// todo
+    //terrain_scene_view_->readCameraInfo();
+
     uint32_t image_index = 0;
     bool need_recreate_swap_chain = er::Helper::acquireNextImage(
         device_,
@@ -1429,20 +1432,12 @@ void RealWorldApplication::drawFrame() {
         localtm.tm_min,
         localtm.tm_sec);
 
-// todo
-#if 0
-    gpu_game_camera_info_ =
-        ego::ViewCamera::readCameraInfo(
-            device_,
-            0);
-#endif
-
     auto visible_tiles =
         ego::TileObject::updateAllTiles(
             device_,
             descriptor_pool_,
             128,
-            glm::vec2(gpu_game_camera_info_.position.x, gpu_game_camera_info_.position.z));
+            glm::vec2(terrain_scene_view_->getCameraPosition()));
 
     if (dump_volume_noise_) {
         const auto noise_texture_size = kDetailNoiseTextureSize;

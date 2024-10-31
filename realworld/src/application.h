@@ -164,8 +164,6 @@ private:
 
     std::vector<er::ClearValue> clear_values_;
 
-    glsl::ViewCameraInfo gpu_game_camera_info_;
-
     glsl::ViewParams view_params_{};
     std::chrono::high_resolution_clock::time_point last_frame_time_point_;
     float current_time_ = 0;
