@@ -1759,6 +1759,8 @@ void RealWorldApplication::cleanup() {
     lbm_patch_->destroy(device_);
     lbm_test_->destroy(device_);
 
+    terrain_scene_view_->destroy(device_);
+
     er::helper::clearCachedShaderModules(device_);
 
     device_->destroySemaphore(init_semaphore_);
