@@ -582,6 +582,14 @@ void RealWorldApplication::initVulkan() {
             nullptr,
             nullptr);
 
+    object_scene_view_ = 
+        std::make_shared<es::ObjectSceneView>(
+            device_,
+            descriptor_pool_,
+            desc_set_layouts,
+            nullptr,
+            nullptr);
+
     terrain_scene_view_->createCameraDescSetWithTerrain(
         texture_sampler_,
         ego::TileObject::getRockLayer(),
@@ -1141,6 +1149,16 @@ void RealWorldApplication::drawScene(
             s_mouse_wheel_offset,
             !s_camera_paused && s_mouse_right_button_pressed);
 
+        object_scene_view_->updateCamera(
+            cmd_buf,
+            s_dbuf_idx,
+            s_key,
+            s_update_frame_count,
+            delta_t,
+            s_last_mouse_pos,
+            s_mouse_wheel_offset,
+            !s_camera_paused && s_mouse_right_button_pressed);
+
         s_mouse_wheel_offset = 0;
 
         if (player_object_) {
@@ -1173,6 +1191,13 @@ void RealWorldApplication::drawScene(
         }
 
         terrain_scene_view_->draw(
+            cmd_buf,
+            desc_sets,
+            s_dbuf_idx,
+            delta_t,
+            current_time);
+
+        object_scene_view_->draw(
             cmd_buf,
             desc_sets,
             s_dbuf_idx,
@@ -1299,9 +1324,12 @@ void RealWorldApplication::drawScene(
         SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
         SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
 
+    const auto& display_scene_view =
+        object_scene_view_;
+
     er::Helper::blitImage(
         cmd_buf,
-        terrain_scene_view_->getColorBuffer()->image,
+        display_scene_view->getColorBuffer()->image,
         swap_chain_info.images[image_index],
         src_info,
         src_info,
@@ -1309,7 +1337,7 @@ void RealWorldApplication::drawScene(
         dst_info,
         SET_FLAG_BIT(ImageAspect, COLOR_BIT),
         SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-        terrain_scene_view_->getColorBuffer()->size,
+        display_scene_view->getColorBuffer()->size,
         glm::ivec3(screen_size.x, screen_size.y, 1));
 
     s_dbuf_idx = 1 - s_dbuf_idx;
@@ -1760,6 +1788,7 @@ void RealWorldApplication::cleanup() {
     lbm_test_->destroy(device_);
 
     terrain_scene_view_->destroy(device_);
+    object_scene_view_->destroy(device_);
 
     er::helper::clearCachedShaderModules(device_);
 

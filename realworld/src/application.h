@@ -20,6 +20,7 @@
 #include "scene_rendering/conemap.h"
 #include "scene_rendering/prt_shadow.h"
 #include "scene_rendering/terrain_scene_view.h"
+#include "scene_rendering/object_scene_view.h"
 #include "ray_tracing/raytracing_base.h"
 #include "engine_helper.h"
 
@@ -160,6 +161,7 @@ private:
     std::shared_ptr<engine::ray_tracing::RayTracingBase> ray_tracing_test_;
     std::shared_ptr<es::Menu> menu_;
 
+    std::shared_ptr<es::ObjectSceneView> object_scene_view_;
     std::shared_ptr<es::TerrainSceneView> terrain_scene_view_;
 
     std::vector<er::ClearValue> clear_values_;
