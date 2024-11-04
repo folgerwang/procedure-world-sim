@@ -680,6 +680,10 @@ void RealWorldApplication::initVulkan() {
             swap_chain_info_.extent,
             glm::inverse(view_params_.view));
 
+    object_scene_view_->addDrawableObject(
+        bistro_exterior_scene_);
+
+
     menu_ = std::make_shared<es::Menu>(
         window_,
         device_,
@@ -1119,6 +1123,11 @@ void RealWorldApplication::drawScene(
             current_time);
     }
 
+    std::shared_ptr<ego::ViewObject> display_scene_view = nullptr;
+
+    display_scene_view = object_scene_view_;
+    //display_scene_view = terrain_scene_view_;
+
     // this has to be happened after tile update, or you wont get the right height info.
     {
         static std::chrono::time_point s_last_time = std::chrono::steady_clock::now();
@@ -1139,17 +1148,7 @@ void RealWorldApplication::drawScene(
             delta_t,
             menu_->isAirfowOn());
 
-        terrain_scene_view_->updateCamera(
-            cmd_buf,
-            s_dbuf_idx,
-            s_key,
-            s_update_frame_count,
-            delta_t,
-            s_last_mouse_pos,
-            s_mouse_wheel_offset,
-            !s_camera_paused && s_mouse_right_button_pressed);
-
-        object_scene_view_->updateCamera(
+        display_scene_view->updateCamera(
             cmd_buf,
             s_dbuf_idx,
             s_key,
@@ -1190,14 +1189,7 @@ void RealWorldApplication::drawScene(
             );
         }
 
-        terrain_scene_view_->draw(
-            cmd_buf,
-            desc_sets,
-            s_dbuf_idx,
-            delta_t,
-            current_time);
-
-        object_scene_view_->draw(
+        display_scene_view->draw(
             cmd_buf,
             desc_sets,
             s_dbuf_idx,
@@ -1323,9 +1315,6 @@ void RealWorldApplication::drawScene(
         er::ImageLayout::PRESENT_SRC_KHR,
         SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
         SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
-
-    const auto& display_scene_view =
-        object_scene_view_;
 
     er::Helper::blitImage(
         cmd_buf,
