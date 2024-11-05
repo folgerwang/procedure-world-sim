@@ -1089,7 +1089,9 @@ void RealWorldApplication::drawScene(
         clear_values_,
         kCubemapSize);
  
-    er::DescriptorSetList desc_sets{ pbr_lighting_desc_set_, view_desc_set };
+    er::DescriptorSetList desc_sets{
+        pbr_lighting_desc_set_,
+        view_desc_set };
 
     {
         // only init one time.
@@ -1123,10 +1125,10 @@ void RealWorldApplication::drawScene(
             current_time);
     }
 
-    std::shared_ptr<ego::ViewObject> display_scene_view = nullptr;
+    std::shared_ptr<ego::ViewObject> focus_scene_view = nullptr;
 
-    display_scene_view = object_scene_view_;
-    //display_scene_view = terrain_scene_view_;
+    focus_scene_view = object_scene_view_;
+    //focus_scene_view = terrain_scene_view_;
 
     // this has to be happened after tile update, or you wont get the right height info.
     {
@@ -1148,7 +1150,7 @@ void RealWorldApplication::drawScene(
             delta_t,
             menu_->isAirfowOn());
 
-        display_scene_view->updateCamera(
+        focus_scene_view->updateCamera(
             cmd_buf,
             s_dbuf_idx,
             s_key,
@@ -1162,6 +1164,10 @@ void RealWorldApplication::drawScene(
 
         if (player_object_) {
             player_object_->updateBuffers(cmd_buf);
+        }
+
+        if (bistro_exterior_scene_) {
+            bistro_exterior_scene_->updateBuffers(cmd_buf);
         }
 
         for (auto& drawable_obj : drawable_objects_) {
@@ -1189,9 +1195,9 @@ void RealWorldApplication::drawScene(
             );
         }
 
-        display_scene_view->draw(
+        focus_scene_view->draw(
             cmd_buf,
-            desc_sets,
+            pbr_lighting_desc_set_,
             s_dbuf_idx,
             delta_t,
             current_time);
@@ -1249,7 +1255,7 @@ void RealWorldApplication::drawScene(
                 ego::DebugDrawObject::draw(
                     cmd_buf,
                     desc_sets,
-                    gpu_game_camera_info_.position,
+                    focus_scene_view->getCameraPosition(),
                     menu_->getDebugDrawType());
             }
 
@@ -1318,7 +1324,7 @@ void RealWorldApplication::drawScene(
 
     er::Helper::blitImage(
         cmd_buf,
-        display_scene_view->getColorBuffer()->image,
+        focus_scene_view->getColorBuffer()->image,
         swap_chain_info.images[image_index],
         src_info,
         src_info,
@@ -1326,7 +1332,7 @@ void RealWorldApplication::drawScene(
         dst_info,
         SET_FLAG_BIT(ImageAspect, COLOR_BIT),
         SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-        display_scene_view->getColorBuffer()->size,
+        focus_scene_view->getColorBuffer()->size,
         glm::ivec3(screen_size.x, screen_size.y, 1));
 
     s_dbuf_idx = 1 - s_dbuf_idx;
@@ -1447,7 +1453,7 @@ void RealWorldApplication::drawFrame() {
         localtm.tm_min,
         localtm.tm_sec);
 
-    terrain_scene_view_->readCameraInfo();
+    terrain_scene_view_->readGpuCameraInfo();
 
     auto visible_tiles =
         ego::TileObject::updateAllTiles(
@@ -1570,6 +1576,12 @@ void RealWorldApplication::drawFrame() {
 
     command_buffer->reset(0);
     command_buffer->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
+
+    std::shared_ptr<ego::ViewObject> display_scene_view = nullptr;
+
+    display_scene_view = object_scene_view_;
+    //display_scene_view = terrain_scene_view_;
+
 
     terrain_scene_view_->setVisibleTiles(visible_tiles);
     drawScene(command_buffer,
