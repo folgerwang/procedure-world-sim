@@ -11,6 +11,7 @@
 #include "game_object/lbm_patch.h"
 #include "game_object/lbm_test.h"
 #include "game_object/camera.h"
+#include "game_object/camera_object.h"
 #include "scene_rendering/skydome.h"
 #include "scene_rendering/weather_system.h"
 #include "scene_rendering/ibl_creator.h"
@@ -161,7 +162,10 @@ private:
     std::shared_ptr<engine::ray_tracing::RayTracingBase> ray_tracing_test_;
     std::shared_ptr<es::Menu> menu_;
 
+    std::shared_ptr<ego::CameraObject> main_camera_object_;
+    std::shared_ptr<ego::CameraObject> shadow_camera_object_;
     std::shared_ptr<es::ObjectSceneView> object_scene_view_;
+    std::shared_ptr<es::ObjectSceneView> shadow_object_scene_view_;
     std::shared_ptr<es::TerrainSceneView> terrain_scene_view_;
 
     std::vector<er::ClearValue> clear_values_;

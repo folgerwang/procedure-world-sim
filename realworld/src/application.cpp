@@ -394,7 +394,7 @@ void RealWorldApplication::initVulkan() {
     createCommandBuffers();
     createSyncObjects();
 
-    ego::ViewObject::createViewCameraDescriptorSetLayout(device_);
+    ego::CameraObject::createViewCameraDescriptorSetLayout(device_);
 
     prt_shadow_gen_ =
         std::make_shared<es::PrtShadow>(
@@ -444,7 +444,7 @@ void RealWorldApplication::initVulkan() {
 
     auto desc_set_layouts = {
         pbr_lighting_desc_set_layout_,
-        ego::ViewObject::getViewCameraDescriptorSetLayout() };
+        ego::CameraObject::getViewCameraDescriptorSetLayout() };
 
     conemap_test_ =
         std::make_shared<ego::ConemapTest>(
@@ -527,7 +527,7 @@ void RealWorldApplication::initVulkan() {
         descriptor_pool_,
         hdr_render_pass_,
         cubemap_render_pass_,
-        ego::ViewObject::getViewCameraDescriptorSetLayout(),
+        ego::CameraObject::getViewCameraDescriptorSetLayout(),
         graphic_no_depth_write_pipeline_info_,
         graphic_cubemap_pipeline_info_,
         ibl_creator_->getEnvmapTexture(),
@@ -576,10 +576,21 @@ void RealWorldApplication::initVulkan() {
         descriptor_pool_,
         desc_set_layouts);
 
+    main_camera_object_ =
+        std::make_shared<ego::CameraObject>(
+            device_,
+            descriptor_pool_);
+
+    shadow_camera_object_ =
+        std::make_shared<ego::CameraObject>(
+            device_,
+            descriptor_pool_);
+
     terrain_scene_view_ =
         std::make_shared<es::TerrainSceneView>(
             device_,
             descriptor_pool_,
+            main_camera_object_,
             desc_set_layouts,
             nullptr,
             nullptr);
@@ -588,11 +599,21 @@ void RealWorldApplication::initVulkan() {
         std::make_shared<es::ObjectSceneView>(
             device_,
             descriptor_pool_,
+            main_camera_object_,
             desc_set_layouts,
             nullptr,
             nullptr);
 
-    terrain_scene_view_->createCameraDescSetWithTerrain(
+    shadow_object_scene_view_ =
+        std::make_shared<es::ObjectSceneView>(
+            device_,
+            descriptor_pool_,
+            shadow_camera_object_,
+            desc_set_layouts,
+            nullptr,
+            nullptr);
+
+    main_camera_object_->createCameraDescSetWithTerrain(
         texture_sampler_,
         ego::TileObject::getRockLayer(),
         ego::TileObject::getSoilWaterLayer(0),
@@ -612,7 +633,7 @@ void RealWorldApplication::initVulkan() {
         device_,
         descriptor_pool_,
         hdr_render_pass_,
-        ego::ViewObject::getViewCameraDescriptorSetLayout(),
+        ego::CameraObject::getViewCameraDescriptorSetLayout(),
         pbr_lighting_desc_set_layout_,
         graphic_pipeline_info_,
         texture_sampler_,
@@ -639,7 +660,7 @@ void RealWorldApplication::initVulkan() {
     volume_cloud_ = std::make_shared<es::VolumeCloud>(
         device_,
         descriptor_pool_,
-        ego::ViewObject::getViewCameraDescriptorSetLayout(),
+        ego::CameraObject::getViewCameraDescriptorSetLayout(),
         mirror_repeat_sampler_,
         texture_point_sampler_,
         depth_buffer_copy_.view,
@@ -665,7 +686,7 @@ void RealWorldApplication::initVulkan() {
     ray_tracing_test_->init(
         device_,
         descriptor_pool_,
-        terrain_scene_view_->getViewCameraBuffer(),
+        main_camera_object_->getViewCameraBuffer(),
         rt_pipeline_properties_,
         as_features_,
         glm::uvec2(1024, 768));
@@ -685,6 +706,8 @@ void RealWorldApplication::initVulkan() {
     object_scene_view_->addDrawableObject(
         bistro_exterior_scene_);
 
+    shadow_object_scene_view_->addDrawableObject(
+        bistro_exterior_scene_);
 
     menu_ = std::make_shared<es::Menu>(
         window_,
@@ -727,7 +750,7 @@ void RealWorldApplication::recreateSwapChain() {
 
     auto desc_set_layouts = {
         pbr_lighting_desc_set_layout_,
-        ego::ViewObject::getViewCameraDescriptorSetLayout() };
+        ego::CameraObject::getViewCameraDescriptorSetLayout() };
 
     ego::TileObject::recreateStaticMembers(device_);
     ego::DrawableObject::recreateStaticMembers(
@@ -752,7 +775,7 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         hdr_render_pass_,
-        ego::ViewObject::getViewCameraDescriptorSetLayout(),
+        ego::CameraObject::getViewCameraDescriptorSetLayout(),
         graphic_no_depth_write_pipeline_info_,
         ibl_creator_->getEnvmapTexture(),
         texture_sampler_,
@@ -837,7 +860,7 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         descriptor_pool_,
         hdr_render_pass_,
-        ego::ViewObject::getViewCameraDescriptorSetLayout(),
+        ego::CameraObject::getViewCameraDescriptorSetLayout(),
         graphic_pipeline_info_,
         texture_sampler_,
         texture_point_sampler_,
@@ -846,7 +869,7 @@ void RealWorldApplication::recreateSwapChain() {
     volume_cloud_->recreate(
         device_,
         descriptor_pool_,
-        ego::ViewObject::getViewCameraDescriptorSetLayout(),
+        ego::CameraObject::getViewCameraDescriptorSetLayout(),
         mirror_repeat_sampler_,
         texture_point_sampler_,
         depth_buffer_copy_.view,
@@ -1128,8 +1151,10 @@ void RealWorldApplication::drawScene(
     }
 
     std::shared_ptr<ego::ViewObject> focus_scene_view = nullptr;
+    std::shared_ptr<ego::ViewObject> shadow_focus_scene_view = nullptr;
 
     focus_scene_view = object_scene_view_;
+    shadow_focus_scene_view = shadow_object_scene_view_;
     //focus_scene_view = terrain_scene_view_;
 
     // this has to be happened after tile update, or you wont get the right height info.
@@ -1144,7 +1169,7 @@ void RealWorldApplication::drawScene(
             cmd_buf,
             ego::TileObject::getWorldMin(),
             ego::TileObject::getWorldRange(),
-            terrain_scene_view_->getCameraPosition(),
+            main_camera_object_->getCameraPosition(),
             menu_->getAirFlowStrength(),
             menu_->getWaterFlowStrength(),
             0,//s_update_frame_count,
@@ -1152,7 +1177,17 @@ void RealWorldApplication::drawScene(
             delta_t,
             menu_->isAirfowOn());
 
-        focus_scene_view->updateCamera(
+        main_camera_object_->updateCamera(
+            cmd_buf,
+            s_dbuf_idx,
+            s_key,
+            s_update_frame_count,
+            delta_t,
+            s_last_mouse_pos,
+            s_mouse_wheel_offset,
+            !s_camera_paused && s_mouse_right_button_pressed);
+
+        shadow_camera_object_->updateCamera(
             cmd_buf,
             s_dbuf_idx,
             s_key,
@@ -1196,6 +1231,13 @@ void RealWorldApplication::drawScene(
                 desc_sets
             );
         }
+
+        shadow_focus_scene_view->draw(
+            cmd_buf,
+            pbr_lighting_desc_set_,
+            s_dbuf_idx,
+            delta_t,
+            current_time);
 
         focus_scene_view->draw(
             cmd_buf,
@@ -1455,14 +1497,14 @@ void RealWorldApplication::drawFrame() {
         localtm.tm_min,
         localtm.tm_sec);
 
-    terrain_scene_view_->readGpuCameraInfo();
+    main_camera_object_->readGpuCameraInfo();
 
     auto visible_tiles =
         ego::TileObject::updateAllTiles(
             device_,
             descriptor_pool_,
             128,
-            glm::vec2(terrain_scene_view_->getCameraPosition()));
+            glm::vec2(main_camera_object_->getCameraPosition()));
 
     if (dump_volume_noise_) {
         const auto noise_texture_size = kDetailNoiseTextureSize;
@@ -1588,7 +1630,7 @@ void RealWorldApplication::drawFrame() {
     terrain_scene_view_->setVisibleTiles(visible_tiles);
     drawScene(command_buffer,
         swap_chain_info_,
-        terrain_scene_view_->getViewCameraDescriptorSet(),
+        main_camera_object_->getViewCameraDescriptorSet(),
         swap_chain_info_.extent,
         image_index,
         delta_t_,
@@ -1790,8 +1832,11 @@ void RealWorldApplication::cleanup() {
     lbm_patch_->destroy(device_);
     lbm_test_->destroy(device_);
 
+    main_camera_object_->destroy(device_);
+    shadow_camera_object_->destroy(device_);
     terrain_scene_view_->destroy(device_);
     object_scene_view_->destroy(device_);
+    shadow_object_scene_view_->destroy(device_);
 
     er::helper::clearCachedShaderModules(device_);
 
