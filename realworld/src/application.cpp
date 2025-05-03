@@ -577,12 +577,12 @@ void RealWorldApplication::initVulkan() {
         desc_set_layouts);
 
     main_camera_object_ =
-        std::make_shared<ego::CameraObject>(
+        std::make_shared<ego::ObjectViewCameraObject>(
             device_,
             descriptor_pool_);
 
     shadow_camera_object_ =
-        std::make_shared<ego::CameraObject>(
+        std::make_shared<ego::ShadowViewCameraObject>(
             device_,
             descriptor_pool_);
 
@@ -611,7 +611,9 @@ void RealWorldApplication::initVulkan() {
             shadow_camera_object_,
             desc_set_layouts,
             nullptr,
-            nullptr);
+            nullptr,
+            glm::uvec2(4096),
+            true);
 
     main_camera_object_->createCameraDescSetWithTerrain(
         texture_sampler_,
@@ -1237,7 +1239,8 @@ void RealWorldApplication::drawScene(
             pbr_lighting_desc_set_,
             s_dbuf_idx,
             delta_t,
-            current_time);
+            current_time,
+            true);
 
         focus_scene_view->draw(
             cmd_buf,
