@@ -222,6 +222,14 @@ void RealWorldApplication::createRenderPasses() {
 }
 
 void RealWorldApplication::initVulkan() {
+    renderbuffer_formats_[int(er::RenderPasses::kDepthOnly)].depth_format =
+        renderbuffer_formats_[int(er::RenderPasses::kForward)].depth_format =
+        er::Format::D24_UNORM_S8_UINT;
+    renderbuffer_formats_[int(er::RenderPasses::kForward)].color_formats.
+        push_back(er::Format::B10G11R11_UFLOAT_PACK32);
+    renderbuffer_formats_[int(er::RenderPasses::kShadow)].depth_format =
+        er::Format::D16_UNORM;
+
     static auto color_no_blend_attachment = er::helper::fillPipelineColorBlendAttachmentState();
     static auto color_blend_attachment =
         er::helper::fillPipelineColorBlendAttachmentState(
@@ -590,6 +598,7 @@ void RealWorldApplication::initVulkan() {
         std::make_shared<es::TerrainSceneView>(
             device_,
             descriptor_pool_,
+            renderbuffer_formats_,
             main_camera_object_,
             desc_set_layouts,
             nullptr,
@@ -599,6 +608,7 @@ void RealWorldApplication::initVulkan() {
         std::make_shared<es::ObjectSceneView>(
             device_,
             descriptor_pool_,
+            renderbuffer_formats_[int(er::RenderPasses::kForward)],
             main_camera_object_,
             desc_set_layouts,
             nullptr,
@@ -608,6 +618,7 @@ void RealWorldApplication::initVulkan() {
         std::make_shared<es::ObjectSceneView>(
             device_,
             descriptor_pool_,
+            renderbuffer_formats_[int(er::RenderPasses::kShadow)],
             shadow_camera_object_,
             desc_set_layouts,
             nullptr,
@@ -697,12 +708,11 @@ void RealWorldApplication::initVulkan() {
         std::make_shared<ego::DrawableObject>(
             device_,
             descriptor_pool_,
-            hdr_render_pass_,
+            renderbuffer_formats_,
             graphic_pipeline_info_,
             repeat_texture_sampler_,
             thin_film_lut_tex_,
             "assets/Bistro_v5_2/BistroExterior.fbx",
-            swap_chain_info_.extent,
             glm::inverse(view_params_.view));
 
     object_scene_view_->addDrawableObject(
@@ -757,10 +767,9 @@ void RealWorldApplication::recreateSwapChain() {
     ego::TileObject::recreateStaticMembers(device_);
     ego::DrawableObject::recreateStaticMembers(
         device_,
-        hdr_render_pass_,
+        &renderbuffer_formats_[0],
         graphic_pipeline_info_,
-        desc_set_layouts,
-        swap_chain_info_.extent);
+        desc_set_layouts);
     ego::ViewCamera::recreateStaticMembers(
         device_);
     ego::DebugDrawObject::recreateStaticMembers(
@@ -1583,12 +1592,11 @@ void RealWorldApplication::drawFrame() {
         auto drawable_obj = std::make_shared<ego::DrawableObject>(
             device_,
             descriptor_pool_,
-            hdr_render_pass_,
+            renderbuffer_formats_,
             graphic_pipeline_info_,
             texture_sampler_,
             thin_film_lut_tex_,
             drawable_name,
-            swap_chain_info_.extent,
             glm::inverse(view_params_.view));
 
         s_update_frame_count = -1;
@@ -1604,12 +1612,11 @@ void RealWorldApplication::drawFrame() {
         player_object_ = std::make_shared<ego::DrawableObject>(
             device_,
             descriptor_pool_,
-            hdr_render_pass_,
+            renderbuffer_formats_,
             graphic_pipeline_info_,
             texture_sampler_,
             thin_film_lut_tex_,
             to_load_player_name,
-            swap_chain_info_.extent,
             glm::inverse(view_params_.view));
     }
 

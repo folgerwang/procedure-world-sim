@@ -1,5 +1,6 @@
 #pragma once
 #include "renderer/renderer.h"
+#include "renderer/renderer_structs.h"
 #include "shaders/global_definition.glsl.h"
 #include "game_object/drawable_object.h"
 #include "game_object/terrain.h"
@@ -77,6 +78,9 @@ private:
 
 private:
     GLFWwindow* window_ = nullptr;
+
+    er::PipelineRenderbufferFormats
+        renderbuffer_formats_[int(er::RenderPasses::kNumRenderPasses)];
 
     er::QueueFamilyList queue_list_;
     er::GraphicPipelineInfo graphic_pipeline_info_;
