@@ -60,7 +60,8 @@ private:
     void createCommandBuffers();
     void createSyncObjects();
     er::WriteDescriptorList addGlobalTextures(
-        const std::shared_ptr<er::DescriptorSet>& description_set);
+        const std::shared_ptr<er::DescriptorSet>& description_set,
+        const std::shared_ptr<er::TextureInfo>& direct_shadow_tex);
     void mainLoop();
     void drawScene(
         std::shared_ptr<er::CommandBuffer> command_buffer,

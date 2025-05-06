@@ -30,13 +30,16 @@ static bool s_bistro_scene_test = true;
 std::shared_ptr<er::DescriptorSetLayout> createPbrLightingDescriptorSetLayout(
     const std::shared_ptr<er::Device>& device) {
     std::vector<er::DescriptorSetLayoutBinding> bindings;
-    bindings.reserve(5);
+    bindings.reserve(6);
 
     bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
         GGX_LUT_INDEX,
         SET_2_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT)));
     bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
         CHARLIE_LUT_INDEX,
+        SET_2_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT)));
+    bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        DIRECT_SHADOW_INDEX,
         SET_2_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT)));
     bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
         LAMBERTIAN_ENV_TEX_INDEX,
@@ -994,10 +997,11 @@ void RealWorldApplication::createSyncObjects() {
 }
 
 er::WriteDescriptorList RealWorldApplication::addGlobalTextures(
-    const std::shared_ptr<er::DescriptorSet>& description_set)
+    const std::shared_ptr<er::DescriptorSet>& description_set,
+    const std::shared_ptr<er::TextureInfo>& direct_shadow_tex )
 {
     er::WriteDescriptorList descriptor_writes;
-    descriptor_writes.reserve(5);
+    descriptor_writes.reserve(6);
     er::Helper::addOneTexture(
         descriptor_writes,
         description_set,
@@ -1014,6 +1018,14 @@ er::WriteDescriptorList RealWorldApplication::addGlobalTextures(
         texture_sampler_,
         charlie_lut_tex_.view,
         er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    er::Helper::addOneTexture(
+        descriptor_writes,
+        description_set,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+        DIRECT_SHADOW_INDEX,
+        texture_sampler_,
+        direct_shadow_tex->view,
+        er::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL);
 
     ibl_creator_->addToGlobalTextures(
         descriptor_writes,
@@ -1034,7 +1046,10 @@ void RealWorldApplication::createDescriptorSets() {
                 1)[0];
 
         // create a global ibl texture descriptor set.
-        auto pbr_lighting_descs = addGlobalTextures(pbr_lighting_desc_set_);
+        auto pbr_lighting_descs = 
+            addGlobalTextures(
+                pbr_lighting_desc_set_,
+                shadow_object_scene_view_->getDepthBuffer());
         device_->updateDescriptorSets(pbr_lighting_descs);
     }
 }
@@ -1162,10 +1177,8 @@ void RealWorldApplication::drawScene(
     }
 
     std::shared_ptr<ego::ViewObject> focus_scene_view = nullptr;
-    std::shared_ptr<ego::ViewObject> shadow_focus_scene_view = nullptr;
-
     focus_scene_view = object_scene_view_;
-    shadow_focus_scene_view = shadow_object_scene_view_;
+
     //focus_scene_view = terrain_scene_view_;
 
     // this has to be happened after tile update, or you wont get the right height info.
@@ -1243,7 +1256,7 @@ void RealWorldApplication::drawScene(
             );
         }
 
-        shadow_focus_scene_view->draw(
+        shadow_object_scene_view_->draw(
             cmd_buf,
             pbr_lighting_desc_set_,
             s_dbuf_idx,
@@ -1251,12 +1264,22 @@ void RealWorldApplication::drawScene(
             current_time,
             true);
 
+        cmd_buf->addImageBarrier(
+            shadow_object_scene_view_->getDepthBuffer()->image,
+            er::Helper::getImageAsDepthAttachment(),
+            er::Helper::getDepthAsShaderSampler());
+
         focus_scene_view->draw(
             cmd_buf,
             pbr_lighting_desc_set_,
             s_dbuf_idx,
             delta_t,
             current_time);
+
+        cmd_buf->addImageBarrier(
+            shadow_object_scene_view_->getDepthBuffer()->image,
+            er::Helper::getDepthAsShaderSampler(),
+            er::Helper::getImageAsDepthAttachment());
 
 #if 0
         cmd_buf->beginRenderPass(
