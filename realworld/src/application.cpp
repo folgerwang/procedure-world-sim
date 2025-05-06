@@ -1025,7 +1025,7 @@ er::WriteDescriptorList RealWorldApplication::addGlobalTextures(
         DIRECT_SHADOW_INDEX,
         texture_sampler_,
         direct_shadow_tex->view,
-        er::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+        er::ImageLayout::DEPTH_READ_ONLY_OPTIMAL);
 
     ibl_creator_->addToGlobalTextures(
         descriptor_writes,
