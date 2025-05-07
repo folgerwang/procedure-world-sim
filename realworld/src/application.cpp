@@ -53,6 +53,19 @@ std::shared_ptr<er::DescriptorSetLayout> createPbrLightingDescriptorSetLayout(
 
     return device->createDescriptorSetLayout(bindings);
 }
+
+// global pbr texture descriptor set layout.
+std::shared_ptr<er::DescriptorSetLayout> createRuntimeLightsDescriptorSetLayout(
+    const std::shared_ptr<er::Device>& device) {
+    std::vector<er::DescriptorSetLayoutBinding> bindings;
+    bindings.reserve(1);
+
+    bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+        RUNTIME_LIGHTS_CONSTANT_INDEX,
+        SET_2_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT)));
+
+    return device->createDescriptorSetLayout(bindings);
+}
 }
 
 namespace work {
@@ -357,6 +370,9 @@ void RealWorldApplication::initVulkan() {
     pbr_lighting_desc_set_layout_ =
         createPbrLightingDescriptorSetLayout(device_);
 
+    runtime_lights_desc_set_layout_ =
+        createRuntimeLightsDescriptorSetLayout(device_);
+
     createCommandPool();
     assert(command_pool_);
     er::Helper::init(device_);
@@ -613,7 +629,6 @@ void RealWorldApplication::initVulkan() {
             descriptor_pool_,
             renderbuffer_formats_[int(er::RenderPasses::kForward)],
             main_camera_object_,
-            desc_set_layouts,
             nullptr,
             nullptr);
 
@@ -623,7 +638,6 @@ void RealWorldApplication::initVulkan() {
             descriptor_pool_,
             renderbuffer_formats_[int(er::RenderPasses::kShadow)],
             shadow_camera_object_,
-            desc_set_layouts,
             nullptr,
             nullptr,
             glm::uvec2(4096),
@@ -1038,20 +1052,50 @@ er::WriteDescriptorList RealWorldApplication::addGlobalTextures(
 void RealWorldApplication::createDescriptorSets() {
     auto buffer_count = swap_chain_info_.images.size();
 
-    {
-        pbr_lighting_desc_set_ =
-            device_->createDescriptorSets(
-                descriptor_pool_,
-                pbr_lighting_desc_set_layout_,
-                1)[0];
+    pbr_lighting_desc_set_ =
+        device_->createDescriptorSets(
+            descriptor_pool_,
+            pbr_lighting_desc_set_layout_,
+            1)[0];
 
-        // create a global ibl texture descriptor set.
-        auto pbr_lighting_descs = 
-            addGlobalTextures(
-                pbr_lighting_desc_set_,
-                shadow_object_scene_view_->getDepthBuffer());
-        device_->updateDescriptorSets(pbr_lighting_descs);
+    // create a global ibl texture descriptor set.
+    auto pbr_lighting_descs = 
+        addGlobalTextures(
+            pbr_lighting_desc_set_,
+            shadow_object_scene_view_->getDepthBuffer());
+    device_->updateDescriptorSets(pbr_lighting_descs);
+
+    runtime_lights_desc_set_ =
+        device_->createDescriptorSets(
+        descriptor_pool_,
+        runtime_lights_desc_set_layout_,
+        1)[0];
+
+    if (!runtime_lights_buffer_) {
+        runtime_lights_buffer_ = std::make_shared<er::BufferInfo>();
+        device_->createBuffer(
+            sizeof(glsl::RuntimeLightsParams),
+            SET_FLAG_BIT(BufferUsage, UNIFORM_BUFFER_BIT),
+            SET_2_FLAG_BITS(MemoryProperty, HOST_VISIBLE_BIT, HOST_COHERENT_BIT),
+            0,
+            runtime_lights_buffer_->buffer,
+            runtime_lights_buffer_->memory,
+            std::source_location::current());
     }
+
+    // create a global ibl texture descriptor set.
+    er::WriteDescriptorList descriptor_writes;
+    descriptor_writes.reserve(1);
+
+    er::Helper::addOneBuffer(
+        descriptor_writes,
+        runtime_lights_desc_set_,
+        engine::renderer::DescriptorType::UNIFORM_BUFFER,
+        RUNTIME_LIGHTS_CONSTANT_INDEX,
+        runtime_lights_buffer_->buffer,
+        runtime_lights_buffer_->buffer->getSize());
+
+    device_->updateDescriptorSets(descriptor_writes);
 }
 
 void RealWorldApplication::createTextureSampler() {
@@ -1176,11 +1220,6 @@ void RealWorldApplication::drawScene(
             current_time);
     }
 
-    std::shared_ptr<ego::ViewObject> focus_scene_view = nullptr;
-    focus_scene_view = object_scene_view_;
-
-    //focus_scene_view = terrain_scene_view_;
-
     // this has to be happened after tile update, or you wont get the right height info.
     {
         static std::chrono::time_point s_last_time = std::chrono::steady_clock::now();
@@ -1256,9 +1295,15 @@ void RealWorldApplication::drawScene(
             );
         }
 
+        er::DescriptorSetList desc_sets{
+            pbr_lighting_desc_set_,
+            nullptr,
+            nullptr,
+            runtime_lights_desc_set_ };
+
         shadow_object_scene_view_->draw(
             cmd_buf,
-            pbr_lighting_desc_set_,
+            desc_sets,
             s_dbuf_idx,
             delta_t,
             current_time,
@@ -1269,9 +1314,9 @@ void RealWorldApplication::drawScene(
             er::Helper::getImageAsDepthAttachment(),
             er::Helper::getDepthAsShaderSampler());
 
-        focus_scene_view->draw(
+        object_scene_view_->draw(
             cmd_buf,
-            pbr_lighting_desc_set_,
+            desc_sets,
             s_dbuf_idx,
             delta_t,
             current_time);
@@ -1403,7 +1448,7 @@ void RealWorldApplication::drawScene(
 
     er::Helper::blitImage(
         cmd_buf,
-        focus_scene_view->getColorBuffer()->image,
+        object_scene_view_->getColorBuffer()->image,
         swap_chain_info.images[image_index],
         src_info,
         src_info,
@@ -1411,7 +1456,7 @@ void RealWorldApplication::drawScene(
         dst_info,
         SET_FLAG_BIT(ImageAspect, COLOR_BIT),
         SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-        focus_scene_view->getColorBuffer()->size,
+        object_scene_view_->getColorBuffer()->size,
         glm::ivec3(screen_size.x, screen_size.y, 1));
 
     s_dbuf_idx = 1 - s_dbuf_idx;
@@ -1823,6 +1868,7 @@ void RealWorldApplication::cleanup() {
     ibl_diffuse_tex_.destroy(device_);
     ibl_specular_tex_.destroy(device_);
     ibl_sheen_tex_.destroy(device_);
+    runtime_lights_buffer_->destroy(device_);
     device_->destroySampler(texture_sampler_);
     device_->destroySampler(texture_point_sampler_);
     device_->destroySampler(repeat_texture_sampler_);

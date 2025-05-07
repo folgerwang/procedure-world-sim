@@ -101,7 +101,9 @@ private:
     er::SwapChainInfo swap_chain_info_;
     std::shared_ptr<er::DescriptorPool> descriptor_pool_;
     std::shared_ptr<er::DescriptorSetLayout> pbr_lighting_desc_set_layout_;
+    std::shared_ptr<er::DescriptorSetLayout> runtime_lights_desc_set_layout_;
     std::shared_ptr<er::DescriptorSet> pbr_lighting_desc_set_;
+    std::shared_ptr<er::DescriptorSet> runtime_lights_desc_set_;
     er::TextureInfo ibl_diffuse_tex_;
     er::TextureInfo ibl_specular_tex_;
     er::TextureInfo ibl_sheen_tex_;
@@ -172,6 +174,7 @@ private:
     std::shared_ptr<es::ObjectSceneView> object_scene_view_;
     std::shared_ptr<es::ObjectSceneView> shadow_object_scene_view_;
     std::shared_ptr<es::TerrainSceneView> terrain_scene_view_;
+    std::shared_ptr<er::BufferInfo> runtime_lights_buffer_;
 
     std::vector<er::ClearValue> clear_values_;
 
