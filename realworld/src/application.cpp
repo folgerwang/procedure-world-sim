@@ -1258,13 +1258,7 @@ void RealWorldApplication::drawScene(
 
         shadow_camera_object_->updateCamera(
             cmd_buf,
-            s_dbuf_idx,
-            s_key,
-            s_update_frame_count,
-            delta_t,
-            s_last_mouse_pos,
-            s_mouse_wheel_offset,
-            !s_camera_paused && s_mouse_right_button_pressed);
+            main_camera_object_->getCameraPos());
 
         s_mouse_wheel_offset = 0;
 
