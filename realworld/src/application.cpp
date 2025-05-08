@@ -60,9 +60,10 @@ std::shared_ptr<er::DescriptorSetLayout> createRuntimeLightsDescriptorSetLayout(
     std::vector<er::DescriptorSetLayoutBinding> bindings;
     bindings.reserve(1);
 
-    bindings.push_back(er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+    bindings.push_back(er::helper::getBufferDescriptionSetLayoutBinding(
         RUNTIME_LIGHTS_CONSTANT_INDEX,
-        SET_2_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT)));
+        SET_2_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT),
+        er::DescriptorType::UNIFORM_BUFFER));
 
     return device->createDescriptorSetLayout(bindings);
 }
@@ -587,10 +588,15 @@ void RealWorldApplication::initVulkan() {
     ego::DrawableObject::initGameObjectBuffer(device_);
     assert(ego::DrawableObject::getGameObjectsBuffer());
 
+    er::DescriptorSetLayoutList object_desc_set_layouts(MAX_NUM_PARAMS_SETS);
+    object_desc_set_layouts[PBR_GLOBAL_PARAMS_SET] = pbr_lighting_desc_set_layout_;
+    object_desc_set_layouts[VIEW_PARAMS_SET] = ego::CameraObject::getViewCameraDescriptorSetLayout();
+    object_desc_set_layouts[RUNTIME_LIGHTS_PARAMS_SET] = runtime_lights_desc_set_layout_;
+
     ego::DrawableObject::initStaticMembers(
         device_,
         descriptor_pool_,
-        desc_set_layouts,
+        object_desc_set_layouts,
         texture_sampler_,
         ego::TileObject::getRockLayer(),
         ego::TileObject::getSoilWaterLayer(0),
@@ -1262,6 +1268,15 @@ void RealWorldApplication::drawScene(
 
         s_mouse_wheel_offset = 0;
 
+        glsl::RuntimeLightsParams runtime_lights_params = {};
+        runtime_lights_params.light_view_proj =
+            shadow_camera_object_->getViewProjMatrix();
+
+        device_->updateBufferMemory(
+            runtime_lights_buffer_->memory,
+            sizeof(runtime_lights_params),
+            &runtime_lights_params);
+
         if (player_object_) {
             player_object_->updateBuffers(cmd_buf);
         }
@@ -1295,11 +1310,9 @@ void RealWorldApplication::drawScene(
             );
         }
 
-        er::DescriptorSetList desc_sets{
-            pbr_lighting_desc_set_,
-            nullptr,
-            nullptr,
-            runtime_lights_desc_set_ };
+        er::DescriptorSetList desc_sets(MAX_NUM_PARAMS_SETS);
+        desc_sets[PBR_GLOBAL_PARAMS_SET] = pbr_lighting_desc_set_;
+        desc_sets[RUNTIME_LIGHTS_PARAMS_SET] = runtime_lights_desc_set_;
 
         shadow_object_scene_view_->draw(
             cmd_buf,
