@@ -612,7 +612,9 @@ void RealWorldApplication::initVulkan() {
     main_camera_object_ =
         std::make_shared<ego::ObjectViewCameraObject>(
             device_,
-            descriptor_pool_);
+            descriptor_pool_,
+            45.0f,
+            float(kWindowSizeX)/float(kWindowSizeY));
 
     shadow_camera_object_ =
         std::make_shared<ego::ShadowViewCameraObject>(
@@ -627,7 +629,8 @@ void RealWorldApplication::initVulkan() {
             main_camera_object_,
             desc_set_layouts,
             nullptr,
-            nullptr);
+            nullptr,
+            glm::uvec2(kWindowSizeX, kWindowSizeY));
 
     object_scene_view_ = 
         std::make_shared<es::ObjectSceneView>(
@@ -636,7 +639,8 @@ void RealWorldApplication::initVulkan() {
             renderbuffer_formats_[int(er::RenderPasses::kForward)],
             main_camera_object_,
             nullptr,
-            nullptr);
+            nullptr,
+            glm::uvec2(kWindowSizeX, kWindowSizeY));
 
     shadow_object_scene_view_ =
         std::make_shared<es::ObjectSceneView>(
