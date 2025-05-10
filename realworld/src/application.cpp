@@ -278,6 +278,10 @@ void RealWorldApplication::initVulkan() {
         std::make_shared<er::PipelineRasterizationStateCreateInfo>(
             er::helper::fillPipelineRasterizationStateCreateInfo());
 
+    auto direct_shadow_rasterization_info =
+        std::make_shared<er::PipelineRasterizationStateCreateInfo>(
+            er::helper::fillPipelineRasterizationStateCreateInfo(true));
+
     auto no_cull_rasterization_info =
         std::make_shared<er::PipelineRasterizationStateCreateInfo>(
             er::helper::fillPipelineRasterizationStateCreateInfo(
@@ -309,6 +313,11 @@ void RealWorldApplication::initVulkan() {
     graphic_pipeline_info_.rasterization_info = cull_rasterization_info;
     graphic_pipeline_info_.ms_info = ms_info;
     graphic_pipeline_info_.depth_stencil_info = depth_stencil_info;
+
+    graphic_direct_shadow_pipeline_info_.blend_state_info = single_no_blend_state_info;
+    graphic_direct_shadow_pipeline_info_.rasterization_info = direct_shadow_rasterization_info;
+    graphic_direct_shadow_pipeline_info_.ms_info = ms_info;
+    graphic_direct_shadow_pipeline_info_.depth_stencil_info = depth_stencil_info;
 
     graphic_double_face_pipeline_info_.blend_state_info = single_no_blend_state_info;
     graphic_double_face_pipeline_info_.rasterization_info = no_cull_rasterization_info;
@@ -796,6 +805,7 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         &renderbuffer_formats_[0],
         graphic_pipeline_info_,
+        graphic_direct_shadow_pipeline_info_,
         desc_set_layouts);
     ego::ViewCamera::recreateStaticMembers(
         device_);

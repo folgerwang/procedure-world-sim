@@ -85,6 +85,7 @@ private:
 
     er::QueueFamilyList queue_list_;
     er::GraphicPipelineInfo graphic_pipeline_info_;
+    er::GraphicPipelineInfo graphic_direct_shadow_pipeline_info_;
     er::GraphicPipelineInfo graphic_double_face_pipeline_info_;
     er::GraphicPipelineInfo graphic_no_depth_write_pipeline_info_;
     er::GraphicPipelineInfo graphic_fs_pipeline_info_;
