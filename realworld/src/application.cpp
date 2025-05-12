@@ -628,7 +628,8 @@ void RealWorldApplication::initVulkan() {
     shadow_camera_object_ =
         std::make_shared<ego::ShadowViewCameraObject>(
             device_,
-            descriptor_pool_);
+            descriptor_pool_,
+            glm::vec3(0.3f, -0.8f, 0.0f));
 
     terrain_scene_view_ =
         std::make_shared<es::TerrainSceneView>(
@@ -1278,8 +1279,17 @@ void RealWorldApplication::drawScene(
         s_mouse_wheel_offset = 0;
 
         glsl::RuntimeLightsParams runtime_lights_params = {};
-        runtime_lights_params.light_view_proj =
-            shadow_camera_object_->getViewProjMatrix();
+        {
+            runtime_lights_params.light_view_proj =
+                shadow_camera_object_->getViewProjMatrix();
+            for (int l = 0; l < LIGHT_COUNT; l++) {
+                runtime_lights_params.lights[l].type = glsl::LightType_Directional;
+                runtime_lights_params.lights[l].color = glm::vec3(1, 0, 0);
+                runtime_lights_params.lights[l].direction = shadow_camera_object_->getLightDir();
+                runtime_lights_params.lights[l].intensity = 100.0f;
+                runtime_lights_params.lights[l].position = glm::vec3(0, 0, 0);
+            }
+        }
 
         device_->updateBufferMemory(
             runtime_lights_buffer_->memory,
