@@ -1284,9 +1284,9 @@ void RealWorldApplication::drawScene(
                 shadow_camera_object_->getViewProjMatrix();
             for (int l = 0; l < LIGHT_COUNT; l++) {
                 runtime_lights_params.lights[l].type = glsl::LightType_Directional;
-                runtime_lights_params.lights[l].color = glm::vec3(1, 0, 0);
+                runtime_lights_params.lights[l].color = glm::vec3(255.0f, 250.0f, 240.0f) / 255.0f;
                 runtime_lights_params.lights[l].direction = shadow_camera_object_->getLightDir();
-                runtime_lights_params.lights[l].intensity = 100.0f;
+                runtime_lights_params.lights[l].intensity = 20.0f;
                 runtime_lights_params.lights[l].position = glm::vec3(0, 0, 0);
             }
         }
