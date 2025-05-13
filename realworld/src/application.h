@@ -168,7 +168,7 @@ private:
     std::shared_ptr<es::Conemap> conemap_gen_;
     std::shared_ptr<es::PrtShadow> prt_shadow_gen_;
     std::shared_ptr<engine::ray_tracing::RayTracingBase> ray_tracing_test_;
-    std::shared_ptr<es::Menu> menu_;
+    std::shared_ptr<engine::ui::Menu> menu_;
 
     std::shared_ptr<ego::ObjectViewCameraObject> main_camera_object_;
     std::shared_ptr<ego::ShadowViewCameraObject> shadow_camera_object_;

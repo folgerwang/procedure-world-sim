@@ -780,7 +780,7 @@ void RealWorldApplication::initVulkan() {
     shadow_object_scene_view_->addDrawableObject(
         player_object_);
 
-    menu_ = std::make_shared<es::Menu>(
+    menu_ = std::make_shared<engine::ui::Menu>(
         window_,
         device_,
         instance_,
