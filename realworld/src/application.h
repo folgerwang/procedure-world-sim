@@ -16,7 +16,6 @@
 #include "scene_rendering/skydome.h"
 #include "scene_rendering/weather_system.h"
 #include "scene_rendering/ibl_creator.h"
-#include "scene_rendering/menu.h"
 #include "scene_rendering/volume_cloud.h"
 #include "scene_rendering/volume_noise.h"
 #include "scene_rendering/conemap.h"
@@ -25,6 +24,7 @@
 #include "scene_rendering/object_scene_view.h"
 #include "ray_tracing/raytracing_base.h"
 #include "engine_helper.h"
+#include "ui/menu.h"
 
 namespace er = engine::renderer;
 namespace ego = engine::game_object;
