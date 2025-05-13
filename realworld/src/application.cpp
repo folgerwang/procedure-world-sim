@@ -278,10 +278,6 @@ void RealWorldApplication::initVulkan() {
         std::make_shared<er::PipelineRasterizationStateCreateInfo>(
             er::helper::fillPipelineRasterizationStateCreateInfo());
 
-    auto direct_shadow_rasterization_info =
-        std::make_shared<er::PipelineRasterizationStateCreateInfo>(
-            er::helper::fillPipelineRasterizationStateCreateInfo(true));
-
     auto no_cull_rasterization_info =
         std::make_shared<er::PipelineRasterizationStateCreateInfo>(
             er::helper::fillPipelineRasterizationStateCreateInfo(
@@ -313,11 +309,6 @@ void RealWorldApplication::initVulkan() {
     graphic_pipeline_info_.rasterization_info = cull_rasterization_info;
     graphic_pipeline_info_.ms_info = ms_info;
     graphic_pipeline_info_.depth_stencil_info = depth_stencil_info;
-
-    graphic_direct_shadow_pipeline_info_.blend_state_info = single_no_blend_state_info;
-    graphic_direct_shadow_pipeline_info_.rasterization_info = direct_shadow_rasterization_info;
-    graphic_direct_shadow_pipeline_info_.ms_info = ms_info;
-    graphic_direct_shadow_pipeline_info_.depth_stencil_info = depth_stencil_info;
 
     graphic_double_face_pipeline_info_.blend_state_info = single_no_blend_state_info;
     graphic_double_face_pipeline_info_.rasterization_info = no_cull_rasterization_info;
@@ -747,17 +738,47 @@ void RealWorldApplication::initVulkan() {
             descriptor_pool_,
             renderbuffer_formats_,
             graphic_pipeline_info_,
-            graphic_direct_shadow_pipeline_info_,
             repeat_texture_sampler_,
             thin_film_lut_tex_,
             "assets/Bistro_v5_2/BistroExterior.fbx",
             glm::inverse(view_params_.view));
 
+    bistro_interior_scene_ =
+        std::make_shared<ego::DrawableObject>(
+            device_,
+            descriptor_pool_,
+            renderbuffer_formats_,
+            graphic_pipeline_info_,
+            repeat_texture_sampler_,
+            thin_film_lut_tex_,
+            "assets/Bistro_v5_2/BistroInterior.fbx",
+            glm::inverse(view_params_.view));
+
+    player_object_ =
+        std::make_shared<ego::DrawableObject>(
+            device_,
+            descriptor_pool_,
+            renderbuffer_formats_,
+            graphic_pipeline_info_,
+            repeat_texture_sampler_,
+            thin_film_lut_tex_,
+            "assets/Characters/scifi_girl_v.01.glb",
+            glm::inverse(view_params_.view));
+
     object_scene_view_->addDrawableObject(
         bistro_exterior_scene_);
 
+    object_scene_view_->addDrawableObject(
+        bistro_interior_scene_);
+
+    object_scene_view_->addDrawableObject(
+        player_object_);
+
     shadow_object_scene_view_->addDrawableObject(
         bistro_exterior_scene_);
+
+    shadow_object_scene_view_->addDrawableObject(
+        player_object_);
 
     menu_ = std::make_shared<es::Menu>(
         window_,
@@ -807,7 +828,6 @@ void RealWorldApplication::recreateSwapChain() {
         device_,
         &renderbuffer_formats_[0],
         graphic_pipeline_info_,
-        graphic_direct_shadow_pipeline_info_,
         desc_set_layouts);
     ego::ViewCamera::recreateStaticMembers(
         device_);
@@ -1304,6 +1324,10 @@ void RealWorldApplication::drawScene(
             bistro_exterior_scene_->updateBuffers(cmd_buf);
         }
 
+        if (bistro_interior_scene_) {
+            bistro_interior_scene_->updateBuffers(cmd_buf);
+        }
+
         for (auto& drawable_obj : drawable_objects_) {
             drawable_obj->updateBuffers(cmd_buf);
         }
@@ -1694,7 +1718,6 @@ void RealWorldApplication::drawFrame() {
             descriptor_pool_,
             renderbuffer_formats_,
             graphic_pipeline_info_,
-            graphic_direct_shadow_pipeline_info_,
             texture_sampler_,
             thin_film_lut_tex_,
             drawable_name,
@@ -1715,7 +1738,6 @@ void RealWorldApplication::drawFrame() {
             descriptor_pool_,
             renderbuffer_formats_,
             graphic_pipeline_info_,
-            graphic_direct_shadow_pipeline_info_,
             texture_sampler_,
             thin_film_lut_tex_,
             to_load_player_name,
@@ -1919,6 +1941,11 @@ void RealWorldApplication::cleanup() {
     if (bistro_exterior_scene_) {
         bistro_exterior_scene_->destroy(device_);
         bistro_exterior_scene_ = nullptr;
+    }
+
+    if (bistro_interior_scene_) {
+        bistro_interior_scene_->destroy(device_);
+        bistro_interior_scene_ = nullptr;
     }
 
     for (auto& obj : drawable_objects_) {

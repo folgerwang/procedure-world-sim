@@ -85,7 +85,6 @@ private:
 
     er::QueueFamilyList queue_list_;
     er::GraphicPipelineInfo graphic_pipeline_info_;
-    er::GraphicPipelineInfo graphic_direct_shadow_pipeline_info_;
     er::GraphicPipelineInfo graphic_double_face_pipeline_info_;
     er::GraphicPipelineInfo graphic_no_depth_write_pipeline_info_;
     er::GraphicPipelineInfo graphic_fs_pipeline_info_;
@@ -152,6 +151,7 @@ private:
     std::vector<std::shared_ptr<ego::DrawableObject>> drawable_objects_;
     std::shared_ptr<ego::DrawableObject> player_object_;
     std::shared_ptr<ego::DrawableObject> bistro_exterior_scene_;
+    std::shared_ptr<ego::DrawableObject> bistro_interior_scene_;
     std::shared_ptr<es::Skydome> skydome_;
     std::shared_ptr<es::WeatherSystem> weather_system_;
     std::shared_ptr<es::VolumeCloud> volume_cloud_;
