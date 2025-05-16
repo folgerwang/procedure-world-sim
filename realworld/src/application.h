@@ -13,6 +13,7 @@
 #include "game_object/lbm_test.h"
 #include "game_object/camera.h"
 #include "game_object/camera_object.h"
+#include "game_object/sphere.h"
 #include "scene_rendering/skydome.h"
 #include "scene_rendering/weather_system.h"
 #include "scene_rendering/ibl_creator.h"
@@ -160,6 +161,7 @@ private:
     std::shared_ptr<ego::ConemapObj> conemap_obj_;
     std::shared_ptr<ego::Plane> unit_plane_;
     std::shared_ptr<ego::Box> unit_box_;
+    std::shared_ptr<ego::Sphere> unit_sphere_;
     std::shared_ptr<ego::ConemapTest> conemap_test_;
     std::shared_ptr<ego::HairPatch> hair_patch_;
     std::shared_ptr<ego::HairTest> hair_test_;

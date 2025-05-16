@@ -424,6 +424,16 @@ void RealWorldApplication::initVulkan() {
 
     ego::CameraObject::createViewCameraDescriptorSetLayout(device_);
 
+    auto desc_set_layouts = {
+        pbr_lighting_desc_set_layout_,
+        ego::CameraObject::getViewCameraDescriptorSetLayout() };
+
+    ego::ShapeBase::initStaticMembers(
+        device_,
+        desc_set_layouts,
+        graphic_pipeline_info_,
+        renderbuffer_formats_[int(er::RenderPasses::kForward)]);
+
     prt_shadow_gen_ =
         std::make_shared<es::PrtShadow>(
             device_,
@@ -451,6 +461,13 @@ void RealWorldApplication::initVulkan() {
             10,
             std::source_location::current());
 
+    unit_sphere_ =
+        std::make_shared<ego::Sphere>(
+            device_,
+            1.0f,
+            2,
+            std::source_location::current());
+
     auto v = std::make_shared<std::array<glm::vec3, 8>>();
     (*v)[0] = glm::vec3(-1.0f, -5.0f, -1.0f);
     (*v)[1] = glm::vec3(1.0f, -5.0f, -1.0f);
@@ -469,10 +486,6 @@ void RealWorldApplication::initVulkan() {
             30,
             10,
             std::source_location::current());
-
-    auto desc_set_layouts = {
-        pbr_lighting_desc_set_layout_,
-        ego::CameraObject::getViewCameraDescriptorSetLayout() };
 
     conemap_test_ =
         std::make_shared<ego::ConemapTest>(
@@ -1360,6 +1373,7 @@ void RealWorldApplication::drawScene(
         shadow_object_scene_view_->draw(
             cmd_buf,
             desc_sets,
+            nullptr,
             s_dbuf_idx,
             delta_t,
             current_time,
@@ -1373,6 +1387,7 @@ void RealWorldApplication::drawScene(
         object_scene_view_->draw(
             cmd_buf,
             desc_sets,
+            unit_sphere_,
             s_dbuf_idx,
             delta_t,
             current_time);
@@ -1958,12 +1973,14 @@ void RealWorldApplication::cleanup() {
     ego::DrawableObject::destroyStaticMembers(device_);
     ego::ViewCamera::destroyStaticMembers(device_);
     ego::DebugDrawObject::destroyStaticMembers(device_);
+    ego::ShapeBase::destroyStaticMembers(device_);
     ibl_creator_->destroy(device_);
     weather_system_->destroy(device_);
     volume_noise_->destroy(device_);
     volume_cloud_->destroy(device_);
     unit_plane_->destroy(device_);
     unit_box_->destroy(device_);
+    unit_sphere_->destroy(device_);
     conemap_obj_->destroy(device_); 
     conemap_gen_->destroy(device_);
     conemap_test_->destroy(device_);
