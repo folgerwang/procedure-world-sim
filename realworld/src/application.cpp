@@ -11,7 +11,7 @@
 #include "renderer/renderer_helper.h"
 #include "ray_tracing/raytracing_callable.h"
 #include "ray_tracing/raytracing_shadow.h"
-#include "engine_helper.h"
+#include "helper/engine_helper.h"
 #include "application.h"
 
 namespace er = engine::renderer;

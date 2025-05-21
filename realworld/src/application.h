@@ -24,7 +24,7 @@
 #include "scene_rendering/terrain_scene_view.h"
 #include "scene_rendering/object_scene_view.h"
 #include "ray_tracing/raytracing_base.h"
-#include "engine_helper.h"
+#include "helper/engine_helper.h"
 #include "ui/menu.h"
 
 namespace er = engine::renderer;
