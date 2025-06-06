@@ -110,7 +110,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Console</SubSystem>
       <AdditionalLibraryDirectories>$(ProjectDir)src\sim_engine\third_parties\vulkan_lib;$(ProjectDir)src\lib\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>glfw3_$(TargetedSDKConfiguration).lib;engine_$(TargetedSDKConfiguration).lib;imgui_$(TargetedSDKConfiguration).lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3_$(TargetedSDKConfiguration).lib;engine_$(TargetedSDKConfiguration).lib;imgui_$(TargetedSDKConfiguration).lib;open-mesh_$(TargetedSDKConfiguration).lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>
@@ -152,7 +152,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Console</SubSystem>
       <AdditionalLibraryDirectories>$(ProjectDir)src\sim_engine\third_parties\vulkan_lib;$(ProjectDir)src\lib\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>glfw3_$(TargetedSDKConfiguration).lib;engine_$(TargetedSDKConfiguration).lib;imgui_$(TargetedSDKConfiguration).lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glfw3_$(TargetedSDKConfiguration).lib;engine_$(TargetedSDKConfiguration).lib;imgui_$(TargetedSDKConfiguration).lib;open-mesh_$(TargetedSDKConfiguration).lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>
