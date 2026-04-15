@@ -62,7 +62,7 @@ std::shared_ptr<er::DescriptorSetLayout> createRuntimeLightsDescriptorSetLayout(
 
     bindings.push_back(er::helper::getBufferDescriptionSetLayoutBinding(
         RUNTIME_LIGHTS_CONSTANT_INDEX,
-        SET_2_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT),
+        SET_3_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT, GEOMETRY_BIT),
         er::DescriptorType::UNIFORM_BUFFER));
 
     return device->createDescriptorSetLayout(bindings);
@@ -1566,31 +1566,22 @@ void RealWorldApplication::drawScene(
         desc_sets[PBR_GLOBAL_PARAMS_SET] = pbr_lighting_desc_set_;
         desc_sets[RUNTIME_LIGHTS_PARAMS_SET] = runtime_lights_desc_set_;
 
-        // ── 4-cascade shadow render passes ───────────────────────────────────
-        // Write all per-cascade VP matrices into their dedicated host-coherent
-        // buffers BEFORE issuing any draw calls.  This ensures each draw reads
-        // its own independent buffer and not the last-written shared value.
-        for (int k = 0; k < CSM_CASCADE_COUNT; ++k) {
-            shadow_camera_object_->updateCascadeBuffer(k, csm_cascade_vps[k]);
-        }
-
-        for (int k = 0; k < CSM_CASCADE_COUNT; ++k) {
-            // Point getViewCameraDescriptorSet() at cascade k's buffer.
-            shadow_camera_object_->setCascadeIndex(k);
-
-            shadow_object_scene_view_->draw(
-                cmd_buf,
-                desc_sets,
-                nullptr,
-                s_dbuf_idx,
-                delta_t,
-                current_time,
-                true,
-                csm_layer_views_[k]);   // render into cascade layer k
-        }
-
-        // Reset to no active cascade.
-        shadow_camera_object_->setCascadeIndex(-1);
+        // ── Single-pass CSM shadow render ─────────────────────────────────────
+        // The geometry shader (base_depthonly_csm.geom) reads all 4 VP matrices
+        // from RuntimeLightsParams and broadcasts each triangle to all 4 depth
+        // array layers in one draw.  Vertex transform runs once per vertex
+        // instead of 4×, giving roughly 4× the throughput of separate passes.
+        // The full 4-layer array view is used so the GS can write to all layers.
+        shadow_object_scene_view_->draw(
+            cmd_buf,
+            desc_sets,
+            nullptr,
+            s_dbuf_idx,
+            delta_t,
+            current_time,
+            true,
+            csm_shadow_tex_->view,    // full CSM_CASCADE_COUNT-layer array view
+            CSM_CASCADE_COUNT);       // layer_count triggers GS layered path
 
         // Custom resource infos matching the shadow pass attachment layout.
         // The shadow depth buffer uses DEPTH_STENCIL_ATTACHMENT_OPTIMAL
