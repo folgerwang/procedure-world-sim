@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include "renderer/renderer.h"
 #include "renderer/renderer_structs.h"
 #include "shaders/global_definition.glsl.h"
@@ -58,6 +59,8 @@ private:
     void recreateRenderBuffer(const glm::uvec2& display_size);
     void createTextureSampler();
     void createDescriptorSets();
+    void setupCsmDebugDraw();
+    void registerCsmDebugImTextureIds();
     void createCommandBuffers();
     void createSyncObjects();
     er::WriteDescriptorList addGlobalTextures(
@@ -178,6 +181,18 @@ private:
     std::shared_ptr<es::ObjectSceneView> shadow_object_scene_view_;
     std::shared_ptr<es::TerrainSceneView> terrain_scene_view_;
     std::shared_ptr<er::BufferInfo> runtime_lights_buffer_;
+
+    // CSM: 2048x2048x4 depth array texture, one layer per cascade.
+    std::shared_ptr<er::TextureInfo> csm_shadow_tex_;
+    std::array<std::shared_ptr<er::ImageView>, CSM_CASCADE_COUNT> csm_layer_views_;
+
+    // CSM debug visualisation: small per-cascade R8G8B8A8 colour targets.
+    static constexpr uint32_t kCsmDebugSize = 256;
+    std::array<er::TextureInfo, CSM_CASCADE_COUNT> csm_debug_color_;
+    std::shared_ptr<er::DescriptorSetLayout>  csm_debug_desc_set_layout_;
+    std::shared_ptr<er::DescriptorSet>        csm_debug_desc_set_;
+    std::shared_ptr<er::PipelineLayout>       csm_debug_pipeline_layout_;
+    std::shared_ptr<er::Pipeline>             csm_debug_pipeline_;
 
     std::vector<er::ClearValue> clear_values_;
 

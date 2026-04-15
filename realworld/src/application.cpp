@@ -635,6 +635,12 @@ void RealWorldApplication::initVulkan() {
             descriptor_pool_,
             glm::vec3(0.3f, -0.8f, 0.0f));
 
+    // Allocate 4 independent per-cascade storage buffers + descriptor sets.
+    // Without these each cascade draw would overwrite the same host-coherent
+    // buffer, and by the time the GPU runs all 4 draws every cascade would
+    // use the last-written VP matrix.
+    shadow_camera_object_->initCascadeDescriptorSets(device_, descriptor_pool_);
+
     terrain_scene_view_ =
         std::make_shared<es::TerrainSceneView>(
             device_,
@@ -656,6 +662,65 @@ void RealWorldApplication::initVulkan() {
             nullptr,
             glm::uvec2(kWindowSizeX, kWindowSizeY));
 
+    // ── Create CSM shadow depth array (2048×2048×CSM_CASCADE_COUNT) ──────────
+    {
+        const er::Format csm_fmt =
+            renderbuffer_formats_[int(er::RenderPasses::kShadow)].depth_format;
+        constexpr uint32_t kCsmSize = 2048u;
+
+        csm_shadow_tex_ = std::make_shared<er::TextureInfo>();
+        csm_shadow_tex_->image = device_->createImage(
+            er::ImageType::TYPE_2D,
+            glm::uvec3(kCsmSize, kCsmSize, 1),
+            csm_fmt,
+            SET_2_FLAG_BITS(ImageUsage,
+                            DEPTH_STENCIL_ATTACHMENT_BIT,
+                            SAMPLED_BIT),
+            er::ImageTiling::OPTIMAL,
+            er::ImageLayout::UNDEFINED,
+            std::source_location::current(),
+            0, false, 1, 1,
+            CSM_CASCADE_COUNT);
+
+        auto mem_req = device_->getImageMemoryRequirements(csm_shadow_tex_->image);
+        csm_shadow_tex_->memory = device_->allocateMemory(
+            mem_req.size,
+            mem_req.memory_type_bits,
+            SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+            0);
+        device_->bindImageMemory(csm_shadow_tex_->image, csm_shadow_tex_->memory);
+        csm_shadow_tex_->size = glm::uvec3(kCsmSize, kCsmSize, 1);
+
+        // Full-array view — used as the sampler2DArray in the fragment shader.
+        csm_shadow_tex_->view = device_->createImageView(
+            csm_shadow_tex_->image,
+            er::ImageViewType::VIEW_2D_ARRAY,
+            csm_fmt,
+            SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
+            std::source_location::current(),
+            0, 1, 0, CSM_CASCADE_COUNT);
+
+        // Per-layer views — used as render-target attachments.
+        for (int k = 0; k < CSM_CASCADE_COUNT; ++k) {
+            csm_layer_views_[k] = device_->createImageView(
+                csm_shadow_tex_->image,
+                er::ImageViewType::VIEW_2D,
+                csm_fmt,
+                SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
+                std::source_location::current(),
+                0, 1, k, 1);
+        }
+
+        // Prime all layers to DEPTH_STENCIL_ATTACHMENT_OPTIMAL.
+        er::Helper::transitionImageLayout(
+            device_,
+            csm_shadow_tex_->image,
+            csm_fmt,
+            er::ImageLayout::UNDEFINED,
+            er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            0, 1, 0, CSM_CASCADE_COUNT);
+    }
+
     shadow_object_scene_view_ =
         std::make_shared<es::ObjectSceneView>(
             device_,
@@ -663,8 +728,8 @@ void RealWorldApplication::initVulkan() {
             renderbuffer_formats_[int(er::RenderPasses::kShadow)],
             shadow_camera_object_,
             nullptr,
-            nullptr,
-            glm::uvec2(4096),
+            csm_shadow_tex_,   // provide our array texture as the depth buffer
+            glm::uvec2(2048),
             true);
 
     main_camera_object_->createCameraDescSetWithTerrain(
@@ -682,6 +747,7 @@ void RealWorldApplication::initVulkan() {
         swap_chain_info_.extent);
 
     createDescriptorSets();
+    setupCsmDebugDraw();
 
     volume_noise_ = std::make_shared<es::VolumeNoise>(
         device_,
@@ -805,6 +871,10 @@ void RealWorldApplication::initVulkan() {
         texture_sampler_,
         ray_tracing_test_->getFinalImage().view,
         nullptr);
+
+    // Register CSM debug colour targets as ImGui textures (ImGui must be
+    // initialised by the Menu constructor before this can be called).
+    registerCsmDebugImTextureIds();
 }
 
 void RealWorldApplication::recreateSwapChain() {
@@ -974,6 +1044,9 @@ void RealWorldApplication::recreateSwapChain() {
         graphics_queue_,
         descriptor_pool_,
         final_render_pass_);
+
+    // Re-register CSM debug textures — ImGui was re-initialized above.
+    registerCsmDebugImTextureIds();
 }
 
 void RealWorldApplication::createImageViews() {
@@ -1153,6 +1226,110 @@ void RealWorldApplication::createDescriptorSets() {
     device_->updateDescriptorSets(descriptor_writes);
 }
 
+void RealWorldApplication::setupCsmDebugDraw() {
+    // Idempotent: skip if already set up (e.g. called twice during init).
+    if (csm_debug_pipeline_) return;
+
+    // ---- 4 small R8G8B8A8_UNORM colour render targets (one per cascade) ----
+    for (int k = 0; k < CSM_CASCADE_COUNT; ++k) {
+        er::Helper::create2DTextureImage(
+            device_,
+            er::Format::R8G8B8A8_UNORM,
+            glm::uvec2(kCsmDebugSize),
+            1,
+            csm_debug_color_[k],
+            SET_3_FLAG_BITS(ImageUsage,
+                COLOR_ATTACHMENT_BIT,
+                SAMPLED_BIT,
+                TRANSFER_SRC_BIT),
+            er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            std::source_location::current());
+    }
+
+    // ---- Descriptor set layout: binding 0 = sampler2DArray (frag only) ----
+    {
+        std::vector<er::DescriptorSetLayoutBinding> bindings(1);
+        bindings[0] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            0,
+            SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT));
+        csm_debug_desc_set_layout_ = device_->createDescriptorSetLayout(bindings);
+    }
+
+    // ---- Descriptor set: bind the CSM depth array ----
+    csm_debug_desc_set_ = device_->createDescriptorSets(
+        descriptor_pool_, csm_debug_desc_set_layout_, 1)[0];
+    {
+        er::WriteDescriptorList writes;
+        er::Helper::addOneTexture(
+            writes,
+            csm_debug_desc_set_,
+            er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            0,
+            texture_sampler_,
+            csm_shadow_tex_->view,
+            er::ImageLayout::DEPTH_READ_ONLY_OPTIMAL);
+        device_->updateDescriptorSets(writes);
+    }
+
+    // ---- Pipeline layout: our desc set + push constant (cascade index) ----
+    {
+        er::PushConstantRange push_const{};
+        push_const.stage_flags = SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT);
+        push_const.offset = 0;
+        push_const.size = sizeof(int32_t);
+        csm_debug_pipeline_layout_ = device_->createPipelineLayout(
+            { csm_debug_desc_set_layout_ },
+            { push_const },
+            std::source_location::current());
+    }
+
+    // ---- Pipeline: full_screen.vert + csm_debug.frag, no depth buffer ----
+    {
+        er::ShaderModuleList shaders(2);
+        shaders[0] = er::helper::loadShaderModule(
+            device_,
+            "full_screen_vert.spv",
+            er::ShaderStageFlagBits::VERTEX_BIT,
+            std::source_location::current());
+        shaders[1] = er::helper::loadShaderModule(
+            device_,
+            "csm_debug_frag.spv",
+            er::ShaderStageFlagBits::FRAGMENT_BIT,
+            std::source_location::current());
+
+        er::PipelineRenderbufferFormats fmt;
+        fmt.color_formats = { er::Format::R8G8B8A8_UNORM };
+        fmt.depth_format   = er::Format::UNDEFINED;   // no depth attachment
+
+        er::PipelineInputAssemblyStateCreateInfo ia;
+        ia.topology = er::PrimitiveTopology::TRIANGLE_LIST;
+        ia.restart_enable = false;
+
+        // graphic_fs_pipeline_info_ = no cull, no depth test/write, single colour.
+        csm_debug_pipeline_ = device_->createPipeline(
+            csm_debug_pipeline_layout_,
+            {},   // no vertex bindings
+            {},   // no vertex attributes
+            ia,
+            graphic_fs_pipeline_info_,
+            shaders,
+            fmt,
+            {},   // default RasterizationStateOverride
+            std::source_location::current());
+    }
+}
+
+void RealWorldApplication::registerCsmDebugImTextureIds() {
+    if (!csm_debug_pipeline_) return;  // not set up yet
+    std::array<ImTextureID, CSM_CASCADE_COUNT> ids;
+    for (int k = 0; k < CSM_CASCADE_COUNT; ++k) {
+        ids[k] = er::Helper::addImTextureID(
+            texture_sampler_,
+            csm_debug_color_[k].view);
+    }
+    menu_->setCsmDebugTextureIds(ids);
+}
+
 void RealWorldApplication::createTextureSampler() {
     texture_sampler_ = device_->createSampler(
         er::Filter::LINEAR,
@@ -1275,6 +1452,10 @@ void RealWorldApplication::drawScene(
             current_time);
     }
 
+    // Declared here so both the update block and the render block can access them.
+    const glm::vec4 csm_cascade_splits(5.0f, 20.0f, 80.0f, 300.0f);
+    std::array<glm::mat4, CSM_CASCADE_COUNT> csm_cascade_vps;
+
     // this has to be happened after tile update, or you wont get the right height info.
     {
         static std::chrono::time_point s_last_time = std::chrono::steady_clock::now();
@@ -1305,16 +1486,31 @@ void RealWorldApplication::drawScene(
             s_mouse_wheel_offset,
             !s_camera_paused && s_mouse_right_button_pressed);
 
+        // Update the base shadow camera position (facing dir, up vector).
         shadow_camera_object_->updateCamera(
             cmd_buf,
             main_camera_object_->getCameraPos());
 
         s_mouse_wheel_offset = 0;
 
+        // ── Compute CSM cascade matrices ──────────────────────────────────────
+        main_camera_object_->readGpuCameraInfo();
+        const auto& main_cam = main_camera_object_->getCameraViewInfo();
+
+        // View-space far depths for each cascade (tune to scene scale).
+        shadow_camera_object_->computeCascadeMatrices(
+            main_cam.view,
+            main_cam.proj,
+            csm_cascade_splits,
+            0.1f,  // main camera z_near
+            csm_cascade_vps);
+
         glsl::RuntimeLightsParams runtime_lights_params = {};
         {
-            runtime_lights_params.light_view_proj =
-                shadow_camera_object_->getViewProjMatrix();
+            for (int k = 0; k < CSM_CASCADE_COUNT; ++k) {
+                runtime_lights_params.light_view_proj[k] = csm_cascade_vps[k];
+            }
+            runtime_lights_params.cascade_splits = csm_cascade_splits;
             for (int l = 0; l < LIGHT_COUNT; l++) {
                 runtime_lights_params.lights[l].type = glsl::LightType_Directional;
                 runtime_lights_params.lights[l].color = glm::vec3(255.0f, 250.0f, 240.0f) / 255.0f;
@@ -1370,19 +1566,129 @@ void RealWorldApplication::drawScene(
         desc_sets[PBR_GLOBAL_PARAMS_SET] = pbr_lighting_desc_set_;
         desc_sets[RUNTIME_LIGHTS_PARAMS_SET] = runtime_lights_desc_set_;
 
-        shadow_object_scene_view_->draw(
-            cmd_buf,
-            desc_sets,
-            nullptr,
-            s_dbuf_idx,
-            delta_t,
-            current_time,
-            true);
+        // ── 4-cascade shadow render passes ───────────────────────────────────
+        // Write all per-cascade VP matrices into their dedicated host-coherent
+        // buffers BEFORE issuing any draw calls.  This ensures each draw reads
+        // its own independent buffer and not the last-written shared value.
+        for (int k = 0; k < CSM_CASCADE_COUNT; ++k) {
+            shadow_camera_object_->updateCascadeBuffer(k, csm_cascade_vps[k]);
+        }
 
+        for (int k = 0; k < CSM_CASCADE_COUNT; ++k) {
+            // Point getViewCameraDescriptorSet() at cascade k's buffer.
+            shadow_camera_object_->setCascadeIndex(k);
+
+            shadow_object_scene_view_->draw(
+                cmd_buf,
+                desc_sets,
+                nullptr,
+                s_dbuf_idx,
+                delta_t,
+                current_time,
+                true,
+                csm_layer_views_[k]);   // render into cascade layer k
+        }
+
+        // Reset to no active cascade.
+        shadow_camera_object_->setCascadeIndex(-1);
+
+        // Custom resource infos matching the shadow pass attachment layout.
+        // The shadow depth buffer uses DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+        // (not DEPTH_ATTACHMENT_OPTIMAL) because object_scene_view uses
+        // a combined depth/stencil format.
+        er::ImageResourceInfo csm_as_depth_attachment = {
+            er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            SET_2_FLAG_BITS(Access, DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, DEPTH_STENCIL_ATTACHMENT_READ_BIT),
+            SET_2_FLAG_BITS(PipelineStage, EARLY_FRAGMENT_TESTS_BIT, LATE_FRAGMENT_TESTS_BIT) };
+        er::ImageResourceInfo csm_as_shader_sampler = {
+            er::ImageLayout::DEPTH_READ_ONLY_OPTIMAL,
+            SET_FLAG_BIT(Access, SHADER_READ_BIT),
+            SET_2_FLAG_BITS(PipelineStage, FRAGMENT_SHADER_BIT, COMPUTE_SHADER_BIT) };
+
+        // Transition ALL cascade layers from depth-attachment to shader-read.
         cmd_buf->addImageBarrier(
             shadow_object_scene_view_->getDepthBuffer()->image,
-            er::Helper::getImageAsDepthAttachment(),
-            er::Helper::getDepthAsShaderSampler());
+            csm_as_depth_attachment,
+            csm_as_shader_sampler,
+            0, 1, 0, CSM_CASCADE_COUNT);
+
+        // ---- CSM debug visualisation ----------------------------------------
+        // While the depth array is in DEPTH_READ_ONLY_OPTIMAL, blit each
+        // cascade to its small R8G8B8A8 colour target so the ImGui window can
+        // display them.
+        if (menu_->showCsmDebug() && csm_debug_pipeline_) {
+            er::ImageResourceInfo dbg_color_attach = {
+                er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
+                SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
+            er::ImageResourceInfo dbg_shader_read = {
+                er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                SET_FLAG_BIT(Access, SHADER_READ_BIT),
+                SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
+
+            for (int k = 0; k < CSM_CASCADE_COUNT; ++k) {
+                // SHADER_READ_ONLY → COLOR_ATTACHMENT
+                cmd_buf->addImageBarrier(
+                    csm_debug_color_[k].image,
+                    dbg_shader_read, dbg_color_attach,
+                    0, 1, 0, 1);
+
+                // Render cascade k depth → colour target.
+                er::RenderingAttachmentInfo color_attach;
+                color_attach.image_view   = csm_debug_color_[k].view;
+                color_attach.image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+                color_attach.load_op      = er::AttachmentLoadOp::CLEAR;
+                color_attach.store_op     = er::AttachmentStoreOp::STORE;
+                color_attach.clear_value.color = { {0.0f, 0.0f, 0.0f, 1.0f} };
+
+                er::RenderingInfo ri = {};
+                ri.render_area_offset = { 0, 0 };
+                ri.render_area_extent = { kCsmDebugSize, kCsmDebugSize };
+                ri.layer_count        = 1;
+                ri.view_mask          = 0;
+                ri.color_attachments  = { color_attach };
+                ri.depth_attachments  = {};
+                ri.stencil_attachments = {};
+                cmd_buf->beginDynamicRendering(ri);
+
+                er::Viewport vp;
+                vp.x = 0; vp.y = 0;
+                vp.width  = float(kCsmDebugSize);
+                vp.height = float(kCsmDebugSize);
+                vp.min_depth = 0.0f;
+                vp.max_depth = 1.0f;
+                er::Scissor sc;
+                sc.offset = glm::ivec2(0);
+                sc.extent = glm::uvec2(kCsmDebugSize);
+                cmd_buf->setViewports({ vp });
+                cmd_buf->setScissors({ sc });
+
+                cmd_buf->bindPipeline(
+                    er::PipelineBindPoint::GRAPHICS, csm_debug_pipeline_);
+
+                int32_t cascade_idx = k;
+                cmd_buf->pushConstants(
+                    SET_FLAG_BIT(ShaderStage, FRAGMENT_BIT),
+                    csm_debug_pipeline_layout_,
+                    &cascade_idx,
+                    sizeof(int32_t));
+                cmd_buf->bindDescriptorSets(
+                    er::PipelineBindPoint::GRAPHICS,
+                    csm_debug_pipeline_layout_,
+                    { csm_debug_desc_set_ });
+
+                cmd_buf->draw(3); // fullscreen triangle (no vertex buffer needed)
+
+                cmd_buf->endDynamicRendering();
+
+                // COLOR_ATTACHMENT → SHADER_READ_ONLY (for ImGui)
+                cmd_buf->addImageBarrier(
+                    csm_debug_color_[k].image,
+                    dbg_color_attach, dbg_shader_read,
+                    0, 1, 0, 1);
+            }
+        }
+        // ---- End CSM debug --------------------------------------------------
 
         object_scene_view_->draw(
             cmd_buf,
@@ -1392,10 +1698,12 @@ void RealWorldApplication::drawScene(
             delta_t,
             current_time);
 
+        // Transition ALL cascade layers back to depth-attachment for next frame.
         cmd_buf->addImageBarrier(
             shadow_object_scene_view_->getDepthBuffer()->image,
-            er::Helper::getDepthAsShaderSampler(),
-            er::Helper::getImageAsDepthAttachment());
+            csm_as_shader_sampler,
+            csm_as_depth_attachment,
+            0, 1, 0, CSM_CASCADE_COUNT);
 
 #if 0
         cmd_buf->beginRenderPass(
@@ -1993,6 +2301,37 @@ void RealWorldApplication::cleanup() {
     shadow_camera_object_->destroy(device_);
     terrain_scene_view_->destroy(device_);
     object_scene_view_->destroy(device_);
+
+    // Destroy CSM debug colour targets and pipeline.
+    for (int k = 0; k < CSM_CASCADE_COUNT; ++k) {
+        if (csm_debug_color_[k].image) {
+            csm_debug_color_[k].destroy(device_);
+        }
+    }
+    if (csm_debug_pipeline_) {
+        device_->destroyPipeline(csm_debug_pipeline_);
+        csm_debug_pipeline_ = nullptr;
+    }
+    if (csm_debug_pipeline_layout_) {
+        device_->destroyPipelineLayout(csm_debug_pipeline_layout_);
+        csm_debug_pipeline_layout_ = nullptr;
+    }
+    if (csm_debug_desc_set_layout_) {
+        device_->destroyDescriptorSetLayout(csm_debug_desc_set_layout_);
+        csm_debug_desc_set_layout_ = nullptr;
+    }
+
+    // Destroy CSM per-layer image views BEFORE destroying the scene view that
+    // owns the underlying array image — Vulkan requires views are destroyed
+    // before the image they reference.
+    for (int k = 0; k < CSM_CASCADE_COUNT; ++k) {
+        if (csm_layer_views_[k]) {
+            device_->destroyImageView(csm_layer_views_[k]);
+            csm_layer_views_[k] = nullptr;
+        }
+    }
+
+    // Destroys the array texture (csm_shadow_tex_) via m_depth_buffer_.
     shadow_object_scene_view_->destroy(device_);
 
     er::helper::clearCachedShaderModules(device_);
