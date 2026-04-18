@@ -12,6 +12,79 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# ── Optional LibTorch for ML-based auto-rigging ──────────────────────────────
+#  LibTorch is resolved in this order:
+#    1) CMAKE_PREFIX_PATH (user-specified via -DCMAKE_PREFIX_PATH=...)
+#    2) third_parties/libtorch (auto-downloaded by GenerateProjectFiles.bat / make)
+#    3) Not found → auto-rig uses heuristic mode
+#
+#  To download LibTorch automatically, run GenerateProjectFiles.bat or
+#    make libtorch
+#  before configuring CMake.
+
+set(LIBTORCH_LOCAL "${CMAKE_SOURCE_DIR}/realworld/src/sim_engine/third_parties/libtorch")
+
+# Check third_parties/libtorch if find_package hasn't been given a path
+find_package(Torch QUIET)
+if(NOT Torch_FOUND AND EXISTS "${LIBTORCH_LOCAL}/share/cmake/Torch/TorchConfig.cmake")
+    list(APPEND CMAKE_PREFIX_PATH "${LIBTORCH_LOCAL}")
+    find_package(Torch QUIET)
+endif()
+
+if(Torch_FOUND)
+    message(STATUS "LibTorch found: ${TORCH_INSTALL_PREFIX}")
+    add_compile_definitions(HAS_LIBTORCH=1)
+else()
+    # Attempt auto-download at configure time (Windows only, via PowerShell)
+    set(LIBTORCH_VERSION "2.7.0")
+    if(WIN32)
+        set(_lt_url "https://download.pytorch.org/libtorch/cpu/libtorch-win-shared-with-deps-${LIBTORCH_VERSION}%2Bcpu.zip")
+    elseif(APPLE)
+        execute_process(COMMAND uname -m OUTPUT_VARIABLE _arch OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if(_arch STREQUAL "arm64")
+            set(_lt_url "https://download.pytorch.org/libtorch/cpu/libtorch-macos-arm64-${LIBTORCH_VERSION}.zip")
+        else()
+            set(_lt_url "https://download.pytorch.org/libtorch/cpu/libtorch-macos-x86_64-${LIBTORCH_VERSION}.zip")
+        endif()
+    else()
+        set(_lt_url "https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-${LIBTORCH_VERSION}%2Bcpu.zip")
+    endif()
+
+    message(STATUS "LibTorch not found — downloading v${LIBTORCH_VERSION} (CPU)...")
+    message(STATUS "  URL: ${_lt_url}")
+    message(STATUS "  Destination: ${LIBTORCH_LOCAL}")
+
+    set(_lt_zip "${CMAKE_BINARY_DIR}/libtorch-download.zip")
+    file(DOWNLOAD "${_lt_url}" "${_lt_zip}"
+         STATUS _dl_status
+         SHOW_PROGRESS
+         TLS_VERIFY ON)
+
+    list(GET _dl_status 0 _dl_code)
+    if(_dl_code EQUAL 0)
+        message(STATUS "Extracting LibTorch...")
+        file(ARCHIVE_EXTRACT INPUT "${_lt_zip}"
+             DESTINATION "${LIBTORCH_LOCAL}/..")
+        file(REMOVE "${_lt_zip}")
+
+        # Retry find_package
+        list(APPEND CMAKE_PREFIX_PATH "${LIBTORCH_LOCAL}")
+        find_package(Torch QUIET)
+        if(Torch_FOUND)
+            message(STATUS "LibTorch downloaded and found: ${TORCH_INSTALL_PREFIX}")
+            add_compile_definitions(HAS_LIBTORCH=1)
+        else()
+            message(WARNING "LibTorch downloaded but TorchConfig.cmake not found.")
+        endif()
+    else()
+        list(GET _dl_status 1 _dl_msg)
+        message(STATUS "LibTorch download failed: ${_dl_msg}")
+        message(STATUS "Auto-rig will use heuristic mode. To enable ML inference:")
+        message(STATUS "  Option A: make libtorch   (then re-run CMake)")
+        message(STATUS "  Option B: cmake .. -DCMAKE_PREFIX_PATH=/path/to/libtorch")
+    endif()
+endif()
+
 # ── Key source paths ──────────────────────────────────────────────────────────
 set(ENGINE_DIR  "${CMAKE_SOURCE_DIR}/realworld/src/sim_engine")
 set(TP_DIR      "${ENGINE_DIR}/third_parties")
@@ -195,6 +268,7 @@ add_library(engine STATIC
     "${ENGINE_DIR}/game_object/view_object.cpp"
     "${ENGINE_DIR}/helper/bvh.cpp"
     "${ENGINE_DIR}/helper/engine_helper.cpp"
+    "${ENGINE_DIR}/helper/gpu_profiler.cpp"
     "${ENGINE_DIR}/helper/mesh_tool.cpp"
     "${ENGINE_DIR}/ray_tracing/raytracing_callable.cpp"
     "${ENGINE_DIR}/ray_tracing/raytracing_shadow.cpp"
@@ -216,8 +290,18 @@ add_library(engine STATIC
     "${ENGINE_DIR}/third_parties/fbx/ufbx.c"
     "${ENGINE_DIR}/ui/chat_box.cpp"
     "${ENGINE_DIR}/ui/menu.cpp"
+    "${SRC_DIR}/plugins/plugin_manager.cpp"
+    "${SRC_DIR}/plugins/auto_rig/auto_rig_plugin.cpp"
+    "${SRC_DIR}/plugins/auto_rig/simple_rasterizer.cpp"
+    "${SRC_DIR}/plugins/auto_rig/rig_diffusion_model.cpp"
 )
 target_include_directories(engine PUBLIC ${COMMON_INCLUDES})
+
+# Link LibTorch to engine if found.
+if(Torch_FOUND)
+    target_link_libraries(engine PUBLIC ${TORCH_LIBRARIES})
+    target_include_directories(engine PUBLIC ${TORCH_INCLUDE_DIRS})
+endif()
 
 # =============================================================================
 # RealWorld  (executable)
@@ -275,6 +359,80 @@ set_target_properties(RealWorld PROPERTIES
     # Debugger working directory = realworld/ so assets/ is found at runtime
     VS_DEBUGGER_WORKING_DIRECTORY           "${CMAKE_SOURCE_DIR}/realworld"
 )
+
+# ── Copy LibTorch DLLs next to executable (Windows) ─────────────────────────
+# The exe lives in realworld/ but the LibTorch .dlls are in libtorch/lib/.
+# Without this step, Windows can't find torch_cpu.dll etc. at runtime.
+if(Torch_FOUND AND WIN32)
+    # TORCH_INSTALL_PREFIX points to the libtorch root; DLLs are in lib/
+    set(_torch_dll_dir "${TORCH_INSTALL_PREFIX}/lib")
+    file(GLOB _torch_dlls "${_torch_dll_dir}/*.dll")
+    if(_torch_dlls)
+        add_custom_command(TARGET RealWorld POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${_torch_dlls}
+                "$<TARGET_FILE_DIR:RealWorld>"
+            COMMENT "Copying LibTorch DLLs to output directory..."
+        )
+        message(STATUS "LibTorch DLLs will be copied from: ${_torch_dll_dir}")
+    endif()
+elseif(Torch_FOUND AND NOT WIN32)
+    # On Linux/macOS the rpath is set via the linker; no copy needed.
+    # Just ensure the runtime path includes the LibTorch lib directory.
+    set_target_properties(RealWorld PROPERTIES
+        BUILD_RPATH "${TORCH_INSTALL_PREFIX}/lib"
+        INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib"
+    )
+endif()
+
+# ── Auto-export ML model if missing ──────────────────────────────────────────
+# If the TorchScript model file doesn't exist, try to generate it via Python.
+# This runs once at build time; subsequent builds skip it.
+set(MODEL_PT "${CMAKE_SOURCE_DIR}/realworld/assets/models/rig_diffusion.pt")
+set(MODEL_SCRIPT "${CMAKE_SOURCE_DIR}/ml_training/scripts/download_and_export_model.py")
+
+if(NOT EXISTS "${MODEL_PT}" AND EXISTS "${MODEL_SCRIPT}")
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_FOUND)
+        message(STATUS "ML model not found — will export at build time")
+        # Try distillation first; if it fails, fall back to skeleton export.
+        # We use a small wrapper script via cmake -P to handle the fallback.
+        set(_export_script "${CMAKE_BINARY_DIR}/export_model.cmake")
+        file(WRITE "${_export_script}" "
+execute_process(
+    COMMAND \"${Python3_EXECUTABLE}\" \"${MODEL_SCRIPT}\"
+        --method distill --output \"${MODEL_PT}\" --resolution 256
+    WORKING_DIRECTORY \"${CMAKE_SOURCE_DIR}/ml_training\"
+    RESULT_VARIABLE _rc
+)
+if(NOT _rc EQUAL 0)
+    message(STATUS \"Distillation failed — trying skeleton export...\")
+    execute_process(
+        COMMAND \"${Python3_EXECUTABLE}\" \"${MODEL_SCRIPT}\"
+            --method skeleton --output \"${MODEL_PT}\" --resolution 256
+        WORKING_DIRECTORY \"${CMAKE_SOURCE_DIR}/ml_training\"
+        RESULT_VARIABLE _rc2
+    )
+    if(NOT _rc2 EQUAL 0)
+        message(WARNING \"ML model export failed. Auto-rig will use heuristic mode.\")
+    endif()
+endif()
+")
+        add_custom_command(
+            OUTPUT "${MODEL_PT}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "${CMAKE_SOURCE_DIR}/realworld/assets/models"
+            COMMAND ${CMAKE_COMMAND} -P "${_export_script}"
+            COMMENT "Exporting auto-rig ML model..."
+        )
+        add_custom_target(export_ml_model DEPENDS "${MODEL_PT}")
+        add_dependencies(RealWorld export_ml_model)
+    else()
+        message(STATUS "Python3 not found — skipping ML model export")
+    endif()
+elseif(EXISTS "${MODEL_PT}")
+    message(STATUS "ML model found: ${MODEL_PT}")
+endif()
 
 # ── Set RealWorld as the startup project in Visual Studio ─────────────────────
 set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT RealWorld)

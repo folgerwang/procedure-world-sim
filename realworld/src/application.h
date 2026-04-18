@@ -26,7 +26,10 @@
 #include "scene_rendering/object_scene_view.h"
 #include "ray_tracing/raytracing_base.h"
 #include "helper/engine_helper.h"
+#include "helper/gpu_profiler.h"
 #include "ui/menu.h"
+#include "plugins/plugin_manager.h"
+#include "plugins/auto_rig/auto_rig_plugin.h"
 
 namespace er = engine::renderer;
 namespace ego = engine::game_object;
@@ -187,7 +190,7 @@ private:
     std::array<std::shared_ptr<er::ImageView>, CSM_CASCADE_COUNT> csm_layer_views_;
 
     // CSM debug visualisation: small per-cascade R8G8B8A8 colour targets.
-    static constexpr uint32_t kCsmDebugSize = 256;
+    static constexpr uint32_t kCsmDebugSize = 512;
     std::array<er::TextureInfo, CSM_CASCADE_COUNT> csm_debug_color_;
     std::shared_ptr<er::DescriptorSetLayout>  csm_debug_desc_set_layout_;
     std::shared_ptr<er::DescriptorSet>        csm_debug_desc_set_;
@@ -207,6 +210,13 @@ private:
 
     uint64_t current_frame_ = 0;
     bool framebuffer_resized_ = false;
+
+    // GPU profiler (timestamp-based, frame-by-frame hierarchy).
+    engine::helper::GpuProfiler gpu_profiler_;
+    bool gpu_profiler_initialized_ = false;
+
+    // Plugin system.
+    plugins::PluginManager plugin_manager_;
 };
 
 }// namespace app

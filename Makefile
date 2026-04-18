@@ -4,21 +4,26 @@
 # Supported platforms: Linux (x86_64), macOS (arm64/x86_64), Windows (MinGW)
 #
 # Usage:
-#   make                         # Debug build
+#   make                         # Debug build (auto-exports ML model if missing)
 #   make BUILD=release           # Release build
+#   make model                   # Export ML model only
 #   make shaders                 # Compile all GLSL shaders to SPIR-V
 #   make clean                   # Remove all build artifacts
 #   make submodules              # Initialize / update all git submodules
 #   make help                    # Show this message
 #
 # Key variables (override on command line):
-#   BUILD       debug (default) | release
-#   CXX         C++ compiler    (default: g++ on Linux, clang++ on macOS)
-#   CC          C compiler      (default: gcc on Linux, clang on macOS)
-#   VULKAN_SDK  Path to the LunarG Vulkan SDK (auto-detected if set in env)
+#   BUILD        debug (default) | release
+#   CXX          C++ compiler    (default: g++ on Linux, clang++ on macOS)
+#   CC           C compiler      (default: gcc on Linux, clang on macOS)
+#   VULKAN_SDK   Path to the LunarG Vulkan SDK (auto-detected if set in env)
+#   LIBTORCH_DIR Path to LibTorch installation (enables ML-based auto-rig)
 # =============================================================================
 
 BUILD ?= debug
+
+# ML model path
+MODEL_PT := realworld/assets/models/rig_diffusion.pt
 
 # Derived directories
 BUILD_DIR := build/$(BUILD)
@@ -37,6 +42,36 @@ else
     else
         $(error Unsupported platform: $(UNAME_S))
     endif
+endif
+
+# ── LibTorch auto-detection / download config ────────────────────────────────
+LIBTORCH_VERSION ?= 2.7.0
+LIBTORCH_LOCAL    = realworld/src/sim_engine/third_parties/libtorch
+
+# If LIBTORCH_DIR is not explicitly set, check third_parties/libtorch
+LIBTORCH_DIR ?=
+ifeq ($(LIBTORCH_DIR),)
+    ifneq ($(wildcard $(LIBTORCH_LOCAL)/share/cmake/Torch/TorchConfig.cmake),)
+        LIBTORCH_DIR := $(LIBTORCH_LOCAL)
+    endif
+endif
+
+# Platform-specific download URL
+LIBTORCH_BASE_URL := https://download.pytorch.org/libtorch
+ifeq ($(PLATFORM),linux)
+    LIBTORCH_ZIP_NAME := libtorch-cxx11-abi-shared-with-deps-$(LIBTORCH_VERSION)%2Bcpu.zip
+    LIBTORCH_URL      := $(LIBTORCH_BASE_URL)/cpu/$(LIBTORCH_ZIP_NAME)
+else ifeq ($(PLATFORM),macos)
+    UNAME_M := $(shell uname -m)
+    ifeq ($(UNAME_M),arm64)
+        LIBTORCH_ZIP_NAME := libtorch-macos-arm64-$(LIBTORCH_VERSION).zip
+    else
+        LIBTORCH_ZIP_NAME := libtorch-macos-x86_64-$(LIBTORCH_VERSION).zip
+    endif
+    LIBTORCH_URL := $(LIBTORCH_BASE_URL)/cpu/$(LIBTORCH_ZIP_NAME)
+else ifeq ($(PLATFORM),windows)
+    LIBTORCH_ZIP_NAME := libtorch-win-shared-with-deps-$(LIBTORCH_VERSION)%2Bcpu.zip
+    LIBTORCH_URL      := $(LIBTORCH_BASE_URL)/cpu/$(LIBTORCH_ZIP_NAME)
 endif
 
 # ── Toolchain ─────────────────────────────────────────────────────────────────
@@ -73,6 +108,25 @@ endif
 
 CXXFLAGS += $(COMMON_DEFINES)
 CFLAGS   += $(COMMON_DEFINES)
+
+# ── LibTorch integration (optional) ──────────────────────────────────────────
+ifneq ($(LIBTORCH_DIR),)
+    CXXFLAGS += -DHAS_LIBTORCH=1
+    LIBTORCH_INCLUDES := -I$(LIBTORCH_DIR)/include -I$(LIBTORCH_DIR)/include/torch/csrc/api/include
+    LIBTORCH_LDFLAGS  := -L$(LIBTORCH_DIR)/lib -Wl,-rpath,$(LIBTORCH_DIR)/lib
+    LIBTORCH_LDLIBS   := -ltorch -ltorch_cpu -lc10
+    # Add CUDA libs if available
+    ifneq ($(wildcard $(LIBTORCH_DIR)/lib/libtorch_cuda.so),)
+        LIBTORCH_LDLIBS += -ltorch_cuda -lc10_cuda
+    endif
+    ifneq ($(wildcard $(LIBTORCH_DIR)/lib/libtorch_cuda.dylib),)
+        LIBTORCH_LDLIBS += -ltorch_cuda -lc10_cuda
+    endif
+else
+    LIBTORCH_INCLUDES :=
+    LIBTORCH_LDFLAGS  :=
+    LIBTORCH_LDLIBS   :=
+endif
 
 # ── Key directory paths ───────────────────────────────────────────────────────
 ENGINE_DIR   := realworld/src/sim_engine
@@ -278,12 +332,27 @@ ENGINE_CPP_SRCS := \
     $(ENGINE_DIR)/scene_rendering/volume_noise.cpp          \
     $(ENGINE_DIR)/scene_rendering/weather_system.cpp        \
     $(ENGINE_DIR)/ui/chat_box.cpp                           \
-    $(ENGINE_DIR)/ui/menu.cpp
+    $(ENGINE_DIR)/ui/menu.cpp                               \
+    $(ENGINE_DIR)/helper/gpu_profiler.cpp
+
+# ── Plugin sources ────────────────────────────────────────────────────────────
+PLUGIN_CPP_SRCS := \
+    $(SRC_DIR)/plugins/plugin_manager.cpp                   \
+    $(SRC_DIR)/plugins/auto_rig/auto_rig_plugin.cpp         \
+    $(SRC_DIR)/plugins/auto_rig/simple_rasterizer.cpp       \
+    $(SRC_DIR)/plugins/auto_rig/rig_diffusion_model.cpp
+
+ENGINE_CPP_SRCS += $(PLUGIN_CPP_SRCS)
 
 ENGINE_C_SRCS := \
     $(ENGINE_DIR)/third_parties/fbx/ufbx.c
 
-ENGINE_CPP_OBJS := $(patsubst $(ENGINE_DIR)/%.cpp, $(OBJ_DIR)/engine/%.o, $(ENGINE_CPP_SRCS))
+# Engine objects: engine sources live under ENGINE_DIR, plugin sources under SRC_DIR
+ENGINE_ENGDIR_CPP := $(filter $(ENGINE_DIR)/%, $(ENGINE_CPP_SRCS))
+ENGINE_SRCDIR_CPP := $(filter $(SRC_DIR)/%, $(ENGINE_CPP_SRCS))
+
+ENGINE_CPP_OBJS := $(patsubst $(ENGINE_DIR)/%.cpp, $(OBJ_DIR)/engine/%.o, $(ENGINE_ENGDIR_CPP)) \
+                   $(patsubst $(SRC_DIR)/%.cpp, $(OBJ_DIR)/plugins/%.o, $(ENGINE_SRCDIR_CPP))
 ENGINE_C_OBJS   := $(patsubst $(ENGINE_DIR)/%.c,   $(OBJ_DIR)/engine/%.o, $(ENGINE_C_SRCS))
 ENGINE_OBJS     := $(ENGINE_CPP_OBJS) $(ENGINE_C_OBJS)
 ENGINE_LIB      := $(LIB_DIR)/libengine_$(BUILD).a
@@ -303,14 +372,15 @@ else
 endif
 
 # ── Linker settings ───────────────────────────────────────────────────────────
-LDFLAGS := -L$(LIB_DIR)
+LDFLAGS := -L$(LIB_DIR) $(LIBTORCH_LDFLAGS)
 
 # Static libraries (order matters: dependents before dependencies)
 LDLIBS := \
     -lengine_$(BUILD)     \
     -limgui_$(BUILD)      \
     -lglfw3_$(BUILD)      \
-    -lopen-mesh_$(BUILD)
+    -lopen-mesh_$(BUILD)  \
+    $(LIBTORCH_LDLIBS)
 
 ifeq ($(PLATFORM),windows)
     # MinGW: use bundled Vulkan import library
@@ -340,12 +410,79 @@ else
 endif
 
 # ── Phony targets ─────────────────────────────────────────────────────────────
-.PHONY: all clean shaders submodules help
+.PHONY: all clean shaders submodules model libtorch help
 
 # ── Default target ────────────────────────────────────────────────────────────
-all: $(TARGET)
+all: libtorch model $(TARGET)
 	@echo ""
 	@echo "Build complete: $(TARGET)  (run from the realworld/ directory)"
+ifneq ($(LIBTORCH_DIR),)
+	@echo "  LibTorch: $(LIBTORCH_DIR)  (ML auto-rig enabled)"
+else
+	@echo "  LibTorch: not found  (auto-rig uses heuristic mode)"
+	@echo "  Run 'make libtorch' or set LIBTORCH_DIR to enable ML inference"
+endif
+
+# ── LibTorch auto-download (to third_parties/libtorch) ───────────────────────
+libtorch:
+	@if [ -n "$(LIBTORCH_DIR)" ] && [ -d "$(LIBTORCH_DIR)" ]; then \
+	    echo "[libtorch] Using: $(LIBTORCH_DIR)"; \
+	elif [ -f "$(LIBTORCH_LOCAL)/share/cmake/Torch/TorchConfig.cmake" ]; then \
+	    echo "[libtorch] Found: $(LIBTORCH_LOCAL)"; \
+	else \
+	    echo "[libtorch] Not found — downloading LibTorch $(LIBTORCH_VERSION) (CPU)..."; \
+	    echo "[libtorch] URL: $(LIBTORCH_URL)"; \
+	    echo "[libtorch] This is a one-time ~200 MB download."; \
+	    echo ""; \
+	    _tmpzip="$(BUILD_DIR)/libtorch-download.zip"; \
+	    mkdir -p "$(BUILD_DIR)"; \
+	    if command -v curl >/dev/null 2>&1; then \
+	        curl -L --progress-bar -o "$$_tmpzip" "$(LIBTORCH_URL)"; \
+	    elif command -v wget >/dev/null 2>&1; then \
+	        wget --show-progress -q -O "$$_tmpzip" "$(LIBTORCH_URL)"; \
+	    else \
+	        echo "[libtorch] ERROR: Neither curl nor wget found."; \
+	        echo "         Install curl or wget, or download manually from:"; \
+	        echo "         $(LIBTORCH_URL)"; \
+	        echo "         Extract to: $(LIBTORCH_LOCAL)"; \
+	        exit 1; \
+	    fi; \
+	    echo "[libtorch] Extracting to $(LIBTORCH_LOCAL)..."; \
+	    mkdir -p "$$(dirname $(LIBTORCH_LOCAL))"; \
+	    unzip -q -o "$$_tmpzip" -d "$$(dirname $(LIBTORCH_LOCAL))"; \
+	    rm -f "$$_tmpzip"; \
+	    if [ -f "$(LIBTORCH_LOCAL)/share/cmake/Torch/TorchConfig.cmake" ]; then \
+	        echo "[libtorch] Installed successfully: $(LIBTORCH_LOCAL)"; \
+	    else \
+	        echo "[libtorch] ERROR: Extraction failed — TorchConfig.cmake not found."; \
+	        exit 1; \
+	    fi; \
+	fi
+
+# ── ML model export (only if .pt is missing) ─────────────────────────────────
+model:
+	@if [ ! -f "$(MODEL_PT)" ]; then \
+	    echo "[model] $(MODEL_PT) not found — exporting..."; \
+	    mkdir -p $$(dirname $(MODEL_PT)); \
+	    if command -v python3 >/dev/null 2>&1; then PY=python3; \
+	    elif command -v python >/dev/null 2>&1; then PY=python; \
+	    else \
+	        echo "[model] Python not found — skipping ML model export."; \
+	        echo "        Auto-rig will use heuristic mode."; \
+	        exit 0; \
+	    fi; \
+	    echo "[model] Trying distillation (downloads pretrained weights)..."; \
+	    $$PY ml_training/scripts/download_and_export_model.py \
+	        --method distill --output $(MODEL_PT) --resolution 256 2>&1 \
+	    || { \
+	        echo "[model] Distillation failed — falling back to skeleton export..."; \
+	        $$PY ml_training/scripts/download_and_export_model.py \
+	            --method skeleton --output $(MODEL_PT) --resolution 256 2>&1 \
+	        || echo "[model] Export failed. Install PyTorch: pip install torch torchvision"; \
+	    }; \
+	else \
+	    echo "[model] $(MODEL_PT) found — OK"; \
+	fi
 
 # ── Final executable ──────────────────────────────────────────────────────────
 $(TARGET): $(APP_OBJS) $(ENGINE_LIB) $(IMGUI_LIB) $(GLFW3_LIB) $(OPENMESH_LIB)
@@ -381,11 +518,16 @@ $(OBJ_DIR)/app/%.o: $(SRC_DIR)/%.cpp
 # ── Object rules: engine ──────────────────────────────────────────────────────
 $(OBJ_DIR)/engine/%.o: $(ENGINE_DIR)/%.cpp
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) $(BASE_INCLUDES) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(BASE_INCLUDES) $(LIBTORCH_INCLUDES) -c $< -o $@
 
 $(OBJ_DIR)/engine/%.o: $(ENGINE_DIR)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(BASE_INCLUDES) -c $< -o $@
+
+# ── Object rules: plugins (under SRC_DIR) ────────────────────────────────────
+$(OBJ_DIR)/plugins/%.o: $(SRC_DIR)/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) $(BASE_INCLUDES) $(LIBTORCH_INCLUDES) -c $< -o $@
 
 # ── Object rules: ImGui ───────────────────────────────────────────────────────
 $(OBJ_DIR)/imgui/%.o: $(IMGUI_DIR)/%.cpp
@@ -434,21 +576,27 @@ help:
 	@echo "RealWorld — cross-platform Makefile"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all         Build the RealWorld executable (default)"
+	@echo "  all         Build everything: download LibTorch, export model, compile (default)"
+	@echo "  libtorch    Download LibTorch to third_parties/ (if not present)"
+	@echo "  model       Export ML auto-rig model (if missing)"
 	@echo "  shaders     Compile all GLSL shaders → SPIR-V (.spv)"
 	@echo "  submodules  Run: git submodule update --init --recursive"
 	@echo "  clean       Remove build/ and realworld/src/lib/"
 	@echo "  help        Show this help"
 	@echo ""
 	@echo "Variables (override on command line):"
-	@echo "  BUILD       debug (default) or release"
-	@echo "  CXX         C++ compiler   [$(CXX)]"
-	@echo "  CC          C   compiler   [$(CC)]"
-	@echo "  VULKAN_SDK  Path to LunarG Vulkan SDK (optional)"
+	@echo "  BUILD            debug (default) or release"
+	@echo "  CXX              C++ compiler   [$(CXX)]"
+	@echo "  CC               C   compiler   [$(CC)]"
+	@echo "  VULKAN_SDK       Path to LunarG Vulkan SDK (optional)"
+	@echo "  LIBTORCH_DIR     Custom LibTorch path (auto-downloaded if omitted)"
+	@echo "  LIBTORCH_VERSION LibTorch version to download [$(LIBTORCH_VERSION)]"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make                           # Debug build"
+	@echo "  make                           # Debug build (auto-downloads LibTorch)"
 	@echo "  make BUILD=release             # Release build"
+	@echo "  make libtorch                  # Download LibTorch only"
+	@echo "  make model                     # Export ML model only"
 	@echo "  make shaders                   # Compile shaders only"
 	@echo "  make VULKAN_SDK=~/VulkanSDK/1.3.x/x86_64  # Custom SDK path"
 	@echo "  make CXX=clang++ CC=clang      # Use Clang"

@@ -101,6 +101,7 @@ static bool s_mouse_right_button_pressed = false;
 static glm::vec2 s_last_mouse_pos;
 static float s_mouse_wheel_offset = 0.0f;
 static int s_key = 0;
+static bool s_toggle_profiler_pause = false;
 
 static void keyInputCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
@@ -114,7 +115,9 @@ static void keyInputCallback(GLFWwindow* window, int key, int scancode, int acti
     }
 
     if (action == GLFW_PRESS && key == GLFW_KEY_SPACE) {
-        s_camera_paused = !s_camera_paused;
+        // Space toggles the GPU profiler flame-chart pause so you can
+        // inspect any frame without it scrolling away.
+        s_toggle_profiler_pause = true;
     }
 }
 
@@ -875,6 +878,15 @@ void RealWorldApplication::initVulkan() {
     // Register CSM debug colour targets as ImGui textures (ImGui must be
     // initialised by the Menu constructor before this can be called).
     registerCsmDebugImTextureIds();
+
+    // Wire the GPU profiler into the menu so it can display itself.
+    menu_->setGpuProfiler(&gpu_profiler_);
+
+    // ---- Plugin system --------------------------------------------------------
+    plugin_manager_.registerPlugin(
+        std::make_unique<plugins::auto_rig::AutoRigPlugin>());
+    plugin_manager_.initAll(device_);
+    menu_->setPluginManager(&plugin_manager_);
 }
 
 void RealWorldApplication::recreateSwapChain() {
@@ -1047,6 +1059,9 @@ void RealWorldApplication::recreateSwapChain() {
 
     // Re-register CSM debug textures — ImGui was re-initialized above.
     registerCsmDebugImTextureIds();
+
+    // Re-wire profiler after menu re-init.
+    menu_->setGpuProfiler(&gpu_profiler_);
 }
 
 void RealWorldApplication::createImageViews() {
@@ -1381,46 +1396,63 @@ void RealWorldApplication::drawScene(
 
     static int s_dbuf_idx = 0;
 
-    if (0)
+    // ----- GPU Profiler: begin frame -----------------------------------------
+    if (!gpu_profiler_initialized_) {
+        gpu_profiler_.init(device_, kMaxFramesInFlight);
+        gpu_profiler_initialized_ = true;
+    }
+    // Consume Space-key pause toggle.
+    if (s_toggle_profiler_pause) {
+        gpu_profiler_.togglePause();
+        s_toggle_profiler_pause = false;
+    }
+    gpu_profiler_.beginFrame(cmd_buf, static_cast<uint32_t>(current_frame_ % kMaxFramesInFlight));
+
     {
-        ibl_creator_->drawEnvmapFromPanoramaImage(
+        auto _scope = gpu_profiler_.beginScope(cmd_buf, "IBL / Skydome");
+        if (0)
+        {
+            ibl_creator_->drawEnvmapFromPanoramaImage(
+                cmd_buf,
+                cubemap_render_pass_,
+                clear_values_,
+                kCubemapSize);
+        }
+        else {
+            skydome_->drawCubeSkyBox(
+                cmd_buf,
+                cubemap_render_pass_,
+                ibl_creator_->getEnvmapTexture(),
+                clear_values_,
+                kCubemapSize);
+        }
+
+        ibl_creator_->createIblDiffuseMap(
             cmd_buf,
             cubemap_render_pass_,
             clear_values_,
             kCubemapSize);
-    }
-    else {
-        skydome_->drawCubeSkyBox(
+
+        ibl_creator_->createIblSpecularMap(
             cmd_buf,
             cubemap_render_pass_,
-            ibl_creator_->getEnvmapTexture(),
             clear_values_,
             kCubemapSize);
+
+        ibl_creator_->createIblSheenMap(
+            cmd_buf,
+            cubemap_render_pass_,
+            clear_values_,
+            kCubemapSize);
+        gpu_profiler_.endScope(cmd_buf, _scope);
     }
-
-    ibl_creator_->createIblDiffuseMap(
-        cmd_buf,
-        cubemap_render_pass_,
-        clear_values_,
-        kCubemapSize);
-
-    ibl_creator_->createIblSpecularMap(
-        cmd_buf,
-        cubemap_render_pass_,
-        clear_values_,
-        kCubemapSize);
-
-    ibl_creator_->createIblSheenMap(
-        cmd_buf,
-        cubemap_render_pass_,
-        clear_values_,
-        kCubemapSize);
  
     er::DescriptorSetList desc_sets{
         pbr_lighting_desc_set_,
         view_desc_set };
 
     {
+        auto _scope_terrain = gpu_profiler_.beginScope(cmd_buf, "Terrain / Weather Update");
         // only init one time.
         static bool s_tile_buffer_inited = false;
         if (!s_tile_buffer_inited) {
@@ -1450,6 +1482,7 @@ void RealWorldApplication::drawScene(
             menu_->getLightExtFactor(),
             s_dbuf_idx,
             current_time);
+        gpu_profiler_.endScope(cmd_buf, _scope_terrain);
     }
 
     // Declared here so both the update block and the render block can access them.
@@ -1458,6 +1491,7 @@ void RealWorldApplication::drawScene(
 
     // this has to be happened after tile update, or you wont get the right height info.
     {
+        auto _scope_go = gpu_profiler_.beginScope(cmd_buf, "Game Object Updates");
         static std::chrono::time_point s_last_time = std::chrono::steady_clock::now();
         auto cur_time = std::chrono::steady_clock::now();
         std::chrono::duration<double> elapsed_seconds = cur_time - s_last_time;
@@ -1544,6 +1578,7 @@ void RealWorldApplication::drawScene(
         if (s_update_frame_count >= 0) {
             s_update_frame_count++;
         }
+        gpu_profiler_.endScope(cmd_buf, _scope_go);
     }
 
     {
@@ -1572,16 +1607,20 @@ void RealWorldApplication::drawScene(
         // array layers in one draw.  Vertex transform runs once per vertex
         // instead of 4×, giving roughly 4× the throughput of separate passes.
         // The full 4-layer array view is used so the GS can write to all layers.
-        shadow_object_scene_view_->draw(
-            cmd_buf,
-            desc_sets,
-            nullptr,
-            s_dbuf_idx,
-            delta_t,
-            current_time,
-            true,
-            csm_shadow_tex_->view,    // full CSM_CASCADE_COUNT-layer array view
-            CSM_CASCADE_COUNT);       // layer_count triggers GS layered path
+        {
+            auto _scope_shadow = gpu_profiler_.beginScope(cmd_buf, "CSM Shadow");
+            shadow_object_scene_view_->draw(
+                cmd_buf,
+                desc_sets,
+                nullptr,
+                s_dbuf_idx,
+                delta_t,
+                current_time,
+                true,
+                csm_shadow_tex_->view,    // full CSM_CASCADE_COUNT-layer array view
+                CSM_CASCADE_COUNT);       // layer_count triggers GS layered path
+            gpu_profiler_.endScope(cmd_buf, _scope_shadow);
+        }
 
         // Custom resource infos matching the shadow pass attachment layout.
         // The shadow depth buffer uses DEPTH_STENCIL_ATTACHMENT_OPTIMAL
@@ -1681,13 +1720,17 @@ void RealWorldApplication::drawScene(
         }
         // ---- End CSM debug --------------------------------------------------
 
-        object_scene_view_->draw(
-            cmd_buf,
-            desc_sets,
-            unit_sphere_,
-            s_dbuf_idx,
-            delta_t,
-            current_time);
+        {
+            auto _scope_forward = gpu_profiler_.beginScope(cmd_buf, "Forward Pass");
+            object_scene_view_->draw(
+                cmd_buf,
+                desc_sets,
+                unit_sphere_,
+                s_dbuf_idx,
+                delta_t,
+                current_time);
+            gpu_profiler_.endScope(cmd_buf, _scope_forward);
+        }
 
         // Transition ALL cascade layers back to depth-attachment for next frame.
         cmd_buf->addImageBarrier(
@@ -1785,6 +1828,7 @@ void RealWorldApplication::drawScene(
             depth_buffer_copy_.size);
 
         if (!menu_->isVolumeMoistTurnOff()) {
+            auto _scope_cloud = gpu_profiler_.beginScope(cmd_buf, "Volume Cloud");
             volume_cloud_->renderVolumeCloud(
                 cmd_buf,
                 view_desc_set,
@@ -1803,6 +1847,7 @@ void RealWorldApplication::drawScene(
                 screen_size,
                 s_dbuf_idx,
                 current_time);
+            gpu_profiler_.endScope(cmd_buf, _scope_cloud);
         }
     }
 
@@ -1816,18 +1861,25 @@ void RealWorldApplication::drawScene(
         SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
         SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
 
-    er::Helper::blitImage(
-        cmd_buf,
-        object_scene_view_->getColorBuffer()->image,
-        swap_chain_info.images[image_index],
-        src_info,
-        src_info,
-        dst_info,
-        dst_info,
-        SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-        SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-        object_scene_view_->getColorBuffer()->size,
-        glm::ivec3(screen_size.x, screen_size.y, 1));
+    {
+        auto _scope_blit = gpu_profiler_.beginScope(cmd_buf, "Final Blit");
+        er::Helper::blitImage(
+            cmd_buf,
+            object_scene_view_->getColorBuffer()->image,
+            swap_chain_info.images[image_index],
+            src_info,
+            src_info,
+            dst_info,
+            dst_info,
+            SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+            SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+            object_scene_view_->getColorBuffer()->size,
+            glm::ivec3(screen_size.x, screen_size.y, 1));
+        gpu_profiler_.endScope(cmd_buf, _scope_blit);
+    }
+
+    // ----- GPU Profiler: end frame -------------------------------------------
+    gpu_profiler_.endFrame(cmd_buf, static_cast<uint32_t>(current_frame_ % kMaxFramesInFlight));
 
     s_dbuf_idx = 1 - s_dbuf_idx;
 }
@@ -2180,6 +2232,15 @@ void RealWorldApplication::drawFrame() {
         recreateSwapChain();
     }
 
+    // Collect GPU timestamp results from the *previous* frame to avoid stalls.
+    // current_frame_ still holds the frame just submitted; the "previous" slot
+    // (one kMaxFramesInFlight period ago) should already be done.
+    if (gpu_profiler_initialized_) {
+        uint32_t collect_frame = static_cast<uint32_t>(
+            (current_frame_ + kMaxFramesInFlight - 1) % kMaxFramesInFlight);
+        gpu_profiler_.collectResults(device_, collect_frame);
+    }
+
     current_frame_ = (current_frame_ + 1) % kMaxFramesInFlight;
     if (s_update_frame_count < 0) {
         s_update_frame_count = 0;
@@ -2214,6 +2275,19 @@ void RealWorldApplication::cleanupSwapChain() {
 }
 
 void RealWorldApplication::cleanup() {
+    // Wait for the GPU to finish before tearing anything down, otherwise
+    // destroying resources still referenced by in-flight command buffers
+    // (query pools, images, buffers, etc.) will crash.
+    if (device_) {
+        device_->waitIdle();
+    }
+
+    plugin_manager_.shutdownAll();
+
+    if (gpu_profiler_initialized_) {
+        gpu_profiler_.destroy(device_);
+        gpu_profiler_initialized_ = false;
+    }
     menu_->destroy();
     cleanupSwapChain();
 
@@ -2244,7 +2318,8 @@ void RealWorldApplication::cleanup() {
     device_->destroySampler(repeat_texture_sampler_);
     device_->destroySampler(mirror_repeat_sampler_);
     device_->destroyDescriptorSetLayout(pbr_lighting_desc_set_layout_);
-    
+    device_->destroyDescriptorSetLayout(runtime_lights_desc_set_layout_);
+
     ego::TileObject::destroyAllTiles(device_);
     ego::TileObject::destroyStaticMembers(device_);
     if (player_object_) {
@@ -2290,6 +2365,9 @@ void RealWorldApplication::cleanup() {
 
     main_camera_object_->destroy(device_);
     shadow_camera_object_->destroy(device_);
+    // Destroy the shared static descriptor set layout exactly once (after
+    // both camera instances have released their descriptor sets).
+    ego::CameraObject::destroyStaticMembers(device_);
     terrain_scene_view_->destroy(device_);
     object_scene_view_->destroy(device_);
 

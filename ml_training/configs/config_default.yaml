@@ -1,0 +1,36 @@
+# ── Training Configuration ──────────────────────────────────────────────────
+model:
+  num_joints: 19
+  input_channels: 7          # RGB(3) + Normal(3) + Silhouette(1)
+  base_channels: 64
+  resolution: 256
+
+data:
+  dataset_path: "datasets/dataset.h5"
+  num_views: 8
+  resolution: 256
+  heatmap_sigma: 2.5         # Gaussian sigma in pixels
+  train_split: 0.70
+  val_split: 0.15
+  test_split: 0.15
+
+training:
+  epochs: 50
+  batch_size: 16
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_step_size: 15
+  lr_gamma: 0.1
+  num_workers: 4
+  device: "cuda"             # "cuda" or "cpu"
+
+augmentation:
+  horizontal_flip: true
+  brightness_range: 0.2
+  contrast_range: 0.2
+  gaussian_noise_std: 0.02
+  depth_dropout_rate: 0.05
+
+export:
+  format: "torchscript"      # "torchscript" or "onnx"
+  output_path: "../realworld/assets/models/rig_diffusion.pt"

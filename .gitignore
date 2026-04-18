@@ -259,3 +259,31 @@ paket-files/
 # Python Tools for Visual Studio (PTVS)
 __pycache__/
 *.pyc
+
+# LibTorch (auto-downloaded, ~200 MB)
+realworld/src/sim_engine/third_parties/libtorch/
+
+# ML model artifacts
+realworld/assets/models/*.pt
+realworld/assets/models/*.onnx
+
+# CMake build directories
+build/
+build_vs/
+
+# Runtime binaries and DLLs
+realworld/*.exe
+realworld/*.dll
+realworld/lib/
+
+# ImGui runtime settings
+realworld/imgui.ini
+
+# Generated outputs
+realworld/rigged_output.glb
+realworld/volume_noise.dds
+
+# Large assets (download separately)
+realworld/assets/Bistro_v5_2/
+realworld/assets/Characters/
+realworld/assets/models/*.pth

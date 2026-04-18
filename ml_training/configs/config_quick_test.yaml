@@ -1,0 +1,36 @@
+# ── Quick test config for prototyping ────────────────────────────────────────
+model:
+  num_joints: 19
+  input_channels: 7
+  base_channels: 32          # smaller network
+  resolution: 128             # lower res for speed
+
+data:
+  dataset_path: "datasets/dataset.h5"
+  num_views: 4
+  resolution: 128
+  heatmap_sigma: 2.0
+  train_split: 0.80
+  val_split: 0.10
+  test_split: 0.10
+
+training:
+  epochs: 10
+  batch_size: 4
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-4
+  lr_step_size: 5
+  lr_gamma: 0.1
+  num_workers: 2
+  device: "cpu"
+
+augmentation:
+  horizontal_flip: false
+  brightness_range: 0.1
+  contrast_range: 0.1
+  gaussian_noise_std: 0.01
+  depth_dropout_rate: 0.0
+
+export:
+  format: "torchscript"
+  output_path: "../realworld/assets/models/rig_diffusion.pt"
