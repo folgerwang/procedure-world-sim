@@ -284,6 +284,6 @@ realworld/rigged_output.glb
 realworld/volume_noise.dds
 
 # Large assets (download separately)
+realworld/assets/environments/
 realworld/assets/Bistro_v5_2/
-realworld/assets/Characters/
 realworld/assets/models/*.pth
