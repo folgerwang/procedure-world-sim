@@ -74,6 +74,16 @@ private:
     PluginState     state_ = PluginState::kUnloaded;
     ProgressCallback progress_cb_;
 
+    // Model versioning — models stored as rig_diffusion_v001.pt, v002, etc.
+    std::string     model_dir_;            // resolved absolute path to models directory
+    std::vector<int> model_versions_;      // discovered version numbers (sorted)
+    int             model_loaded_version_ = 0;  // currently loaded version (0 = stub)
+    int             model_selected_version_ = -1; // UI selection (-1 = latest)
+
+    void scanModelVersions();              // refresh model_versions_ from disk
+    std::string modelPathForVersion(int v) const;  // full path for version v
+    bool loadModelVersion(int version);    // load a specific version (-1 = latest)
+
     // Input mesh data.
     std::string     source_mesh_path_;   // original file — reloaded at export time
     TriangleMesh    mesh_;
@@ -162,9 +172,17 @@ private:
     void initEditableJoints();  // for multi-view (auto-rig debug)
     bool exportTrainingData(const std::string& output_dir);
 
-    // Multi-view editable joints (for auto-rig debug overlay).
+    // Multi-view edits for debug panel.
     std::vector<ViewEditState> view_edits_;
+
+    // ---- Training state ----
+    bool   training_running_ = false;
+    bool   training_finished_ = false;
+    int    training_exit_code_ = -1;
+    std::string training_log_;
+    std::string training_status_ = "Idle";
+
 };
 
-} // namespace auto_rig
-} // namespace plugins
+}  // namespace auto_rig
+}  // namespace plugins

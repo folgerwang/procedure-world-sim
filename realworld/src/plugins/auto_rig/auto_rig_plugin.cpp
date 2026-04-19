@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <unordered_map>
 #include <functional>
+#include <thread>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -94,8 +95,29 @@ bool AutoRigPlugin::init(
     rasterizer_      = std::make_unique<SimpleRasterizer>();
     diffusion_model_ = std::make_unique<RigDiffusionModel>();
 
-    // Load diffusion model.  If no .pt file exists yet, the stub runs.
-    diffusion_model_->load("assets/models/rig_diffusion.pt", "cpu");
+    // Resolve the models directory once.
+    {
+        std::string exe_dir = std::filesystem::current_path().string();
+        for (const auto& candidate : {
+            std::string("assets/models"),
+            exe_dir + "/assets/models",
+            exe_dir + "/../realworld/assets/models",
+        }) {
+            if (std::filesystem::exists(candidate)) {
+                model_dir_ = std::filesystem::canonical(candidate).string();
+                break;
+            }
+        }
+        if (model_dir_.empty()) {
+            model_dir_ = exe_dir + "/assets/models";
+            std::filesystem::create_directories(model_dir_);
+        }
+        fprintf(stderr, "[AutoRig] Model directory: %s\n", model_dir_.c_str());
+    }
+
+    // Scan for versioned models and load the latest.
+    scanModelVersions();
+    loadModelVersion(-1);  // -1 = latest
 
     state_ = PluginState::kLoaded;
     return true;
@@ -105,6 +127,106 @@ void AutoRigPlugin::shutdown() {
     rasterizer_.reset();
     diffusion_model_.reset();
     state_ = PluginState::kUnloaded;
+}
+
+// ============================================================================
+//  Model versioning helpers
+//
+//  Models are stored as:  <model_dir_>/rig_diffusion_v001.pt
+//                         <model_dir_>/rig_diffusion_v002.pt  ...
+//  Also accepts the legacy unversioned  rig_diffusion.pt  (treated as v0).
+// ============================================================================
+
+std::string AutoRigPlugin::modelPathForVersion(int v) const {
+    if (v <= 0)
+        return {};  // no model
+    if (v == 1) {
+        // v001 could be either the legacy unversioned file or a versioned file
+        std::string versioned = model_dir_ + "/rig_diffusion_v001.pt";
+        if (std::filesystem::exists(versioned))
+            return versioned;
+        // Fall back to legacy name
+        return model_dir_ + "/rig_diffusion.pt";
+    }
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "/rig_diffusion_v%03d.pt", v);
+    return model_dir_ + buf;
+}
+
+void AutoRigPlugin::scanModelVersions() {
+    model_versions_.clear();
+
+    if (model_dir_.empty() || !std::filesystem::exists(model_dir_))
+        return;
+
+    // Check for versioned files: rig_diffusion_vNNN.pt
+    for (auto& entry : std::filesystem::directory_iterator(model_dir_)) {
+        if (!entry.is_regular_file()) continue;
+        std::string name = entry.path().filename().string();
+        // Match rig_diffusion_vNNN.pt  (prefix = "rig_diffusion_v" = 15 chars)
+        if (name.size() >= 19 &&
+            name.substr(0, 15) == "rig_diffusion_v" &&
+            name.substr(name.size() - 3) == ".pt") {
+            std::string num_str = name.substr(15, name.size() - 18);
+            try {
+                int v = std::stoi(num_str);
+                if (v > 0) model_versions_.push_back(v);
+            } catch (...) {}
+        }
+    }
+
+    // Legacy unversioned rig_diffusion.pt counts as v001
+    // (but only if v001 wasn't already found as a versioned file)
+    if (std::filesystem::exists(model_dir_ + "/rig_diffusion.pt")) {
+        bool has_v1 = false;
+        for (int v : model_versions_) { if (v == 1) { has_v1 = true; break; } }
+        if (!has_v1)
+            model_versions_.push_back(1);
+    }
+
+    std::sort(model_versions_.begin(), model_versions_.end());
+
+    fprintf(stderr, "[AutoRig] Found %d model version(s):", (int)model_versions_.size());
+    for (int v : model_versions_) fprintf(stderr, " v%03d", v);
+    fprintf(stderr, "\n");
+}
+
+bool AutoRigPlugin::loadModelVersion(int version) {
+    scanModelVersions();
+
+    // -1 means latest
+    int target = version;
+    if (target < 0) {
+        if (model_versions_.empty()) {
+            // No models at all — use stub
+            fprintf(stderr, "[AutoRig] No trained models found — using stub.\n");
+            diffusion_model_ = std::make_unique<RigDiffusionModel>();
+            diffusion_model_->load("", "cpu");
+            model_loaded_version_ = 0;
+            return true;
+        }
+        target = model_versions_.back();  // highest version
+    }
+
+    std::string path = modelPathForVersion(target);
+    if (path.empty() || !std::filesystem::exists(path)) {
+        fprintf(stderr, "[AutoRig] Model v%03d not found: %s\n", target, path.c_str());
+        return false;
+    }
+
+    fprintf(stderr, "[AutoRig] Loading model v%03d: %s\n", target, path.c_str());
+    diffusion_model_ = std::make_unique<RigDiffusionModel>();
+    bool ok = diffusion_model_->load(path, "cpu");
+    if (ok) {
+        model_loaded_version_ = target;
+        fprintf(stderr, "[AutoRig] Model v%03d loaded successfully.\n", target);
+    } else {
+        // load() with HAS_LIBTORCH falls through to stub on failure,
+        // so loaded_ is true but we're in stub mode
+        fprintf(stderr, "[AutoRig] Model v%03d LibTorch load failed — stub active.\n", target);
+        model_loaded_version_ = 0;
+    }
+    return ok;
 }
 
 void AutoRigPlugin::reportProgress(int step, int total, const std::string& msg) {
@@ -618,10 +740,15 @@ bool AutoRigPlugin::predictJoints() {
         return false;
     }
 
-    fprintf(stderr, "[AutoRig] predictJoints: %d captures, each %dx%d, model has %d joints\n",
+    fprintf(stderr, "[AutoRig] predictJoints: %d captures, each %dx%d, model has %d joints, "
+        "loaded_version=%d, model_dir=%s\n",
         (int)captures_.size(),
         captures_[0].width, captures_[0].height,
-        diffusion_model_->numJoints());
+        diffusion_model_->numJoints(),
+        model_loaded_version_,
+        model_dir_.c_str());
+
+    ui_status_ = "Running model v" + std::to_string(model_loaded_version_) + "...";
 
     view_predictions_ = diffusion_model_->predictBatch(captures_);
 
@@ -907,12 +1034,13 @@ bool AutoRigPlugin::fuseAndBuildSkeleton() {
 
         if (accum[j].weight_sum > 1e-6f) {
             jt.position = accum[j].pos_sum / accum[j].weight_sum;
-        } else if (j < 19) {
-            // Fallback: anatomically correct default position.
-            jt.position = default_pos[j];
         } else {
+            // No ML data for this joint — place at mesh center.
             jt.position = center;
         }
+        fprintf(stderr, "[AutoRig]   joint %2d %-18s: pos=(%.3f,%.3f,%.3f) weight=%.4f\n",
+            j, jt.name.c_str(), jt.position.x, jt.position.y, jt.position.z,
+            accum[j].weight_sum);
     }
 
     // Compute inverse bind matrices incorporating the mesh node's world
@@ -1055,6 +1183,30 @@ bool AutoRigPlugin::exportTrainingData(const std::string& output_dir) {
 
     int views_saved = 0;
 
+    // ---- Scan existing files to find the next available view index ----------
+    int next_view_idx = 0;
+    try {
+        for (auto& entry : std::filesystem::directory_iterator(data_dir)) {
+            std::string fname = entry.path().filename().string();
+            // Match pattern: <base>_view<N>_meta.json
+            std::string prefix = base_name + "_view";
+            std::string suffix = "_meta.json";
+            if (fname.size() > prefix.size() + suffix.size() &&
+                fname.compare(0, prefix.size(), prefix) == 0 &&
+                fname.compare(fname.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                std::string num_str = fname.substr(
+                    prefix.size(), fname.size() - prefix.size() - suffix.size());
+                try {
+                    int idx = std::stoi(num_str);
+                    next_view_idx = std::max(next_view_idx, idx + 1);
+                } catch (...) {}
+            }
+        }
+    } catch (...) {
+        // Directory may not exist yet — that's fine, start at 0.
+    }
+    fprintf(stderr, "[AutoRig] Existing training data: next view index = %d\n", next_view_idx);
+
     // Process each saved edit view
     for (int v = 0; v < (int)saved_edits_.size(); ++v) {
         const auto& cap = saved_edits_[v].capture;
@@ -1063,12 +1215,13 @@ bool AutoRigPlugin::exportTrainingData(const std::string& output_dir) {
         int W = cap.width;
         int H = cap.height;
 
+        int file_idx = next_view_idx + views_saved;  // continue from existing data
         char filename_buf[512];
 
         // ---- Save color image ----
         if (!cap.color.empty()) {
             std::snprintf(filename_buf, sizeof(filename_buf),
-                "%s/%s_view%d_color.png", data_dir.c_str(), base_name.c_str(), v);
+                "%s/%s_view%d_color.png", data_dir.c_str(), base_name.c_str(), file_idx);
             if (!stbi_write_png(filename_buf, W, H, 3,
                     cap.color.data(), W * 3)) {
                 fprintf(stderr, "[AutoRig] Failed to write %s\n", filename_buf);
@@ -1078,7 +1231,7 @@ bool AutoRigPlugin::exportTrainingData(const std::string& output_dir) {
         // ---- Save silhouette ----
         if (!cap.silhouette.empty()) {
             std::snprintf(filename_buf, sizeof(filename_buf),
-                "%s/%s_view%d_silhouette.png", data_dir.c_str(), base_name.c_str(), v);
+                "%s/%s_view%d_silhouette.png", data_dir.c_str(), base_name.c_str(), file_idx);
             if (!stbi_write_png(filename_buf, W, H, 1,
                     cap.silhouette.data(), W)) {
                 fprintf(stderr, "[AutoRig] Failed to write %s\n", filename_buf);
@@ -1117,7 +1270,7 @@ bool AutoRigPlugin::exportTrainingData(const std::string& output_dir) {
             }
 
             std::snprintf(filename_buf, sizeof(filename_buf),
-                "%s/%s_view%d_heatmap.png", data_dir.c_str(), base_name.c_str(), v);
+                "%s/%s_view%d_heatmap.png", data_dir.c_str(), base_name.c_str(), file_idx);
             if (!stbi_write_png(filename_buf, W, H, 1,
                     heatmap.data(), W)) {
                 fprintf(stderr, "[AutoRig] Failed to write %s\n", filename_buf);
@@ -1126,7 +1279,7 @@ bool AutoRigPlugin::exportTrainingData(const std::string& output_dir) {
 
         // ---- Save metadata JSON ----
         std::snprintf(filename_buf, sizeof(filename_buf),
-            "%s/%s_view%d_meta.json", data_dir.c_str(), base_name.c_str(), v);
+            "%s/%s_view%d_meta.json", data_dir.c_str(), base_name.c_str(), file_idx);
         FILE* meta_file = std::fopen(filename_buf, "w");
         if (!meta_file) {
             fprintf(stderr, "[AutoRig] Failed to open %s for writing\n", filename_buf);
@@ -1135,7 +1288,7 @@ bool AutoRigPlugin::exportTrainingData(const std::string& output_dir) {
 
         // Write JSON metadata
         fprintf(meta_file, "{\n");
-        fprintf(meta_file, "  \"view_index\": %d,\n", v);
+        fprintf(meta_file, "  \"view_index\": %d,\n", file_idx);
         fprintf(meta_file, "  \"azimuth_deg\": %.1f,\n", cap.azimuth_deg);
         fprintf(meta_file, "  \"elevation_deg\": %.1f,\n", cap.elevation_deg);
         fprintf(meta_file, "  \"width\": %d,\n", W);
@@ -1166,8 +1319,8 @@ bool AutoRigPlugin::exportTrainingData(const std::string& output_dir) {
         ++views_saved;
     }
 
-    fprintf(stderr, "[AutoRig] Exported training data for %d edited views to %s\n",
-        views_saved, data_dir.c_str());
+    fprintf(stderr, "[AutoRig] Exported training data: %d new views (index %d..%d) to %s\n",
+        views_saved, next_view_idx, next_view_idx + views_saved - 1, data_dir.c_str());
 
     return views_saved > 0;
 }
@@ -1544,7 +1697,14 @@ bool AutoRigPlugin::rigCharacter(
 
     initEditableJoints();
 
-    reportProgress(3, kTotalSteps, "Running diffusion model...");
+    {
+        char model_msg[128];
+        std::snprintf(model_msg, sizeof(model_msg),
+            "Running model v%03d (%s)...",
+            model_loaded_version_,
+            model_loaded_version_ > 0 ? "trained" : "stub/heuristic");
+        reportProgress(3, kTotalSteps, model_msg);
+    }
     if (!predictJoints()) { state_ = PluginState::kError; return false; }
 
     reportProgress(4, kTotalSteps, "Fusing 3D skeleton...");
@@ -1778,6 +1938,250 @@ void AutoRigPlugin::drawImGui() {
         return;
     }
 
+    // ---- Train Model (root level, always visible) ----
+    {
+        if (training_running_) ImGui::BeginDisabled();
+        if (ImGui::Button("  Train Model  ")) {
+            training_running_ = true;
+            training_finished_ = false;
+            training_exit_code_ = -1;
+            training_log_.clear();
+            training_status_ = "Training started...";
+
+            // Find the ml_training directory relative to the executable
+            std::string exe_dir = std::filesystem::current_path().string();
+            std::string ml_dir;
+
+            for (const auto& candidate : {
+                exe_dir + "/../ml_training",
+                exe_dir + "/../../ml_training",
+                exe_dir + "/ml_training",
+            }) {
+                if (std::filesystem::exists(candidate + "/train.py")) {
+                    ml_dir = std::filesystem::canonical(candidate).string();
+                    break;
+                }
+            }
+
+            if (ml_dir.empty()) {
+                training_status_ = "Error: cannot find ml_training/train.py";
+                training_running_ = false;
+            } else {
+                // Find the training data directory.
+                // The export writes to: <mesh_parent>/training_data/<stem>/
+                // or the user may have data in assets/rigs_training/<stem>/
+                std::string data_dir;
+
+                // 1) If a mesh is selected, check its sibling training_data folder
+                if (!source_mesh_path_.empty()) {
+                    std::string stem = std::filesystem::path(source_mesh_path_).stem().string();
+                    std::string parent = std::filesystem::path(source_mesh_path_)
+                        .parent_path().string();
+                    // Check training_data/<stem>
+                    std::string cand = parent + "/training_data/" + stem;
+                    if (std::filesystem::exists(cand)) data_dir = cand;
+                }
+
+                // 2) Scan assets/rigs_training/ for any subfolder with *_meta.json
+                if (data_dir.empty()) {
+                    for (const auto& rigs_dir : {
+                        exe_dir + "/assets/rigs_training",
+                        exe_dir + "/../realworld/assets/rigs_training",
+                    }) {
+                        if (!std::filesystem::exists(rigs_dir)) continue;
+                        for (auto& sub : std::filesystem::directory_iterator(rigs_dir)) {
+                            if (!sub.is_directory()) continue;
+                            // Check if it has at least one *_meta.json
+                            for (auto& f : std::filesystem::directory_iterator(sub.path())) {
+                                if (f.path().string().find("_meta.json") != std::string::npos) {
+                                    data_dir = sub.path().string();
+                                    break;
+                                }
+                            }
+                            if (!data_dir.empty()) break;
+                        }
+                        if (!data_dir.empty()) break;
+                    }
+                }
+
+                // 3) Broader scan: any directory under assets/ containing *_meta.json
+                if (data_dir.empty()) {
+                    for (const auto& assets_root : {
+                        exe_dir + "/assets",
+                        exe_dir + "/../realworld/assets",
+                    }) {
+                        if (!std::filesystem::exists(assets_root)) continue;
+                        try {
+                            for (auto& entry : std::filesystem::recursive_directory_iterator(
+                                     assets_root, std::filesystem::directory_options::skip_permission_denied)) {
+                                if (entry.is_regular_file() &&
+                                    entry.path().string().find("_meta.json") != std::string::npos) {
+                                    data_dir = entry.path().parent_path().string();
+                                    break;
+                                }
+                            }
+                        } catch (...) {}
+                        if (!data_dir.empty()) break;
+                    }
+                }
+
+                if (data_dir.empty()) {
+                    training_status_ = "Error: no training data found. Export data from Rig Editor first.";
+                    fprintf(stderr, "[AutoRig] No training data found. Searched from: %s\n", exe_dir.c_str());
+                    training_running_ = false;
+                } else {
+                    fprintf(stderr, "[AutoRig] Found training data: %s\n", data_dir.c_str());
+
+                    // Determine the next version number
+                    scanModelVersions();
+                    int next_ver = 1;
+                    if (!model_versions_.empty())
+                        next_ver = model_versions_.back() + 1;
+                    std::string model_out = modelPathForVersion(next_ver);
+
+                    std::filesystem::create_directories(ml_dir + "/datasets");
+                    std::filesystem::create_directories(model_dir_);
+
+                    std::string cmd =
+                        "cd \"" + ml_dir + "\" && python train_from_captures.py"
+                        " --data_dir \"" + data_dir + "\""
+                        " --output_model \"" + model_out + "\""
+                        " --epochs 500"
+                        " 2>&1";
+
+                    fprintf(stderr, "[AutoRig] Training command: %s\n", cmd.c_str());
+
+                    std::thread([this, cmd]() {
+#ifdef _WIN32
+                        FILE* pipe = _popen(cmd.c_str(), "r");
+#else
+                        FILE* pipe = popen(cmd.c_str(), "r");
+#endif
+                        if (!pipe) {
+                            training_status_ = "Error: failed to launch training process";
+                            training_running_ = false;
+                            return;
+                        }
+
+                        char buf[256];
+                        while (fgets(buf, sizeof(buf), pipe)) {
+                            training_log_ += buf;
+                            std::string line(buf);
+                            if (!line.empty() && line.back() == '\n')
+                                line.pop_back();
+                            if (!line.empty())
+                                training_status_ = line;
+                        }
+
+#ifdef _WIN32
+                        training_exit_code_ = _pclose(pipe);
+#else
+                        training_exit_code_ = pclose(pipe);
+#endif
+                        training_running_ = false;
+                        training_finished_ = true;
+
+                        if (training_exit_code_ == 0) {
+                            training_status_ = "Training complete! Model exported.";
+                        } else {
+                            training_status_ = "Training failed (exit code " +
+                                std::to_string(training_exit_code_) + ")";
+                        }
+                    }).detach();
+                }
+            }
+        }
+        if (training_running_) ImGui::EndDisabled();
+
+        // Training status
+        if (training_running_) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Training...");
+        }
+        if (!training_status_.empty()) {
+            ImVec4 col = training_finished_ && training_exit_code_ == 0
+                ? ImVec4(0.2f, 1.0f, 0.2f, 1.0f)
+                : ImVec4(0.9f, 0.9f, 0.9f, 1.0f);
+            ImGui::TextColored(col, "%s", training_status_.c_str());
+        }
+
+        // Auto-reload latest model after successful training
+        if (training_finished_ && training_exit_code_ == 0) {
+            if (loadModelVersion(-1)) {
+                char ver_buf[32];
+                std::snprintf(ver_buf, sizeof(ver_buf), "v%03d", model_loaded_version_);
+                training_status_ = std::string("Training complete! Loaded model ") + ver_buf;
+                model_selected_version_ = -1;  // reset to "latest"
+            } else {
+                training_status_ = "Training complete but failed to load new model.";
+            }
+            training_finished_ = false;
+        }
+
+        if (!training_log_.empty()) {
+            if (ImGui::CollapsingHeader("Training Log")) {
+                ImGui::BeginChild("##train_log", ImVec2(-1, 200), true);
+                ImGui::TextUnformatted(training_log_.c_str());
+                if (training_running_)
+                    ImGui::SetScrollHereY(1.0f);
+                ImGui::EndChild();
+            }
+        }
+
+        // ---- Model version selector ----
+        {
+            // Show loaded model info
+            if (model_loaded_version_ > 0) {
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                    "Active model: v%03d", model_loaded_version_);
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
+                    "Active model: stub (no trained model)");
+            }
+
+            if (!model_versions_.empty()) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(120);
+
+                // Build combo items: "Latest (vNNN)", "v003", "v002", "v001", ...
+                char current_label[64];
+                if (model_selected_version_ < 0)
+                    std::snprintf(current_label, sizeof(current_label),
+                        "Latest (v%03d)", model_versions_.back());
+                else
+                    std::snprintf(current_label, sizeof(current_label),
+                        "v%03d", model_selected_version_);
+
+                if (ImGui::BeginCombo("##model_ver", current_label)) {
+                    // "Latest" option
+                    {
+                        char lbl[64];
+                        std::snprintf(lbl, sizeof(lbl), "Latest (v%03d)", model_versions_.back());
+                        bool selected = (model_selected_version_ < 0);
+                        if (ImGui::Selectable(lbl, selected)) {
+                            model_selected_version_ = -1;
+                            loadModelVersion(-1);
+                        }
+                    }
+                    // Individual versions (newest first)
+                    for (int i = (int)model_versions_.size() - 1; i >= 0; --i) {
+                        int v = model_versions_[i];
+                        char lbl[64];
+                            std::snprintf(lbl, sizeof(lbl), "v%03d", v);
+                        bool selected = (model_selected_version_ == v);
+                        if (ImGui::Selectable(lbl, selected)) {
+                            model_selected_version_ = v;
+                            loadModelVersion(v);
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+            }
+        }
+    }
+
+    ImGui::Separator();
+
     // ---- Mesh file selection (shared) ----
     if (!files_scanned_) { refreshMeshFileList(); files_scanned_ = true; }
 
@@ -1846,6 +2250,31 @@ void AutoRigPlugin::drawImGui() {
             ImGui::SameLine(); ImGui::Text("%s", ui_status_.c_str());
             if (ui_progress_ > 0.0f) ImGui::ProgressBar(ui_progress_, ImVec2(-1, 0));
 
+            // ---- Debug: model info ----
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Model Info:");
+            ImGui::Text("  Model dir: %s", model_dir_.c_str());
+            ImGui::Text("  Versions found: %d", (int)model_versions_.size());
+            if (model_loaded_version_ > 0) {
+                std::string loaded_path = modelPathForVersion(model_loaded_version_);
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+                    "  Loaded: v%03d  (%s)", model_loaded_version_, loaded_path.c_str());
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f),
+                    "  Loaded: STUB (heuristic placement)");
+            }
+            if (diffusion_model_) {
+                ImGui::Text("  Model loaded: %s, joints: %d, module ptr: %s",
+                    diffusion_model_->isLoaded() ? "YES" : "NO",
+                    diffusion_model_->numJoints(),
+                    (model_loaded_version_ > 0) ? "LibTorch" : "stub");
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f),
+                    "  diffusion_model_ is NULL!");
+            }
+            ImGui::Text("  CWD: %s", std::filesystem::current_path().string().c_str());
+            ImGui::Separator();
+
             // ---- 3D Preview ----
             if (!mesh_.empty() || !skeleton_.empty()) {
                 ImGui::Separator();
@@ -1878,12 +2307,23 @@ void AutoRigPlugin::drawImGui() {
 
             // ---- Debug multi-view (off by default) ----
             ImGui::Checkbox("Show Debug Views", &show_debug_views_);
-            if (show_debug_views_ && !captures_.empty() && !view_edits_.empty()) {
+            if (show_debug_views_ && !captures_.empty()) {
+                // Show ML predictions if available, otherwise heuristic
+                bool has_ml = !view_predictions_.empty();
+                if (has_ml) {
+                    ImGui::TextColored(ImVec4(0.2f,1.0f,0.2f,1.0f),
+                        "Showing: ML predictions (yellow)");
+                } else if (!view_edits_.empty()) {
+                    ImGui::TextColored(ImVec4(0.0f,0.9f,0.9f,1.0f),
+                        "Showing: Heuristic (cyan)");
+                }
+
                 if (ImGui::CollapsingHeader("Debug: Per-View Captures")) {
                     static float dbg_scale = 0.35f;
                     ImGui::SliderFloat("Scale", &dbg_scale, 0.15f, 1.0f, "%.2f");
 
-                    for (int v = 0; v < (int)captures_.size() && v < (int)view_edits_.size(); ++v) {
+                    int num_views = (int)captures_.size();
+                    for (int v = 0; v < num_views; ++v) {
                         const auto& cap = captures_[v];
                         int W = cap.width, H = cap.height;
                         float tw = W * dbg_scale, th = H * dbg_scale;
@@ -1896,22 +2336,43 @@ void AutoRigPlugin::drawImGui() {
                             vdl->PushClipRect(cp, ImVec2(cp.x + tw, cp.y + th), true);
                             drawViewPixels(vdl, cp, tw, th, cap);
 
-                            // Draw bones + joints from view_edits_
-                            auto& es = view_edits_[v];
                             auto uv2s = [&](const glm::vec2& uv) -> ImVec2 {
                                 return ImVec2(cp.x + uv.x * tw, cp.y + uv.y * th);
                             };
-                            for (int j = 0; j < kNumEditJoints; ++j) {
-                                int pj = kJointParents[j];
-                                if (pj >= 0) {
-                                    vdl->AddLine(uv2s(es.joints[pj].uv), uv2s(es.joints[j].uv),
-                                        IM_COL32(0,220,220,180), 1.5f);
+
+                            if (has_ml && v < (int)view_predictions_.size()) {
+                                // Draw ML predictions in YELLOW
+                                const auto& vp = view_predictions_[v];
+                                const auto& parents = getStandardJointParents();
+                                for (int j = 0; j < (int)vp.joints.size(); ++j) {
+                                    int pj = (j < (int)parents.size()) ? parents[j] : -1;
+                                    if (pj >= 0 && pj < (int)vp.joints.size()) {
+                                        vdl->AddLine(
+                                            uv2s(vp.joints[pj].peak_uv),
+                                            uv2s(vp.joints[j].peak_uv),
+                                            IM_COL32(255,220,0,200), 2.0f);
+                                    }
+                                }
+                                for (int j = 0; j < (int)vp.joints.size(); ++j) {
+                                    vdl->AddCircleFilled(uv2s(vp.joints[j].peak_uv), 4.0f,
+                                        IM_COL32(255,200,0,240));
+                                }
+                            } else if (!view_edits_.empty() && v < (int)view_edits_.size()) {
+                                // Fallback: heuristic in CYAN
+                                auto& es = view_edits_[v];
+                                for (int j = 0; j < kNumEditJoints; ++j) {
+                                    int pj = kJointParents[j];
+                                    if (pj >= 0) {
+                                        vdl->AddLine(uv2s(es.joints[pj].uv), uv2s(es.joints[j].uv),
+                                            IM_COL32(0,220,220,180), 1.5f);
+                                    }
+                                }
+                                for (int j = 0; j < kNumEditJoints; ++j) {
+                                    vdl->AddCircleFilled(uv2s(es.joints[j].uv), 3.0f,
+                                        IM_COL32(0,240,240,220));
                                 }
                             }
-                            for (int j = 0; j < kNumEditJoints; ++j) {
-                                vdl->AddCircleFilled(uv2s(es.joints[j].uv), 3.0f,
-                                    IM_COL32(0,240,240,220));
-                            }
+
                             vdl->AddRect(cp, ImVec2(cp.x + tw, cp.y + th), IM_COL32(80,80,80,200));
                             vdl->PopClipRect();
                             ImGui::TreePop();
@@ -2223,50 +2684,64 @@ void AutoRigPlugin::drawImGui() {
                     }
                     edit_view_.any_edited = true;
                 }
+
                 ImGui::SameLine();
-                if (ImGui::Button("Save This View")) {
-                    saved_edits_.push_back({edit_view_, edit_capture_});
-                    fprintf(stderr, "[AutoRig] Saved edit view #%d (az=%.0f)\n",
-                        (int)saved_edits_.size(), edit_capture_.azimuth_deg);
+                if (ImGui::Button("Save View")) {
+                    SavedEditView sv;
+                    sv.edit    = edit_view_;
+                    sv.capture = edit_capture_;
+                    saved_edits_.push_back(std::move(sv));
+                    fprintf(stderr, "[AutoRig] Saved view %d (az=%.0f el=%.0f)\n",
+                        (int)saved_edits_.size() - 1,
+                        edit_capture_.azimuth_deg, edit_capture_.elevation_deg);
                 }
+
                 ImGui::SameLine();
-                ImGui::Text("  Saved views: %d", (int)saved_edits_.size());
+                ImGui::Text("Saved: %d views", (int)saved_edits_.size());
             }
 
-            ImGui::EndChild();
+            ImGui::EndChild();  // ##re_2d
 
-            // ---- Bottom: saved views list + export ----
-            ImGui::Separator();
+            // ---- Saved views gallery ----
             if (!saved_edits_.empty()) {
-                ImGui::Text("Saved Training Views:");
+                ImGui::Separator();
+                ImGui::Text("Saved Views (%d):", (int)saved_edits_.size());
+                ImGui::SameLine();
+                if (ImGui::Button("Clear All##saved")) {
+                    saved_edits_.clear();
+                }
+                float thumb_sz = 80.0f;
                 for (int i = 0; i < (int)saved_edits_.size(); ++i) {
-                    auto& sv = saved_edits_[i];
-                    ImGui::BulletText("View %d: az=%.0f el=%.0f  (%d edited joints)",
-                        i, sv.edit.azimuth_deg, sv.edit.elevation_deg,
-                        (int)std::count_if(sv.edit.joints.begin(), sv.edit.joints.end(),
-                            [](const EditableJoint& ej) { return ej.edited; }));
-                    ImGui::SameLine();
                     ImGui::PushID(i);
-                    if (ImGui::SmallButton("X")) {
-                        saved_edits_.erase(saved_edits_.begin() + i);
-                        --i;
-                    }
+                    char lbl[32];
+                    std::snprintf(lbl, sizeof(lbl), "View %d", i);
+                    ImGui::Text("%s (az=%.0f)", lbl,
+                        saved_edits_[i].capture.azimuth_deg);
+                    if (i + 1 < (int)saved_edits_.size())
+                        ImGui::SameLine();
                     ImGui::PopID();
                 }
-
-                if (ImGui::Button("  Export Training Data  ")) {
-                    if (exportTrainingData("assets/rigs_training")) {
-                        ui_status_ = "Training data exported!";
-                    } else {
-                        ui_status_ = "Export failed (no edited views?)";
-                    }
-                }
-                ImGui::SameLine();
-                ImGui::Text("-> assets/rigs_training/");
             }
 
-            if (ImGui::Button("Clear All Saved Views")) {
-                saved_edits_.clear();
+            // ---- Export button ----
+            ImGui::Separator();
+
+            {
+                bool no_saved = saved_edits_.empty();
+                if (no_saved) ImGui::BeginDisabled();
+
+                if (ImGui::Button("  Export Training Data  ")) {
+                    std::string out_dir = std::filesystem::path(source_mesh_path_)
+                        .parent_path().string() + "/training_data";
+                    if (exportTrainingData(out_dir)) {
+                        training_status_ = "Exported " + std::to_string(saved_edits_.size()) +
+                            " views to " + out_dir;
+                    } else {
+                        training_status_ = "Export failed!";
+                    }
+                }
+
+                if (no_saved) ImGui::EndDisabled();
             }
 
             ImGui::EndTabItem();
@@ -2278,5 +2753,6 @@ void AutoRigPlugin::drawImGui() {
     ImGui::End();
 }
 
-} // namespace auto_rig
-} // namespace plugins
+}  // namespace auto_rig
+}  // namespace plugins
+      

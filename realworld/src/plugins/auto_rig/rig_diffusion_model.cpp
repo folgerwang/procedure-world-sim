@@ -52,58 +52,60 @@ bool RigDiffusionModel::load(
     fprintf(stderr, "[RigDiffusionModel] HAS_LIBTORCH=%d\n", HAS_LIBTORCH);
 
 #if HAS_LIBTORCH
-    try {
-        fprintf(stderr, "[RigDiffusionModel] Creating device '%s'...\n", device_str.c_str());
-        auto* dev = new torch::Device(device_str);
+    if (!model_path.empty()) {
+        try {
+            fprintf(stderr, "[RigDiffusionModel] Creating device '%s'...\n", device_str.c_str());
+            auto* dev = new torch::Device(device_str);
 
-        fprintf(stderr, "[RigDiffusionModel] Loading TorchScript model...\n");
-        auto* mod = new torch::jit::Module(torch::jit::load(model_path, *dev));
-        mod->eval();
-        fprintf(stderr, "[RigDiffusionModel] Model loaded, set to eval mode.\n");
+            fprintf(stderr, "[RigDiffusionModel] Loading TorchScript model...\n");
+            auto* mod = new torch::jit::Module(torch::jit::load(model_path, *dev));
+            mod->eval();
+            fprintf(stderr, "[RigDiffusionModel] Model loaded, set to eval mode.\n");
 
-        device_ptr_ = dev;
-        module_     = mod;
-        loaded_     = true;
+            device_ptr_ = dev;
+            module_     = mod;
+            loaded_     = true;
 
-        // Infer num_joints from the model by running a dummy forward pass.
-        fprintf(stderr, "[RigDiffusionModel] Running dummy forward pass (1, 7, 64, 64)...\n");
-        auto dummy = torch::zeros({1, 7, 64, 64}, dev->is_cuda()
-                         ? torch::kCUDA : torch::kCPU);
-        auto out = mod->forward({dummy});
+            // Infer num_joints from the model by running a dummy forward pass.
+            fprintf(stderr, "[RigDiffusionModel] Running dummy forward pass (1, 7, 64, 64)...\n");
+            auto dummy = torch::zeros({1, 7, 64, 64}, dev->is_cuda()
+                             ? torch::kCUDA : torch::kCPU);
+            auto out = mod->forward({dummy});
 
-        // The model may return a single tensor (heatmaps only) or a tuple
-        // (heatmaps, adjacency).  Detect which format.
-        if (out.isTensor()) {
-            num_joints_ = static_cast<int>(out.toTensor().size(1));
-            auto sizes = out.toTensor().sizes();
-            fprintf(stderr, "[RigDiffusionModel] Output format: single tensor [%lld, %lld, %lld, %lld]\n",
-                (long long)sizes[0], (long long)sizes[1],
-                (long long)sizes[2], (long long)sizes[3]);
-        } else {
-            auto tup = out.toTuple();
-            num_joints_ = static_cast<int>(tup->elements()[0].toTensor().size(1));
-            fprintf(stderr, "[RigDiffusionModel] Output format: tuple (%d elements)\n",
-                (int)tup->elements().size());
+            // The model may return a single tensor (heatmaps only) or a tuple
+            // (heatmaps, adjacency).  Detect which format.
+            if (out.isTensor()) {
+                num_joints_ = static_cast<int>(out.toTensor().size(1));
+                auto sizes = out.toTensor().sizes();
+                fprintf(stderr, "[RigDiffusionModel] Output format: single tensor [%lld, %lld, %lld, %lld]\n",
+                    (long long)sizes[0], (long long)sizes[1],
+                    (long long)sizes[2], (long long)sizes[3]);
+            } else {
+                auto tup = out.toTuple();
+                num_joints_ = static_cast<int>(tup->elements()[0].toTensor().size(1));
+                fprintf(stderr, "[RigDiffusionModel] Output format: tuple (%d elements)\n",
+                    (int)tup->elements().size());
+            }
+
+            fprintf(stderr, "[RigDiffusionModel] Loaded OK: %s on %s  (joints=%d)\n",
+                model_path.c_str(), device_str.c_str(), num_joints_);
+            return true;
+        } catch (const std::exception& e) {
+            fprintf(stderr, "[RigDiffusionModel] LOAD FAILED: %s\n", e.what());
+            fprintf(stderr, "[RigDiffusionModel] Falling back to stub mode.\n");
         }
-
-        fprintf(stderr, "[RigDiffusionModel] Loaded OK: %s on %s  (joints=%d)\n",
-            model_path.c_str(), device_str.c_str(), num_joints_);
-        return true;
-    } catch (const std::exception& e) {
-        fprintf(stderr, "[RigDiffusionModel] LOAD FAILED: %s\n", e.what());
-        loaded_ = false;
-        return false;
     }
 #else
     (void)model_path;
     (void)device_str;
-    // Stub mode: use standard humanoid joint set.
+#endif
+
+    // Stub mode: use standard humanoid joint set with heuristic placement.
     num_joints_ = static_cast<int>(getStandardJointNames().size());
     loaded_ = true;
     fprintf(stderr, "[RigDiffusionModel] running in STUB mode (%d joints)\n",
         num_joints_);
     return true;
-#endif
 }
 
 // ============================================================================
@@ -215,7 +217,19 @@ ViewJointPrediction RigDiffusionModel::predict(
 
         auto input_data = prepareInput(capture);
         auto tensor = torch::from_blob(input_data.data(), {1, 7, h, w},
-                                       torch::kFloat32).to(*dev);
+                                       torch::kFloat32);
+
+        // Resize to model training resolution.
+        constexpr int kModelRes = 256;
+        if (h != kModelRes || w != kModelRes) {
+            namespace F = torch::nn::functional;
+            tensor = F::interpolate(tensor,
+                F::InterpolateFuncOptions()
+                    .size(std::vector<int64_t>{kModelRes, kModelRes})
+                    .mode(torch::kBilinear)
+                    .align_corners(false));
+        }
+        tensor = tensor.to(*dev);
 
         auto output = mod->forward({tensor});
 
@@ -243,17 +257,20 @@ ViewJointPrediction RigDiffusionModel::predict(
                 adj_t.data_ptr<float>() + adj_t.numel());
         }
 
+        // Use model's output resolution, not capture resolution
+        int out_h = static_cast<int>(heat_t.size(2));
+        int out_w = static_cast<int>(heat_t.size(3));
+
         std::vector<float> heatmaps(heat_t.data_ptr<float>(),
             heat_t.data_ptr<float>() + heat_t.numel());
 
-        return decodeOutput(heatmaps, adjacency, 0, w, h);
+        return decodeOutput(heatmaps, adjacency, 0, out_w, out_h);
     }
 #endif
 
     // ---- Stub: heuristic joint placement from silhouette -------------------
-    //
-    // Compute the silhouette bounding box and distribute joints at anatomical
-    // proportions.  This gives a reasonable starting skeleton for humanoids.
+
+    fprintf(stderr, "[RigDiffusionModel] *** STUB MODE *** — heuristic placement\n");
 
     // Find silhouette bounding box.
     int sil_min_x = w, sil_max_x = 0, sil_min_y = h, sil_max_y = 0;
@@ -272,9 +289,8 @@ ViewJointPrediction RigDiffusionModel::predict(
     float bh = (float)(sil_max_y - sil_min_y);
     if (bh < 1.0f) bh = 1.0f;
 
-    // Humanoid proportional Y positions (0 = top of head, 1 = feet).
-    // Standard joint layout matching getStandardJointNames().
-    struct JointPlacement { float rx; float ry; };  // relative to silhouette bbox
+    // Humanoid proportional positions (0 = top of head, 1 = feet).
+    struct JointPlacement { float rx; float ry; };
     const JointPlacement placements[] = {
         { 0.50f, 0.45f },  // hips
         { 0.50f, 0.38f },  // spine
@@ -378,9 +394,30 @@ std::vector<ViewJointPrediction> RigDiffusionModel::predictBatch(
             }
         }
 
-        fprintf(stderr, "[RigDiffusionModel] Running forward pass...\n");
+        // Resize input to the model's training resolution (256x256).
+        // The U-Net is fully convolutional, so it CAN accept any size, but
+        // the learned features (Gaussian blobs, receptive fields, etc.) only
+        // make sense at the resolution it was trained at.
+        constexpr int kModelRes = 256;
+        fprintf(stderr, "[RigDiffusionModel] Building raw tensor (%d, 7, %d, %d)...\n",
+            B, h, w);
         auto tensor = torch::from_blob(batch_data.data(), {B, 7, h, w},
-                                        torch::kFloat32).to(*dev);
+                                        torch::kFloat32);
+
+        if (h != kModelRes || w != kModelRes) {
+            fprintf(stderr, "[RigDiffusionModel] Resizing input %dx%d -> %dx%d "
+                "(model training resolution)\n", w, h, kModelRes, kModelRes);
+            namespace F = torch::nn::functional;
+            tensor = F::interpolate(tensor,
+                F::InterpolateFuncOptions()
+                    .size(std::vector<int64_t>{kModelRes, kModelRes})
+                    .mode(torch::kBilinear)
+                    .align_corners(false));
+        }
+        tensor = tensor.to(*dev);
+
+        fprintf(stderr, "[RigDiffusionModel] Running forward pass (input: %lldx%lld)...\n",
+            (long long)tensor.size(3), (long long)tensor.size(2));
         auto output = mod->forward({tensor});
         fprintf(stderr, "[RigDiffusionModel] Forward pass complete.\n");
 
@@ -411,6 +448,14 @@ std::vector<ViewJointPrediction> RigDiffusionModel::predictBatch(
                 hm_min, hm_max, hm_mean);
         }
 
+        // The model output may be at a different resolution than the input captures.
+        // e.g. captures are 1024x1024 but model outputs 256x256 heatmaps.
+        int out_h = static_cast<int>(heat_t.size(2));
+        int out_w = static_cast<int>(heat_t.size(3));
+        int out_npix = out_h * out_w;
+        fprintf(stderr, "[RigDiffusionModel] Input: %dx%d, Output heatmaps: %dx%d\n",
+            w, h, out_w, out_h);
+
         // Standard adjacency.
         int J = num_joints_;
         std::vector<float> adjacency(J * J, 0.0f);
@@ -422,18 +467,32 @@ std::vector<ViewJointPrediction> RigDiffusionModel::predictBatch(
             }
         }
 
-        // Decode each view.
+        // Decode each view using the MODEL's output resolution, not the capture's.
+        // decodeOutput normalizes peaks to UV [0,1], so resolution differences are OK.
         std::vector<ViewJointPrediction> results;
         results.reserve(B);
         const float* hm_ptr = heat_t.data_ptr<float>();
-        int per_view = J * npix;
+        int per_view = J * out_npix;
         for (int i = 0; i < B; ++i) {
             std::vector<float> hm(hm_ptr + i * per_view,
                                   hm_ptr + (i + 1) * per_view);
-            auto pred = decodeOutput(hm, adjacency, i, w, h);
+            auto pred = decodeOutput(hm, adjacency, i, out_w, out_h);
+
+            // Log first view's joint predictions
+            if (i == 0) {
+                fprintf(stderr, "[RigDiffusionModel] View 0 predictions:\n");
+                for (int j = 0; j < (int)pred.joints.size(); ++j) {
+                    fprintf(stderr, "  [%2d] %-18s uv=(%.3f, %.3f) conf=%.4f\n",
+                        j, pred.joints[j].name.c_str(),
+                        pred.joints[j].peak_uv.x, pred.joints[j].peak_uv.y,
+                        pred.joints[j].confidence);
+                }
+            }
+
             results.push_back(std::move(pred));
         }
-        fprintf(stderr, "[RigDiffusionModel] Decoded %d views via LibTorch\n", B);
+        fprintf(stderr, "[RigDiffusionModel] Decoded %d views via LibTorch (output %dx%d)\n",
+            B, out_w, out_h);
         return results;
     }
 
@@ -445,6 +504,7 @@ std::vector<ViewJointPrediction> RigDiffusionModel::predictBatch(
     // Fallback: sequential per-view prediction (stub mode).
     fprintf(stderr, "[RigDiffusionModel] Stub mode: %d views, %d joints\n",
         (int)captures.size(), num_joints_);
+
     std::vector<ViewJointPrediction> results;
     results.reserve(captures.size());
     for (int i = 0; i < (int)captures.size(); ++i) {
@@ -452,10 +512,8 @@ std::vector<ViewJointPrediction> RigDiffusionModel::predictBatch(
         pred.view_idx = i;
         results.push_back(std::move(pred));
     }
-    fprintf(stderr, "[RigDiffusionModel] Stub mode: produced %d predictions\n",
-        (int)results.size());
     return results;
 }
 
-} // namespace auto_rig
-} // namespace plugins
+}  // namespace auto_rig
+}  // namespace plugins
