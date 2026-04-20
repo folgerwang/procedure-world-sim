@@ -1960,7 +1960,10 @@ void AutoRigPlugin::drawImGui() {
 
     // ---- Train Model (root level, always visible) ----
     {
-        if (training_running_) ImGui::BeginDisabled();
+        // Snapshot the disabled state so Begin/End stay balanced even if the
+        // button handler flips training_running_ mid-frame.
+        const bool disable_train = training_running_;
+        if (disable_train) ImGui::BeginDisabled();
         if (ImGui::Button("  Train Model  ")) {
             training_running_ = true;
             training_finished_ = false;
@@ -2129,7 +2132,7 @@ void AutoRigPlugin::drawImGui() {
                 }
             }
         }
-        if (training_running_) ImGui::EndDisabled();
+        if (disable_train) ImGui::EndDisabled();
 
         // Training status + progress bar
         if (training_running_) {
@@ -2287,13 +2290,16 @@ void AutoRigPlugin::drawImGui() {
 
             bool is_running = (state_ == PluginState::kRunning);
             bool no_mesh = selected_mesh_path_.empty();
-            if (is_running || no_mesh) ImGui::BeginDisabled();
+            // Snapshot the disabled state — rigCharacter() flips state_ to
+            // kRunning, which would otherwise unbalance Begin/End.
+            const bool disable_run = (is_running || no_mesh);
+            if (disable_run) ImGui::BeginDisabled();
             if (ImGui::Button("  Run Auto-Rig  ")) {
                 num_views_ = ui_num_views_;
                 capture_resolution_ = ui_resolution_;
                 rigCharacter(selected_mesh_path_, output_path_buf_);
             }
-            if (is_running || no_mesh) ImGui::EndDisabled();
+            if (disable_run) ImGui::EndDisabled();
             ImGui::SameLine(); ImGui::Text("%s", ui_status_.c_str());
             if (ui_progress_ > 0.0f) ImGui::ProgressBar(ui_progress_, ImVec2(-1, 0));
 
