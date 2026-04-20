@@ -186,6 +186,11 @@ private:
     int    training_epoch_ = 0;
     int    training_total_epochs_ = 0;
     float  training_loss_ = 0.0f;
+    // Device info parsed from "[DEVICE] ..." lines emitted by
+    // train_from_captures.py. Shown next to the training progress bar so
+    // it's obvious whether CUDA or CPU is actually being used.
+    std::string training_device_ = "?";  // e.g. "cuda" or "cpu"
+    std::string training_device_detail_;  // "NVIDIA RTX 3090 (cc 8.6, cuda 12.1)"
 
 };
 

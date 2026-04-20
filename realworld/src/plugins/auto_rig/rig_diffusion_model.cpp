@@ -122,21 +122,31 @@ std::vector<float> RigDiffusionModel::prepareInput(
     // Layout: CHW  (channels = RGB:3 + Normal:3 + Silhouette:1 = 7).
     std::vector<float> data(7 * npix, 0.0f);
 
+    // ── Runtime luminance filter (matches AugmentedViewDataset in
+    //    train_from_captures.py). We strip color and broadcast BT.709 luma
+    //    to both the RGB slots and the normals-proxy slots, so the model
+    //    sees grayscale shape/shading signal instead of pigment.
+    //    WARNING: keep these weights identical to LUMA_W in the Python
+    //    training code — any drift will cause inference to miss joints.
+    constexpr float kLumaR = 0.2126f;
+    constexpr float kLumaG = 0.7152f;
+    constexpr float kLumaB = 0.0722f;
+
     for (int i = 0; i < npix; ++i) {
-        // RGB [0,1]
         float r = capture.color[i * 3 + 0] / 255.0f;
         float g = capture.color[i * 3 + 1] / 255.0f;
         float b = capture.color[i * 3 + 2] / 255.0f;
-        data[0 * npix + i] = r;
-        data[1 * npix + i] = g;
-        data[2 * npix + i] = b;
-        // Normals: use RGB as proxy to match training pipeline.
-        // Training data uses color_np as normals (same as RGB, [0,1]).
-        // Using actual normal_map here would create a mismatch.
-        data[3 * npix + i] = r;
-        data[4 * npix + i] = g;
-        data[5 * npix + i] = b;
-        // Silhouette [0,1]
+        float y = kLumaR * r + kLumaG * g + kLumaB * b;  // BT.709 luma
+
+        // RGB slots: broadcast luma across the 3 channels
+        data[0 * npix + i] = y;
+        data[1 * npix + i] = y;
+        data[2 * npix + i] = y;
+        // Normals-proxy slots: same luma (training data does the same)
+        data[3 * npix + i] = y;
+        data[4 * npix + i] = y;
+        data[5 * npix + i] = y;
+        // Silhouette [0,1] — passed through unchanged, it's already shape info
         data[6 * npix + i] = capture.silhouette[i] / 255.0f;
     }
     return data;
@@ -383,19 +393,23 @@ std::vector<ViewJointPrediction> RigDiffusionModel::predictBatch(
             std::copy(single.begin(), single.end(),
                       batch_data.begin() + i * 7 * npix);
 
-            // Log input statistics for first view
+            // Log input statistics for first view. Channel 0 is luminance
+            // after the runtime filter in prepareInput (matches training).
             if (i == 0) {
-                float rgb_min = 1e9f, rgb_max = -1e9f;
+                float luma_min = 1e9f, luma_max = -1e9f, luma_sum = 0.0f;
                 float sil_sum = 0.0f;
                 for (int p = 0; p < npix; ++p) {
-                    float r = single[0 * npix + p];
-                    if (r < rgb_min) rgb_min = r;
-                    if (r > rgb_max) rgb_max = r;
+                    float y = single[0 * npix + p];
+                    if (y < luma_min) luma_min = y;
+                    if (y > luma_max) luma_max = y;
+                    luma_sum += y;
                     sil_sum += single[6 * npix + p];
                 }
-                fprintf(stderr, "[RigDiffusionModel]   view 0: R range=[%.3f, %.3f], "
-                    "silhouette coverage=%.1f%%\n",
-                    rgb_min, rgb_max, 100.0f * sil_sum / npix);
+                fprintf(stderr, "[RigDiffusionModel]   view 0: luma range=[%.3f, %.3f] "
+                    "mean=%.3f, silhouette coverage=%.1f%%  "
+                    "(filter: RGB->BT.709 luma)\n",
+                    luma_min, luma_max, luma_sum / npix,
+                    100.0f * sil_sum / npix);
             }
         }
 

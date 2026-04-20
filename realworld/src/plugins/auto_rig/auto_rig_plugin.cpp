@@ -1973,6 +1973,8 @@ void AutoRigPlugin::drawImGui() {
             training_exit_code_ = -1;
             training_log_.clear();
             training_status_ = "Training started...";
+            training_device_ = "?";
+            training_device_detail_.clear();
 
             // Find the ml_training directory relative to the executable
             std::string exe_dir = std::filesystem::current_path().string();
@@ -2112,6 +2114,66 @@ void AutoRigPlugin::drawImGui() {
                                     }
                                 }
                             }
+
+                            // Parse "[DEVICE] resolved=cuda  ..." and
+                            // "[DEVICE] gpu[0]="NVIDIA ..."  compute_capability=8.6  cuda_runtime=12.1"
+                            // so the UI can show which device training is on.
+                            {
+                                const char* dev_marker = strstr(buf, "[DEVICE]");
+                                if (dev_marker) {
+                                    // Find "resolved=<word>"
+                                    const char* rs = strstr(dev_marker, "resolved=");
+                                    if (rs) {
+                                        rs += 9;  // skip "resolved="
+                                        char tok[32] = {0};
+                                        int ti = 0;
+                                        while (*rs && *rs != ' ' && *rs != '\n' &&
+                                               *rs != '\r' && ti < (int)sizeof(tok) - 1) {
+                                            tok[ti++] = *rs++;
+                                        }
+                                        if (ti > 0) training_device_ = tok;
+                                    }
+
+                                    // Grab the GPU name line for the detail string.
+                                    // Format: [DEVICE] gpu[0]="NAME"  compute_capability=X.Y  cuda_runtime=Z
+                                    const char* gpu = strstr(dev_marker, "gpu[");
+                                    if (gpu) {
+                                        const char* q1 = strchr(gpu, '"');
+                                        const char* q2 = q1 ? strchr(q1 + 1, '"') : nullptr;
+                                        if (q1 && q2 && q2 > q1) {
+                                            std::string name(q1 + 1, q2 - q1 - 1);
+                                            std::string cap, cuda_rt;
+                                            const char* cc = strstr(q2, "compute_capability=");
+                                            if (cc) {
+                                                cc += 19;
+                                                while (*cc && *cc != ' ' && *cc != '\n') cap += *cc++;
+                                            }
+                                            const char* cr = strstr(q2, "cuda_runtime=");
+                                            if (cr) {
+                                                cr += 13;
+                                                while (*cr && *cr != ' ' && *cr != '\n') cuda_rt += *cr++;
+                                            }
+                                            training_device_detail_ = name;
+                                            if (!cap.empty())
+                                                training_device_detail_ += " (cc " + cap;
+                                            if (!cuda_rt.empty())
+                                                training_device_detail_ += ", cuda " + cuda_rt + ")";
+                                            else if (!cap.empty())
+                                                training_device_detail_ += ")";
+                                        }
+                                    }
+
+                                    // Capture the "reason_no_cuda=..." explanation
+                                    const char* reason = strstr(dev_marker, "reason_no_cuda=");
+                                    if (reason) {
+                                        reason += 15;
+                                        std::string r;
+                                        while (*reason && *reason != '\n' && *reason != '\r')
+                                            r += *reason++;
+                                        training_device_detail_ = r;
+                                    }
+                                }
+                            }
                         }
 
 #ifdef _WIN32
@@ -2138,13 +2200,29 @@ void AutoRigPlugin::drawImGui() {
         if (training_running_) {
             if (training_total_epochs_ > 0) {
                 float frac = (float)training_epoch_ / (float)training_total_epochs_;
-                char overlay[64];
-                std::snprintf(overlay, sizeof(overlay), "Epoch %d/%d  loss=%.6f",
+                char overlay[96];
+                std::snprintf(overlay, sizeof(overlay),
+                    "[%s] Epoch %d/%d  loss=%.6f",
+                    training_device_.c_str(),
                     training_epoch_, training_total_epochs_, training_loss_);
                 ImGui::ProgressBar(frac, ImVec2(-1, 0), overlay);
             } else {
                 ImGui::SameLine();
                 ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Training...");
+            }
+
+            // Second line: explicit device readout — green for cuda, yellow for
+            // cpu, grey while unknown. This is the thing you actually want to
+            // look at when training feels too slow.
+            ImVec4 dcol;
+            if (training_device_ == "cuda")     dcol = ImVec4(0.3f, 1.0f, 0.3f, 1.0f);
+            else if (training_device_ == "cpu") dcol = ImVec4(1.0f, 0.8f, 0.2f, 1.0f);
+            else                                dcol = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+            ImGui::TextColored(dcol, "Device: %s", training_device_.c_str());
+            if (!training_device_detail_.empty()) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                    "(%s)", training_device_detail_.c_str());
             }
         }
         if (!training_status_.empty()) {

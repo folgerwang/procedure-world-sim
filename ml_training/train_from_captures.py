@@ -209,6 +209,23 @@ class AugmentedViewDataset(torch.utils.data.Dataset):
             inp = torch.from_numpy(grp["input"][:])      # (7, H, W)
             hm = torch.from_numpy(grp["heatmaps"][:])    # (J, H, W)
 
+        # ── Color → luminance filter (applied to BOTH train and eval) ──
+        # The captured input has 7 channels: RGB(3) + normals-proxy(3) + sil(1).
+        # The "normals" slot is actually a copy of RGB, so 6/7 channels are
+        # pure color — the model gets biased toward pigment instead of shape.
+        # We collapse RGB and normals-proxy to BT.709 luminance and broadcast
+        # that across the 3 channels each. The C++ auto-rig inference path
+        # (rig_diffusion_model.cpp::prepareInput) applies the identical
+        # transform so train and infer see the same inputs.
+        #
+        # Silhouette (channel 6) is already shape info and is left alone.
+        LUMA_W = torch.tensor([0.2126, 0.7152, 0.0722],
+                              dtype=inp.dtype, device=inp.device).view(3, 1, 1)
+        rgb_luma  = (inp[0:3] * LUMA_W).sum(dim=0, keepdim=True)   # (1,H,W)
+        norm_luma = (inp[3:6] * LUMA_W).sum(dim=0, keepdim=True)
+        inp[0:3] = rgb_luma.expand(3, -1, -1)
+        inp[3:6] = norm_luma.expand(3, -1, -1)
+
         if not self.augment:
             return {"input": inp, "heatmaps": hm}
 
@@ -221,22 +238,22 @@ class AugmentedViewDataset(torch.utils.data.Dataset):
             for li, ri in LR_SWAP_PAIRS:
                 hm[li], hm[ri] = hm[ri].clone(), hm[li].clone()
 
-        # ── Color jitter on RGB channels (first 3 of 7) ──
-        if np.random.random() < 0.8:
-            rgb = inp[:3]  # (3, H, W)
-            # Brightness: ±20%
-            brightness = 1.0 + (np.random.random() - 0.5) * 0.4
-            rgb = rgb * brightness
-            # Contrast: ±20%
-            contrast = 1.0 + (np.random.random() - 0.5) * 0.4
-            mean = rgb.mean()
-            rgb = (rgb - mean) * contrast + mean
-            # Hue-ish shift: slight per-channel scaling
-            for c in range(3):
-                rgb[c] = rgb[c] * (0.9 + np.random.random() * 0.2)
-            inp[:3] = rgb.clamp(0.0, 1.0)
-            # Apply same brightness to normals proxy (channels 3-5)
-            inp[3:6] = (inp[3:6] * brightness).clamp(0.0, 1.0)
+        # ── Luma jitter (applied after the grayscale filter above) ──
+        # With color stripped out, the model only has brightness/contrast to
+        # key on. Widen the jitter range so it learns to cope with varied
+        # lighting — ±40% brightness + ±40% contrast.
+        if np.random.random() < 0.9:
+            gray = inp[:6]  # (6, H, W) — all grayscale after the luma filter
+            brightness = 1.0 + (np.random.random() - 0.5) * 0.8   # ±40%
+            gray = gray * brightness
+            contrast = 1.0 + (np.random.random() - 0.5) * 0.8     # ±40%
+            mean = gray.mean()
+            gray = (gray - mean) * contrast + mean
+            # Slight per-channel desync so the 2 groups of 3 identical channels
+            # aren't pixel-perfect duplicates — acts as mild noise regularisation.
+            for c in range(6):
+                gray[c] = gray[c] * (0.92 + np.random.random() * 0.16)
+            inp[:6] = gray.clamp(0.0, 1.0)
 
         # ── Random translate + scale (affine) ──
         if np.random.random() < 0.5:
@@ -309,9 +326,45 @@ def train_model(h5_path: str, output_model: str, epochs: int = 50,
                 lr: float = 1e-3, device: str = "auto"):
     """Train the U-Net from scratch on the captured data."""
 
+    # ── Device selection with verbose diagnostics ──
+    # The C++ plugin parses lines starting with "[DEVICE]" to display which
+    # device training is actually running on.
+    requested = device
+    cuda_available = torch.cuda.is_available()
+    cuda_count = torch.cuda.device_count() if cuda_available else 0
+    cuda_built = torch.backends.cuda.is_built()  # was torch compiled with CUDA?
+
     if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Training device: {device}")
+        device = "cuda" if cuda_available else "cpu"
+
+    print("-" * 60, flush=True)
+    print(f"[DEVICE] requested={requested}  resolved={device}", flush=True)
+    print(f"[DEVICE] torch={torch.__version__}  "
+          f"cuda_built={cuda_built}  "
+          f"cuda_available={cuda_available}  "
+          f"device_count={cuda_count}", flush=True)
+    if cuda_available:
+        idx = torch.cuda.current_device()
+        name = torch.cuda.get_device_name(idx)
+        cap = torch.cuda.get_device_capability(idx)
+        print(f"[DEVICE] gpu[{idx}]=\"{name}\"  compute_capability={cap[0]}.{cap[1]}  "
+              f"cuda_runtime={torch.version.cuda}", flush=True)
+    else:
+        # Explain *why* CUDA isn't being used — helps diagnose "why is this on CPU?"
+        if not cuda_built:
+            reason = ("torch was built without CUDA (this is the CPU-only wheel). "
+                      "Install the CUDA wheel from https://pytorch.org/get-started/locally/ "
+                      "e.g. pip install torch --index-url "
+                      "https://download.pytorch.org/whl/cu121")
+        elif cuda_count == 0:
+            reason = ("torch has CUDA support but no visible CUDA device. "
+                      "Check nvidia-smi / driver install / CUDA_VISIBLE_DEVICES.")
+        else:
+            reason = "user explicitly requested CPU"
+        print(f"[DEVICE] reason_no_cuda={reason}", flush=True)
+    if device == "cuda" and requested != "cuda" and requested != "auto":
+        print(f"[DEVICE] WARNING: requested {requested} but using {device}", flush=True)
+    print("-" * 60, flush=True)
 
     # Build model
     model = build_model(
@@ -361,6 +414,8 @@ def train_model(h5_path: str, output_model: str, epochs: int = 50,
     print(f"\nStarting training: {epochs} epochs, {len(effective_dataset)} samples/epoch")
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
     print(f"Heatmap sigma: {HEATMAP_SIGMA}, peak weight: {PEAK_WEIGHT}")
+    print(f"[INPUT] runtime filter: RGB + normals-proxy -> BT.709 luminance "
+          f"(forces shape/shading learning, not color)")
     print("-" * 60)
 
     best_loss = float("inf")
@@ -370,6 +425,7 @@ def train_model(h5_path: str, output_model: str, epochs: int = 50,
         model.train()
         total_loss = 0.0
         n_batches = 0
+        epoch_t0 = time.time()
 
         for batch in loader:
             inp = batch["input"].to(device)
@@ -386,6 +442,15 @@ def train_model(h5_path: str, output_model: str, epochs: int = 50,
 
         avg_loss = total_loss / max(n_batches, 1)
         scheduler.step()
+
+        # Emit a per-epoch timing line on epoch 1 (and every 25 after) so the
+        # C++ UI / log makes CPU-vs-GPU speed painfully obvious.
+        if epoch == 1 or epoch % 25 == 0:
+            epoch_secs = time.time() - epoch_t0
+            print(f"[TIMING] epoch={epoch}  batches={n_batches}  "
+                  f"seconds={epoch_secs:.2f}  "
+                  f"sec_per_batch={epoch_secs / max(n_batches, 1):.3f}  "
+                  f"device={device}", flush=True)
 
         if avg_loss < best_loss:
             best_loss = avg_loss
