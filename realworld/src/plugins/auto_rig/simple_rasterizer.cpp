@@ -475,7 +475,8 @@ std::vector<ViewCapture> SimpleRasterizer::captureOrbit(
     const TriangleMesh& mesh,
     int num_views,
     int resolution,
-    float elevation_deg) const
+    float elevation_deg,
+    float radius_mult) const
 {
     std::vector<ViewCapture> captures;
     captures.reserve(num_views);
@@ -483,7 +484,10 @@ std::vector<ViewCapture> SimpleRasterizer::captureOrbit(
     // Orbit centre and radius from the mesh bounds.
     glm::vec3 centre = (mesh.bbox_min + mesh.bbox_max) * 0.5f;
     float extent = glm::length(mesh.bbox_max - mesh.bbox_min);
-    float radius = extent * 1.2f;  // pull the camera out a bit
+    float radius = extent * radius_mult;
+
+    fprintf(stderr, "[SimpleRasterizer] captureOrbit: radius=%.4f (ext=%.4f * mult=%.4f) res=%d elev=%.1f\n",
+            radius, extent, radius_mult, resolution, elevation_deg);
 
     float elev_rad = glm::radians(elevation_deg);
 
@@ -527,22 +531,21 @@ void TriangleMesh::recomputeBounds() {
 
 void TriangleMesh::recomputeNormals() {
     normals.assign(positions.size(), glm::vec3(0.0f));
-
     for (size_t i = 0; i + 2 < indices.size(); i += 3) {
-        auto& p0 = positions[indices[i + 0]];
-        auto& p1 = positions[indices[i + 1]];
-        auto& p2 = positions[indices[i + 2]];
-        glm::vec3 fn = glm::cross(p1 - p0, p2 - p0);
-        normals[indices[i + 0]] += fn;
-        normals[indices[i + 1]] += fn;
-        normals[indices[i + 2]] += fn;
+        uint32_t i0 = indices[i], i1 = indices[i + 1], i2 = indices[i + 2];
+        glm::vec3 e1 = positions[i1] - positions[i0];
+        glm::vec3 e2 = positions[i2] - positions[i0];
+        glm::vec3 fn = glm::cross(e1, e2);
+        normals[i0] += fn;
+        normals[i1] += fn;
+        normals[i2] += fn;
     }
-
     for (auto& n : normals) {
         float len = glm::length(n);
         if (len > 1e-8f) n /= len;
     }
 }
 
-} // namespace auto_rig
-} // namespace plugins
+}  // namespace auto_rig
+}  // namespace plugins
+

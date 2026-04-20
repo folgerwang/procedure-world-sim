@@ -81,7 +81,7 @@ class UNetHeatmap(nn.Module):
     """
 
     def __init__(self, num_joints: int = 19, in_channels: int = 7,
-                 base_channels: int = 64):
+                 base_channels: int = 64, dropout: float = 0.15):
         super().__init__()
         c = base_channels
 
@@ -93,6 +93,11 @@ class UNetHeatmap(nn.Module):
 
         # Bottleneck.
         self.bottleneck = ConvBlock(c * 8, c * 16)       # → 16c
+
+        # Dropout in bottleneck + deeper decoder layers to prevent overfitting.
+        self.drop_bottleneck = nn.Dropout2d(dropout)
+        self.drop_dec4 = nn.Dropout2d(dropout)
+        self.drop_dec3 = nn.Dropout2d(dropout * 0.5)
 
         # Decoder path (with skip connections).
         self.dec4 = DecoderBlock(c * 16, c * 8, c * 8)
@@ -120,11 +125,11 @@ class UNetHeatmap(nn.Module):
         s4, x = self.enc4(x)   # s4: (B, 8c, H/8, W/8)
 
         # Bottleneck.
-        x = self.bottleneck(x)  # (B, 16c, H/16, W/16)
+        x = self.drop_bottleneck(self.bottleneck(x))  # (B, 16c, H/16, W/16)
 
         # Decoder.
-        x = self.dec4(x, s4)    # (B, 8c, H/8, W/8)
-        x = self.dec3(x, s3)    # (B, 4c, H/4, W/4)
+        x = self.drop_dec4(self.dec4(x, s4))    # (B, 8c, H/8, W/8)
+        x = self.drop_dec3(self.dec3(x, s3))    # (B, 4c, H/4, W/4)
         x = self.dec2(x, s2)    # (B, 2c, H/2, W/2)
         x = self.dec1(x, s1)    # (B, c, H, W)
 

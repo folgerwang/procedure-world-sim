@@ -130,6 +130,8 @@ private:
     float  preview_pitch_ = 0.0f;
     bool   preview_dragging_ = false;
     ImVec2 preview_drag_start_ = {};
+    bool   lock_azimuth_   = false;
+    bool   lock_elevation_ = false;
 
     // Auto-rig debug multi-view toggle (off by default).
     bool   show_debug_views_ = false;
@@ -181,6 +183,9 @@ private:
     int    training_exit_code_ = -1;
     std::string training_log_;
     std::string training_status_ = "Idle";
+    int    training_epoch_ = 0;
+    int    training_total_epochs_ = 0;
+    float  training_loss_ = 0.0f;
 
 };
 

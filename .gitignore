@@ -287,3 +287,15 @@ realworld/volume_noise.dds
 realworld/assets/environments/
 realworld/assets/Bistro_v5_2/
 realworld/assets/models/*.pth
+
+# ML training data & debug outputs (large binary assets, user-specific)
+ml_training/compare_output/
+ml_training/verify_output/
+realworld/assets/Characters/training_data/
+realworld/assets/debug_autorig_captures/
+realworld/assets/rigs_training/
+*.h5
+
+# Large mesh assets
+realworld/assets/Characters/*.gltf
+realworld/assets/Characters/*.glb

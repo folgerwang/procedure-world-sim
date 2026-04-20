@@ -658,9 +658,30 @@ bool AutoRigPlugin::captureViews(int num_views, int resolution) {
     if (mesh_.empty()) return false;
     num_views_ = num_views;
     capture_resolution_ = resolution;
-    captures_ = rasterizer_->captureOrbit(mesh_, num_views, resolution);
-    fprintf(stderr, "[AutoRig] captured %d views @ %dx%d\n",
-        (int)captures_.size(), resolution, resolution);
+    // Pass camera_distance_ so inference views match rig-editor training captures.
+    // Elevation 0° matches the default rig-editor view (eye level).
+    captures_ = rasterizer_->captureOrbit(mesh_, num_views, resolution,
+                                          0.0f, camera_distance_);
+    fprintf(stderr, "[AutoRig] captured %d views @ %dx%d (radius_mult=%.2f)\n",
+        (int)captures_.size(), resolution, resolution, camera_distance_);
+
+    // Dump auto-rig captures for comparison with training data.
+    {
+        std::string dump_dir = model_dir_ + "/../debug_autorig_captures";
+        try { std::filesystem::create_directories(dump_dir); } catch (...) {}
+        for (int i = 0; i < (int)captures_.size(); ++i) {
+            const auto& cap = captures_[i];
+            if (cap.color.empty()) continue;
+            char buf[512];
+            std::snprintf(buf, sizeof(buf), "%s/autorig_view%02d_color.png",
+                          dump_dir.c_str(), i);
+            stbi_write_png(buf, cap.width, cap.height, 3,
+                           cap.color.data(), cap.width * 3);
+        }
+        fprintf(stderr, "[AutoRig] Dumped %d capture images to %s\n",
+                (int)captures_.size(), dump_dir.c_str());
+    }
+
     return !captures_.empty();
 }
 
@@ -698,7 +719,7 @@ void AutoRigPlugin::initEditableJointsForView(
     float ca = std::cos(az_rad), sa = std::sin(az_rad);
 
     for (int j = 0; j < kNumEditJoints; ++j) {
-        float ax = kJointDefs[j].lr * ca + kJointDefs[j].fb * sa;
+        float ax = -kJointDefs[j].lr * ca + kJointDefs[j].fb * sa;  // negate lr: character's left = screen right
         float px = sil_cx + ax * sil_h;
         float py = sil_min_y + kJointDefs[j].ry * sil_h;
         state.joints[j].uv = glm::clamp(
@@ -1211,7 +1232,6 @@ bool AutoRigPlugin::exportTrainingData(const std::string& output_dir) {
     for (int v = 0; v < (int)saved_edits_.size(); ++v) {
         const auto& cap = saved_edits_[v].capture;
         const auto& edit_state = saved_edits_[v].edit;
-        if (!edit_state.any_edited) continue;
         int W = cap.width;
         int H = cap.height;
 
@@ -1944,6 +1964,9 @@ void AutoRigPlugin::drawImGui() {
         if (ImGui::Button("  Train Model  ")) {
             training_running_ = true;
             training_finished_ = false;
+            training_epoch_ = 0;
+            training_total_epochs_ = 0;
+            training_loss_ = 0.0f;
             training_exit_code_ = -1;
             training_log_.clear();
             training_status_ = "Training started...";
@@ -2047,6 +2070,7 @@ void AutoRigPlugin::drawImGui() {
                         " --data_dir \"" + data_dir + "\""
                         " --output_model \"" + model_out + "\""
                         " --epochs 500"
+                        " --device auto"
                         " 2>&1";
 
                     fprintf(stderr, "[AutoRig] Training command: %s\n", cmd.c_str());
@@ -2071,6 +2095,20 @@ void AutoRigPlugin::drawImGui() {
                                 line.pop_back();
                             if (!line.empty())
                                 training_status_ = line;
+
+                            // Parse "Epoch   5/500  loss=0.001234" for progress bar
+                            {
+                                const char* ep = strstr(buf, "Epoch");
+                                if (ep) {
+                                    int cur = 0, total = 0;
+                                    float loss = 0.0f;
+                                    if (sscanf(ep, "Epoch %d/%d loss=%f", &cur, &total, &loss) >= 2) {
+                                        training_epoch_ = cur;
+                                        training_total_epochs_ = total;
+                                        training_loss_ = loss;
+                                    }
+                                }
+                            }
                         }
 
 #ifdef _WIN32
@@ -2093,10 +2131,18 @@ void AutoRigPlugin::drawImGui() {
         }
         if (training_running_) ImGui::EndDisabled();
 
-        // Training status
+        // Training status + progress bar
         if (training_running_) {
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Training...");
+            if (training_total_epochs_ > 0) {
+                float frac = (float)training_epoch_ / (float)training_total_epochs_;
+                char overlay[64];
+                std::snprintf(overlay, sizeof(overlay), "Epoch %d/%d  loss=%.6f",
+                    training_epoch_, training_total_epochs_, training_loss_);
+                ImGui::ProgressBar(frac, ImVec2(-1, 0), overlay);
+            } else {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Training...");
+            }
         }
         if (!training_status_.empty()) {
             ImVec4 col = training_finished_ && training_exit_code_ == 0
@@ -2206,7 +2252,8 @@ void AutoRigPlugin::drawImGui() {
                     if (mesh_.empty() || source_mesh_path_ != selected_mesh_path_) {
                         loadMesh(selected_mesh_path_);
                         // Render a default orbit so we have captures ready.
-                        captures_ = rasterizer_->captureOrbit(mesh_, num_views_, capture_resolution_);
+                        captures_ = rasterizer_->captureOrbit(mesh_, num_views_, capture_resolution_,
+                                                              0.0f, camera_distance_);
                         initEditableJoints();
                         edit_capture_valid_ = false;
                     }
@@ -2430,9 +2477,12 @@ void AutoRigPlugin::drawImGui() {
                 if (preview_dragging_) {
                     if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                         ImVec2 m = ImGui::GetMousePos();
-                        preview_yaw_   += (m.x - preview_drag_start_.x) * 0.01f;
-                        preview_pitch_ += (m.y - preview_drag_start_.y) * 0.01f;
-                        preview_pitch_  = std::clamp(preview_pitch_, -1.5f, 1.5f);
+                        if (!lock_azimuth_)
+                            preview_yaw_   += (m.x - preview_drag_start_.x) * 0.01f;
+                        if (!lock_elevation_) {
+                            preview_pitch_ += (m.y - preview_drag_start_.y) * 0.01f;
+                            preview_pitch_  = std::clamp(preview_pitch_, -1.5f, 1.5f);
+                        }
                         preview_drag_start_ = m;
                     } else {
                         preview_dragging_ = false;
@@ -2491,10 +2541,31 @@ void AutoRigPlugin::drawImGui() {
                 IM_COL32(160, 160, 160, 180), "Drag to rotate");
             pdl->PopClipRect();
 
-            // Show current angle.
+            // Show current angle — click label to lock/unlock that axis.
             float az_deg = -glm::degrees(preview_yaw_);
             float el_deg = -glm::degrees(preview_pitch_);
-            ImGui::Text("Azimuth: %.0f  Elevation: %.0f", az_deg, el_deg);
+            {
+                ImVec4 lock_col(1.0f, 0.6f, 0.2f, 1.0f);   // orange when locked
+                ImVec4 norm_col = ImGui::GetStyleColorVec4(ImGuiCol_Text);
+
+                if (lock_azimuth_) ImGui::PushStyleColor(ImGuiCol_Text, lock_col);
+                char az_lbl[64]; std::snprintf(az_lbl, sizeof(az_lbl),
+                    lock_azimuth_ ? "Azimuth: %.0f [LOCKED]" : "Azimuth: %.0f", az_deg);
+                if (ImGui::Selectable(az_lbl, lock_azimuth_,
+                        ImGuiSelectableFlags_None, ImVec2(canvas_dim * 0.48f, 0)))
+                    lock_azimuth_ = !lock_azimuth_;
+                if (lock_azimuth_) ImGui::PopStyleColor();
+
+                ImGui::SameLine();
+
+                if (lock_elevation_) ImGui::PushStyleColor(ImGuiCol_Text, lock_col);
+                char el_lbl[64]; std::snprintf(el_lbl, sizeof(el_lbl),
+                    lock_elevation_ ? "Elevation: %.0f [LOCKED]" : "Elevation: %.0f", el_deg);
+                if (ImGui::Selectable(el_lbl, lock_elevation_,
+                        ImGuiSelectableFlags_None, ImVec2(canvas_dim * 0.48f, 0)))
+                    lock_elevation_ = !lock_elevation_;
+                if (lock_elevation_) ImGui::PopStyleColor();
+            }
 
             // Zoom slider (camera distance).
             float old_dist = camera_distance_;
@@ -2526,14 +2597,20 @@ void AutoRigPlugin::drawImGui() {
                 glm::mat4 view_mat = glm::lookAt(eye, centre, glm::vec3(0, 1, 0));
 
                 // Render with OIT for translucent mesh (joints visible behind body).
+                // Training data export uses the color PNG from this capture, which
+                // is opaque; OIT only affects the interactive editing overlay.
                 edit_capture_ = rasterizer_->renderOIT(
                     mesh_, capture_resolution_, capture_resolution_,
                     view_mat, proj, mesh_opacity_, az, el);
                 initEditableJointsForView(edit_view_, edit_capture_);
                 edit_capture_valid_ = true;
+
+                fprintf(stderr, "[AutoRig] Edit capture: radius=%.4f (ext=%.4f * cam_dist=%.4f) res=%d\n",
+                        radius, ext, camera_distance_, capture_resolution_);
                 drag_joint_ = -1;
 
-                fprintf(stderr, "[AutoRig] Captured edit view: az=%.1f el=%.1f\n", az, el);
+                fprintf(stderr, "[AutoRig] Captured edit view: az=%.1f el=%.1f res=%d radius=%.3f\n",
+                        az, el, capture_resolution_, radius);
             }
 
             ImGui::EndChild();
@@ -2731,8 +2808,24 @@ void AutoRigPlugin::drawImGui() {
                 if (no_saved) ImGui::BeginDisabled();
 
                 if (ImGui::Button("  Export Training Data  ")) {
-                    std::string out_dir = std::filesystem::path(source_mesh_path_)
-                        .parent_path().string() + "/training_data";
+                    // Export to assets/rigs_training/ — same place the Train button reads from.
+                    std::string exe_path;
+                    {
+                        #ifdef _WIN32
+                        char buf[MAX_PATH]; GetModuleFileNameA(nullptr, buf, MAX_PATH);
+                        exe_path = std::filesystem::path(buf).parent_path().string();
+                        #else
+                        exe_path = std::filesystem::canonical("/proc/self/exe").parent_path().string();
+                        #endif
+                    }
+                    std::string out_dir;
+                    // Try: exe_dir/../realworld/assets/rigs_training (dev layout)
+                    std::string dev_path = exe_path + "/../realworld/assets/rigs_training";
+                    std::string prod_path = exe_path + "/assets/rigs_training";
+                    if (std::filesystem::exists(dev_path) || !std::filesystem::exists(prod_path))
+                        out_dir = dev_path;
+                    else
+                        out_dir = prod_path;
                     if (exportTrainingData(out_dir)) {
                         training_status_ = "Exported " + std::to_string(saved_edits_.size()) +
                             " views to " + out_dir;

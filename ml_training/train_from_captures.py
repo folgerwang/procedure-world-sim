@@ -62,7 +62,7 @@ NUM_JOINTS = 19
 INPUT_CHANNELS = 7   # RGB(3) + Normal(3) + Silhouette(1)
 RESOLUTION = 256
 BASE_CHANNELS = 64
-HEATMAP_SIGMA = 2.5
+HEATMAP_SIGMA = 8.0   # was 2.5 — too small, model learns to output near-zero
 
 
 # ── Step 1: Convert captured PNGs + JSON to HDF5 ────────────────────────────
@@ -163,11 +163,32 @@ def convert_captures_to_h5(data_dir: str, h5_path: str, resolution: int = 256):
 
 # ── Step 2: Simple training loop (self-contained) ───────────────────────────
 
-class SimpleViewDataset(torch.utils.data.Dataset):
-    """Lightweight HDF5 dataset for captured views (no augmentation)."""
+# Left/right joint swap pairs for horizontal flip augmentation.
+# When the image is flipped, left_shoulder becomes right_shoulder, etc.
+LR_SWAP_PAIRS = [
+    (5, 9),    # left_shoulder <-> right_shoulder
+    (6, 10),   # left_upper_arm <-> right_upper_arm
+    (7, 11),   # left_lower_arm <-> right_lower_arm
+    (8, 12),   # left_hand <-> right_hand
+    (13, 16),  # left_upper_leg <-> right_upper_leg
+    (14, 17),  # left_lower_leg <-> right_lower_leg
+    (15, 18),  # left_foot <-> right_foot
+]
 
-    def __init__(self, h5_path: str):
+
+class AugmentedViewDataset(torch.utils.data.Dataset):
+    """HDF5 dataset with online augmentation for better generalization.
+
+    Augmentations applied randomly each time a sample is fetched:
+      - Horizontal flip (with left/right joint channel swap)
+      - Random brightness / contrast / hue jitter on RGB channels
+      - Random small affine: translate ±10%, scale 0.85–1.15
+      - Gaussian noise on input
+    """
+
+    def __init__(self, h5_path: str, augment: bool = True):
         self.h5_path = h5_path
+        self.augment = augment
         self.samples = []
 
         with h5py.File(h5_path, "r") as hf:
@@ -175,7 +196,8 @@ class SimpleViewDataset(torch.utils.data.Dataset):
                 for view_key in sorted(hf[model_key].keys()):
                     self.samples.append((model_key, view_key))
 
-        print(f"Dataset: {len(self.samples)} samples from {h5_path}")
+        print(f"Dataset: {len(self.samples)} samples from {h5_path}"
+              f" (augmentation={'ON' if augment else 'OFF'})")
 
     def __len__(self):
         return len(self.samples)
@@ -184,8 +206,102 @@ class SimpleViewDataset(torch.utils.data.Dataset):
         model_key, view_key = self.samples[idx]
         with h5py.File(self.h5_path, "r") as hf:
             grp = hf[model_key][view_key]
-            inp = torch.from_numpy(grp["input"][:])
-            hm = torch.from_numpy(grp["heatmaps"][:])
+            inp = torch.from_numpy(grp["input"][:])      # (7, H, W)
+            hm = torch.from_numpy(grp["heatmaps"][:])    # (J, H, W)
+
+        if not self.augment:
+            return {"input": inp, "heatmaps": hm}
+
+        # ── Horizontal flip (15% chance) ──
+        # Keep low — too much flipping confuses left/right with few training views.
+        if np.random.random() < 0.15:
+            inp = inp.flip(2)        # flip W dimension
+            hm = hm.flip(2)
+            # Swap left/right joint heatmap channels
+            for li, ri in LR_SWAP_PAIRS:
+                hm[li], hm[ri] = hm[ri].clone(), hm[li].clone()
+
+        # ── Color jitter on RGB channels (first 3 of 7) ──
+        if np.random.random() < 0.8:
+            rgb = inp[:3]  # (3, H, W)
+            # Brightness: ±20%
+            brightness = 1.0 + (np.random.random() - 0.5) * 0.4
+            rgb = rgb * brightness
+            # Contrast: ±20%
+            contrast = 1.0 + (np.random.random() - 0.5) * 0.4
+            mean = rgb.mean()
+            rgb = (rgb - mean) * contrast + mean
+            # Hue-ish shift: slight per-channel scaling
+            for c in range(3):
+                rgb[c] = rgb[c] * (0.9 + np.random.random() * 0.2)
+            inp[:3] = rgb.clamp(0.0, 1.0)
+            # Apply same brightness to normals proxy (channels 3-5)
+            inp[3:6] = (inp[3:6] * brightness).clamp(0.0, 1.0)
+
+        # ── Random translate + scale (affine) ──
+        if np.random.random() < 0.5:
+            _, H, W = inp.shape
+            # Random scale 0.85 – 1.15
+            scale = 0.85 + np.random.random() * 0.3
+            # Random translate ±10% of image size
+            tx = (np.random.random() - 0.5) * 0.2 * W
+            ty = (np.random.random() - 0.5) * 0.2 * H
+
+            # Build affine grid for spatial transform
+            theta = torch.tensor([
+                [scale, 0, tx / (W / 2)],
+                [0, scale, ty / (H / 2)]
+            ], dtype=torch.float32).unsqueeze(0)
+
+            grid = torch.nn.functional.affine_grid(
+                theta, [1, 1, H, W], align_corners=False)
+
+            # Apply to input (all 7 channels)
+            inp_4d = inp.unsqueeze(0)
+            inp = torch.nn.functional.grid_sample(
+                inp_4d, grid, mode='bilinear',
+                padding_mode='zeros', align_corners=False)[0]
+
+            # Apply same transform to heatmaps
+            hm_4d = hm.unsqueeze(0)
+            hm = torch.nn.functional.grid_sample(
+                hm_4d, grid, mode='bilinear',
+                padding_mode='zeros', align_corners=False)[0]
+
+        # ── Gaussian blur (key for generalization!) ──
+        # Makes the model focus on body shape/silhouette, not pixel details.
+        if np.random.random() < 0.7:
+            _, H, W = inp.shape
+            # Random kernel size (must be odd)
+            k = np.random.choice([3, 5, 7, 9, 11])
+            sigma = 0.3 * ((k - 1) * 0.5 - 1) + 0.8 + np.random.random() * 2.0
+            # Apply blur to RGB + normals (channels 0-5), keep silhouette sharp
+            inp_blur = inp[:6].unsqueeze(0)  # (1, 6, H, W)
+            padding = k // 2
+            # Per-channel 2D gaussian blur via conv2d
+            x = torch.arange(k, dtype=torch.float32) - k // 2
+            kernel_1d = torch.exp(-x * x / (2 * sigma * sigma))
+            kernel_1d = kernel_1d / kernel_1d.sum()
+            kernel_2d = kernel_1d.unsqueeze(1) * kernel_1d.unsqueeze(0)  # (k, k)
+            kernel_2d = kernel_2d.view(1, 1, k, k).repeat(6, 1, 1, 1)  # (6, 1, k, k)
+            inp_blur = torch.nn.functional.conv2d(
+                inp_blur, kernel_2d, padding=padding, groups=6)
+            inp[:6] = inp_blur[0].clamp(0.0, 1.0)
+
+        # ── Random erasing / cutout (forces learning from partial views) ──
+        if np.random.random() < 0.3:
+            _, H, W = inp.shape
+            eh = int(H * (0.05 + np.random.random() * 0.15))
+            ew = int(W * (0.05 + np.random.random() * 0.15))
+            ey = np.random.randint(0, H - eh)
+            ex = np.random.randint(0, W - ew)
+            inp[:, ey:ey+eh, ex:ex+ew] = 0.0
+
+        # ── Gaussian noise ──
+        if np.random.random() < 0.3:
+            noise = torch.randn_like(inp) * 0.03
+            inp = (inp + noise).clamp(0.0, 1.0)
+
         return {"input": inp, "heatmaps": hm}
 
 
@@ -205,20 +321,20 @@ def train_model(h5_path: str, output_model: str, epochs: int = 50,
         device=device,
     )
 
-    # Dataset — with few samples, we just use all of them for training
-    dataset = SimpleViewDataset(h5_path)
+    # Dataset with online augmentation — each fetch returns a randomly
+    # augmented version, so the model sees different variations every epoch.
+    dataset = AugmentedViewDataset(h5_path, augment=True)
     if len(dataset) == 0:
         print("ERROR: Dataset is empty, nothing to train on.")
         return False
 
-    # With very few samples (< 20), we duplicate the dataset to fill batches
-    effective_dataset = dataset
-    if len(dataset) < 16:
-        # Repeat the dataset to have at least 16 samples per "epoch"
-        repeats = max(16 // len(dataset), 1)
-        effective_dataset = torch.utils.data.ConcatDataset([dataset] * repeats)
-        print(f"Small dataset ({len(dataset)} samples) — "
-              f"repeating {repeats}x = {len(effective_dataset)} effective samples")
+    # With few samples, repeat so each epoch has enough gradient steps.
+    # With augmentation, every repeat is a different random variation.
+    samples_per_epoch = max(64, len(dataset))  # at least 64 samples/epoch
+    repeats = max(samples_per_epoch // len(dataset), 1)
+    effective_dataset = torch.utils.data.ConcatDataset([dataset] * repeats)
+    print(f"Base samples: {len(dataset)}, repeats: {repeats}x, "
+          f"effective: {len(effective_dataset)}/epoch (each augmented differently)")
 
     loader = torch.utils.data.DataLoader(
         effective_dataset,
@@ -229,12 +345,22 @@ def train_model(h5_path: str, output_model: str, epochs: int = 50,
     )
 
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=max(epochs // 3, 5),
-                                          gamma=0.5)
-    criterion = nn.MSELoss()
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=lr * 0.01)
+
+    # Weighted MSE: upweight pixels near joint peaks so the model can't
+    # cheat by predicting all-zeros (which gives tiny MSE on sparse targets).
+    PEAK_WEIGHT = 20.0   # pixels with target > 0.5 get this extra weight
+
+    def weighted_mse_loss(pred, target):
+        """MSE with extra weight on peak regions."""
+        weight = torch.ones_like(target)
+        weight[target > 0.1] = PEAK_WEIGHT * 0.5
+        weight[target > 0.5] = PEAK_WEIGHT
+        return (weight * (pred - target) ** 2).mean()
 
     print(f"\nStarting training: {epochs} epochs, {len(effective_dataset)} samples/epoch")
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    print(f"Heatmap sigma: {HEATMAP_SIGMA}, peak weight: {PEAK_WEIGHT}")
     print("-" * 60)
 
     best_loss = float("inf")
@@ -251,7 +377,7 @@ def train_model(h5_path: str, output_model: str, epochs: int = 50,
 
             optimizer.zero_grad()
             pred = model(inp)
-            loss = criterion(pred, target)
+            loss = weighted_mse_loss(pred, target)
             loss.backward()
             optimizer.step()
 
@@ -265,9 +391,10 @@ def train_model(h5_path: str, output_model: str, epochs: int = 50,
             best_loss = avg_loss
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
 
-        if epoch % 5 == 0 or epoch == 1 or epoch == epochs:
-            print(f"Epoch {epoch:4d}/{epochs}  loss={avg_loss:.6f}  "
-                  f"best={best_loss:.6f}  lr={scheduler.get_last_lr()[0]:.2e}")
+        # Print every epoch so C++ progress bar updates smoothly
+        print(f"Epoch {epoch:4d}/{epochs}  loss={avg_loss:.6f}  "
+              f"best={best_loss:.6f}  lr={scheduler.get_last_lr()[0]:.2e}",
+              flush=True)
 
     print("-" * 60)
     print(f"Training complete. Best loss: {best_loss:.6f}")

@@ -52,11 +52,13 @@ public:
 
     // Generate an orbit of cameras looking at the mesh bounding-box centre.
     // Returns `num_views` ViewCaptures evenly spaced in azimuth.
+    // `radius_mult` controls camera distance as a multiplier of mesh extent.
     std::vector<ViewCapture> captureOrbit(
         const TriangleMesh& mesh,
         int   num_views,
         int   resolution,
-        float elevation_deg = 15.0f) const;
+        float elevation_deg = 15.0f,
+        float radius_mult   = 1.2f) const;
 
 private:
     // Rasterise a single triangle into the depth buffer + attribute buffers.
@@ -74,5 +76,5 @@ private:
         std::vector<Fragment>& out_frags) const;
 };
 
-} // namespace auto_rig
-} // namespace plugins
+}  // namespace auto_rig
+}  // namespace plugins

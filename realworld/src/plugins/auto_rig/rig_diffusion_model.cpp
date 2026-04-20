@@ -124,13 +124,18 @@ std::vector<float> RigDiffusionModel::prepareInput(
 
     for (int i = 0; i < npix; ++i) {
         // RGB [0,1]
-        data[0 * npix + i] = capture.color[i * 3 + 0] / 255.0f;
-        data[1 * npix + i] = capture.color[i * 3 + 1] / 255.0f;
-        data[2 * npix + i] = capture.color[i * 3 + 2] / 255.0f;
-        // Normals [-1,1]
-        data[3 * npix + i] = capture.normal_map[i * 3 + 0];
-        data[4 * npix + i] = capture.normal_map[i * 3 + 1];
-        data[5 * npix + i] = capture.normal_map[i * 3 + 2];
+        float r = capture.color[i * 3 + 0] / 255.0f;
+        float g = capture.color[i * 3 + 1] / 255.0f;
+        float b = capture.color[i * 3 + 2] / 255.0f;
+        data[0 * npix + i] = r;
+        data[1 * npix + i] = g;
+        data[2 * npix + i] = b;
+        // Normals: use RGB as proxy to match training pipeline.
+        // Training data uses color_np as normals (same as RGB, [0,1]).
+        // Using actual normal_map here would create a mismatch.
+        data[3 * npix + i] = r;
+        data[4 * npix + i] = g;
+        data[5 * npix + i] = b;
         // Silhouette [0,1]
         data[6 * npix + i] = capture.silhouette[i] / 255.0f;
     }
