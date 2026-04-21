@@ -21,11 +21,22 @@ rem   -libtorch=<path>    Use existing LibTorch at this path (skip download)
 rem   -skip-deps          Skip Python dependency install
 rem   -skip-model         Skip ML model export
 rem   -skip-libtorch      Skip LibTorch download
+rem   -skip-cuda          Skip CUDA torch install (use CPU wheel from requirements.txt)
+rem   -cuda=<wheel>       CUDA wheel tag (default: cu128). Examples:
+rem                         cu128  -- works with all current NVIDIA GPUs incl.
+rem                                   Blackwell/RTX 50-series (sm_120). DEFAULT.
+rem                         cu121  -- older; no sm_120 kernels.
+rem                         cu118  -- older still, Turing/Ampere-friendly.
+rem                         nightly/cu128  -- bleeding edge if stable lacks
+rem                                           support for your card yet.
+rem                         cpu    -- force CPU torch (same as -skip-cuda).
 rem   Unknown args are ignored (allows pass-through from GenerateProjectFiles.bat)
 set "LIBTORCH_DIR_ARG="
 set "SKIP_DEPS=0"
 set "SKIP_MODEL=0"
 set "SKIP_LIBTORCH=0"
+set "SKIP_CUDA=0"
+set "CUDA_WHEEL=cu128"
 
 :arg_loop
 if "%~1"=="" goto :arg_done
@@ -34,9 +45,14 @@ if /i "!_a:~0,10!"=="-libtorch=" set "LIBTORCH_DIR_ARG=!_a:~10!"
 if /i "!_a!"=="-skip-deps" set "SKIP_DEPS=1"
 if /i "!_a!"=="-skip-model" set "SKIP_MODEL=1"
 if /i "!_a!"=="-skip-libtorch" set "SKIP_LIBTORCH=1"
+if /i "!_a!"=="-skip-cuda" set "SKIP_CUDA=1"
+if /i "!_a:~0,6!"=="-cuda=" set "CUDA_WHEEL=!_a:~6!"
 shift
 goto :arg_loop
 :arg_done
+
+rem -cuda=cpu is just a friendlier spelling of -skip-cuda
+if /i "!CUDA_WHEEL!"=="cpu" set "SKIP_CUDA=1"
 
 rem ── Python dependencies for ML training ──────────────────────────────────────
 rem   The Auto-Rig "Train Model" button and the model export step below both
@@ -66,6 +82,62 @@ if errorlevel 1 (
 for /f "tokens=2 delims= " %%v in ('python --version 2^>^&1') do (
     echo [INFO]  Python %%v
 )
+
+rem ── CUDA torch ────────────────────────────────────────────────────────────────
+rem   requirements.txt pins torch>=2.0 but doesn't specify an index, so pip
+rem   picks the CPU wheel on Windows. If an NVIDIA GPU is present we install
+rem   the CUDA wheel FIRST -- then the requirements.txt install below sees the
+rem   torch requirement as already satisfied and won't downgrade it.
+rem
+rem   Default wheel: cu128 (works with RTX 50-series Blackwell cards that need
+rem   sm_120 kernels, and backward compatible with older NVIDIA cards).
+rem   Override with -cuda=<tag>; skip with -skip-cuda or -cuda=cpu.
+if "!SKIP_CUDA!"=="1" (
+    echo [INFO]  Skipping CUDA torch install ^(-skip-cuda / -cuda=cpu^)
+    goto :cuda_torch_done
+)
+
+where nvidia-smi >nul 2>&1
+if errorlevel 1 (
+    echo [INFO]  nvidia-smi not found -- skipping CUDA torch install
+    echo         ^(training will run on CPU. Pass -skip-cuda to silence this.^)
+    goto :cuda_torch_done
+)
+
+rem Is a CUDA-enabled torch already installed? If so, skip the slow reinstall.
+python -c "import sys, torch; sys.exit(0 if torch.backends.cuda.is_built() else 1)" >nul 2>&1
+if not errorlevel 1 (
+    for /f "delims=" %%t in ('python -c "import torch; print(torch.__version__)"') do (
+        echo [INFO]  CUDA torch already installed: %%t -- skipping reinstall
+    )
+    goto :cuda_torch_done
+)
+
+set "CUDA_INDEX=https://download.pytorch.org/whl/!CUDA_WHEEL!"
+echo.
+echo -- CUDA torch install -------------------------------------
+echo [INFO]  NVIDIA GPU detected -- installing CUDA torch wheel
+echo [INFO]  Wheel tag:  !CUDA_WHEEL!
+echo [INFO]  Index:      !CUDA_INDEX!
+echo [INFO]  One-time ~2.5 GB download.
+python -m pip uninstall -y torch torchvision >nul 2>&1
+python -m pip install --disable-pip-version-check torch torchvision --index-url "!CUDA_INDEX!"
+if errorlevel 1 (
+    echo.
+    echo [WARN]  CUDA torch install failed ^(index: !CUDA_INDEX!^).
+    echo         For RTX 50-series ^(Blackwell^) try nightly:
+    echo           Setup.bat -cuda=nightly/cu128
+    echo         Or fall back to CPU:
+    echo           Setup.bat -skip-cuda
+    echo         Continuing -- requirements.txt will install a CPU wheel instead.
+) else (
+    echo [INFO]  CUDA torch installed. Verify with:
+    echo           python ml_training\check_device.py
+)
+echo -----------------------------------------------------------
+echo.
+
+:cuda_torch_done
 
 echo.
 echo -- Python dependencies ------------------------------------
