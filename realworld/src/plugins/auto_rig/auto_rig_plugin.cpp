@@ -117,7 +117,7 @@ bool AutoRigPlugin::init(
 
     // Scan for versioned models and load the latest.
     scanModelVersions();
-    loadModelVersion(-1);  // -1 = latest
+    loadModelByIndex(-1);  // -1 = latest
 
     state_ = PluginState::kLoaded;
     return true;
@@ -138,19 +138,35 @@ void AutoRigPlugin::shutdown() {
 // ============================================================================
 
 std::string AutoRigPlugin::modelPathForVersion(int v) const {
-    if (v <= 0)
-        return {};  // no model
-    if (v == 1) {
-        // v001 could be either the legacy unversioned file or a versioned file
-        std::string versioned = model_dir_ + "/rig_diffusion_v001.pt";
-        if (std::filesystem::exists(versioned))
-            return versioned;
-        // Fall back to legacy name
-        return model_dir_ + "/rig_diffusion.pt";
-    }
+    // Legacy compat — searches by version number only (returns first match).
+    for (auto& e : model_versions_)
+        if (e.version == v) return e.path;
+    if (v <= 0) return {};
+    // Fallback to legacy naming
     char buf[64];
     std::snprintf(buf, sizeof(buf), "/rig_diffusion_v%03d.pt", v);
+    std::string p = model_dir_ + buf;
+    if (std::filesystem::exists(p)) return p;
+    if (v == 1) {
+        p = model_dir_ + "/rig_diffusion.pt";
+        if (std::filesystem::exists(p)) return p;
+    }
+    return {};
+}
+
+std::string AutoRigPlugin::modelPathForArchVersion(const std::string& arch, int v) const {
+    char buf[128];
+    std::snprintf(buf, sizeof(buf), "/rig_diffusion_%s_v%03d.pt", arch.c_str(), v);
     return model_dir_ + buf;
+}
+
+int AutoRigPlugin::nextVersionForArch(const std::string& arch) const {
+    int max_ver = 0;
+    for (auto& e : model_versions_) {
+        if (e.arch == arch && e.version > max_ver)
+            max_ver = e.version;
+    }
+    return max_ver + 1;
 }
 
 void AutoRigPlugin::scanModelVersions() {
@@ -159,72 +175,126 @@ void AutoRigPlugin::scanModelVersions() {
     if (model_dir_.empty() || !std::filesystem::exists(model_dir_))
         return;
 
-    // Check for versioned files: rig_diffusion_vNNN.pt
+    // Scan for all .pt files matching our naming patterns.
     for (auto& entry : std::filesystem::directory_iterator(model_dir_)) {
         if (!entry.is_regular_file()) continue;
         std::string name = entry.path().filename().string();
-        // Match rig_diffusion_vNNN.pt  (prefix = "rig_diffusion_v" = 15 chars)
-        if (name.size() >= 19 &&
-            name.substr(0, 15) == "rig_diffusion_v" &&
-            name.substr(name.size() - 3) == ".pt") {
-            std::string num_str = name.substr(15, name.size() - 18);
+        if (name.size() < 4 || name.substr(name.size() - 3) != ".pt") continue;
+        // Skip checkpoint files
+        if (name.find("_checkpoint") != std::string::npos) continue;
+
+        std::string stem = name.substr(0, name.size() - 3);  // strip ".pt"
+
+        // New format: rig_diffusion_<arch>_v###
+        // Legacy format: rig_diffusion_v###
+        const std::string prefix = "rig_diffusion_";
+        if (stem.size() < prefix.size() ||
+            stem.substr(0, prefix.size()) != prefix) continue;
+        std::string rest = stem.substr(prefix.size());  // after "rig_diffusion_"
+
+        ModelEntry me;
+        me.path = entry.path().string();
+
+        // Try new format: <arch>_v###
+        auto vpos = rest.rfind("_v");
+        if (vpos != std::string::npos && vpos > 0) {
+            std::string arch_part = rest.substr(0, vpos);
+            std::string num_str = rest.substr(vpos + 2);
+            // Check if arch_part is a known architecture
+            bool known = false;
+            for (int i = 0; i < kNumModelArchs; ++i) {
+                if (arch_part == kModelArchNames[i]) { known = true; break; }
+            }
+            if (known) {
+                try {
+                    me.version = std::stoi(num_str);
+                    me.arch = arch_part;
+                    if (me.version > 0) {
+                        model_versions_.push_back(me);
+                        continue;
+                    }
+                } catch (...) {}
+            }
+        }
+
+        // Legacy format: v###  (no arch prefix — treat as "unet")
+        if (rest.size() >= 1 && rest[0] == 'v') {
             try {
-                int v = std::stoi(num_str);
-                if (v > 0) model_versions_.push_back(v);
+                me.version = std::stoi(rest.substr(1));
+                me.arch = "unet";  // legacy models are all unet
+                if (me.version > 0)
+                    model_versions_.push_back(me);
             } catch (...) {}
         }
     }
 
-    // Legacy unversioned rig_diffusion.pt counts as v001
-    // (but only if v001 wasn't already found as a versioned file)
+    // Legacy unversioned rig_diffusion.pt counts as unet v001
     if (std::filesystem::exists(model_dir_ + "/rig_diffusion.pt")) {
-        bool has_v1 = false;
-        for (int v : model_versions_) { if (v == 1) { has_v1 = true; break; } }
-        if (!has_v1)
-            model_versions_.push_back(1);
+        bool has_legacy_v1 = false;
+        for (auto& e : model_versions_) {
+            if (e.arch == "unet" && e.version == 1) { has_legacy_v1 = true; break; }
+        }
+        if (!has_legacy_v1) {
+            ModelEntry me;
+            me.version = 1;
+            me.arch = "unet";
+            me.path = model_dir_ + "/rig_diffusion.pt";
+            model_versions_.push_back(me);
+        }
     }
 
-    std::sort(model_versions_.begin(), model_versions_.end());
+    // Sort by version number (ascending).
+    std::sort(model_versions_.begin(), model_versions_.end(),
+        [](const ModelEntry& a, const ModelEntry& b) {
+            return a.version < b.version;
+        });
 
-    fprintf(stderr, "[AutoRig] Found %d model version(s):", (int)model_versions_.size());
-    for (int v : model_versions_) fprintf(stderr, " v%03d", v);
+    fprintf(stderr, "[AutoRig] Found %d model(s):", (int)model_versions_.size());
+    for (auto& e : model_versions_)
+        fprintf(stderr, " %s", e.label().c_str());
     fprintf(stderr, "\n");
 }
 
-bool AutoRigPlugin::loadModelVersion(int version) {
-    scanModelVersions();
+bool AutoRigPlugin::loadModelByIndex(int idx) {
+    // NOTE: caller must call scanModelVersions() before this.
+    // We don't re-scan here because that would invalidate the idx.
 
     // -1 means latest
-    int target = version;
-    if (target < 0) {
+    int target_idx = idx;
+    if (target_idx < 0) {
         if (model_versions_.empty()) {
-            // No models at all — use stub
             fprintf(stderr, "[AutoRig] No trained models found — using stub.\n");
             diffusion_model_ = std::make_unique<RigDiffusionModel>();
             diffusion_model_->load("", "cpu");
-            model_loaded_version_ = 0;
+            model_loaded_idx_ = -1;
             return true;
         }
-        target = model_versions_.back();  // highest version
+        target_idx = (int)model_versions_.size() - 1;  // latest
     }
 
-    std::string path = modelPathForVersion(target);
-    if (path.empty() || !std::filesystem::exists(path)) {
-        fprintf(stderr, "[AutoRig] Model v%03d not found: %s\n", target, path.c_str());
+    if (target_idx < 0 || target_idx >= (int)model_versions_.size()) {
+        fprintf(stderr, "[AutoRig] Model index %d out of range.\n", target_idx);
         return false;
     }
 
-    fprintf(stderr, "[AutoRig] Loading model v%03d: %s\n", target, path.c_str());
+    auto& me = model_versions_[target_idx];
+    if (!std::filesystem::exists(me.path)) {
+        fprintf(stderr, "[AutoRig] Model %s not found: %s\n",
+                me.label().c_str(), me.path.c_str());
+        return false;
+    }
+
+    fprintf(stderr, "[AutoRig] Loading model %s: %s\n",
+            me.label().c_str(), me.path.c_str());
     diffusion_model_ = std::make_unique<RigDiffusionModel>();
-    bool ok = diffusion_model_->load(path, "cpu");
+    bool ok = diffusion_model_->load(me.path, "cpu");
     if (ok) {
-        model_loaded_version_ = target;
-        fprintf(stderr, "[AutoRig] Model v%03d loaded successfully.\n", target);
+        model_loaded_idx_ = target_idx;
+        fprintf(stderr, "[AutoRig] Model %s loaded successfully.\n", me.label().c_str());
     } else {
-        // load() with HAS_LIBTORCH falls through to stub on failure,
-        // so loaded_ is true but we're in stub mode
-        fprintf(stderr, "[AutoRig] Model v%03d LibTorch load failed — stub active.\n", target);
-        model_loaded_version_ = 0;
+        fprintf(stderr, "[AutoRig] Model %s LibTorch load failed — stub active.\n",
+                me.label().c_str());
+        model_loaded_idx_ = -1;
     }
     return ok;
 }
@@ -658,12 +728,75 @@ bool AutoRigPlugin::captureViews(int num_views, int resolution) {
     if (mesh_.empty()) return false;
     num_views_ = num_views;
     capture_resolution_ = resolution;
-    // Pass camera_distance_ so inference views match rig-editor training captures.
+
+    // Try to read camera_distance from training data so auto-rig captures
+    // match the scale the model was trained on.
+    if (training_camera_dist_ < 0) {
+        // Collect candidate directories that might contain _meta.json files.
+        std::vector<std::string> search_dirs;
+        // Primary: rigs_training subdirectories (always exists after training).
+        try {
+            std::string rt_dir = model_dir_ + "/../rigs_training";
+            if (std::filesystem::exists(rt_dir)) {
+                for (auto& d : std::filesystem::directory_iterator(rt_dir)) {
+                    if (d.is_directory()) search_dirs.push_back(d.path().string());
+                }
+            }
+        } catch (...) {}
+        // Secondary: mesh-specific training_data dir.
+        try {
+            auto mesh_path = std::filesystem::path(source_mesh_path_);
+            std::string td = mesh_path.parent_path().string() + "/training_data/"
+                           + mesh_path.stem().string();
+            if (std::filesystem::exists(td))
+                search_dirs.push_back(td);
+        } catch (...) {}
+
+        // Scan for the first _meta.json with a camera_distance field.
+        for (auto& dir : search_dirs) {
+            if (training_camera_dist_ > 0) break;
+            try {
+                for (auto& f : std::filesystem::directory_iterator(dir)) {
+                    std::string fname = f.path().filename().string();
+                    if (fname.find("_meta.json") == std::string::npos) continue;
+                    FILE* fp = std::fopen(f.path().string().c_str(), "r");
+                    if (!fp) continue;
+                    char buf[4096];
+                    size_t n = std::fread(buf, 1, sizeof(buf) - 1, fp);
+                    std::fclose(fp);
+                    buf[n] = '\0';
+                    const char* cd = strstr(buf, "\"camera_distance\"");
+                    if (cd) {
+                        const char* colon = strchr(cd, ':');
+                        if (colon) {
+                            float val = 0;
+                            if (sscanf(colon + 1, " %f", &val) == 1 && val > 0) {
+                                training_camera_dist_ = val;
+                                fprintf(stderr, "[AutoRig] Training camera_distance=%.4f "
+                                        "(from %s)\n", val, f.path().string().c_str());
+                                break;
+                            }
+                        }
+                    }
+                }
+            } catch (...) {}
+        }
+        if (training_camera_dist_ < 0) {
+            training_camera_dist_ = camera_distance_;
+            fprintf(stderr, "[AutoRig] No training camera_distance found, "
+                    "using current slider value %.4f\n", camera_distance_);
+        }
+    }
+
+    float capture_dist = (use_training_scale_ && training_camera_dist_ > 0)
+                         ? training_camera_dist_ : camera_distance_;
     // Elevation 0° matches the default rig-editor view (eye level).
     captures_ = rasterizer_->captureOrbit(mesh_, num_views, resolution,
-                                          0.0f, camera_distance_);
-    fprintf(stderr, "[AutoRig] captured %d views @ %dx%d (radius_mult=%.2f)\n",
-        (int)captures_.size(), resolution, resolution, camera_distance_);
+                                          0.0f, capture_dist);
+    fprintf(stderr, "[AutoRig] captured %d views @ %dx%d (capture_dist=%.4f, "
+            "training_dist=%.4f, slider=%.4f, use_training=%d)\n",
+        (int)captures_.size(), resolution, resolution, capture_dist,
+        training_camera_dist_, camera_distance_, (int)use_training_scale_);
 
     // Dump auto-rig captures for comparison with training data.
     {
@@ -761,15 +894,17 @@ bool AutoRigPlugin::predictJoints() {
         return false;
     }
 
+    std::string loaded_label = (model_loaded_idx_ >= 0 && model_loaded_idx_ < (int)model_versions_.size())
+        ? model_versions_[model_loaded_idx_].label() : "stub";
     fprintf(stderr, "[AutoRig] predictJoints: %d captures, each %dx%d, model has %d joints, "
-        "loaded_version=%d, model_dir=%s\n",
+        "loaded=%s, model_dir=%s\n",
         (int)captures_.size(),
         captures_[0].width, captures_[0].height,
         diffusion_model_->numJoints(),
-        model_loaded_version_,
+        loaded_label.c_str(),
         model_dir_.c_str());
 
-    ui_status_ = "Running model v" + std::to_string(model_loaded_version_) + "...";
+    ui_status_ = "Running model " + loaded_label + "...";
 
     view_predictions_ = diffusion_model_->predictBatch(captures_);
 
@@ -1311,6 +1446,7 @@ bool AutoRigPlugin::exportTrainingData(const std::string& output_dir) {
         fprintf(meta_file, "  \"view_index\": %d,\n", file_idx);
         fprintf(meta_file, "  \"azimuth_deg\": %.1f,\n", cap.azimuth_deg);
         fprintf(meta_file, "  \"elevation_deg\": %.1f,\n", cap.elevation_deg);
+        fprintf(meta_file, "  \"camera_distance\": %.4f,\n", camera_distance_);
         fprintf(meta_file, "  \"width\": %d,\n", W);
         fprintf(meta_file, "  \"height\": %d,\n", H);
         fprintf(meta_file, "  \"joints\": [\n");
@@ -1718,12 +1854,9 @@ bool AutoRigPlugin::rigCharacter(
     initEditableJoints();
 
     {
-        char model_msg[128];
-        std::snprintf(model_msg, sizeof(model_msg),
-            "Running model v%03d (%s)...",
-            model_loaded_version_,
-            model_loaded_version_ > 0 ? "trained" : "stub/heuristic");
-        reportProgress(3, kTotalSteps, model_msg);
+        std::string ml = (model_loaded_idx_ >= 0 && model_loaded_idx_ < (int)model_versions_.size())
+            ? model_versions_[model_loaded_idx_].label() : "stub/heuristic";
+        reportProgress(3, kTotalSteps, "Running model " + ml + "...");
     }
     if (!predictJoints()) { state_ = PluginState::kError; return false; }
 
@@ -1960,6 +2093,19 @@ void AutoRigPlugin::drawImGui() {
 
     // ---- Train Model (root level, always visible) ----
     {
+        // Model architecture selector.
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::BeginCombo("Architecture", kModelArchLabels[training_model_arch_])) {
+            for (int i = 0; i < kNumModelArchs; ++i) {
+                bool selected = (i == training_model_arch_);
+                if (ImGui::Selectable(kModelArchLabels[i], selected))
+                    training_model_arch_ = i;
+                if (selected) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+
         // Snapshot the disabled state so Begin/End stay balanced even if the
         // button handler flips training_running_ mid-frame.
         const bool disable_train = training_running_;
@@ -2060,13 +2206,13 @@ void AutoRigPlugin::drawImGui() {
                 } else {
                     fprintf(stderr, "[AutoRig] Found training data: %s\n", data_dir.c_str());
 
-                    // Determine the next version number
+                    // Determine the next version number for selected architecture
                     scanModelVersions();
-                    int next_ver = 1;
-                    if (!model_versions_.empty())
-                        next_ver = model_versions_.back() + 1;
-                    std::string model_out = modelPathForVersion(next_ver);
+                    std::string arch = kModelArchNames[training_model_arch_];
+                    int next_ver = nextVersionForArch(arch);
+                    std::string model_out = modelPathForArchVersion(arch, next_ver);
 
+                    training_target_path_ = model_out;
                     std::filesystem::create_directories(ml_dir + "/datasets");
                     std::filesystem::create_directories(model_dir_);
 
@@ -2074,6 +2220,7 @@ void AutoRigPlugin::drawImGui() {
                         "cd \"" + ml_dir + "\" && python train_from_captures.py"
                         " --data_dir \"" + data_dir + "\""
                         " --output_model \"" + model_out + "\""
+                        " --model " + arch +
                         " --epochs 500"
                         " --device auto"
                         " 2>&1";
@@ -2101,7 +2248,10 @@ void AutoRigPlugin::drawImGui() {
                             if (!line.empty())
                                 training_status_ = line;
 
-                            // Parse "Epoch   5/500  loss=0.001234" for progress bar
+                            // Parse epoch progress for progress bar.
+                            // Formats:
+                            //   "Epoch   5/500  loss=0.001234 ..."        (no val split)
+                            //   "Epoch   5/500  train=0.001234  val=..."  (with val split)
                             {
                                 const char* ep = strstr(buf, "Epoch");
                                 if (ep) {
@@ -2111,6 +2261,17 @@ void AutoRigPlugin::drawImGui() {
                                         training_epoch_ = cur;
                                         training_total_epochs_ = total;
                                         training_loss_ = loss;
+                                    } else if (sscanf(ep, "Epoch %d/%d train=%f", &cur, &total, &loss) >= 2) {
+                                        training_epoch_ = cur;
+                                        training_total_epochs_ = total;
+                                        training_loss_ = loss;
+                                        // Also grab val loss if present.
+                                        const char* vp = strstr(ep, "val=");
+                                        if (vp) {
+                                            float vl = 0.0f;
+                                            if (sscanf(vp, "val=%f", &vl) == 1)
+                                                training_loss_ = vl;  // show val loss in UI
+                                        }
                                     }
                                 }
                             }
@@ -2232,13 +2393,35 @@ void AutoRigPlugin::drawImGui() {
             ImGui::TextColored(col, "%s", training_status_.c_str());
         }
 
-        // Auto-reload latest model after successful training
+        // Auto-reload the just-trained model after successful training
         if (training_finished_ && training_exit_code_ == 0) {
-            if (loadModelVersion(-1)) {
-                char ver_buf[32];
-                std::snprintf(ver_buf, sizeof(ver_buf), "v%03d", model_loaded_version_);
-                training_status_ = std::string("Training complete! Loaded model ") + ver_buf;
-                model_selected_version_ = -1;  // reset to "latest"
+            scanModelVersions();
+            // Find the exact model that was just trained by matching filename
+            // (avoids Windows forward/backslash path mismatches).
+            int target_idx = -1;
+            std::string target_filename =
+                std::filesystem::path(training_target_path_).filename().string();
+            for (int i = 0; i < (int)model_versions_.size(); ++i) {
+                std::string entry_filename =
+                    std::filesystem::path(model_versions_[i].path).filename().string();
+                if (entry_filename == target_filename) {
+                    target_idx = i;
+                    break;
+                }
+            }
+            fprintf(stderr, "[AutoRig] Post-train reload: target=%s found_idx=%d\n",
+                    target_filename.c_str(), target_idx);
+            if (target_idx >= 0 && loadModelByIndex(target_idx)) {
+                training_status_ = "Training complete! Loaded model " +
+                    model_versions_[target_idx].label();
+                model_selected_idx_ = target_idx;
+            } else if (loadModelByIndex(-1)) {
+                // Fallback to latest if exact match not found
+                std::string lbl = (model_loaded_idx_ >= 0 && model_loaded_idx_ < (int)model_versions_.size())
+                    ? model_versions_[model_loaded_idx_].label() : "?";
+                training_status_ = "Training complete! Loaded model " + lbl +
+                    " (expected " + target_filename + ")";
+                model_selected_idx_ = -1;
             } else {
                 training_status_ = "Training complete but failed to load new model.";
             }
@@ -2258,9 +2441,10 @@ void AutoRigPlugin::drawImGui() {
         // ---- Model version selector ----
         {
             // Show loaded model info
-            if (model_loaded_version_ > 0) {
+            if (model_loaded_idx_ >= 0 && model_loaded_idx_ < (int)model_versions_.size()) {
+                auto& loaded = model_versions_[model_loaded_idx_];
                 ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
-                    "Active model: v%03d", model_loaded_version_);
+                    "Active model: %s", loaded.label().c_str());
             } else {
                 ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f),
                     "Active model: stub (no trained model)");
@@ -2268,37 +2452,32 @@ void AutoRigPlugin::drawImGui() {
 
             if (!model_versions_.empty()) {
                 ImGui::SameLine();
-                ImGui::SetNextItemWidth(120);
+                ImGui::SetNextItemWidth(200);
 
-                // Build combo items: "Latest (vNNN)", "v003", "v002", "v001", ...
-                char current_label[64];
-                if (model_selected_version_ < 0)
-                    std::snprintf(current_label, sizeof(current_label),
-                        "Latest (v%03d)", model_versions_.back());
+                // Build combo items: "Latest (arch_vNNN)", individual entries...
+                std::string current_label;
+                if (model_selected_idx_ < 0)
+                    current_label = "Latest (" + model_versions_.back().label() + ")";
                 else
-                    std::snprintf(current_label, sizeof(current_label),
-                        "v%03d", model_selected_version_);
+                    current_label = model_versions_[model_selected_idx_].label();
 
-                if (ImGui::BeginCombo("##model_ver", current_label)) {
+                if (ImGui::BeginCombo("##model_ver", current_label.c_str())) {
                     // "Latest" option
                     {
-                        char lbl[64];
-                        std::snprintf(lbl, sizeof(lbl), "Latest (v%03d)", model_versions_.back());
-                        bool selected = (model_selected_version_ < 0);
-                        if (ImGui::Selectable(lbl, selected)) {
-                            model_selected_version_ = -1;
-                            loadModelVersion(-1);
+                        std::string lbl = "Latest (" + model_versions_.back().label() + ")";
+                        bool selected = (model_selected_idx_ < 0);
+                        if (ImGui::Selectable(lbl.c_str(), selected)) {
+                            model_selected_idx_ = -1;
+                            loadModelByIndex(-1);
                         }
                     }
-                    // Individual versions (newest first)
+                    // Individual models (newest first)
                     for (int i = (int)model_versions_.size() - 1; i >= 0; --i) {
-                        int v = model_versions_[i];
-                        char lbl[64];
-                            std::snprintf(lbl, sizeof(lbl), "v%03d", v);
-                        bool selected = (model_selected_version_ == v);
-                        if (ImGui::Selectable(lbl, selected)) {
-                            model_selected_version_ = v;
-                            loadModelVersion(v);
+                        auto& me = model_versions_[i];
+                        bool selected = (model_selected_idx_ == i);
+                        if (ImGui::Selectable(me.label().c_str(), selected)) {
+                            model_selected_idx_ = i;
+                            loadModelByIndex(i);
                         }
                     }
                     ImGui::EndCombo();
@@ -2386,10 +2565,10 @@ void AutoRigPlugin::drawImGui() {
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Model Info:");
             ImGui::Text("  Model dir: %s", model_dir_.c_str());
             ImGui::Text("  Versions found: %d", (int)model_versions_.size());
-            if (model_loaded_version_ > 0) {
-                std::string loaded_path = modelPathForVersion(model_loaded_version_);
+            if (model_loaded_idx_ >= 0 && model_loaded_idx_ < (int)model_versions_.size()) {
+                auto& me = model_versions_[model_loaded_idx_];
                 ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
-                    "  Loaded: v%03d  (%s)", model_loaded_version_, loaded_path.c_str());
+                    "  Loaded: %s  (%s)", me.label().c_str(), me.path.c_str());
             } else {
                 ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f),
                     "  Loaded: STUB (heuristic placement)");
@@ -2398,7 +2577,7 @@ void AutoRigPlugin::drawImGui() {
                 ImGui::Text("  Model loaded: %s, joints: %d, module ptr: %s",
                     diffusion_model_->isLoaded() ? "YES" : "NO",
                     diffusion_model_->numJoints(),
-                    (model_loaded_version_ > 0) ? "LibTorch" : "stub");
+                    (model_loaded_idx_ >= 0) ? "LibTorch" : "stub");
             } else {
                 ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f),
                     "  diffusion_model_ is NULL!");
@@ -2436,8 +2615,18 @@ void AutoRigPlugin::drawImGui() {
                     preview_yaw_, preview_pitch_, preview_dragging_, preview_drag_start_);
             }
 
-            // ---- Debug multi-view (off by default) ----
+            // ---- Debug controls ----
             ImGui::Checkbox("Show Debug Views", &show_debug_views_);
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Use Training Scale", &use_training_scale_)) {
+                training_camera_dist_ = -1.0f;  // force re-read on next auto-rig
+            }
+            if (!use_training_scale_) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "(manual scale)");
+                ImGui::SetNextItemWidth(200);
+                ImGui::SliderFloat("Debug Scale", &camera_distance_, 0.3f, 2.0f, "%.2f");
+            }
             if (show_debug_views_ && !captures_.empty()) {
                 // Show ML predictions if available, otherwise heuristic
                 bool has_ml = !view_predictions_.empty();

@@ -52,8 +52,33 @@ if _missing:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from models.unet_heatmap import build_model, UNetHeatmap
 from utils.heatmap_utils import generate_heatmaps
+
+# ── Model registry ──────────────────────────────────────────────────────────
+# Each entry maps a CLI name to (module_path, build_function_kwargs).
+# All models share the same interface: build_model(num_joints, in_channels, device)
+# and return (B, J, H, W) sigmoid heatmaps from forward().
+
+MODEL_REGISTRY = {
+    "unet":       "models.unet_heatmap",
+    "hourglass":  "models.stacked_hourglass",
+    "resnet":     "models.simple_baseline",
+}
+
+DEFAULT_MODEL = "unet"
+
+
+def _build_model_by_name(name: str, num_joints: int, in_channels: int,
+                         device: str):
+    """Import the selected model module and call its build_model()."""
+    if name not in MODEL_REGISTRY:
+        print(f"ERROR: Unknown model '{name}'. "
+              f"Available: {', '.join(MODEL_REGISTRY.keys())}")
+        raise ValueError(f"Unknown model: {name}")
+    import importlib
+    mod = importlib.import_module(MODEL_REGISTRY[name])
+    return mod.build_model(num_joints=num_joints, in_channels=in_channels,
+                           device=device)
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -229,8 +254,13 @@ class AugmentedViewDataset(torch.utils.data.Dataset):
         if not self.augment:
             return {"input": inp, "heatmaps": hm}
 
+        # ── 30% chance: return clean sample (no augmentation) ──
+        # Critical with small datasets — the model needs to see un-distorted
+        # data frequently enough to learn the real pattern.
+        if np.random.random() < 0.30:
+            return {"input": inp, "heatmaps": hm}
+
         # ── Horizontal flip (15% chance) ──
-        # Keep low — too much flipping confuses left/right with few training views.
         if np.random.random() < 0.15:
             inp = inp.flip(2)        # flip W dimension
             hm = hm.flip(2)
@@ -238,15 +268,18 @@ class AugmentedViewDataset(torch.utils.data.Dataset):
             for li, ri in LR_SWAP_PAIRS:
                 hm[li], hm[ri] = hm[ri].clone(), hm[li].clone()
 
+        # NOTE: Vertical flip removed — flipping upside-down without proper
+        # top/bottom joint swap (head<->feet etc.) teaches incorrect mappings.
+        # With few training views this degrades performance significantly.
+
         # ── Luma jitter (applied after the grayscale filter above) ──
-        # With color stripped out, the model only has brightness/contrast to
-        # key on. Widen the jitter range so it learns to cope with varied
-        # lighting — ±40% brightness + ±40% contrast.
-        if np.random.random() < 0.9:
+        # Moderate range so the model learns lighting invariance without
+        # destroying the signal with only ~50 raw samples.
+        if np.random.random() < 0.7:
             gray = inp[:6]  # (6, H, W) — all grayscale after the luma filter
-            brightness = 1.0 + (np.random.random() - 0.5) * 0.8   # ±40%
+            brightness = 1.0 + (np.random.random() - 0.5) * 0.5   # ±25%
             gray = gray * brightness
-            contrast = 1.0 + (np.random.random() - 0.5) * 0.8     # ±40%
+            contrast = 1.0 + (np.random.random() - 0.5) * 0.5     # ±25%
             mean = gray.mean()
             gray = (gray - mean) * contrast + mean
             # Slight per-channel desync so the 2 groups of 3 identical channels
@@ -256,18 +289,29 @@ class AugmentedViewDataset(torch.utils.data.Dataset):
             inp[:6] = gray.clamp(0.0, 1.0)
 
         # ── Random translate + scale (affine) ──
+        # In affine_grid, the theta matrix maps OUTPUT coords to INPUT coords:
+        #   scale > 1 in theta => zoom OUT (object appears smaller)
+        #   scale < 1 in theta => zoom IN  (object appears larger, gets cropped)
+        # We want the model to see meshes at different apparent sizes without
+        # losing joints off-screen.  apparent_scale in [0.7, 1.4] keeps the
+        # full body visible while adding useful scale variance.
         if np.random.random() < 0.5:
             _, H, W = inp.shape
-            # Random scale 0.85 – 1.15
-            scale = 0.85 + np.random.random() * 0.3
-            # Random translate ±10% of image size
-            tx = (np.random.random() - 0.5) * 0.2 * W
-            ty = (np.random.random() - 0.5) * 0.2 * H
+            # Desired apparent scale of the object: 0.7× to 1.4× (log-uniform)
+            # Conservative range so the full body stays in frame — at 2.0×
+            # limbs get cropped and their heatmaps vanish, confusing the model.
+            log_apparent = np.random.uniform(np.log(0.7), np.log(1.4))
+            apparent_scale = float(np.exp(log_apparent))
+            # theta scale is inverse of apparent scale
+            theta_scale = 1.0 / apparent_scale
+            # Random translate ±8% of image size (keep joints on-screen)
+            tx = (np.random.random() - 0.5) * 0.16 * W
+            ty = (np.random.random() - 0.5) * 0.16 * H
 
             # Build affine grid for spatial transform
             theta = torch.tensor([
-                [scale, 0, tx / (W / 2)],
-                [0, scale, ty / (H / 2)]
+                [theta_scale, 0, tx / (W / 2)],
+                [0, theta_scale, ty / (H / 2)]
             ], dtype=torch.float32).unsqueeze(0)
 
             grid = torch.nn.functional.affine_grid(
@@ -285,9 +329,9 @@ class AugmentedViewDataset(torch.utils.data.Dataset):
                 hm_4d, grid, mode='bilinear',
                 padding_mode='zeros', align_corners=False)[0]
 
-        # ── Gaussian blur (key for generalization!) ──
+        # ── Gaussian blur (helps generalization) ──
         # Makes the model focus on body shape/silhouette, not pixel details.
-        if np.random.random() < 0.7:
+        if np.random.random() < 0.4:
             _, H, W = inp.shape
             # Random kernel size (must be odd)
             k = np.random.choice([3, 5, 7, 9, 11])
@@ -306,7 +350,7 @@ class AugmentedViewDataset(torch.utils.data.Dataset):
             inp[:6] = inp_blur[0].clamp(0.0, 1.0)
 
         # ── Random erasing / cutout (forces learning from partial views) ──
-        if np.random.random() < 0.3:
+        if np.random.random() < 0.15:
             _, H, W = inp.shape
             eh = int(H * (0.05 + np.random.random() * 0.15))
             ew = int(W * (0.05 + np.random.random() * 0.15))
@@ -323,8 +367,9 @@ class AugmentedViewDataset(torch.utils.data.Dataset):
 
 
 def train_model(h5_path: str, output_model: str, epochs: int = 50,
-                lr: float = 1e-3, device: str = "auto"):
-    """Train the U-Net from scratch on the captured data."""
+                lr: float = 1e-3, device: str = "auto",
+                model_name: str = DEFAULT_MODEL):
+    """Train the selected model from scratch on the captured data."""
 
     # ── Device selection with verbose diagnostics ──
     # The C++ plugin parses lines starting with "[DEVICE]" to display which
@@ -367,35 +412,99 @@ def train_model(h5_path: str, output_model: str, epochs: int = 50,
     print("-" * 60, flush=True)
 
     # Build model
-    model = build_model(
-        num_joints=NUM_JOINTS,
-        in_channels=INPUT_CHANNELS,
-        base_channels=BASE_CHANNELS,
-        device=device,
-    )
+    print(f"[MODEL] architecture={model_name}")
+    model = _build_model_by_name(model_name, NUM_JOINTS, INPUT_CHANNELS, device)
 
     # Dataset with online augmentation — each fetch returns a randomly
     # augmented version, so the model sees different variations every epoch.
-    dataset = AugmentedViewDataset(h5_path, augment=True)
-    if len(dataset) == 0:
+    full_dataset = AugmentedViewDataset(h5_path, augment=True)
+    if len(full_dataset) == 0:
         print("ERROR: Dataset is empty, nothing to train on.")
         return False
 
-    # With few samples, repeat so each epoch has enough gradient steps.
-    # With augmentation, every repeat is a different random variation.
-    samples_per_epoch = max(64, len(dataset))  # at least 64 samples/epoch
-    repeats = max(samples_per_epoch // len(dataset), 1)
-    effective_dataset = torch.utils.data.ConcatDataset([dataset] * repeats)
-    print(f"Base samples: {len(dataset)}, repeats: {repeats}x, "
-          f"effective: {len(effective_dataset)}/epoch (each augmented differently)")
+    # ── Virtual dataset expansion via augmentation ──
+    # With random scale (0.5–2.0), flips, offset, blur, noise, and cutout,
+    # each raw sample produces many unique variations.  We target ~500
+    # virtual samples total (train + val), split 85/15.
+    TARGET_VIRTUAL_SAMPLES = 200
+    VAL_FRACTION = 0.15  # 15% held out for validation
+
+    n_raw = len(full_dataset)
+    n_virtual = max(TARGET_VIRTUAL_SAMPLES, n_raw)  # never shrink
+    n_val = max(1, int(n_virtual * VAL_FRACTION)) if n_raw >= 4 else 0
+    n_train = n_virtual - n_val
+
+    # Random seed for split — different every run.
+    split_seed = int(time.time()) % 100000
+
+    print(f"\n{'='*60}")
+    print(f"  DATASET SUMMARY")
+    print(f"  Raw samples:     {n_raw}")
+    print(f"  Virtual target:  {n_virtual}  (augmented from {n_raw} raw)")
+    print(f"  Train / val:     {n_train} / {n_val}", end="")
+    if n_val == 0:
+        print("  (no split — too few raw samples)")
+    else:
+        print(f"  ({VAL_FRACTION*100:.0f}% held out, seed={split_seed})")
+    print(f"  Augmentation:    30% clean pass-through, scale 0.7-1.4,")
+    print(f"                   hflip 15%, translate ±8%, blur, noise, cutout")
+    print(f"  HDF5 path:       {h5_path}")
+    print(f"  Resolution:      {RESOLUTION}x{RESOLUTION}")
+    print(f"  Input channels:  {INPUT_CHANNELS}  (RGB + normals-proxy + silhouette)")
+    print(f"  Heatmap sigma:   {HEATMAP_SIGMA}")
+    print(f"{'='*60}\n")
+
+    if n_val > 0:
+        # Split raw samples into train/val base sets first, then repeat each.
+        n_raw_val = max(1, int(n_raw * VAL_FRACTION))
+        n_raw_train = n_raw - n_raw_val
+        generator = torch.Generator().manual_seed(split_seed)
+        train_base, val_base = torch.utils.data.random_split(
+            full_dataset, [n_raw_train, n_raw_val], generator=generator)
+
+        # Repeat train base to reach n_train virtual samples.
+        train_repeats = max(1, (n_train + n_raw_train - 1) // n_raw_train)
+        train_dataset = torch.utils.data.ConcatDataset([train_base] * train_repeats)
+
+        # Validation: un-augmented, repeated to reach n_val virtual samples.
+        # (un-augmented so val loss is a clean measurement)
+        val_raw_dataset = AugmentedViewDataset(h5_path, augment=False)
+        val_indices = val_base.indices
+        val_base_clean = torch.utils.data.Subset(val_raw_dataset, val_indices)
+        val_repeats = max(1, (n_val + n_raw_val - 1) // n_raw_val)
+        val_subset_clean = torch.utils.data.ConcatDataset(
+            [val_base_clean] * val_repeats)
+
+        print(f"Train: {n_raw_train} raw x {train_repeats} repeats = "
+              f"{len(train_dataset)} virtual samples/epoch")
+        print(f"Val:   {n_raw_val} raw x {val_repeats} repeats = "
+              f"{len(val_subset_clean)} virtual samples (un-augmented)")
+    else:
+        # Too few raw samples — use everything for training, no val.
+        train_repeats = max(1, (n_train + n_raw - 1) // n_raw)
+        train_dataset = torch.utils.data.ConcatDataset(
+            [full_dataset] * train_repeats)
+        val_subset_clean = None
+        print(f"Train: {n_raw} raw x {train_repeats} repeats = "
+              f"{len(train_dataset)} virtual samples/epoch (no val split)")
 
     loader = torch.utils.data.DataLoader(
-        effective_dataset,
-        batch_size=min(8, len(effective_dataset)),
+        train_dataset,
+        batch_size=min(8, len(train_dataset)),
         shuffle=True,
         num_workers=0,
         drop_last=False,
     )
+
+    if val_subset_clean is not None:
+        val_loader = torch.utils.data.DataLoader(
+            val_subset_clean,
+            batch_size=min(8, len(val_subset_clean)),
+            shuffle=False,
+            num_workers=0,
+        )
+    else:
+        val_loader = None
 
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=lr * 0.01)
@@ -411,7 +520,7 @@ def train_model(h5_path: str, output_model: str, epochs: int = 50,
         weight[target > 0.5] = PEAK_WEIGHT
         return (weight * (pred - target) ** 2).mean()
 
-    print(f"\nStarting training: {epochs} epochs, {len(effective_dataset)} samples/epoch")
+    print(f"\nStarting training: {epochs} epochs, {len(train_dataset)} samples/epoch")
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
     print(f"Heatmap sigma: {HEATMAP_SIGMA}, peak weight: {PEAK_WEIGHT}")
     print(f"[INPUT] runtime filter: RGB + normals-proxy -> BT.709 luminance "
@@ -433,7 +542,15 @@ def train_model(h5_path: str, output_model: str, epochs: int = 50,
 
             optimizer.zero_grad()
             pred = model(inp)
-            loss = weighted_mse_loss(pred, target)
+            # Intermediate supervision: if model returns a list of per-stack
+            # outputs (e.g. Stacked Hourglass), apply loss to each stack.
+            # Earlier stacks get equal weight — this gives stronger gradients
+            # through the entire network.
+            if isinstance(pred, list):
+                loss = sum(weighted_mse_loss(p, target) for p in pred) / len(pred)
+                pred = pred[-1]  # use final stack for logging
+            else:
+                loss = weighted_mse_loss(pred, target)
             loss.backward()
             optimizer.step()
 
@@ -452,17 +569,41 @@ def train_model(h5_path: str, output_model: str, epochs: int = 50,
                   f"sec_per_batch={epoch_secs / max(n_batches, 1):.3f}  "
                   f"device={device}", flush=True)
 
-        if avg_loss < best_loss:
-            best_loss = avg_loss
+        # ── Validation loss ──
+        val_loss = 0.0
+        if val_loader is not None:
+            model.eval()
+            with torch.no_grad():
+                val_total = 0.0
+                val_n = 0
+                for batch in val_loader:
+                    inp_v = batch["input"].to(device)
+                    target_v = batch["heatmaps"].to(device)
+                    pred_v = model(inp_v)
+                    if isinstance(pred_v, list):
+                        pred_v = pred_v[-1]
+                    val_total += weighted_mse_loss(pred_v, target_v).item()
+                    val_n += 1
+                val_loss = val_total / max(val_n, 1)
+
+        # Select best model by val loss (if available), else train loss.
+        check_loss = val_loss if val_loader is not None else avg_loss
+        if check_loss < best_loss:
+            best_loss = check_loss
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
 
         # Print every epoch so C++ progress bar updates smoothly
-        print(f"Epoch {epoch:4d}/{epochs}  loss={avg_loss:.6f}  "
-              f"best={best_loss:.6f}  lr={scheduler.get_last_lr()[0]:.2e}",
-              flush=True)
+        if val_loader is not None:
+            print(f"Epoch {epoch:4d}/{epochs}  train={avg_loss:.6f}  "
+                  f"val={val_loss:.6f}  best_val={best_loss:.6f}  "
+                  f"lr={scheduler.get_last_lr()[0]:.2e}", flush=True)
+        else:
+            print(f"Epoch {epoch:4d}/{epochs}  loss={avg_loss:.6f}  "
+                  f"best={best_loss:.6f}  lr={scheduler.get_last_lr()[0]:.2e}",
+                  flush=True)
 
     print("-" * 60)
-    print(f"Training complete. Best loss: {best_loss:.6f}")
+    print(f"Training complete. Best {'val' if val_loader else 'train'} loss: {best_loss:.6f}")
 
     # Load best weights
     if best_state is not None:
@@ -493,6 +634,7 @@ def train_model(h5_path: str, output_model: str, epochs: int = 50,
         "model_state_dict": best_state,
         "config": {
             "model": {
+                "architecture": model_name,
                 "num_joints": NUM_JOINTS,
                 "input_channels": INPUT_CHANNELS,
                 "base_channels": BASE_CHANNELS,
@@ -524,6 +666,10 @@ def main():
                         help="Device: 'cuda', 'cpu', or 'auto'")
     parser.add_argument("--resolution", type=int, default=256,
                         help="Training resolution")
+    parser.add_argument("--model", default=DEFAULT_MODEL,
+                        choices=list(MODEL_REGISTRY.keys()),
+                        help=f"Model architecture (default: {DEFAULT_MODEL}). "
+                             f"Options: {', '.join(MODEL_REGISTRY.keys())}")
     args = parser.parse_args()
 
     global RESOLUTION
@@ -534,6 +680,7 @@ def main():
     print("=" * 60)
     print(f"  Data:       {args.data_dir}")
     print(f"  Output:     {args.output_model}")
+    print(f"  Model:      {args.model}")
     print(f"  Epochs:     {args.epochs}")
     print(f"  Resolution: {RESOLUTION}")
     print("=" * 60)
@@ -550,7 +697,7 @@ def main():
     # Step 2: Train and export
     print(f"\n[Step 2/2] Training model...")
     if not train_model(h5_path, args.output_model, args.epochs,
-                       args.lr, args.device):
+                       args.lr, args.device, args.model):
         print("FAILED: Training failed")
         sys.exit(1)
 

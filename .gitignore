@@ -291,6 +291,7 @@ realworld/assets/models/*.pth
 # ML training data & debug outputs (large binary assets, user-specific)
 ml_training/compare_output/
 ml_training/verify_output/
+ml_training/debug_aug_output/
 realworld/assets/Characters/training_data/
 realworld/assets/debug_autorig_captures/
 realworld/assets/rigs_training/

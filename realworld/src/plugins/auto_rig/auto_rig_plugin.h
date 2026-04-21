@@ -74,15 +74,29 @@ private:
     PluginState     state_ = PluginState::kUnloaded;
     ProgressCallback progress_cb_;
 
-    // Model versioning — models stored as rig_diffusion_v001.pt, v002, etc.
+    // Model versioning — models stored as rig_diffusion_<arch>_v###.pt
+    // Also supports legacy rig_diffusion_v###.pt (arch = "unet").
+    struct ModelEntry {
+        int         version = 0;
+        std::string arch;        // "unet", "hourglass", "resnet", or "" for legacy
+        std::string path;        // full filesystem path
+        std::string label() const {
+            if (arch.empty()) return "v" + std::to_string(version);
+            char buf[80];
+            std::snprintf(buf, sizeof(buf), "%s_v%03d", arch.c_str(), version);
+            return buf;
+        }
+    };
     std::string     model_dir_;            // resolved absolute path to models directory
-    std::vector<int> model_versions_;      // discovered version numbers (sorted)
-    int             model_loaded_version_ = 0;  // currently loaded version (0 = stub)
-    int             model_selected_version_ = -1; // UI selection (-1 = latest)
+    std::vector<ModelEntry> model_versions_;  // discovered models (sorted by version)
+    int             model_loaded_idx_ = -1;   // index into model_versions_ (-1 = stub)
+    int             model_selected_idx_ = -1; // UI selection (-1 = latest)
 
     void scanModelVersions();              // refresh model_versions_ from disk
-    std::string modelPathForVersion(int v) const;  // full path for version v
-    bool loadModelVersion(int version);    // load a specific version (-1 = latest)
+    std::string modelPathForVersion(int v) const;  // full path for version v (legacy compat)
+    std::string modelPathForArchVersion(const std::string& arch, int v) const;
+    int nextVersionForArch(const std::string& arch) const;
+    bool loadModelByIndex(int idx);        // load by index into model_versions_ (-1 = latest)
 
     // Input mesh data.
     std::string     source_mesh_path_;   // original file — reloaded at export time
@@ -143,6 +157,8 @@ private:
     int         preview_render_res_   = 384;  // lower res for interactive speed
     float       mesh_opacity_         = 0.6f; // OIT mesh opacity (0 = invisible, 1 = opaque)
     float       camera_distance_      = 0.9f; // camera orbit radius multiplier
+    float       training_camera_dist_ = -1.0f; // camera distance from training data (-1 = not loaded)
+    bool        use_training_scale_   = true;  // auto-rig uses training camera dist when true
 
     // ---- Rig editing state ----
     struct EditableJoint {
@@ -177,7 +193,15 @@ private:
     // Multi-view edits for debug panel.
     std::vector<ViewEditState> view_edits_;
 
+    // ---- Model architecture selection ----
+    // Maps to Python --model argument: "unet", "hourglass", "resnet"
+    static constexpr const char* kModelArchNames[] = { "unet", "hourglass", "resnet" };
+    static constexpr const char* kModelArchLabels[] = { "U-Net", "Stacked Hourglass", "SimpleBaseline (ResNet)" };
+    static constexpr int kNumModelArchs = 3;
+    int    training_model_arch_ = 1;   // index into kModelArchNames (default: hourglass)
+
     // ---- Training state ----
+    std::string training_target_path_;  // path of model being trained (for reload)
     bool   training_running_ = false;
     bool   training_finished_ = false;
     int    training_exit_code_ = -1;
