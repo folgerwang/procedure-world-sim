@@ -437,6 +437,16 @@ void RealWorldApplication::initVulkan() {
         graphic_pipeline_info_,
         renderbuffer_formats_[int(er::RenderPasses::kForward)]);
 
+    // "Nanite-lite" cluster-debug pipeline. Cheap to create unconditionally
+    // -- the per-mesh GPU buffers are only allocated when the
+    // --cluster-debug flag is set. Shares the same descriptor-set layout
+    // list as ShapeBase since the vertex shader only needs the camera SSBO.
+    ego::ClusterDebugDraw::initStaticMembers(
+        device_,
+        desc_set_layouts,
+        graphic_pipeline_info_,
+        renderbuffer_formats_[int(er::RenderPasses::kForward)]);
+
     prt_shadow_gen_ =
         std::make_shared<es::PrtShadow>(
             device_,
@@ -814,8 +824,25 @@ void RealWorldApplication::initVulkan() {
         as_features_,
         glm::uvec2(1024, 768));
 
+    // Spin up the async mesh loader before kicking off any load.
+    // Its ctor probes device_->hasLoaderQueue(): on hardware with the
+    // dedicated loader queue the worker thread starts here and the
+    // startup assets below stream in asynchronously; on single-queue
+    // hardware the manager transparently falls back to inline loads
+    // so this block behaves exactly like the pre-async code path.
+    mesh_load_task_manager_ =
+        std::make_unique<ego::MeshLoadTaskManager>(device_);
+
+    // Async startup loads. createAsync returns a shell DrawableObject
+    // immediately; the render loop's isReady() check skips it until
+    // the worker thread finishes parsing + GPU upload and the main
+    // thread finalizes descriptors/pipelines on the next poll(). The
+    // HUD menu spinner (see Menu::drawMeshLoadProgress) reads
+    // MeshLoadTaskManager::inFlightFilenames() to tell the user
+    // what's still loading.
     bistro_exterior_scene_ =
-        std::make_shared<ego::DrawableObject>(
+        ego::DrawableObject::createAsync(
+            *mesh_load_task_manager_,
             device_,
             descriptor_pool_,
             renderbuffer_formats_,
@@ -826,7 +853,8 @@ void RealWorldApplication::initVulkan() {
             glm::inverse(view_params_.view));
 
     bistro_interior_scene_ =
-        std::make_shared<ego::DrawableObject>(
+        ego::DrawableObject::createAsync(
+            *mesh_load_task_manager_,
             device_,
             descriptor_pool_,
             renderbuffer_formats_,
@@ -837,7 +865,8 @@ void RealWorldApplication::initVulkan() {
             glm::inverse(view_params_.view));
 
     player_object_ =
-        std::make_shared<ego::DrawableObject>(
+        ego::DrawableObject::createAsync(
+            *mesh_load_task_manager_,
             device_,
             descriptor_pool_,
             renderbuffer_formats_,
@@ -881,6 +910,13 @@ void RealWorldApplication::initVulkan() {
 
     // Wire the GPU profiler into the menu so it can display itself.
     menu_->setGpuProfiler(&gpu_profiler_);
+
+    // Wire the async mesh loader so the menu can draw a HUD spinner
+    // for in-flight loads (see Menu::draw). Passing a non-owning
+    // pointer — the manager's lifetime is tied to the Application.
+    if (mesh_load_task_manager_) {
+        menu_->setMeshLoadTaskManager(mesh_load_task_manager_.get());
+    }
 
     // ---- Plugin system --------------------------------------------------------
     plugin_manager_.registerPlugin(
@@ -2077,9 +2113,19 @@ void RealWorldApplication::drawFrame() {
     current_time_ += delta_t_;
     last_frame_time_point_ = current_time_point;
 
+    // Drain any in-flight async mesh loads whose GPU fence has signaled:
+    // this runs phase 3 (descriptor-set + pipeline creation) on the main
+    // thread. Cheap when nothing is ready. Must run before we touch
+    // drawable_objects_ for draw so that objects finalized this frame
+    // pop in immediately instead of waiting one extra frame.
+    if (mesh_load_task_manager_) {
+        mesh_load_task_manager_->poll();
+    }
+
     auto to_load_drawable_names = menu_->getToLoadGltfNamesAndClear();
     for (auto& drawable_name : to_load_drawable_names) {
-        auto drawable_obj = std::make_shared<ego::DrawableObject>(
+        auto drawable_obj = ego::DrawableObject::createAsync(
+            *mesh_load_task_manager_,
             device_,
             descriptor_pool_,
             renderbuffer_formats_,
@@ -2096,10 +2142,20 @@ void RealWorldApplication::drawFrame() {
     auto to_load_player_name = menu_->getToLoadPlayerNameAndClear();
     if (to_load_player_name != "") {
         if (player_object_) {
+            // Destroy has to wait until the previous async load (if any)
+            // finished — tearing down an object whose GPU upload is
+            // still in flight would use-after-free the staging buffers.
+            // In practice this is rare (the user can't spam the menu
+            // faster than a load completes) but being defensive here
+            // costs nothing.
+            if (!player_object_->isReady()) {
+                mesh_load_task_manager_->waitAll();
+            }
             player_object_->destroy(device_);
             player_object_ = nullptr;
         }
-        player_object_ = std::make_shared<ego::DrawableObject>(
+        player_object_ = ego::DrawableObject::createAsync(
+            *mesh_load_task_manager_,
             device_,
             descriptor_pool_,
             renderbuffer_formats_,
@@ -2275,6 +2331,16 @@ void RealWorldApplication::cleanupSwapChain() {
 }
 
 void RealWorldApplication::cleanup() {
+    // Tear down the async mesh loader first. Its dtor drains the
+    // pending queue, joins the worker thread, and waitAll()'s any
+    // in-flight GPU fences. Doing this before waitIdle/destroyXxx
+    // means no phase 2/phase 3 work can race with the destroy
+    // sequence below (which would otherwise wipe buffers/images
+    // the worker still holds shared_ptrs to).
+    if (mesh_load_task_manager_) {
+        mesh_load_task_manager_.reset();
+    }
+
     // Wait for the GPU to finish before tearing anything down, otherwise
     // destroying resources still referenced by in-flight command buffers
     // (query pools, images, buffers, etc.) will crash.

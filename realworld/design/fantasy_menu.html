@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Ashes of Eldra — main menu mockup</title>
+<style>
+  :root {
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-serif: "Cormorant Garamond", "EB Garamond", Georgia, "Times New Roman", serif;
+  }
+  html, body { margin: 0; padding: 0; background: #050407; min-height: 100vh; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-sans); color: #f4ecd8;
+  }
+  .stage {
+    width: min(96vw, 1600px);
+    aspect-ratio: 16 / 9;
+    position: relative;
+    border-radius: 14px;
+    overflow: hidden;
+    background: #0b0f1a;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+  }
+  .bg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 4%;
+  }
+  .title {
+    text-align: center; margin-top: 2%;
+  }
+  .title .name {
+    font-family: var(--font-serif);
+    font-size: clamp(28px, 5vw, 64px);
+    letter-spacing: 0.15em;
+    color: #f8e8bf;
+    text-shadow: 0 2px 14px rgba(0,0,0,0.6);
+  }
+  .title .sub {
+    font-family: var(--font-serif);
+    font-size: clamp(11px, 1.4vw, 16px);
+    letter-spacing: 0.4em;
+    color: #d8b48a;
+    margin-top: 6px;
+    text-transform: lowercase;
+  }
+  .menu {
+    margin-top: clamp(18px, 3vw, 40px);
+    display: flex; flex-direction: column;
+    gap: clamp(6px, 0.9vw, 12px);
+    min-width: clamp(200px, 26vw, 300px);
+  }
+  .mbtn {
+    all: unset;
+    cursor: pointer;
+    text-align: center;
+    padding: clamp(8px, 1vw, 12px) clamp(14px, 1.6vw, 22px);
+    font-family: var(--font-serif);
+    font-size: clamp(13px, 1.3vw, 16px);
+    letter-spacing: 0.22em;
+    color: #f4ecd8;
+    background: rgba(11, 8, 23, 0.35);
+    border: 1px solid rgba(248, 232, 191, 0.28);
+    border-radius: 2px;
+    transition: background 160ms ease, border-color 160ms ease, transform 160ms ease, color 160ms ease;
+    position: relative;
+    overflow: hidden;
+  }
+  .mbtn::before, .mbtn::after {
+    content: "";
+    position: absolute; top: 50%;
+    width: 8px; height: 1px;
+    background: rgba(248, 232, 191, 0.5);
+    transform: translateY(-50%) scaleX(0);
+    transition: transform 200ms ease;
+  }
+  .mbtn::before { left: 8px;  transform-origin: left; }
+  .mbtn::after  { right: 8px; transform-origin: right; }
+  .mbtn:hover {
+    background: rgba(201, 118, 90, 0.22);
+    border-color: rgba(255, 216, 138, 0.7);
+    color: #fff3c4;
+  }
+  .mbtn:hover::before, .mbtn:hover::after { transform: translateY(-50%) scaleX(1); }
+  .mbtn:active { transform: translateY(1px); }
+  .mbtn:focus-visible { outline: 1px solid #ffd88a; outline-offset: 2px; }
+
+  .loader {
+    position: absolute; left: 50%; bottom: 5%;
+    transform: translateX(-50%);
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 18px;
+    border: 1px solid rgba(248,232,191,0.3);
+    border-radius: 999px;
+    background: rgba(11,8,23,0.55);
+    backdrop-filter: blur(4px);
+  }
+  .loader svg { width: 26px; height: 26px; display: block; }
+  .loader .label {
+    font-family: var(--font-serif); font-size: 13px;
+    color: #f8e8bf; letter-spacing: 0.08em;
+  }
+  .loader .sub {
+    font-size: 11px; color: #d8b48a; letter-spacing: 0.2em;
+  }
+  .corner {
+    position: absolute; font-size: 11px;
+    letter-spacing: 0.3em; color: rgba(248,232,191,0.6);
+  }
+  .corner.tl { left: 18px; top: 14px; }
+  .corner.tr { right: 18px; top: 14px; }
+
+  @keyframes runeSpin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="stage">
+  <svg class="bg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <defs>
+      <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#1a1236"/>
+        <stop offset="0.45" stop-color="#3a2357"/>
+        <stop offset="0.75" stop-color="#7d3b5e"/>
+        <stop offset="1" stop-color="#c9765a"/>
+      </linearGradient>
+      <radialGradient id="moonGlow" cx="50%" cy="50%" r="50%">
+        <stop offset="0"    stop-color="#fff3c4" stop-opacity="0.9"/>
+        <stop offset="0.45" stop-color="#ffd88a" stop-opacity="0.25"/>
+        <stop offset="1"    stop-color="#ffd88a" stop-opacity="0"/>
+      </radialGradient>
+      <linearGradient id="fogGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#b49bd4" stop-opacity="0"/>
+        <stop offset="1" stop-color="#b49bd4" stop-opacity="0.45"/>
+      </linearGradient>
+      <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#5a3c6e"/>
+        <stop offset="1" stop-color="#1a1236"/>
+      </linearGradient>
+      <linearGradient id="vignette" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0"    stop-color="#000" stop-opacity="0.55"/>
+        <stop offset="0.35" stop-color="#000" stop-opacity="0"/>
+        <stop offset="0.7"  stop-color="#000" stop-opacity="0"/>
+        <stop offset="1"    stop-color="#000" stop-opacity="0.7"/>
+      </linearGradient>
+      <linearGradient id="spinRune" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#ffd88a"/>
+        <stop offset="1" stop-color="#c9765a"/>
+      </linearGradient>
+    </defs>
+
+    <rect width="1600" height="900" fill="url(#sky)"/>
+
+    <g opacity="0.9">
+      <circle cx="120"  cy="110" r="1.1" fill="#fff"/>
+      <circle cx="260"  cy="70"  r="0.8" fill="#fff"/>
+      <circle cx="410"  cy="140" r="1.4" fill="#fff"/>
+      <circle cx="560"  cy="90"  r="0.9" fill="#fff"/>
+      <circle cx="700"  cy="170" r="1.1" fill="#fff"/>
+      <circle cx="860"  cy="60"  r="1.3" fill="#fff"/>
+      <circle cx="1000" cy="150" r="0.8" fill="#fff"/>
+      <circle cx="1180" cy="95"  r="1.2" fill="#fff"/>
+      <circle cx="1320" cy="175" r="0.9" fill="#fff"/>
+      <circle cx="1460" cy="80"  r="1.1" fill="#fff"/>
+      <circle cx="1540" cy="200" r="0.8" fill="#fff"/>
+      <circle cx="90"   cy="260" r="0.7" fill="#fff"/>
+      <circle cx="340"  cy="230" r="0.9" fill="#fff"/>
+      <circle cx="620"  cy="260" r="0.7" fill="#fff"/>
+      <circle cx="920"  cy="240" r="1"   fill="#fff"/>
+      <circle cx="1240" cy="260" r="0.8" fill="#fff"/>
+      <circle cx="1500" cy="300" r="0.7" fill="#fff"/>
+    </g>
+
+    <circle cx="1180" cy="260" r="240" fill="url(#moonGlow)"/>
+    <circle cx="1180" cy="260" r="110" fill="#fdf3d1"/>
+    <circle cx="1140" cy="240" r="12" fill="#e8d79a" opacity="0.7"/>
+    <circle cx="1210" cy="280" r="18" fill="#e8d79a" opacity="0.6"/>
+    <circle cx="1170" cy="300" r="8"  fill="#e8d79a" opacity="0.6"/>
+
+    <g opacity="0.6">
+      <path d="M-20 480 Q 300 380 620 470 Q 940 560 1260 450 Q 1450 400 1620 470 L 1620 560 L -20 560 Z" fill="#1b1434"/>
+      <path d="M-20 520 Q 260 440 540 520 Q 820 600 1120 510 Q 1360 450 1620 520 L 1620 560 L -20 560 Z" fill="#2a1a47"/>
+    </g>
+
+    <g>
+      <polygon points="-20,620 120,520 230,600 320,470 430,600 520,540 620,620 620,720 -20,720" fill="#120b24"/>
+      <polygon points="600,620 720,490 830,570 940,430 1060,560 1180,510 1300,580 1400,530 1500,610 1620,540 1620,720 600,720" fill="#0d0819"/>
+    </g>
+
+    <g transform="translate(620 350)">
+      <rect x="-10" y="260" width="440" height="110" fill="#0b0617"/>
+      <polygon points="-10,260 40,200 90,260" fill="#0b0617"/>
+      <polygon points="40,200 40,140 60,140 60,200" fill="#0b0617"/>
+      <polygon points="40,140 50,110 60,140" fill="#0b0617"/>
+      <rect x="95" y="220" width="120" height="150" fill="#0b0617"/>
+      <polygon points="95,220 155,140 215,220" fill="#0b0617"/>
+      <polygon points="150,140 160,100 170,140" fill="#0b0617"/>
+      <rect x="230" y="240" width="70" height="130" fill="#0b0617"/>
+      <polygon points="230,240 265,180 300,240" fill="#0b0617"/>
+      <rect x="310" y="200" width="90" height="170" fill="#0b0617"/>
+      <polygon points="310,200 355,130 400,200" fill="#0b0617"/>
+      <polygon points="350,130 360,95 370,130" fill="#0b0617"/>
+      <rect x="410" y="250" width="50" height="120" fill="#0b0617"/>
+      <polygon points="410,250 435,200 460,250" fill="#0b0617"/>
+      <rect x="112" y="250" width="10" height="18" fill="#ffb347" opacity="0.9"/>
+      <rect x="180" y="250" width="10" height="18" fill="#ffb347" opacity="0.8"/>
+      <rect x="330" y="240" width="8"  height="16" fill="#ffb347" opacity="0.9"/>
+      <rect x="370" y="290" width="8"  height="16" fill="#ffb347" opacity="0.85"/>
+      <rect x="250" y="290" width="6"  height="14" fill="#ffb347" opacity="0.8"/>
+    </g>
+
+    <rect x="0" y="640" width="1600" height="260" fill="url(#water)"/>
+    <g stroke="#f4dcc2" stroke-opacity="0.18" stroke-width="1" fill="none">
+      <path d="M0 700 Q 200 696 400 700 T 800 700 T 1200 700 T 1600 700"/>
+      <path d="M0 740 Q 200 736 400 740 T 800 740 T 1200 740 T 1600 740"/>
+      <path d="M0 780 Q 200 776 400 780 T 800 780 T 1200 780 T 1600 780"/>
+      <path d="M0 820 Q 200 816 400 820 T 800 820 T 1200 820 T 1600 820"/>
+    </g>
+    <g opacity="0.45">
+      <ellipse cx="860" cy="720" rx="150" ry="4" fill="#fdf3d1"/>
+      <ellipse cx="860" cy="760" rx="110" ry="3" fill="#fdf3d1"/>
+      <ellipse cx="860" cy="800" rx="80"  ry="2" fill="#fdf3d1"/>
+    </g>
+
+    <rect x="0" y="420" width="1600" height="240" fill="url(#fogGrad)" opacity="0.55"/>
+
+    <g opacity="0.85">
+      <path d="M180 380 Q 260 240 420 300 Q 540 345 660 280"  stroke="#c9a1e8" stroke-width="1.2" fill="none" stroke-dasharray="2 6"/>
+      <path d="M900 300 Q 1050 200 1240 260 Q 1360 300 1480 220" stroke="#ffc7a3" stroke-width="1.2" fill="none" stroke-dasharray="2 6"/>
+    </g>
+
+    <rect width="1600" height="900" fill="url(#vignette)"/>
+  </svg>
+
+  <div class="overlay">
+    <div class="title">
+      <div class="name">Ashes of Eldra</div>
+      <div class="sub">chronicles of the fallen realm</div>
+    </div>
+
+    <div class="menu">
+      <button class="mbtn">New journey</button>
+      <button class="mbtn">Continue</button>
+      <button class="mbtn">Load save</button>
+      <button class="mbtn">Options</button>
+      <button class="mbtn">Credits</button>
+      <button class="mbtn">Leave the realm</button>
+    </div>
+
+    <div class="loader">
+      <svg viewBox="0 0 44 44">
+        <circle cx="22" cy="22" r="16" fill="none"
+                stroke="rgba(248,232,191,0.18)" stroke-width="2"/>
+        <g style="transform-origin: 22px 22px; animation: runeSpin 2.6s linear infinite;">
+          <circle cx="22" cy="22" r="16" fill="none"
+                  stroke="url(#spinRune)" stroke-width="2"
+                  stroke-linecap="round" stroke-dasharray="18 82"/>
+          <circle cx="22" cy="6" r="2.2" fill="#ffd88a"/>
+        </g>
+        <g style="transform-origin: 22px 22px; animation: runeSpin 4.2s linear infinite reverse;">
+          <path d="M22 12 L27 22 L22 32 L17 22 Z"
+                fill="none" stroke="#f8e8bf" stroke-width="1"
+                stroke-linejoin="round" opacity="0.7"/>
+        </g>
+      </svg>
+      <div style="display:flex; flex-direction:column; line-height:1.25;">
+        <span id="loadLabel" class="label">Summoning the world…</span>
+        <span id="loadSub"   class="sub">bistro_exterior.fbx</span>
+      </div>
+    </div>
+
+    <div class="corner tl">v0.4.2 · pre-alpha</div>
+    <div class="corner tr">press esc to return</div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var msgs = [
+      ['Summoning the world…',      'bistro_exterior.fbx'],
+      ['Lighting the braziers…',    'bistro_interior.fbx'],
+      ['Awakening the hero…',       'scifi_girl_v.01.glb'],
+      ['Raising the cathedral…',    'cluster_mesh: 12.3k tris'],
+      ['Finalizing descriptor sets','phase 3 on main thread']
+    ];
+    var i = 0;
+    var label = document.getElementById('loadLabel');
+    var sub   = document.getElementById('loadSub');
+    setInterval(function () {
+      i = (i + 1) % msgs.length;
+      label.textContent = msgs[i][0];
+      sub.textContent   = msgs[i][1];
+    }, 2200);
+  })();
+</script>
+</body>
+</html>

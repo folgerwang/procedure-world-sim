@@ -4,6 +4,7 @@
 #include "renderer/renderer_structs.h"
 #include "shaders/global_definition.glsl.h"
 #include "game_object/drawable_object.h"
+#include "game_object/mesh_load_task_manager.h"
 #include "game_object/terrain.h"
 #include "game_object/debug_draw.h"
 #include "game_object/conemap_obj.h"
@@ -159,6 +160,12 @@ private:
     std::shared_ptr<ego::DrawableObject> player_object_;
     std::shared_ptr<ego::DrawableObject> bistro_exterior_scene_;
     std::shared_ptr<ego::DrawableObject> bistro_interior_scene_;
+
+    // Async mesh loader. Lives for the whole application run; its
+    // worker thread is joined in the destructor. See
+    // game_object/mesh_load_task_manager.{h,cpp} for the three-phase
+    // model and startup/menu wiring below.
+    std::unique_ptr<ego::MeshLoadTaskManager> mesh_load_task_manager_;
     std::shared_ptr<es::Skydome> skydome_;
     std::shared_ptr<es::WeatherSystem> weather_system_;
     std::shared_ptr<es::VolumeCloud> volume_cloud_;

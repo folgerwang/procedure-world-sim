@@ -4,10 +4,12 @@
 #include <fstream>
 #include <stdexcept>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <thread>
 
 #include "application.h"
+#include "helper/cluster_mesh.h"  // engine::helper::clusterRenderingEnabled()
 
 extern glm::vec4 getMainImage(const glm::vec2& frag_coord, const glm::ivec2& screen_size);
 
@@ -38,7 +40,38 @@ void fillBlock(FillBlockParams* params) {
 }
 
 
-int main() {
+// ─── Command-line flag parsing ──────────────────────────────────────────────
+// Supported flags (parsed in main(), before the app is constructed):
+//
+//   --cluster-debug      Turn on the "Nanite-lite" cluster debug visualisation.
+//                        Builds a ClusterMesh parallel to every static mesh at
+//                        load time and renders each cluster in a unique flat
+//                        color so you can eyeball cluster boundaries/sizes.
+//                        (Also accepted: -cluster-debug, --cluster, -cluster.)
+//
+// Keeping this as a simple argv-sweep rather than pulling in a CLI lib — we
+// only have one flag and the engine's startup is already self-contained.
+static bool parseClusterDebugFlag(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        const char* a = argv[i];
+        if (a == nullptr) continue;
+        if (std::strcmp(a, "--cluster-debug") == 0 ||
+            std::strcmp(a,  "-cluster-debug") == 0 ||
+            std::strcmp(a, "--cluster")        == 0 ||
+            std::strcmp(a,  "-cluster")        == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int main(int argc, char** argv) {
+    // Flip the global toggle before any mesh loads so the build path can
+    // pick it up and produce ClusterMesh sidecars.
+    if (parseClusterDebugFlag(argc, argv)) {
+        engine::helper::clusterRenderingEnabled() = true;
+        std::cout << "[CLUSTER] debug draw enabled via CLI flag\n";
+    }
 #if 0
     if (0) {
         std::ofstream myfile;
