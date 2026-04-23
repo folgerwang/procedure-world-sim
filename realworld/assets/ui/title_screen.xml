@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Title screen layout for Ashes of Eldra.
+    Loaded at startup by Menu; drives the background image, title banner,
+    top bar, and main‐menu items.  When a menu item's "action" attribute
+    is "new_game" the engine hides this screen and starts streaming the
+    meshes listed under <new_game_meshes>.
+-->
+<title_screen>
+
+    <!-- Full-screen background image (drawn first in z-order). -->
+    <background image="assets/ui/fantasy_bg.png" />
+
+    <!-- Top twilight gradient bar + title banner. -->
+    <top_bar height_extra="72">
+        <title text="Ashes of Eldra"
+               subtitle="chronicles of the fallen realm"
+               version="v0.4.2  pre-alpha" />
+        <!-- Visual style for the gradient is coded in drawFantasyTopBackdrop;
+             the XML just carries the text so it can be changed without
+             recompiling. -->
+    </top_bar>
+
+    <!-- Main‐menu items rendered as a centred vertical list over the
+         background.  Each item has a label and an action string that
+         the engine interprets. -->
+    <menu_items>
+        <item label="New Game"          action="new_game" />
+        <item label="Load Game"         action="load_game" />
+        <item label="Settings"          action="settings" />
+        <item label="Quit to Desktop"   action="quit" />
+    </menu_items>
+
+    <!-- Meshes streamed asynchronously when the player clicks "New Game". -->
+    <new_game_meshes>
+        <mesh path="assets/Bistro_v5_2/BistroExterior.fbx" />
+        <mesh path="assets/Bistro_v5_2/BistroInterior.fbx" />
+    </new_game_meshes>
+
+</title_screen>

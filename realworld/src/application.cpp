@@ -876,17 +876,14 @@ void RealWorldApplication::initVulkan() {
             "assets/Characters/scifi_girl_v.01.glb",
             glm::inverse(view_params_.view));
 
-    object_scene_view_->addDrawableObject(
-        bistro_exterior_scene_);
-
-    object_scene_view_->addDrawableObject(
-        bistro_interior_scene_);
+    // Bistro scenes contain a sky dome mesh that draws a purple atmospheric
+    // background.  Disabled so only game objects and the player render.
+    // object_scene_view_->addDrawableObject(bistro_exterior_scene_);
+    // object_scene_view_->addDrawableObject(bistro_interior_scene_);
+    // shadow_object_scene_view_->addDrawableObject(bistro_exterior_scene_);
 
     object_scene_view_->addDrawableObject(
         player_object_);
-
-    shadow_object_scene_view_->addDrawableObject(
-        bistro_exterior_scene_);
 
     shadow_object_scene_view_->addDrawableObject(
         player_object_);
@@ -1599,11 +1596,11 @@ void RealWorldApplication::drawScene(
             player_object_->updateBuffers(cmd_buf);
         }
 
-        if (bistro_exterior_scene_) {
+        // Bistro scene buffer updates — enabled once game has started.
+        if (bistro_exterior_scene_ && bistro_exterior_scene_->isReady()) {
             bistro_exterior_scene_->updateBuffers(cmd_buf);
         }
-
-        if (bistro_interior_scene_) {
+        if (bistro_interior_scene_ && bistro_interior_scene_->isReady()) {
             bistro_interior_scene_->updateBuffers(cmd_buf);
         }
 
@@ -1758,10 +1755,12 @@ void RealWorldApplication::drawScene(
 
         {
             auto _scope_forward = gpu_profiler_.beginScope(cmd_buf, "Forward Pass");
+            // Pass nullptr for the sky sphere — scene geometry provides its
+            // own background; the atmospheric sphere is not needed.
             object_scene_view_->draw(
                 cmd_buf,
                 desc_sets,
-                unit_sphere_,
+                nullptr,
                 s_dbuf_idx,
                 delta_t,
                 current_time);
@@ -2122,6 +2121,44 @@ void RealWorldApplication::drawFrame() {
         mesh_load_task_manager_->poll();
     }
 
+    // ---- "New Game" handler: add the bistro scenes (already created at
+    // startup and streaming in the background) into the scene views so
+    // they start rendering.  The XML mesh list is available for any
+    // additional meshes that weren't pre-loaded.
+    if (menu_->consumeNewGameRequest()) {
+        // Restore the bistro exterior/interior into the scene views.
+        // They were created at startup but NOT added to the views so the
+        // title screen stays clean.
+        if (bistro_exterior_scene_) {
+            object_scene_view_->addDrawableObject(bistro_exterior_scene_);
+            shadow_object_scene_view_->addDrawableObject(bistro_exterior_scene_);
+        }
+        if (bistro_interior_scene_) {
+            object_scene_view_->addDrawableObject(bistro_interior_scene_);
+        }
+
+        s_update_frame_count = -1;
+    }
+
+    // Transition Loading → InGame once bistro scenes have finished streaming.
+    if (menu_->getGameState() == engine::ui::GameState::Loading) {
+        bool all_ready = true;
+        if (bistro_exterior_scene_ && !bistro_exterior_scene_->isReady())
+            all_ready = false;
+        if (bistro_interior_scene_ && !bistro_interior_scene_->isReady())
+            all_ready = false;
+        if (all_ready) {
+            menu_->setGameState(engine::ui::GameState::InGame);
+            menu_->setBackgroundEnabled(false);
+        }
+    }
+
+    // Legacy background-disable check (for non-title-screen mesh loads).
+    if (menu_->isBackgroundEnabled() &&
+        menu_->getGameState() == engine::ui::GameState::InGame) {
+        menu_->setBackgroundEnabled(false);
+    }
+
     auto to_load_drawable_names = menu_->getToLoadGltfNamesAndClear();
     for (auto& drawable_name : to_load_drawable_names) {
         auto drawable_obj = ego::DrawableObject::createAsync(
@@ -2137,6 +2174,8 @@ void RealWorldApplication::drawFrame() {
 
         s_update_frame_count = -1;
         drawable_objects_.push_back(drawable_obj);
+        object_scene_view_->addDrawableObject(drawable_obj);
+        shadow_object_scene_view_->addDrawableObject(drawable_obj);
     }
 
     auto to_load_player_name = menu_->getToLoadPlayerNameAndClear();
@@ -2151,6 +2190,8 @@ void RealWorldApplication::drawFrame() {
             if (!player_object_->isReady()) {
                 mesh_load_task_manager_->waitAll();
             }
+            object_scene_view_->removeDrawableObject(player_object_);
+            shadow_object_scene_view_->removeDrawableObject(player_object_);
             player_object_->destroy(device_);
             player_object_ = nullptr;
         }
@@ -2164,6 +2205,8 @@ void RealWorldApplication::drawFrame() {
             thin_film_lut_tex_,
             to_load_player_name,
             glm::inverse(view_params_.view));
+        object_scene_view_->addDrawableObject(player_object_);
+        shadow_object_scene_view_->addDrawableObject(player_object_);
     }
 
     if (player_object_) {
