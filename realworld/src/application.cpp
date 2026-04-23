@@ -152,6 +152,7 @@ void mouseWheelCallback(GLFWwindow* window, double xoffset, double yoffset) {
 void RealWorldApplication::initWindow() {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     window_ = glfwCreateWindow(kWindowSizeX, kWindowSizeY, "Real World", nullptr, nullptr);
     glfwSetWindowUserPointer(window_, this);
     glfwSetFramebufferSizeCallback(window_, framebufferResizeCallback);
@@ -995,6 +996,63 @@ void RealWorldApplication::recreateSwapChain() {
 
     createDescriptorSets();
 
+    // ---- Scene views: re-allocate descriptor sets + resize buffers ----
+    {
+        const auto& fwd_fmt =
+            renderbuffer_formats_[int(er::RenderPasses::kForward)];
+        object_scene_view_->recreate(fwd_fmt, swap_chain_info_.extent);
+        terrain_scene_view_->recreate(fwd_fmt, swap_chain_info_.extent);
+        // Shadow view keeps its fixed 2048×2048 size but needs new desc sets.
+        const auto& shd_fmt =
+            renderbuffer_formats_[int(er::RenderPasses::kShadow)];
+        shadow_object_scene_view_->recreate(shd_fmt, glm::uvec2(2048));
+    }
+
+    // ---- Camera descriptor sets ----
+    main_camera_object_->recreateDescriptorSet();
+    shadow_camera_object_->recreateDescriptorSet();
+    shadow_camera_object_->recreateCascadeDescriptorSets(device_, descriptor_pool_);
+
+    // re-create the terrain camera descriptor (binds terrain textures).
+    main_camera_object_->createCameraDescSetWithTerrain(
+        texture_sampler_,
+        ego::TileObject::getRockLayer(),
+        ego::TileObject::getSoilWaterLayer(0),
+        ego::TileObject::getSoilWaterLayer(1),
+        *ego::DrawableObject::getGameObjectsBuffer());
+
+    // ---- Ray tracing ----
+    ray_tracing_test_->recreate(
+        device_,
+        descriptor_pool_,
+        main_camera_object_->getViewCameraBuffer(),
+        rt_pipeline_properties_,
+        as_features_,
+        glm::uvec2(1024, 768));
+
+    // ---- LBM test ----
+    lbm_test_->recreate(
+        device_,
+        descriptor_pool_,
+        texture_sampler_,
+        lbm_patch_->getLbmPatchTexture());
+
+    // ---- CSM debug descriptor set (re-alloc from new pool) ----
+    if (csm_debug_desc_set_layout_) {
+        csm_debug_desc_set_ = device_->createDescriptorSets(
+            descriptor_pool_, csm_debug_desc_set_layout_, 1)[0];
+        er::WriteDescriptorList writes;
+        er::Helper::addOneTexture(
+            writes,
+            csm_debug_desc_set_,
+            er::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            0,
+            texture_sampler_,
+            csm_shadow_tex_->view,
+            er::ImageLayout::DEPTH_READ_ONLY_OPTIMAL);
+        device_->updateDescriptorSets(writes);
+    }
+
     for (auto& image : swap_chain_info_.images) {
         er::Helper::transitionImageLayout(
             device_,
@@ -1063,6 +1121,17 @@ void RealWorldApplication::recreateSwapChain() {
         texture_sampler_,
         texture_point_sampler_,
         swap_chain_info_.extent);
+
+    // Terrain tile descriptors need the noise textures just recreated above.
+    terrain_scene_view_->updateTileResDescriptorSet(
+        device_,
+        descriptor_pool_,
+        texture_sampler_,
+        repeat_texture_sampler_,
+        weather_system_->getTempTexes(),
+        map_mask_tex_.view,
+        volume_noise_->getDetailNoiseTexture().view,
+        volume_noise_->getRoughNoiseTexture().view);
 
     volume_cloud_->recreate(
         device_,
@@ -2227,13 +2296,20 @@ void RealWorldApplication::drawFrame() {
 
 
     terrain_scene_view_->setVisibleTiles(visible_tiles);
-    drawScene(command_buffer,
-        swap_chain_info_,
-        main_camera_object_->getViewCameraDescriptorSet(),
-        swap_chain_info_.extent,
-        image_index,
-        delta_t_,
-        current_time_);
+
+    // Skip the full 3D scene (forward pass, shadows, terrain, volume
+    // cloud, etc.) while on the title screen — only the ImGui title UI
+    // and background image are shown. This avoids partially-loaded
+    // meshes drawing garbage geometry through the background.
+    if (menu_->getGameState() != engine::ui::GameState::TitleScreen) {
+        drawScene(command_buffer,
+            swap_chain_info_,
+            main_camera_object_->getViewCameraDescriptorSet(),
+            swap_chain_info_.extent,
+            image_index,
+            delta_t_,
+            current_time_);
+    }
 
     if (!menu_->isRayTracingTurnOff()) {
         auto result_image =
@@ -2397,6 +2473,7 @@ void RealWorldApplication::cleanup() {
         gpu_profiler_.destroy(device_);
         gpu_profiler_initialized_ = false;
     }
+    menu_->destroyResources();
     menu_->destroy();
     cleanupSwapChain();
 
