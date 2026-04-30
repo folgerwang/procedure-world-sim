@@ -12,6 +12,7 @@
 #include "ray_tracing/raytracing_callable.h"
 #include "ray_tracing/raytracing_shadow.h"
 #include "helper/engine_helper.h"
+#include "helper/cluster_mesh.h"
 #include "application.h"
 
 namespace er = engine::renderer;
@@ -807,6 +808,19 @@ void RealWorldApplication::initVulkan() {
         volume_noise_->getRoughNoiseTexture().view,
         swap_chain_info_.extent);
 
+    ssao_ = std::make_shared<es::SSAO>(
+        device_,
+        descriptor_pool_,
+        ego::CameraObject::getViewCameraDescriptorSetLayout(),
+        texture_sampler_,
+        depth_buffer_copy_.view,
+        hdr_color_buffer_.view,
+        swap_chain_info_.extent);
+
+    cluster_renderer_ = std::make_shared<es::ClusterRenderer>(
+        device_,
+        descriptor_pool_);
+
     ego::DebugDrawObject::updateStaticDescriptorSet(
         device_,
         descriptor_pool_,
@@ -921,6 +935,13 @@ void RealWorldApplication::initVulkan() {
         std::make_unique<plugins::auto_rig::AutoRigPlugin>());
     plugin_manager_.initAll(device_);
     menu_->setPluginManager(&plugin_manager_);
+
+    if (ssao_) {
+        menu_->setSSAO(ssao_.get());
+    }
+    if (cluster_renderer_) {
+        menu_->setClusterRenderer(cluster_renderer_.get());
+    }
 }
 
 void RealWorldApplication::recreateSwapChain() {
@@ -1148,6 +1169,21 @@ void RealWorldApplication::recreateSwapChain() {
         volume_noise_->getDetailNoiseTexture().view,
         volume_noise_->getRoughNoiseTexture().view,
         swap_chain_info_.extent);
+
+    if (ssao_) {
+        ssao_->recreate(
+            device_,
+            descriptor_pool_,
+            ego::CameraObject::getViewCameraDescriptorSetLayout(),
+            texture_sampler_,
+            depth_buffer_copy_.view,
+            hdr_color_buffer_.view,
+            swap_chain_info_.extent);
+    }
+
+    if (cluster_renderer_) {
+        cluster_renderer_->recreate(descriptor_pool_);
+    }
 
     menu_->init(
         window_,
@@ -1622,6 +1658,24 @@ void RealWorldApplication::drawScene(
             s_mouse_wheel_offset,
             !s_camera_paused && s_mouse_right_button_pressed);
 
+        // Push per-frame feature flags into the camera buffer so shaders can
+        // conditionally skip expensive passes (e.g. shadow sampling).
+        {
+            uint32_t input_flags = 0u;
+            if (menu_->isShadowPassTurnOff())
+                input_flags |= FEATURE_INPUT_SHADOW_DISABLED;
+            main_camera_object_->setInputFeatureFlags(input_flags);
+        }
+
+        // Tell the forward pass whether to skip clustered meshes.
+        // When the cluster indirect draw is active the cluster renderer owns
+        // those meshes; drawing them in the forward pass as well causes
+        // double-rendering with z-fighting.
+        engine::helper::clusterIndirectActive() =
+            cluster_renderer_ &&
+            cluster_renderer_->isEnabled() &&
+            !engine::helper::clusterRenderingEnabled();  // not debug-draw mode
+
         // Update the base shadow camera position (facing dir, up vector).
         shadow_camera_object_->updateCamera(
             cmd_buf,
@@ -1709,7 +1763,7 @@ void RealWorldApplication::drawScene(
         // array layers in one draw.  Vertex transform runs once per vertex
         // instead of 4×, giving roughly 4× the throughput of separate passes.
         // The full 4-layer array view is used so the GS can write to all layers.
-        {
+        if (!menu_->isShadowPassTurnOff()) {
             auto _scope_shadow = gpu_profiler_.beginScope(cmd_buf, "CSM Shadow");
             shadow_object_scene_view_->draw(
                 cmd_buf,
@@ -1822,10 +1876,46 @@ void RealWorldApplication::drawScene(
         }
         // ---- End CSM debug --------------------------------------------------
 
+        // ── GPU cluster culling (Nanite-lite) ──
+        if (cluster_renderer_ && cluster_renderer_->isEnabled()) {
+            auto _scope_cull = gpu_profiler_.beginScope(cmd_buf, "Cluster Cull");
+            cluster_renderer_->cull(
+                cmd_buf,
+                main_camera_object_->getViewProjMatrix(),
+                main_camera_object_->getCameraPosition());
+            gpu_profiler_.endScope(cmd_buf, _scope_cull);
+        }
+
+        // ── Per-mesh frustum culling ──────────────────────────────────
+        // When cluster rendering is enabled, extract world-space frustum
+        // planes and pass them to DrawableObject. drawMesh() will transform
+        // each mesh's local-space bounding sphere by its model matrix and
+        // cull against these planes — correct regardless of node transform.
+        if (cluster_renderer_ && cluster_renderer_->isEnabled()) {
+            const auto& vp = main_camera_object_->getViewProjMatrix();
+            glm::vec4 fplanes[6];
+            fplanes[0] = glm::vec4(vp[0][3]+vp[0][0], vp[1][3]+vp[1][0],
+                                    vp[2][3]+vp[2][0], vp[3][3]+vp[3][0]);
+            fplanes[1] = glm::vec4(vp[0][3]-vp[0][0], vp[1][3]-vp[1][0],
+                                    vp[2][3]-vp[2][0], vp[3][3]-vp[3][0]);
+            fplanes[2] = glm::vec4(vp[0][3]+vp[0][1], vp[1][3]+vp[1][1],
+                                    vp[2][3]+vp[2][1], vp[3][3]+vp[3][1]);
+            fplanes[3] = glm::vec4(vp[0][3]-vp[0][1], vp[1][3]-vp[1][1],
+                                    vp[2][3]-vp[2][1], vp[3][3]-vp[3][1]);
+            fplanes[4] = glm::vec4(vp[0][3]+vp[0][2], vp[1][3]+vp[1][2],
+                                    vp[2][3]+vp[2][2], vp[3][3]+vp[3][2]);
+            fplanes[5] = glm::vec4(vp[0][3]-vp[0][2], vp[1][3]-vp[1][2],
+                                    vp[2][3]-vp[2][2], vp[3][3]-vp[3][2]);
+            for (int i = 0; i < 6; ++i) {
+                float len = glm::length(glm::vec3(fplanes[i]));
+                if (len > 0.0001f) fplanes[i] /= len;
+            }
+            ego::DrawableObject::setFrustumCullPlanes(fplanes);
+        }
+
         {
             auto _scope_forward = gpu_profiler_.beginScope(cmd_buf, "Forward Pass");
-            // Pass nullptr for the sky sphere — scene geometry provides its
-            // own background; the atmospheric sphere is not needed.
+
             object_scene_view_->draw(
                 cmd_buf,
                 desc_sets,
@@ -1833,7 +1923,83 @@ void RealWorldApplication::drawScene(
                 s_dbuf_idx,
                 delta_t,
                 current_time);
+
             gpu_profiler_.endScope(cmd_buf, _scope_forward);
+        }
+
+        // Clear frustum cull state so depth-only / shadow passes are not culled.
+        ego::DrawableObject::clearFrustumCull();
+
+        // ── Bindless cluster draw (single drawIndexedIndirectCount) ──
+        // Rendered in its own dynamic rendering pass, on top of the
+        // forward pass output (LOAD, not CLEAR).
+        // Skipped when cluster debug draw is active — the forward pass already
+        // drew the cluster visualisation and the indirect draw would overwrite it.
+        if (cluster_renderer_ && cluster_renderer_->isEnabled() &&
+            !engine::helper::clusterRenderingEnabled()) {
+            auto _scope_cluster = gpu_profiler_.beginScope(
+                cmd_buf, "Cluster Bindless Draw");
+
+            auto color_buf = object_scene_view_->getColorBuffer();
+            auto depth_buf = object_scene_view_->getDepthBuffer();
+
+            er::RenderingAttachmentInfo color_attach;
+            color_attach.image_view   = color_buf->view;
+            color_attach.image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+            color_attach.load_op      = er::AttachmentLoadOp::LOAD;
+            color_attach.store_op     = er::AttachmentStoreOp::STORE;
+
+            er::RenderingAttachmentInfo depth_attach;
+            depth_attach.image_view   = depth_buf->view;
+            depth_attach.image_layout = er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            depth_attach.load_op      = er::AttachmentLoadOp::LOAD;
+            depth_attach.store_op     = er::AttachmentStoreOp::STORE;
+
+            er::RenderingInfo ri = {};
+            ri.render_area_offset  = { 0, 0 };
+            ri.render_area_extent  = screen_size;
+            ri.layer_count         = 1;
+            ri.view_mask           = 0;
+            ri.color_attachments   = { color_attach };
+            ri.depth_attachments   = { depth_attach };
+            ri.stencil_attachments = {};
+
+            cmd_buf->beginDynamicRendering(ri);
+
+            // Build descriptor set list matching the bindless pipeline layout:
+            //   set 0 = PBR global (IBL + shadow sampler)
+            //   set 1 = view camera (VP matrices)
+            //   set 2 = cluster bindless (injected by draw())
+            //   set 3 = nullptr (SKIN — unused by cluster pass)
+            //   set 4 = runtime lights (sun direction/color + CSM data)
+            er::DescriptorSetList cluster_desc_sets(
+                RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
+            cluster_desc_sets[PBR_GLOBAL_PARAMS_SET] = pbr_lighting_desc_set_;
+            cluster_desc_sets[VIEW_PARAMS_SET] =
+                main_camera_object_->getViewCameraDescriptorSet();
+            cluster_desc_sets[RUNTIME_LIGHTS_PARAMS_SET] =
+                runtime_lights_desc_set_;
+
+            // Viewport and scissor for the full screen.
+            er::Viewport vp;
+            vp.x = 0; vp.y = 0;
+            vp.width  = static_cast<float>(screen_size.x);
+            vp.height = static_cast<float>(screen_size.y);
+            vp.min_depth = 0.0f;
+            vp.max_depth = 1.0f;
+            er::Scissor sc;
+            sc.offset = glm::ivec2(0);
+            sc.extent = screen_size;
+
+            cluster_renderer_->draw(
+                cmd_buf,
+                cluster_desc_sets,
+                { vp },
+                { sc });
+
+            cmd_buf->endDynamicRendering();
+
+            gpu_profiler_.endScope(cmd_buf, _scope_cluster);
         }
 
         // Transition ALL cascade layers back to depth-attachment for next frame.
@@ -1930,6 +2096,14 @@ void RealWorldApplication::drawScene(
             SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
             depth_buffer_.size,
             depth_buffer_copy_.size);
+
+        // ── SSAO: generate, blur, apply to HDR color ──
+        if (ssao_ && ssao_->enabled) {
+            auto _scope_ssao = gpu_profiler_.beginScope(cmd_buf, "SSAO");
+            ssao_->render(cmd_buf, view_desc_set,
+                          hdr_color_buffer_.image, screen_size);
+            gpu_profiler_.endScope(cmd_buf, _scope_ssao);
+        }
 
         if (!menu_->isVolumeMoistTurnOff()) {
             auto _scope_cloud = gpu_profiler_.beginScope(cmd_buf, "Volume Cloud");
@@ -2219,6 +2393,83 @@ void RealWorldApplication::drawFrame() {
         if (all_ready) {
             menu_->setGameState(engine::ui::GameState::InGame);
             menu_->setBackgroundEnabled(false);
+
+            // Upload cluster data to the GPU cluster renderer now that
+            // meshes are fully loaded. Iterates every mesh in every
+            // drawable and uploads its ClusterMesh sidecar.
+            if (cluster_renderer_) {
+                // Cluster bounds from buildClusterMesh() are already in
+                // the mesh's local space, which for FBX scenes IS world
+                // space (the FBX loader bakes node transforms into
+                // vertex positions). Using identity here avoids the
+                auto uploadClusters = [&](
+                    const std::shared_ptr<ego::DrawableObject>& obj) {
+                    if (!obj || !obj->isReady()) return;
+                    auto& meshes  = obj->getMutableMeshes();
+                    const auto& data = obj->getDrawableData();
+
+                    // Build mesh_idx → first-node world transform table.
+                    // node.cached_matrix_ is set by DrawableData::update()
+                    // and already includes the full parent hierarchy.
+                    // Defaults to identity for meshes with no owning node.
+                    std::vector<glm::mat4> mesh_transforms(
+                        meshes.size(), glm::mat4(1.0f));
+                    for (const auto& node : data.nodes_) {
+                        if (node.mesh_idx_ >= 0 &&
+                            static_cast<uint32_t>(node.mesh_idx_) < meshes.size()) {
+                            // First node wins — handles non-instanced meshes.
+                            if (mesh_transforms[node.mesh_idx_] == glm::mat4(1.0f))
+                                mesh_transforms[node.mesh_idx_] = node.cached_matrix_;
+                        }
+                    }
+
+                    for (uint32_t mi = 0; mi < meshes.size(); ++mi) {
+                        auto& cm = meshes[mi].cluster_mesh_;
+                        if (cm.empty()) continue;
+                        // Record global mesh index BEFORE upload (it
+                        // increments uploaded_mesh_count_ internally).
+                        meshes[mi].cluster_global_mesh_idx_ =
+                            static_cast<int32_t>(cluster_renderer_->getMeshCount());
+                        cluster_renderer_->uploadMeshClusters(
+                            cm, obj->getDrawableData(), mi, 0,
+                            mesh_transforms[mi]);
+                    }
+                };
+                uploadClusters(bistro_exterior_scene_);
+                uploadClusters(bistro_interior_scene_);
+                for (auto& d : drawable_objects_) {
+                    uploadClusters(d);
+                }
+
+                // Merge all staged cluster data into single flat GPU SSBOs.
+                cluster_renderer_->finalizeUploads();
+
+                // Initialize the bindless graphics pipeline for cluster
+                // rendering. Needs the global descriptor set layouts
+                // (PBR_GLOBAL at set 0, VIEW_PARAMS at set 1) so the
+                // pipeline layout matches the forward pass.
+                {
+                    // Provide all sets 0..RUNTIME_LIGHTS so the cluster
+                    // pipeline can read the same sun light + shadow data
+                    // as the standard forward pass.
+                    er::DescriptorSetLayoutList global_layouts(
+                        RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
+                    global_layouts[PBR_GLOBAL_PARAMS_SET] =
+                        pbr_lighting_desc_set_layout_;
+                    global_layouts[VIEW_PARAMS_SET] =
+                        ego::CameraObject::getViewCameraDescriptorSetLayout();
+                    // Set 2 (PBR_MATERIAL_PARAMS_SET) is replaced by the
+                    // cluster bindless set inside initBindlessPipeline.
+                    // Set 3 (SKIN_PARAMS_SET) stays nullptr.
+                    global_layouts[RUNTIME_LIGHTS_PARAMS_SET] =
+                        runtime_lights_desc_set_layout_;
+                    cluster_renderer_->initBindlessPipeline(
+                        global_layouts,
+                        graphic_pipeline_info_,
+                        renderbuffer_formats_[
+                            int(er::RenderPasses::kForward)]);
+                }
+            }
         }
     }
 
@@ -2538,6 +2789,8 @@ void RealWorldApplication::cleanup() {
     weather_system_->destroy(device_);
     volume_noise_->destroy(device_);
     volume_cloud_->destroy(device_);
+    if (ssao_) ssao_->destroy(device_);
+    if (cluster_renderer_) cluster_renderer_->destroy();
     unit_plane_->destroy(device_);
     unit_box_->destroy(device_);
     unit_sphere_->destroy(device_);

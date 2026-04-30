@@ -21,6 +21,8 @@
 #include "scene_rendering/ibl_creator.h"
 #include "scene_rendering/volume_cloud.h"
 #include "scene_rendering/volume_noise.h"
+#include "scene_rendering/ssao.h"
+#include "scene_rendering/cluster_renderer.h"
 #include "scene_rendering/conemap.h"
 #include "scene_rendering/prt_shadow.h"
 #include "scene_rendering/terrain_scene_view.h"
@@ -169,6 +171,8 @@ private:
     std::shared_ptr<es::Skydome> skydome_;
     std::shared_ptr<es::WeatherSystem> weather_system_;
     std::shared_ptr<es::VolumeCloud> volume_cloud_;
+    std::shared_ptr<es::SSAO> ssao_;
+    std::shared_ptr<es::ClusterRenderer> cluster_renderer_;
     std::shared_ptr<es::VolumeNoise> volume_noise_;
     std::shared_ptr<es::IblCreator> ibl_creator_;
     std::shared_ptr<ego::ConemapObj> conemap_obj_;

@@ -328,6 +328,8 @@ ENGINE_CPP_SRCS := \
     $(ENGINE_DIR)/scene_rendering/skydome.cpp               \
     $(ENGINE_DIR)/scene_rendering/terrain_scene_view.cpp    \
     $(ENGINE_DIR)/scene_rendering/view_capture.cpp          \
+    $(ENGINE_DIR)/scene_rendering/ssao.cpp                   \
+    $(ENGINE_DIR)/scene_rendering/cluster_renderer.cpp      \
     $(ENGINE_DIR)/scene_rendering/volume_cloud.cpp          \
     $(ENGINE_DIR)/scene_rendering/volume_noise.cpp          \
     $(ENGINE_DIR)/scene_rendering/weather_system.cpp        \
