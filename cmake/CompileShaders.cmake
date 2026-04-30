@@ -167,6 +167,11 @@ add_spirv(SPIRV_FILES "skybox_vert.spv"  "skybox.vert"      vertex)
 add_spirv(SPIRV_FILES "skybox_frag.spv"  "skybox.frag"      fragment)
 # cube_skybox.spv: output name deliberately has no _frag suffix (matches runtime).
 add_spirv(SPIRV_FILES "cube_skybox.spv"  "cube_skybox.frag" fragment)
+# Dithered "mini-buffer" sky update: renders a (cube_size/8)^2 cubemap at
+# full atmospheric quality and scatters it into the full-res envmap mip 0
+# with a per-frame 8x8 dither offset (cycles 64 unique positions in 64
+# frames).  Net per-frame sky cost: ~1/64 of the full-res draw.
+add_spirv(SPIRV_FILES "cube_skybox_mini_comp.spv" "cube_skybox_mini.comp" compute)
 
 # ── IBL pre-filter (cube_ibl.frag compiled 4 ways) ───────────────────────────
 # NUM_SAMPLES must be defined for all variants: getSampleVector/filterColor are
@@ -177,6 +182,15 @@ add_spirv(SPIRV_FILES "ibl_labertian_frag.spv"       "cube_ibl.frag" fragment  L
 add_spirv(SPIRV_FILES "ibl_ggx_frag.spv"             "cube_ibl.frag" fragment  GGX_FILTER           NUM_SAMPLES=1024)
 add_spirv(SPIRV_FILES "ibl_charlie_frag.spv"         "cube_ibl.frag" fragment  CHARLIE_FILTER       NUM_SAMPLES=1024)
 add_spirv(SPIRV_FILES "ibl_smooth_comp.spv"          "ibl_smooth.comp"         compute)
+
+# Dithered "mini-buffer" IBL convolution: same Lambertian / GGX / Charlie
+# filters as cube_ibl.frag, but written as a compute shader that updates
+# only 1/64 of the destination IBL cubemap mip's texels per frame.  Uses
+# the same NUM_SAMPLES as the reference fragment-shader path so the
+# steady-state output is identical.
+add_spirv(SPIRV_FILES "ibl_lambertian_mini_comp.spv" "cube_ibl_mini.comp" compute  LAMBERTIAN_FILTER  NUM_SAMPLES=1024)
+add_spirv(SPIRV_FILES "ibl_ggx_mini_comp.spv"        "cube_ibl_mini.comp" compute  GGX_FILTER         NUM_SAMPLES=1024)
+add_spirv(SPIRV_FILES "ibl_charlie_mini_comp.spv"    "cube_ibl_mini.comp" compute  CHARLIE_FILTER     NUM_SAMPLES=1024)
 
 # ── CSM debug ─────────────────────────────────────────────────────────────────
 add_spirv(SPIRV_FILES "csm_debug_frag.spv" "csm_debug.frag" fragment)

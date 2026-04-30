@@ -921,6 +921,7 @@ void RealWorldApplication::initVulkan() {
     // Register CSM debug colour targets as ImGui textures (ImGui must be
     // initialised by the Menu constructor before this can be called).
     registerCsmDebugImTextureIds();
+    registerIblDebugImTextureIds();
 
     // Wire the GPU profiler into the menu so it can display itself.
     menu_->setGpuProfiler(&gpu_profiler_);
@@ -1199,6 +1200,7 @@ void RealWorldApplication::recreateSwapChain() {
 
     // Re-register CSM debug textures — ImGui was re-initialized above.
     registerCsmDebugImTextureIds();
+    registerIblDebugImTextureIds();
 
     // Re-wire profiler after menu re-init.
     menu_->setGpuProfiler(&gpu_profiler_);
@@ -1485,6 +1487,73 @@ void RealWorldApplication::registerCsmDebugImTextureIds() {
     menu_->setCsmDebugTextureIds(ids);
 }
 
+void RealWorldApplication::registerIblDebugImTextureIds() {
+    if (!menu_ || !ibl_creator_ || !skydome_) return;
+
+    using MipFaceArray = engine::ui::Menu::IblDebugMipFaceArray;
+    constexpr int kMaxMips = engine::ui::Menu::kIblDebugMaxMips;
+
+    // Walk every mip [0, num_mips) of one TextureInfo and wrap each cube
+    // face's pre-existing 2D view (TextureInfo::surface_views[mip][face],
+    // populated by createCubemapTexture for use_as_framebuffer cubemaps)
+    // as an ImTextureID via the standard linear sampler.  Returns the
+    // count actually registered (may be < tex.surface_views.size() if it
+    // exceeds kMaxMips).
+    auto register_all_mips = [&](
+        const er::TextureInfo& tex,
+        MipFaceArray& out) -> int {
+        out = {};
+        const int actual = static_cast<int>(tex.surface_views.size());
+        const int n = std::min(actual, kMaxMips);
+        for (int m = 0; m < n; ++m) {
+            const auto& faces = tex.surface_views[m];
+            const int nf = std::min<int>(6, static_cast<int>(faces.size()));
+            for (int f = 0; f < nf; ++f) {
+                if (faces[f]) {
+                    out[m][f] = er::Helper::addImTextureID(
+                        texture_sampler_, faces[f]);
+                }
+            }
+        }
+        return n;
+    };
+
+    // Sky envmap: full mip chain (let user inspect mipgen-smoothed
+    // partial updates).
+    {
+        MipFaceArray ids{};
+        const int n = register_all_mips(ibl_creator_->getEnvmapTexture(), ids);
+        menu_->setEnvmapFaceMipTextureIds(ids, n);
+    }
+    // Sky mini-buffer: single mip but exposed as the same shape so the
+    // menu's per-row mip slider is uniform.
+    {
+        MipFaceArray ids{};
+        const int n = register_all_mips(skydome_->getMiniEnvmapTexture(), ids);
+        menu_->setMiniEnvmapFaceMipTextureIds(ids, n);
+    }
+    // IBL diffuse: single mip in the current pipeline.
+    {
+        MipFaceArray ids{};
+        const int n = register_all_mips(ibl_creator_->getIblDiffuseTexture(), ids);
+        menu_->setIblDiffuseFaceMipTextureIds(ids, n);
+    }
+    // IBL specular: full mip chain.  Mip 0 is the GGX convolution; mips
+    // 1..N-1 are box-filter mipgen of mip 0 - the slider lets the user
+    // step through the blur progression.
+    {
+        MipFaceArray ids{};
+        const int n = register_all_mips(ibl_creator_->getIblSpecularTexture(), ids);
+        menu_->setIblSpecularFaceMipTextureIds(ids, n);
+    }
+    // IBL sheen: full mip chain (Charlie convolution at mip 0 + mipgen).
+    {
+        MipFaceArray ids{};
+        const int n = register_all_mips(ibl_creator_->getIblSheenTexture(), ids);
+        menu_->setIblSheenFaceMipTextureIds(ids, n);
+    }
+}
+
 void RealWorldApplication::createTextureSampler() {
     texture_sampler_ = device_->createSampler(
         er::Filter::LINEAR,
@@ -1550,40 +1619,44 @@ void RealWorldApplication::drawScene(
 
     {
         auto _scope = gpu_profiler_.beginScope(cmd_buf, "IBL / Skydome");
-        if (0)
-        {
-            ibl_creator_->drawEnvmapFromPanoramaImage(
-                cmd_buf,
-                cubemap_render_pass_,
-                clear_values_,
-                kCubemapSize);
-        }
-        else {
-            skydome_->drawCubeSkyBox(
-                cmd_buf,
-                cubemap_render_pass_,
-                ibl_creator_->getEnvmapTexture(),
-                clear_values_,
-                kCubemapSize);
-        }
+        // ORDER MATTERS: the sky scattering LUT must be (re)generated
+        // BEFORE the cubemap consumes it.  The LUT is gated by scale-
+        // height changes (cheap no-op once converged), but on frame 0
+        // its contents are uninitialised - if we let updateCubeSkyBoxMini
+        // run first it samples zeros, computes garbage atmospheric
+        // values, and the block-fill bootstrap broadcasts that garbage
+        // across every envmap texel, leaving the EMA to slowly correct
+        // it over many seconds.  Doing the LUT first guarantees frame 0
+        // sees correct LUT data and the first-touch fill is valid.
+        skydome_->updateSkyScatteringLut(cmd_buf);
 
-        ibl_creator_->createIblDiffuseMap(
+        // Sky envmap + IBL convolution: pure dithered compute path.
+        //
+        // Both Skydome::updateCubeSkyBoxMini and IblCreator::updateIbl*MapMini
+        // self-bootstrap.  On the very first call (mini_frame_index_ == 0)
+        // the compute shader runs in "block fill" mode: each thread
+        // evaluates one sample at its dither position and broadcasts it
+        // to every texel in the corresponding 8x8 / stride^2 block, so
+        // the entire output is initialized in one cheap dispatch.  From
+        // frame 1 onward each thread updates only the dither-selected
+        // texel and EMA-blends with the existing value, integrating
+        // additional samples over time.
+        //
+        // This removes the old expensive bootstrap (drawCubeSkyBox +
+        // createIbl*Map) entirely.  Steady-state per-frame cost is the
+        // same as before; the first frame is now ~4000x cheaper than
+        // it used to be.
+        skydome_->updateCubeSkyBoxMini(
             cmd_buf,
-            cubemap_render_pass_,
-            clear_values_,
+            ibl_creator_->getEnvmapTexture(),
             kCubemapSize);
 
-        ibl_creator_->createIblSpecularMap(
-            cmd_buf,
-            cubemap_render_pass_,
-            clear_values_,
-            kCubemapSize);
-
-        ibl_creator_->createIblSheenMap(
-            cmd_buf,
-            cubemap_render_pass_,
-            clear_values_,
-            kCubemapSize);
+        ibl_creator_->updateIblDiffuseMapMini(cmd_buf, kCubemapSize);
+        ibl_creator_->updateIblSpecularMapMini(cmd_buf, kCubemapSize);
+        // Sheen runs last - it advances the shared mini_frame_index_ so
+        // all three IBL filters use the same per-frame dither offset and
+        // sample stratum.
+        ibl_creator_->updateIblSheenMapMini(cmd_buf, kCubemapSize);
         gpu_profiler_.endScope(cmd_buf, _scope);
     }
  
@@ -2276,13 +2349,31 @@ void RealWorldApplication::drawFrame() {
     float latitude = 37.4419f;
     float longtitude = -122.1430f; // west.
 
+    // Time-of-day driven by the Menu slider (see Skydome window).  When
+    // auto-advance is on, the Menu ticks tod_hours_ forward by real time
+    // each frame.  consumeTodJump() returns true once when the user has
+    // yanked the slider far enough to call it a hard skip - we use that
+    // as a cue to reset the sky / IBL mini-buffer accumulators so they
+    // re-bootstrap cleanly instead of EMA-blending toward the new sun
+    // position over many seconds.
+    menu_->advanceTimeOfDay(delta_t_);
+    const float tod_h = menu_->getTimeOfDayHours();
+    const int   tod_hour = static_cast<int>(tod_h);
+    const int   tod_min  = static_cast<int>((tod_h - tod_hour) * 60.0f);
+    const int   tod_sec  = static_cast<int>(((tod_h - tod_hour) * 60.0f - tod_min) * 60.0f);
+
+    if (menu_->consumeTodJump()) {
+        if (skydome_)     skydome_->resetMiniBuffer();
+        if (ibl_creator_) ibl_creator_->resetMiniBuffer();
+    }
+
     skydome_->update(
         latitude,
         longtitude,
         localtm.tm_yday,
-        22/*localtm->tm_hour*/,
-        localtm.tm_min,
-        localtm.tm_sec);
+        tod_hour,
+        tod_min,
+        tod_sec);
 
     main_camera_object_->readGpuCameraInfo();
 
@@ -2386,6 +2477,15 @@ void RealWorldApplication::drawFrame() {
         if (bistro_interior_scene_) {
             object_scene_view_->addDrawableObject(bistro_interior_scene_);
         }
+
+        // Big scene transition - drop the temporally-integrated sky and
+        // IBL state so the next frame's compute dispatches re-bootstrap
+        // every texel via the cheap "block fill" path instead of
+        // EMA-blending against a stale envmap.  Wire similar calls in
+        // wherever else you do a hard scene change (player teleport,
+        // load-from-save, debug "skip to dawn", etc.).
+        if (skydome_)     skydome_->resetMiniBuffer();
+        if (ibl_creator_) ibl_creator_->resetMiniBuffer();
 
         s_update_frame_count = -1;
     }

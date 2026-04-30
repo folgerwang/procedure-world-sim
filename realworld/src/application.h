@@ -68,6 +68,12 @@ private:
     void createDescriptorSets();
     void setupCsmDebugDraw();
     void registerCsmDebugImTextureIds();
+    // Registers ImGui texture IDs for the IBL/sky cubemap debug window.
+    // Must be called after IblCreator and Skydome have been constructed
+    // and ImGui has been initialised by the Menu constructor (i.e. same
+    // ordering as registerCsmDebugImTextureIds, plus a re-register on
+    // swap-chain rebuild since ImGui state is reset).
+    void registerIblDebugImTextureIds();
     void createCommandBuffers();
     void createSyncObjects();
     er::WriteDescriptorList addGlobalTextures(
