@@ -1,4 +1,6 @@
 #include <iostream>
+#include <fstream>
+#include <iomanip>
 #include <vector>
 #include <map>
 #include <limits>
@@ -1671,10 +1673,15 @@ void RealWorldApplication::drawScene(
         // When the cluster indirect draw is active the cluster renderer owns
         // those meshes; drawing them in the forward pass as well causes
         // double-rendering with z-fighting.
+        // Require getTotalVisible() > 0 so the forward pass acts as a fallback
+        // for the first frame (before the first readback arrives) and for any
+        // frame where the GPU cull produces zero draws — preventing black holes
+        // where neither path renders the mesh.
         engine::helper::clusterIndirectActive() =
             cluster_renderer_ &&
             cluster_renderer_->isEnabled() &&
-            !engine::helper::clusterRenderingEnabled();  // not debug-draw mode
+            !engine::helper::clusterRenderingEnabled() &&  // not debug-draw mode
+            cluster_renderer_->getTotalVisible() > 0;      // cluster pass has output
 
         // Update the base shadow camera position (facing dir, up vector).
         shadow_camera_object_->updateCamera(
@@ -2424,14 +2431,14 @@ void RealWorldApplication::drawFrame() {
                     }
 
                     for (uint32_t mi = 0; mi < meshes.size(); ++mi) {
-                        auto& cm = meshes[mi].cluster_mesh_;
+                        const auto& cm = meshes[mi].cluster_mesh_;
                         if (cm.empty()) continue;
-                        // Record global mesh index BEFORE upload (it
-                        // increments uploaded_mesh_count_ internally).
                         meshes[mi].cluster_global_mesh_idx_ =
-                            static_cast<int32_t>(cluster_renderer_->getMeshCount());
+                            static_cast<int32_t>(
+                                cluster_renderer_->getMeshCount());
                         cluster_renderer_->uploadMeshClusters(
-                            cm, obj->getDrawableData(), mi, 0,
+                            cm, obj->getDrawableData(), mi,
+                            meshes[mi].cluster_prim_map_,
                             mesh_transforms[mi]);
                     }
                 };
@@ -2665,6 +2672,42 @@ void RealWorldApplication::drawFrame() {
         uint32_t collect_frame = static_cast<uint32_t>(
             (current_frame_ + kMaxFramesInFlight - 1) % kMaxFramesInFlight);
         gpu_profiler_.collectResults(device_, collect_frame);
+
+        // ── Per-second GPU profile log dump ──────────────────────────────────
+        // Append the latest FrameRecord to gpu_profile.log once per wall-clock
+        // second.  Each entry is prefixed with a timestamp so the log is
+        // easy to tail-follow during a live session.
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - gpu_profile_last_dump_).count();
+        if (elapsed >= 1000) {
+            gpu_profile_last_dump_ = now;
+            const auto* frame = gpu_profiler_.getLatestFrame();
+            if (frame) {
+                // Use a wall-clock time string for the log header.
+                auto wall = std::chrono::system_clock::now();
+                auto wall_t = std::chrono::system_clock::to_time_t(wall);
+
+                static const char* kLogPath = "gpu_profile.log";
+                std::ofstream log(kLogPath, std::ios::app);
+                if (log.is_open()) {
+                    log << "── GPU frame @ " << std::put_time(std::localtime(&wall_t), "%H:%M:%S")
+                        << "  total=" << std::fixed << std::setprecision(3)
+                        << frame->total_ms << " ms"
+                        << "  scopes=" << frame->scopes.size() << "\n";
+                    for (const auto& s : frame->scopes) {
+                        float dur_ms = s.end_ms - s.begin_ms;
+                        // Indent by depth for readability.
+                        for (int d = 0; d < s.depth; ++d) log << "  ";
+                        log << std::left << std::setw(32) << s.name
+                            << "  " << std::fixed << std::setprecision(3)
+                            << std::setw(8) << dur_ms << " ms"
+                            << "  [" << s.begin_ms << " → " << s.end_ms << "]\n";
+                    }
+                    log << "\n";
+                }
+            }
+        }
     }
 
     current_frame_ = (current_frame_ + 1) % kMaxFramesInFlight;

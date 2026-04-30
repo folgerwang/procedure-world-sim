@@ -352,6 +352,17 @@ else()  # Linux
     )
 endif()
 
+# ── Compile GLSL shaders to SPIR-V at build time ─────────────────────────────
+# CompileShaders.cmake finds glslc (from VULKAN_SDK), compiles every .vert /
+# .frag / .comp / .geom / .rgen / … source to lib/shaders/**/*.spv, and
+# creates a "Shaders" target that RealWorld depends on.  If glslc is not found
+# (e.g. Vulkan SDK not installed) a warning is printed and the pre-compiled
+# .spv files already in lib/shaders/ are used as-is.
+include(cmake/CompileShaders.cmake)
+if(TARGET Shaders)
+    add_dependencies(RealWorld Shaders)
+endif()
+
 # ── Output executable next to assets/ so relative paths resolve ───────────────
 # The game loads assets via paths like "assets/..." relative to the exe.
 # Place the binary directly in the realworld/ folder for all configs.

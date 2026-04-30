@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <chrono>
 #include "renderer/renderer.h"
 #include "renderer/renderer_structs.h"
 #include "shaders/global_definition.glsl.h"
@@ -225,6 +226,10 @@ private:
     // GPU profiler (timestamp-based, frame-by-frame hierarchy).
     engine::helper::GpuProfiler gpu_profiler_;
     bool gpu_profiler_initialized_ = false;
+
+    // Wall-clock timestamp of the last GPU-profile log dump.
+    // Used to throttle log output to once per second.
+    std::chrono::steady_clock::time_point gpu_profile_last_dump_{};
 
     // Plugin system.
     plugins::PluginManager plugin_manager_;
