@@ -1657,8 +1657,24 @@ void RealWorldApplication::drawScene(
     if (s_request_toggle_collision_debug) {
         if (menu_) {
             menu_->toggleCollisionDebug();
-            std::cout << "[collision-debug] " <<
-                (menu_->isCollisionDebugOn() ? "ON" : "OFF") << std::endl;
+            std::cout << "[collision-debug] "
+                      << (menu_->isCollisionDebugOn() ? "ON" : "OFF")
+                      << "  meshes=" << collision_world_.meshCount()
+                      << "  pipeline_ready="
+                      << (eh::CollisionDebugDraw::ready() ? "yes" : "no")
+                      << "  collision_world_built=" << collision_world_built_
+                      << "  game_state="
+                      << static_cast<int>(menu_->getGameState())
+                      << std::endl;
+            if (menu_->isCollisionDebugOn() &&
+                collision_world_.meshCount() == 0) {
+                std::cout << "[collision-debug] WARNING: collision world "
+                             "is empty. The build retries every frame "
+                             "while in InGame state -- if you keep "
+                             "seeing 0, buildFromDrawable() is failing "
+                             "(vertex_position_ or vertex_indices_ not "
+                             "populated)." << std::endl;
+            }
         }
         s_request_toggle_collision_debug = false;
     }
@@ -2051,12 +2067,50 @@ void RealWorldApplication::drawScene(
             ego::DrawableObject::setFrustumCullPlanes(fplanes);
         }
 
+        // Hoisted so the cluster / sky passes below can see it and
+        // skip themselves -- collision debug is meant to be a clean
+        // segmentation view, no cluster geometry layered on top.
+        const bool show_collision_dbg =
+            menu_ && menu_->isCollisionDebugOn() && !collision_world_.empty();
+
         {
             auto _scope_forward = gpu_profiler_.beginScope(cmd_buf, "Forward Pass");
 
-            const bool show_collision_dbg =
-                menu_ && menu_->isCollisionDebugOn();
-            if (show_collision_dbg && !collision_world_.empty()) {
+            if (show_collision_dbg) {
+                // Replaces the normal forward pass: open our own dynamic
+                // rendering scope on the same color/depth targets that
+                // ObjectSceneView::draw would have used. Without this the
+                // CollisionDebugDraw pipeline executes outside any render
+                // pass instance and produces no visible output (validation
+                // layers flag it; release builds just discard the draw).
+                auto color_buf = object_scene_view_->getColorBuffer();
+                auto depth_buf = object_scene_view_->getDepthBuffer();
+
+                er::RenderingAttachmentInfo color_attach;
+                color_attach.image_view   = color_buf->view;
+                color_attach.image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+                color_attach.load_op      = er::AttachmentLoadOp::CLEAR;
+                color_attach.store_op     = er::AttachmentStoreOp::STORE;
+                color_attach.clear_value.color = { {0.05f, 0.05f, 0.05f, 1.0f} };
+
+                er::RenderingAttachmentInfo depth_attach;
+                depth_attach.image_view   = depth_buf->view;
+                depth_attach.image_layout = er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                depth_attach.load_op      = er::AttachmentLoadOp::CLEAR;
+                depth_attach.store_op     = er::AttachmentStoreOp::STORE;
+                depth_attach.clear_value.depth_stencil = { 1.0f, 0 };
+
+                er::RenderingInfo ri = {};
+                ri.render_area_offset  = { 0, 0 };
+                ri.render_area_extent  = swap_chain_info.extent;
+                ri.layer_count         = 1;
+                ri.view_mask           = 0;
+                ri.color_attachments   = { color_attach };
+                ri.depth_attachments   = { depth_attach };
+                ri.stencil_attachments = {};
+
+                cmd_buf->beginDynamicRendering(ri);
+
                 er::Viewport vp;
                 vp.x = 0.0f; vp.y = 0.0f;
                 vp.width     = float(swap_chain_info.extent.x);
@@ -2068,8 +2122,31 @@ void RealWorldApplication::drawScene(
                 sc.extent = swap_chain_info.extent;
                 std::vector<er::Viewport> viewports = { vp };
                 std::vector<er::Scissor>  scissors  = { sc };
+
+                // The collision pipeline layout is exactly two sets:
+                //   set 0 = PBR_GLOBAL_PARAMS_SET (shared layout, even
+                //           though the collision shaders don't sample
+                //           it -- the layout list at pipeline create
+                //           time included it for parity with ShapeBase
+                //           / ClusterDebugDraw)
+                //   set 1 = VIEW_PARAMS_SET (camera view-proj SSBO,
+                //           consumed by collision_debug.vert)
+                // We MUST pass exactly two descriptor sets here. The
+                // application's `desc_sets` has 5+ slots (PBR, VIEW,
+                // MATERIAL, SKIN, RUNTIME_LIGHTS, ...); calling
+                // bindDescriptorSets with that full list against a
+                // 2-layout pipeline crashes the driver inside
+                // CmdBindDescriptorSets.  Mirror the slicing pattern
+                // ClusterDebugDraw uses inside drawable_object.cpp.
+                er::DescriptorSetList collision_desc_sets = {
+                    desc_sets[PBR_GLOBAL_PARAMS_SET],
+                    main_camera_object_->getViewCameraDescriptorSet(),
+                };
+
                 collision_world_.drawDebug(
-                    device_, cmd_buf, desc_sets, viewports, scissors);
+                    device_, cmd_buf, collision_desc_sets, viewports, scissors);
+
+                cmd_buf->endDynamicRendering();
             } else {
                 object_scene_view_->draw(
                     cmd_buf,
@@ -2091,8 +2168,12 @@ void RealWorldApplication::drawScene(
         // forward pass output (LOAD, not CLEAR).
         // Skipped when cluster debug draw is active — the forward pass already
         // drew the cluster visualisation and the indirect draw would overwrite it.
+        // Also skipped when collision-mesh debug is on -- the forward pass
+        // drew per-mesh segmentation colors and we want them to remain the
+        // only thing on screen.
         if (cluster_renderer_ && cluster_renderer_->isEnabled() &&
-            !engine::helper::clusterRenderingEnabled()) {
+            !engine::helper::clusterRenderingEnabled() &&
+            !show_collision_dbg) {
             auto _scope_cluster = gpu_profiler_.beginScope(
                 cmd_buf, "Cluster Bindless Draw");
 
@@ -2642,22 +2723,6 @@ void RealWorldApplication::drawFrame() {
             menu_->setGameState(engine::ui::GameState::InGame);
             menu_->setBackgroundEnabled(false);
 
-            if (!collision_world_built_) {
-                auto buildAndAdd = [&](
-                    const std::shared_ptr<ego::DrawableObject>& obj) {
-                    if (!obj || !obj->isReady()) return;
-                    auto m = std::make_shared<engine::helper::CollisionMesh>();
-                    if (m->buildFromDrawable(*obj)) {
-                        std::cout << "[collision] Built mesh: "
-                                  << m->triangleCount() << " tris" << std::endl;
-                        collision_world_.addMesh(std::move(m));
-                    }
-                };
-                buildAndAdd(bistro_exterior_scene_);
-                buildAndAdd(bistro_interior_scene_);
-                collision_world_built_ = true;
-            }
-
             if (player_object_ && player_object_->isReady() &&
                 player_controller_ && !player_controller_->isSpawned()) {
                 const auto& cam = main_camera_object_->getCameraViewInfo();
@@ -2759,6 +2824,57 @@ void RealWorldApplication::drawFrame() {
                             int(er::RenderPasses::kForward)]);
                 }
             }
+        }
+    }
+
+    // Build the collision world once both bistro scenes have actually
+    // populated their CPU-side mesh data. We retry every frame in
+    // InGame state until at least one mesh is added so that any
+    // transient "isReady() == true but vertex_position_ not yet
+    // populated" race resolves itself instead of leaving the world
+    // permanently empty.
+    if (!collision_world_built_ &&
+        menu_->getGameState() == engine::ui::GameState::InGame) {
+        bool any_added = false;
+        // One CollisionMesh PER FBX mesh inside each drawable, so the
+        // segmentation viz paints distinct colours per piece of
+        // geometry instead of one giant blob per drawable. build_bvh
+        // is false here -- the BVH builder runs an O(N log N)
+        // multithreaded pass that on Bistro-sized input would freeze
+        // the render thread on the first in-game frame. The debug
+        // visualisation only needs the flat triangle list. Player
+        // capsule-vs-static-mesh collision (resolveCapsule) is
+        // disabled until we wire up an async BVH build, but that
+        // path was a no-op before this fix anyway.
+        auto buildAndAdd = [&](
+            const std::shared_ptr<ego::DrawableObject>& obj) {
+            if (!obj || !obj->isReady()) return;
+            const auto& data = obj->getDrawableData();
+            int built = 0;
+            size_t total_tris = 0;
+            for (size_t mi = 0; mi < data.meshes_.size(); ++mi) {
+                auto m = std::make_shared<engine::helper::CollisionMesh>();
+                if (m->buildFromDrawableMesh(
+                        *obj, mi, /*build_bvh=*/false)) {
+                    total_tris += m->triangleCount();
+                    ++built;
+                    collision_world_.addMesh(std::move(m));
+                    any_added = true;
+                }
+            }
+            if (built > 0) {
+                std::cout << "[collision] " << built
+                          << " mesh(es), " << total_tris
+                          << " tris from drawable" << std::endl;
+            }
+        };
+        buildAndAdd(bistro_exterior_scene_);
+        buildAndAdd(bistro_interior_scene_);
+        if (any_added) {
+            collision_world_built_ = true;
+            std::cout << "[collision] World ready: "
+                      << collision_world_.meshCount()
+                      << " mesh(es) total" << std::endl;
         }
     }
 
