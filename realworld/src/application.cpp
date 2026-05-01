@@ -2833,13 +2833,51 @@ void RealWorldApplication::drawFrame() {
     // transient "isReady() == true but vertex_position_ not yet
     // populated" race resolves itself instead of leaving the world
     // permanently empty.
+    // If the user changed the collision-shape selector in the menu,
+    // tear down the existing CollisionWorld so the build retry
+    // below rebuilds with the new shape. waitIdle is needed because
+    // CollisionDebugMeshBuffers (the GPU-side companion) may still
+    // be referenced by an in-flight command buffer; destroying its
+    // buffers without synchronisation is a Vulkan validation error.
+    if (menu_->collisionWorldDirty()) {
+        device_->waitIdle();
+        collision_world_.destroyDebugBuffers(device_);
+        collision_world_.clear();
+        collision_world_built_ = false;
+        menu_->clearCollisionWorldDirty();
+    }
+
     if (!collision_world_built_ &&
         menu_->getGameState() == engine::ui::GameState::InGame) {
         bool any_added = false;
-        // One CollisionMesh PER FBX mesh inside each drawable, so the
-        // segmentation viz paints distinct colours per piece of
-        // geometry instead of one giant blob per drawable. build_bvh
-        // is false here -- the BVH builder runs an O(N log N)
+
+        // Map the menu's user-facing CollisionDebugShape onto the
+        // engine's CollisionShape -- the menu deliberately exposes
+        // a curated 3-option subset (Original / Simplified / Volume)
+        // instead of the full enum so the UI stays uncluttered.
+        engine::helper::CollisionShape shape =
+            engine::helper::CollisionShape::VoxelCube;
+        const char* shape_label = "5cm voxel cubes";
+        switch (menu_->collisionDebugShape()) {
+        case engine::ui::Menu::CollisionDebugShape::Original:
+            shape = engine::helper::CollisionShape::None;
+            shape_label = "original mesh";
+            break;
+        case engine::ui::Menu::CollisionDebugShape::Simplified:
+            shape = engine::helper::CollisionShape::Decimate;
+            shape_label = "gap-filled simplified";
+            break;
+        case engine::ui::Menu::CollisionDebugShape::Volume:
+            shape = engine::helper::CollisionShape::VoxelCube;
+            shape_label = "5cm voxel cubes";
+            break;
+        }
+
+        // One CollisionMesh PER (mesh, primitive) pair so each
+        // material part paints in its own segmentation colour AND
+        // carries its own MaterialInfo::name_ for gameplay surface
+        // lookups (footstep sounds, friction, etc.). build_bvh is
+        // false here -- the BVH builder runs an O(N log N)
         // multithreaded pass that on Bistro-sized input would freeze
         // the render thread on the first in-game frame. The debug
         // visualisation only needs the flat triangle list. Player
@@ -2853,19 +2891,25 @@ void RealWorldApplication::drawFrame() {
             int built = 0;
             size_t total_tris = 0;
             for (size_t mi = 0; mi < data.meshes_.size(); ++mi) {
-                auto m = std::make_shared<engine::helper::CollisionMesh>();
-                if (m->buildFromDrawableMesh(
-                        *obj, mi, /*build_bvh=*/false)) {
-                    total_tris += m->triangleCount();
-                    ++built;
-                    collision_world_.addMesh(std::move(m));
-                    any_added = true;
+                const auto& mesh = data.meshes_[mi];
+                for (size_t pi = 0; pi < mesh.primitives_.size(); ++pi) {
+                    auto m = std::make_shared<engine::helper::CollisionMesh>();
+                    if (m->buildFromDrawablePrimitive(
+                            *obj, mi, pi,
+                            /*build_bvh=*/false,
+                            shape)) {
+                        total_tris += m->triangleCount();
+                        ++built;
+                        collision_world_.addMesh(std::move(m));
+                        any_added = true;
+                    }
                 }
             }
             if (built > 0) {
                 std::cout << "[collision] " << built
-                          << " mesh(es), " << total_tris
-                          << " tris from drawable" << std::endl;
+                          << " primitive(s), " << total_tris
+                          << " tris (" << shape_label
+                          << ") from drawable" << std::endl;
             }
         };
         buildAndAdd(bistro_exterior_scene_);
