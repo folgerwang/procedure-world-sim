@@ -307,11 +307,14 @@ ENGINE_CPP_SRCS := \
     $(ENGINE_DIR)/game_object/object_file.cpp       \
     $(ENGINE_DIR)/game_object/patch.cpp             \
     $(ENGINE_DIR)/game_object/plane.cpp             \
+    $(ENGINE_DIR)/game_object/player_controller.cpp \
     $(ENGINE_DIR)/game_object/shape_base.cpp        \
     $(ENGINE_DIR)/game_object/sphere.cpp            \
     $(ENGINE_DIR)/game_object/terrain.cpp           \
     $(ENGINE_DIR)/game_object/view_object.cpp       \
     $(ENGINE_DIR)/helper/bvh.cpp                    \
+    $(ENGINE_DIR)/helper/collision_debug_draw.cpp   \
+    $(ENGINE_DIR)/helper/collision_mesh.cpp         \
     $(ENGINE_DIR)/helper/engine_helper.cpp          \
     $(ENGINE_DIR)/helper/mesh_tool.cpp              \
     $(ENGINE_DIR)/ray_tracing/raytracing_callable.cpp       \

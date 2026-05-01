@@ -16,6 +16,7 @@
 #include "game_object/lbm_test.h"
 #include "game_object/camera.h"
 #include "game_object/camera_object.h"
+#include "game_object/player_controller.h"
 #include "game_object/sphere.h"
 #include "scene_rendering/skydome.h"
 #include "scene_rendering/weather_system.h"
@@ -31,6 +32,7 @@
 #include "ray_tracing/raytracing_base.h"
 #include "helper/engine_helper.h"
 #include "helper/gpu_profiler.h"
+#include "helper/collision_mesh.h"
 #include "ui/menu.h"
 #include "plugins/plugin_manager.h"
 #include "plugins/auto_rig/auto_rig_plugin.h"
@@ -167,6 +169,15 @@ private:
 
     std::vector<std::shared_ptr<ego::DrawableObject>> drawable_objects_;
     std::shared_ptr<ego::DrawableObject> player_object_;
+    // Drives the scene-skinned.gltf rig from WASD input each frame —
+    // procedural pose (idle bob + walk cycle) plus terrain clamp and
+    // capsule collision against the level.
+    std::unique_ptr<ego::PlayerController> player_controller_;
+
+    // Triangle-mesh collision world. Populated once both bistro scenes
+    // are isReady(); PlayerController consults it every frame.
+    engine::helper::CollisionWorld collision_world_;
+    bool collision_world_built_ = false;
     std::shared_ptr<ego::DrawableObject> bistro_exterior_scene_;
     std::shared_ptr<ego::DrawableObject> bistro_interior_scene_;
 

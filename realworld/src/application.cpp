@@ -105,6 +105,10 @@ static glm::vec2 s_last_mouse_pos;
 static float s_mouse_wheel_offset = 0.0f;
 static int s_key = 0;
 static bool s_toggle_profiler_pause = false;
+// Edge-trigger for the F1 keypress. Consumed in drawFrame() and
+// forwarded to Menu::toggleCollisionDebug() so the menu's checkbox
+// and the F1 hotkey share one canonical flag.
+static bool s_request_toggle_collision_debug = false;
 
 static void keyInputCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
@@ -112,15 +116,17 @@ static void keyInputCallback(GLFWwindow* window, int key, int scancode, int acti
     if (action != GLFW_RELEASE && !s_camera_paused) {
         s_key = key;
     }
-
     if (action == GLFW_PRESS && key == GLFW_KEY_ESCAPE) {
         s_exit_game = true;
     }
-
     if (action == GLFW_PRESS && key == GLFW_KEY_SPACE) {
-        // Space toggles the GPU profiler flame-chart pause so you can
-        // inspect any frame without it scrolling away.
         s_toggle_profiler_pause = true;
+    }
+    if (action == GLFW_PRESS && key == GLFW_KEY_F1) {
+        // F1 is a shortcut for the "Game Objects -> Debug Collision Mesh"
+        // menu item.  We can't touch the menu directly from a GLFW
+        // callback, so set an edge-trigger that drawFrame() consumes.
+        s_request_toggle_collision_debug = true;
     }
 }
 
@@ -446,6 +452,12 @@ void RealWorldApplication::initVulkan() {
     // --cluster-debug flag is set. Shares the same descriptor-set layout
     // list as ShapeBase since the vertex shader only needs the camera SSBO.
     ego::ClusterDebugDraw::initStaticMembers(
+        device_,
+        desc_set_layouts,
+        graphic_pipeline_info_,
+        renderbuffer_formats_[int(er::RenderPasses::kForward)]);
+
+    eh::CollisionDebugDraw::initStaticMembers(
         device_,
         desc_set_layouts,
         graphic_pipeline_info_,
@@ -889,6 +901,10 @@ void RealWorldApplication::initVulkan() {
             "assets/Bistro_v5_2/BistroInterior.fbx",
             glm::inverse(view_params_.view));
 
+    // Spawn the rigged auto-rig character (19 bones, no embedded
+    // animation channels — PlayerController drives the rig procedurally
+    // each frame). spawnAt() is called once the level finishes loading
+    // so the character appears in front of the camera.
     player_object_ =
         ego::DrawableObject::createAsync(
             *mesh_load_task_manager_,
@@ -898,8 +914,10 @@ void RealWorldApplication::initVulkan() {
             graphic_pipeline_info_,
             repeat_texture_sampler_,
             thin_film_lut_tex_,
-            "assets/Characters/scifi_girl_v.01.glb",
+            "assets/Characters/scene-skinned.gltf",
             glm::inverse(view_params_.view));
+
+    player_controller_ = std::make_unique<ego::PlayerController>();
 
     // Bistro scenes contain a sky dome mesh that draws a purple atmospheric
     // background.  Disabled so only game objects and the player render.
@@ -1633,6 +1651,17 @@ void RealWorldApplication::drawScene(
         gpu_profiler_.togglePause();
         s_toggle_profiler_pause = false;
     }
+    // Consume F1-key edge-trigger for collision-mesh debug. Routes
+    // through the menu so the menu checkbox and the F1 hotkey are
+    // perfectly in sync.
+    if (s_request_toggle_collision_debug) {
+        if (menu_) {
+            menu_->toggleCollisionDebug();
+            std::cout << "[collision-debug] " <<
+                (menu_->isCollisionDebugOn() ? "ON" : "OFF") << std::endl;
+        }
+        s_request_toggle_collision_debug = false;
+    }
     gpu_profiler_.beginFrame(cmd_buf, static_cast<uint32_t>(current_frame_ % kMaxFramesInFlight));
 
     {
@@ -2025,13 +2054,31 @@ void RealWorldApplication::drawScene(
         {
             auto _scope_forward = gpu_profiler_.beginScope(cmd_buf, "Forward Pass");
 
-            object_scene_view_->draw(
-                cmd_buf,
-                desc_sets,
-                nullptr,
-                s_dbuf_idx,
-                delta_t,
-                current_time);
+            const bool show_collision_dbg =
+                menu_ && menu_->isCollisionDebugOn();
+            if (show_collision_dbg && !collision_world_.empty()) {
+                er::Viewport vp;
+                vp.x = 0.0f; vp.y = 0.0f;
+                vp.width     = float(swap_chain_info.extent.x);
+                vp.height    = float(swap_chain_info.extent.y);
+                vp.min_depth = 0.0f;
+                vp.max_depth = 1.0f;
+                er::Scissor sc;
+                sc.offset = glm::ivec2(0);
+                sc.extent = swap_chain_info.extent;
+                std::vector<er::Viewport> viewports = { vp };
+                std::vector<er::Scissor>  scissors  = { sc };
+                collision_world_.drawDebug(
+                    device_, cmd_buf, desc_sets, viewports, scissors);
+            } else {
+                object_scene_view_->draw(
+                    cmd_buf,
+                    desc_sets,
+                    nullptr,
+                    s_dbuf_idx,
+                    delta_t,
+                    current_time);
+            }
 
             gpu_profiler_.endScope(cmd_buf, _scope_forward);
         }
@@ -2595,6 +2642,47 @@ void RealWorldApplication::drawFrame() {
             menu_->setGameState(engine::ui::GameState::InGame);
             menu_->setBackgroundEnabled(false);
 
+            if (!collision_world_built_) {
+                auto buildAndAdd = [&](
+                    const std::shared_ptr<ego::DrawableObject>& obj) {
+                    if (!obj || !obj->isReady()) return;
+                    auto m = std::make_shared<engine::helper::CollisionMesh>();
+                    if (m->buildFromDrawable(*obj)) {
+                        std::cout << "[collision] Built mesh: "
+                                  << m->triangleCount() << " tris" << std::endl;
+                        collision_world_.addMesh(std::move(m));
+                    }
+                };
+                buildAndAdd(bistro_exterior_scene_);
+                buildAndAdd(bistro_interior_scene_);
+                collision_world_built_ = true;
+            }
+
+            if (player_object_ && player_object_->isReady() &&
+                player_controller_ && !player_controller_->isSpawned()) {
+                const auto& cam = main_camera_object_->getCameraViewInfo();
+                glm::vec3 cam_pos = main_camera_object_->getCameraPosition();
+                glm::vec2 fwd_xz(cam.facing_dir.x, cam.facing_dir.z);
+                float fxz_len = glm::length(fwd_xz);
+                if (fxz_len > 1e-3f) {
+                    fwd_xz /= fxz_len;
+                } else {
+                    float yaw_rad = glm::radians(-cam.yaw);
+                    fwd_xz = glm::vec2(
+                        std::cos(yaw_rad), std::sin(yaw_rad));
+                }
+                const float kSpawnAhead = 3.0f;
+                glm::vec2 spawn_xz =
+                    glm::vec2(cam_pos.x, cam_pos.z) + fwd_xz * kSpawnAhead;
+                float spawn_y = engine::game_object::getTerrainGroundHeight(
+                    spawn_xz);
+                glm::vec3 spawn_pos(spawn_xz.x, spawn_y, spawn_xz.y);
+                player_controller_->spawnAt(spawn_pos, cam.yaw);
+                std::cout << "[player] Spawned at ("
+                          << spawn_pos.x << ", " << spawn_pos.y << ", "
+                          << spawn_pos.z << ") yaw=" << cam.yaw << std::endl;
+            }
+
             // Upload cluster data to the GPU cluster renderer now that
             // meshes are fully loaded. Iterates every mesh in every
             // drawable and uploads its ClusterMesh sidecar.
@@ -2728,6 +2816,18 @@ void RealWorldApplication::drawFrame() {
             glm::inverse(view_params_.view));
         object_scene_view_->addDrawableObject(player_object_);
         shadow_object_scene_view_->addDrawableObject(player_object_);
+    }
+
+    if (player_object_ && player_controller_) {
+        const float cam_yaw =
+            main_camera_object_->getCameraViewInfo().yaw;
+        player_controller_->update(
+            window_,
+            delta_t_,
+            cam_yaw,
+            player_object_,
+            drawable_objects_,
+            &collision_world_);
     }
 
     if (player_object_) {
@@ -2956,6 +3056,9 @@ void RealWorldApplication::cleanup() {
     }
 
     plugin_manager_.shutdownAll();
+
+    collision_world_.destroyDebugBuffers(device_);
+    eh::CollisionDebugDraw::destroyStaticMembers(device_);
 
     if (gpu_profiler_initialized_) {
         gpu_profiler_.destroy(device_);

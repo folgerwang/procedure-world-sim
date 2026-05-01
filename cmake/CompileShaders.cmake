@@ -155,6 +155,13 @@ add_spirv(SPIRV_FILES "cluster_cull_comp.spv"     "cluster_cull.comp"     comput
 add_spirv(SPIRV_FILES "cluster_debug_vert.spv" "cluster_debug.vert" vertex)
 add_spirv(SPIRV_FILES "cluster_debug_frag.spv" "cluster_debug.frag" fragment)
 
+# ── Collision debug draw ──────────────────────────────────────────────────────
+# Renders static-mesh collision triangles flat-shaded with a hash of the
+# triangle id so adjacent faces look obviously different. Toggled in-game
+# with F1; consumed by helper::CollisionDebugDraw.
+add_spirv(SPIRV_FILES "collision_debug_vert.spv" "collision_debug.vert" vertex)
+add_spirv(SPIRV_FILES "collision_debug_frag.spv" "collision_debug.frag" fragment)
+
 # ── Simple geometry passes ────────────────────────────────────────────────────
 add_spirv(SPIRV_FILES "base_shape_draw_vert.spv" "base_shape_draw.vert" vertex)
 add_spirv(SPIRV_FILES "base_shape_draw_frag.spv" "base_shape_draw.frag" fragment)
