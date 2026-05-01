@@ -593,6 +593,14 @@ void RealWorldApplication::initVulkan() {
         swap_chain_info_.extent,
         kCubemapSize);
 
+    // Create the fullscreen envmap background pipeline (dynamic rendering path).
+    skydome_->initEnvmapBackgroundPipeline(
+        device_,
+        descriptor_pool_,
+        ibl_creator_->getEnvmapTexture(),
+        texture_sampler_,
+        renderbuffer_formats_[int(er::RenderPasses::kForward)]);
+
     for (auto& image : swap_chain_info_.images) {
         er::Helper::transitionImageLayout(
             device_,
@@ -1003,6 +1011,16 @@ void RealWorldApplication::recreateSwapChain() {
         ibl_creator_->getEnvmapTexture(),
         texture_sampler_,
         swap_chain_info_.extent);
+
+    // Recreate the envmap background pipeline for the new descriptor pool /
+    // swap-chain format (the dynamic rendering pipeline must match the current
+    // forward pass color + depth formats).
+    skydome_->initEnvmapBackgroundPipeline(
+        device_,
+        descriptor_pool_,
+        ibl_creator_->getEnvmapTexture(),
+        texture_sampler_,
+        renderbuffer_formats_[int(er::RenderPasses::kForward)]);
 
     ibl_creator_->recreate(
         device_,
@@ -1763,6 +1781,17 @@ void RealWorldApplication::drawScene(
 
         s_mouse_wheel_offset = 0;
 
+        // ── Sync shadow light direction with the live sun position ────────────
+        // getSunDir() returns a ground→sun unit vector (positive Y = above
+        // horizon).  The shadow camera expects sun→ground (negate it).
+        // Clamp to a minimum elevation of ~5° so cascades don't blow up
+        // when the sun skims the horizon or dips below it.
+        {
+            glm::vec3 sun = skydome_->getSunDir();
+            sun.y = std::max(sun.y, 0.087f);  // sin(5°)
+            shadow_camera_object_->setLightDir(-glm::normalize(sun));
+        }
+
         // ── Compute CSM cascade matrices ──────────────────────────────────────
         main_camera_object_->readGpuCameraInfo();
         const auto& main_cam = main_camera_object_->getCameraViewInfo();
@@ -2082,6 +2111,61 @@ void RealWorldApplication::drawScene(
             gpu_profiler_.endScope(cmd_buf, _scope_cluster);
         }
 
+        // ── Sky envmap background pass ─────────────────────────────────────────
+        // Draws the sky envmap into all pixels that were NOT covered by geometry
+        // (i.e. depth buffer still holds the cleared value 1.0 = far plane).
+        // Uses LESS_OR_EQUAL depth test + no depth write so it is a cheap
+        // background fill that automatically respects the forward pass results.
+        if (skydome_) {
+            auto _scope_sky = gpu_profiler_.beginScope(cmd_buf, "Sky Envmap");
+
+            auto color_buf = object_scene_view_->getColorBuffer();
+            auto depth_buf = object_scene_view_->getDepthBuffer();
+
+            er::RenderingAttachmentInfo sky_color_attach;
+            sky_color_attach.image_view   = color_buf->view;
+            sky_color_attach.image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+            sky_color_attach.load_op      = er::AttachmentLoadOp::LOAD;
+            sky_color_attach.store_op     = er::AttachmentStoreOp::STORE;
+
+            er::RenderingAttachmentInfo sky_depth_attach;
+            sky_depth_attach.image_view   = depth_buf->view;
+            sky_depth_attach.image_layout = er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            sky_depth_attach.load_op      = er::AttachmentLoadOp::LOAD;
+            sky_depth_attach.store_op     = er::AttachmentStoreOp::STORE;
+
+            er::RenderingInfo sky_ri = {};
+            sky_ri.render_area_offset  = { 0, 0 };
+            sky_ri.render_area_extent  = screen_size;
+            sky_ri.layer_count         = 1;
+            sky_ri.view_mask           = 0;
+            sky_ri.color_attachments   = { sky_color_attach };
+            sky_ri.depth_attachments   = { sky_depth_attach };
+            sky_ri.stencil_attachments = {};
+
+            cmd_buf->beginDynamicRendering(sky_ri);
+
+            er::Viewport sky_vp;
+            sky_vp.x = 0; sky_vp.y = 0;
+            sky_vp.width      = float(screen_size.x);
+            sky_vp.height     = float(screen_size.y);
+            sky_vp.min_depth  = 0.0f;
+            sky_vp.max_depth  = 1.0f;
+            er::Scissor sky_sc;
+            sky_sc.offset = glm::ivec2(0);
+            sky_sc.extent = screen_size;
+            cmd_buf->setViewports({ sky_vp });
+            cmd_buf->setScissors({ sky_sc });
+
+            skydome_->drawEnvmap(
+                cmd_buf,
+                main_camera_object_->getCameraViewInfo().inv_view_proj_relative);
+
+            cmd_buf->endDynamicRendering();
+
+            gpu_profiler_.endScope(cmd_buf, _scope_sky);
+        }
+
         // Transition ALL cascade layers back to depth-attachment for next frame.
         cmd_buf->addImageBarrier(
             shadow_object_scene_view_->getDepthBuffer()->image,
@@ -2346,8 +2430,8 @@ void RealWorldApplication::drawFrame() {
     tm localtm;
     gmtime_s(&localtm, &now);
 
-    float latitude = 37.4419f;
-    float longtitude = -122.1430f; // west.
+    float latitude   = 37.4419f;
+    float longtitude = -122.1430f; // west (negative = west of prime meridian).
 
     // Time-of-day driven by the Menu slider (see Skydome window).  When
     // auto-advance is on, the Menu ticks tod_hours_ forward by real time
@@ -2357,15 +2441,34 @@ void RealWorldApplication::drawFrame() {
     // re-bootstrap cleanly instead of EMA-blending toward the new sun
     // position over many seconds.
     menu_->advanceTimeOfDay(delta_t_);
+
+    // Convert the menu's UTC-based time to local solar time for the hardcoded
+    // longitude.  Each 15° of longitude = 1 hour; west is negative.
+    // This ensures the sun position is correct regardless of the timezone
+    // the machine running the app is set to.
+    const float utc_h =
+        static_cast<float>(localtm.tm_hour) +
+        static_cast<float>(localtm.tm_min)  / 60.0f +
+        static_cast<float>(localtm.tm_sec)  / 3600.0f;
+    const float solar_h = std::fmod(utc_h + longtitude / 15.0f + 24.0f, 24.0f);
+
+    // Sync the menu slider to solar time once on startup.
+    // Use solar noon (12.0) as the fallback if the computed solar time is
+    // outside daytime hours (below-horizon sun gives a pitch-black sky and
+    // kills IBL, so always start in daytime regardless of the user's timezone).
+    static bool s_tod_synced = false;
+    if (!s_tod_synced) {
+        const bool is_daytime = (solar_h >= 6.0f && solar_h <= 20.0f);
+        menu_->setTimeOfDayHours(is_daytime ? solar_h : 12.0f);
+        s_tod_synced = true;
+    }
+
     const float tod_h = menu_->getTimeOfDayHours();
     const int   tod_hour = static_cast<int>(tod_h);
     const int   tod_min  = static_cast<int>((tod_h - tod_hour) * 60.0f);
     const int   tod_sec  = static_cast<int>(((tod_h - tod_hour) * 60.0f - tod_min) * 60.0f);
 
-    if (menu_->consumeTodJump()) {
-        if (skydome_)     skydome_->resetMiniBuffer();
-        if (ibl_creator_) ibl_creator_->resetMiniBuffer();
-    }
+    menu_->consumeTodJump(); // consume the flag; dither cycle runs continuously, no reset needed
 
     skydome_->update(
         latitude,
@@ -2477,15 +2580,6 @@ void RealWorldApplication::drawFrame() {
         if (bistro_interior_scene_) {
             object_scene_view_->addDrawableObject(bistro_interior_scene_);
         }
-
-        // Big scene transition - drop the temporally-integrated sky and
-        // IBL state so the next frame's compute dispatches re-bootstrap
-        // every texel via the cheap "block fill" path instead of
-        // EMA-blending against a stale envmap.  Wire similar calls in
-        // wherever else you do a hard scene change (player teleport,
-        // load-from-save, debug "skip to dawn", etc.).
-        if (skydome_)     skydome_->resetMiniBuffer();
-        if (ibl_creator_) ibl_creator_->resetMiniBuffer();
 
         s_update_frame_count = -1;
     }

@@ -172,6 +172,11 @@ add_spirv(SPIRV_FILES "cube_skybox.spv"  "cube_skybox.frag" fragment)
 # with a per-frame 8x8 dither offset (cycles 64 unique positions in 64
 # frames).  Net per-frame sky cost: ~1/64 of the full-res draw.
 add_spirv(SPIRV_FILES "cube_skybox_mini_comp.spv" "cube_skybox_mini.comp" compute)
+# Fullscreen envmap background pass: draws the live sky envmap into all pixels
+# not covered by geometry (depth == far-plane 1.0) using a push-constant
+# inv_view_proj_relative matrix to reconstruct the world-space view direction.
+add_spirv(SPIRV_FILES "skybox_envmap_vert.spv" "skybox_envmap.vert" vertex)
+add_spirv(SPIRV_FILES "skybox_envmap_frag.spv" "skybox_envmap.frag" fragment)
 
 # ── IBL pre-filter (cube_ibl.frag compiled 4 ways) ───────────────────────────
 # NUM_SAMPLES must be defined for all variants: getSampleVector/filterColor are
