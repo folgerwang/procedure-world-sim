@@ -197,12 +197,32 @@ add_spirv(SPIRV_FILES "ibl_smooth_comp.spv"          "ibl_smooth.comp"         c
 
 # Dithered "mini-buffer" IBL convolution: same Lambertian / GGX / Charlie
 # filters as cube_ibl.frag, but written as a compute shader that updates
-# only 1/64 of the destination IBL cubemap mip's texels per frame.  Uses
-# the same NUM_SAMPLES as the reference fragment-shader path so the
-# steady-state output is identical.
-add_spirv(SPIRV_FILES "ibl_lambertian_mini_comp.spv" "cube_ibl_mini.comp" compute  LAMBERTIAN_FILTER  NUM_SAMPLES=1024)
-add_spirv(SPIRV_FILES "ibl_ggx_mini_comp.spv"        "cube_ibl_mini.comp" compute  GGX_FILTER         NUM_SAMPLES=1024)
-add_spirv(SPIRV_FILES "ibl_charlie_mini_comp.spv"    "cube_ibl_mini.comp" compute  CHARLIE_FILTER     NUM_SAMPLES=1024)
+# only 1/(dither_stride^2) of the destination IBL cubemap mip's texels per
+# frame.  NUM_SAMPLES is the SAMPLE BANK size; per-frame, each touched
+# texel reads NUM_SAMPLES_PER_FRAME = NUM_SAMPLES / dither_count samples.
+#
+# Why 16384 (= 16 × dither_count for dither_stride = 32):
+#   - The dither_count for the mini path is 32×32 = 1024 frames.  With
+#     NUM_SAMPLES = 1024 we'd get NUM_SAMPLES_PER_FRAME = 1, and the
+#     stride-coprime trick degenerates because NUM_SAMPLES == dither_count
+#     ((stride * dither_count) mod NUM_SAMPLES == 0 for every stride).
+#     Each pixel ends up locked to its single random importance sample
+#     forever → permanent dot-pattern noise (visible in the IBL diffuse
+#     debug viewer as a regular pixelated grid).
+#   - Bumping NUM_SAMPLES to 16384 gives NUM_SAMPLES_PER_FRAME = 16, the
+#     same per-touch quality the shader had with the original 8×8 / 64-
+#     frame setup.  gcd(NUM_SAMPLES_PER_FRAME + 1, 1024) = gcd(17, 1024)
+#     = 1 and gcd(17, 16384) = 1, so consecutive touches of the same pixel
+#     advance through disjoint sample subsets.  Combined with the EMA
+#     (kIblTemporalAlpha = 0.25, ~4-touch effective window) each diffuse
+#     pixel converges to a ~64-effective-sample estimate -- smooth blob
+#     instead of pixelated noise.
+#   - Shader cost is unchanged from the old setup: the per-touch loop runs
+#     16 iterations per texel (same as before), and we still touch only
+#     1/1024 of the mip per frame.
+add_spirv(SPIRV_FILES "ibl_lambertian_mini_comp.spv" "cube_ibl_mini.comp" compute  LAMBERTIAN_FILTER  NUM_SAMPLES=16384)
+add_spirv(SPIRV_FILES "ibl_ggx_mini_comp.spv"        "cube_ibl_mini.comp" compute  GGX_FILTER         NUM_SAMPLES=16384)
+add_spirv(SPIRV_FILES "ibl_charlie_mini_comp.spv"    "cube_ibl_mini.comp" compute  CHARLIE_FILTER     NUM_SAMPLES=16384)
 
 # ── CSM debug ─────────────────────────────────────────────────────────────────
 add_spirv(SPIRV_FILES "csm_debug_frag.spv" "csm_debug.frag" fragment)

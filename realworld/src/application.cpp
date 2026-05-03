@@ -1797,11 +1797,17 @@ void RealWorldApplication::drawScene(
             !s_camera_paused && s_mouse_right_button_pressed);
 
         // Push per-frame feature flags into the camera buffer so shaders can
-        // conditionally skip expensive passes (e.g. shadow sampling).
+        // conditionally skip expensive passes (e.g. shadow sampling) and
+        // dispatch on the active "Render Debug" visualisation mode.
         {
             uint32_t input_flags = 0u;
             if (menu_->isShadowPassTurnOff())
                 input_flags |= FEATURE_INPUT_SHADOW_DISABLED;
+            // Pack the menu's render-debug mode (0..255) into bits 16..23.
+            // base.frag and cluster_bindless.frag mask + branch on this.
+            input_flags |= (static_cast<uint32_t>(menu_->getDebugRenderMode())
+                            << FEATURE_INPUT_DEBUG_MODE_SHIFT)
+                           & FEATURE_INPUT_DEBUG_MODE_MASK;
             main_camera_object_->setInputFeatureFlags(input_flags);
         }
 
