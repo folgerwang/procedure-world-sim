@@ -147,9 +147,17 @@ add_spirv(SPIRV_FILES "base_depthonly_frag_NOMTL.spv" "base_depthonly.frag" frag
 add_spirv(SPIRV_FILES "base_depthonly_csm_geom.spv" "base_depthonly_csm.geom" geometry)
 
 # ── Cluster bindless pass ─────────────────────────────────────────────────────
-add_spirv(SPIRV_FILES "cluster_bindless_vert.spv" "cluster_bindless.vert" vertex)
-add_spirv(SPIRV_FILES "cluster_bindless_frag.spv" "cluster_bindless.frag" fragment)
-add_spirv(SPIRV_FILES "cluster_cull_comp.spv"     "cluster_cull.comp"     compute)
+add_spirv(SPIRV_FILES "cluster_bindless_vert.spv"     "cluster_bindless.vert" vertex)
+add_spirv(SPIRV_FILES "cluster_bindless_frag.spv"     "cluster_bindless.frag" fragment)
+# OIT_OUTPUT variant: same shader compiled with -DOIT_OUTPUT so it writes
+# the McGuire-Bavoil weighted-blended pair (accum + reveal) instead of a
+# single colour.  Used by the cluster translucent pipeline; resolved by
+# oit_composite_frag.spv in a fullscreen pass.
+add_spirv(SPIRV_FILES "cluster_bindless_oit_frag.spv" "cluster_bindless.frag" fragment OIT_OUTPUT)
+add_spirv(SPIRV_FILES "cluster_cull_comp.spv"         "cluster_cull.comp"     compute)
+# WBOIT resolve — fullscreen pass that reads accum+reveal and writes the
+# composited translucent layer back over the scene colour buffer.
+add_spirv(SPIRV_FILES "oit_composite_frag.spv"        "oit_composite.frag"    fragment)
 
 # ── Cluster debug draw ────────────────────────────────────────────────────────
 add_spirv(SPIRV_FILES "cluster_debug_vert.spv" "cluster_debug.vert" vertex)

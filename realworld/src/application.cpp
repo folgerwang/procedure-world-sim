@@ -2234,11 +2234,19 @@ void RealWorldApplication::drawScene(
             sc.offset = glm::ivec2(0);
             sc.extent = screen_size;
 
+            // cluster_renderer_->draw now manages its own dynamic-rendering
+            // sub-passes for the WBOIT translucent + composite stages, so we
+            // hand it the host pass's color/depth views + screen size.  It
+            // re-begins our pass with LOAD/LOAD before returning so the
+            // matching endDynamicRendering() below still has a pass to close.
             cluster_renderer_->draw(
                 cmd_buf,
                 cluster_desc_sets,
                 { vp },
-                { sc });
+                { sc },
+                color_buf->view,
+                depth_buf->view,
+                screen_size);
 
             cmd_buf->endDynamicRendering();
 
