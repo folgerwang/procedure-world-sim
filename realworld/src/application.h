@@ -57,6 +57,17 @@ public:
     void run();
     void setFrameBufferResized(bool resized) { framebuffer_resized_ = resized; }
 
+    // Screen-space velocity buffer (RG16F, NDC delta).  Populated by
+    // the cluster G-buffer pass when deferred rendering is enabled;
+    // empty (zero-cleared, in COLOR_ATTACHMENT_OPTIMAL layout) when
+    // forward rendering is selected.  Future passes that want to
+    // consume it (TAA, motion blur, temporal reprojection) should
+    // (a) check deferred_rendering_enabled_, (b) insert the
+    // appropriate barrier to SHADER_READ_ONLY before sampling, and
+    // (c) restore COLOR_ATTACHMENT_OPTIMAL afterwards so the next
+    // frame's G-buffer pass can re-clear into it.
+    const er::TextureInfo& getVelocityBuffer() const { return gbuf_velocity_; }
+
 private:
     void initWindow();
     void initVulkan();
@@ -67,6 +78,22 @@ private:
     void createDepthResources(const glm::uvec2& display_size);
     void createHdrColorBuffer(const glm::uvec2& display_size);
     void createColorBufferCopy(const glm::uvec2& display_size);
+    // ── Deferred-rendering G-buffer (3 RTs + reused depth) ────────────────
+    // First step toward clustered shading: opaque cluster geometry rasterises
+    // material attributes into these targets instead of running PBR in the
+    // fragment shader.  A compute resolve (initDeferredResolve) then runs
+    // PBR once per pixel and writes the lit colour into hdr_color_buffer_.
+    // Other forward passes (terrain / grass / hair / sky / OIT) keep running
+    // ON TOP of that resolved HDR target — see drawScene() for the order.
+    // Lifetime hooks: createGBuffer is called from recreateRenderBuffer so
+    // the targets always match the swap-chain size.
+    void createGBuffer(const glm::uvec2& display_size);
+    void initDeferredResolve();
+    // The resolve writes into a caller-supplied storage image — by default
+    // object_scene_view_'s color buffer, since that's where the rest of the
+    // scene already targets.  Pass an alternate view to override.
+    void writeDeferredResolveDescriptors(
+        const std::shared_ptr<er::ImageView>& output_color_view = nullptr);
     void recreateRenderBuffer(const glm::uvec2& display_size);
     void createTextureSampler();
     void createDescriptorSets();
@@ -145,6 +172,53 @@ private:
     std::shared_ptr<er::Framebuffer> hdr_water_frame_buffer_;
     std::shared_ptr<er::RenderPass> hdr_render_pass_;
     std::shared_ptr<er::RenderPass> hdr_water_render_pass_;
+
+    // ── Deferred renderer (Phase 1: cluster_bindless only) ────────────────
+    // Master toggle.  When false, drawScene() runs the legacy forward path
+    // and none of the gbuf_/deferred_ resources need to be valid.  When
+    // true, the cluster opaque pass writes the G-buffer instead of lit
+    // colour; deferred_resolve.comp reads it back and lights the scene
+    // into hdr_color_buffer_; everything else (terrain / sky / OIT) is
+    // overlaid forward as before.  Defaults to OFF so this commit is
+    // visually identical until the user opts in via the menu / hotkey.
+    bool deferred_rendering_enabled_ = true;
+    // RT0  — RGBA8       albedo.rgb + ao.a
+    // RT1  — RGBA8_UNORM octahedral-encoded normal.xy + roughness.z + flags.w
+    //                    (RGBA8 keeps each channel symmetric and fits the
+    //                    bandwidth budget; world normals are reconstructed
+    //                    via octDecode in deferred_resolve.comp.)
+    // RT2  — RGBA8       emissive.rgb + metallic.a
+    //                    (emissive is tone-mapped/clamped at fragment time
+    //                    so an LDR target is sufficient for opaque assets;
+    //                    upgrade to R11G11B10F if HDR emissives become an
+    //                    issue.)
+    er::Format gbuf_albedo_ao_format_      = er::Format::R8G8B8A8_UNORM;
+    er::Format gbuf_normal_rough_format_   = er::Format::R8G8B8A8_UNORM;
+    er::Format gbuf_emissive_metal_format_ = er::Format::R8G8B8A8_UNORM;
+    // RT3 — RG16F  screen-space NDC-delta velocity (curNDC - prevNDC).
+    //              Written by cluster_bindless.frag GBUFFER_OUTPUT branch;
+    //              deferred resolve does NOT consume it.  Exposed via
+    //              getVelocityBuffer() so future passes (TAA, motion
+    //              blur, temporal reprojection / upscaling) can sample
+    //              it.  Half-float because NDC delta is small and signed
+    //              and we want sub-pixel precision; R8G8 would clip and
+    //              quantise badly at sub-pixel scales.
+    er::Format gbuf_velocity_format_       = er::Format::R16G16_SFLOAT;
+    er::TextureInfo gbuf_albedo_ao_;
+    er::TextureInfo gbuf_normal_rough_;
+    er::TextureInfo gbuf_emissive_metal_;
+    er::TextureInfo gbuf_velocity_;
+    // Pipeline format descriptor used when (re)creating the cluster G-buffer
+    // pipeline.  Built once in initVulkan and shared with cluster_renderer_->
+    // initBindlessGBufferPipeline().
+    er::PipelineRenderbufferFormats gbuffer_renderbuffer_format_;
+
+    // Compute resolve resources.
+    std::shared_ptr<er::Sampler>             gbuf_sampler_;
+    std::shared_ptr<er::DescriptorSetLayout> deferred_resolve_desc_set_layout_;
+    std::shared_ptr<er::DescriptorSet>       deferred_resolve_desc_set_;
+    std::shared_ptr<er::PipelineLayout>      deferred_resolve_pipeline_layout_;
+    std::shared_ptr<er::Pipeline>            deferred_resolve_pipeline_;
 
     er::TextureInfo sample_tex_;
     er::TextureInfo ggx_lut_tex_;

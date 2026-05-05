@@ -218,11 +218,233 @@ void RealWorldApplication::createColorBufferCopy(const glm::uvec2& display_size)
         std::source_location::current());
 }
 
+// ─── Deferred G-buffer + compute resolve ─────────────────────────────────
+// Phase 1 of the deferred-rendering migration.  See application.h for the
+// G-buffer layout and the rationale for the (small) RGBA8 formats; the
+// compute resolve runs PBR once per pixel and writes hdr_color_buffer_.
+//
+// Lifetime: createGBuffer is called from recreateRenderBuffer so the
+// G-buffer always matches the swap-chain extent.  initDeferredResolve runs
+// once at startup (after descriptor pool + IBL textures are ready).
+// writeDeferredResolveDescriptors is called from createGBuffer so the
+// (re-allocated) image views are re-bound on every resize.
+void RealWorldApplication::createGBuffer(const glm::uvec2& display_size) {
+    auto usage = SET_3_FLAG_BITS(
+        ImageUsage,
+        SAMPLED_BIT,
+        COLOR_ATTACHMENT_BIT,
+        TRANSFER_DST_BIT);
+
+    er::Helper::create2DTextureImage(
+        device_,
+        gbuf_albedo_ao_format_,
+        display_size,
+        1,
+        gbuf_albedo_ao_,
+        usage,
+        er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        std::source_location::current());
+
+    er::Helper::create2DTextureImage(
+        device_,
+        gbuf_normal_rough_format_,
+        display_size,
+        1,
+        gbuf_normal_rough_,
+        usage,
+        er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        std::source_location::current());
+
+    er::Helper::create2DTextureImage(
+        device_,
+        gbuf_emissive_metal_format_,
+        display_size,
+        1,
+        gbuf_emissive_metal_,
+        usage,
+        er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        std::source_location::current());
+
+    // RT3 — screen-space NDC-delta velocity (curNDC - prevNDC).
+    // Allocated alongside the rest of the G-buffer; sampled by future
+    // TAA / motion blur passes via getVelocityBuffer().
+    er::Helper::create2DTextureImage(
+        device_,
+        gbuf_velocity_format_,
+        display_size,
+        1,
+        gbuf_velocity_,
+        usage,
+        er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        std::source_location::current());
+
+    // Re-bind the freshly-allocated image views to the resolve descriptor
+    // set.  No-op until initDeferredResolve has run.
+    if (deferred_resolve_desc_set_) {
+        writeDeferredResolveDescriptors();
+    }
+}
+
 void RealWorldApplication::recreateRenderBuffer(const glm::uvec2& display_size) {
     createDepthResources(display_size);
     createHdrColorBuffer(display_size);
     createColorBufferCopy(display_size);
+    createGBuffer(display_size);
     createFramebuffers(display_size);
+}
+
+void RealWorldApplication::initDeferredResolve() {
+    // Lazily init only once.  Called from initVulkan after descriptor pool,
+    // PBR/runtime-light layouts, and IBL textures are ready (so the global
+    // sets bound at dispatch time already have valid contents).
+    if (deferred_resolve_pipeline_) {
+        return;
+    }
+
+    // ── Sampler shared by all G-buffer reads in the resolve compute ──────
+    // Linear filter is fine — the resolve runs at native screen resolution,
+    // one texel per pixel, so the only effect of LINEAR vs NEAREST would be
+    // half-texel shifts at attribute discontinuities, which we want to
+    // smooth out anyway.  CLAMP_TO_EDGE because we never sample outside
+    // the screen rect.
+    if (!gbuf_sampler_) {
+        gbuf_sampler_ = device_->createSampler(
+            er::Filter::LINEAR,
+            er::SamplerAddressMode::CLAMP_TO_EDGE,
+            er::SamplerMipmapMode::NEAREST,
+            /*anisotropy*/ 0.0f,
+            std::source_location::current());
+    }
+
+    // ── Resolve descriptor set layout ─────────────────────────────────────
+    //   binding 0   sampler2D  G-buffer RT0 (albedo + ao)
+    //   binding 1   sampler2D  G-buffer RT1 (octahedral normal + roughness)
+    //   binding 2   sampler2D  G-buffer RT2 (emissive + metallic)
+    //   binding 3   sampler2D  depth (single-channel, used for world-pos
+    //                          reconstruction via inv-VP)
+    //   binding 4   image2D    HDR colour output (writeonly storage image)
+    //   binding 5   sampler2D  G-buffer RT3 (velocity, NDC delta).  Not
+    //                          consumed by the regular lighting math —
+    //                          only sampled when render-debug mode is
+    //                          DEBUG_RENDER_MODE_VELOCITY for the
+    //                          motion-vector visualisation.
+    //
+    // Lighting data (sun/CSM and IBL) reuses the existing global descriptor
+    // sets at PBR_GLOBAL_PARAMS_SET / VIEW_PARAMS_SET / RUNTIME_LIGHTS_PARAMS_SET,
+    // so the resolve compute simply binds them at the same indices it would
+    // in the forward fragment shader.  See deferred_resolve.comp.
+    {
+        std::vector<er::DescriptorSetLayoutBinding> bindings(6);
+        for (uint32_t i = 0; i < 4; ++i) {
+            bindings[i] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                i, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER);
+        }
+        bindings[4] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            4, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::STORAGE_IMAGE);
+        bindings[5] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            5, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::COMBINED_IMAGE_SAMPLER);
+        deferred_resolve_desc_set_layout_ =
+            device_->createDescriptorSetLayout(bindings);
+    }
+
+    // ── Pipeline layout ──
+    // Mirror the forward cluster pipeline's set indices so deferred_resolve
+    // .comp can use the same `set = N, binding = M` pattern as the forward
+    // shaders for IBL / camera / runtime lights.  An empty layout is dropped
+    // at SKIN_PARAMS_SET (3) since the resolve doesn't skin anything.
+    auto empty_layout = device_->createDescriptorSetLayout({});
+    er::DescriptorSetLayoutList all_layouts(RUNTIME_LIGHTS_PARAMS_SET + 1);
+    all_layouts[PBR_GLOBAL_PARAMS_SET]     = pbr_lighting_desc_set_layout_;
+    all_layouts[VIEW_PARAMS_SET]           =
+        ego::CameraObject::getViewCameraDescriptorSetLayout();
+    all_layouts[PBR_MATERIAL_PARAMS_SET]   = deferred_resolve_desc_set_layout_;
+    all_layouts[SKIN_PARAMS_SET]           = empty_layout;
+    all_layouts[RUNTIME_LIGHTS_PARAMS_SET] = runtime_lights_desc_set_layout_;
+    for (auto& l : all_layouts) if (!l) l = empty_layout;
+
+    deferred_resolve_pipeline_layout_ = er::helper::createComputePipelineLayout(
+        device_, all_layouts, /*push_const_range_size*/ 0);
+
+    deferred_resolve_pipeline_ = er::helper::createComputePipeline(
+        device_, deferred_resolve_pipeline_layout_,
+        "deferred_resolve_comp.spv",
+        std::source_location::current());
+
+    // ── Descriptor set ──
+    // Allocated once; image-view bindings are refreshed by
+    // writeDeferredResolveDescriptors on every swap-chain resize.
+    deferred_resolve_desc_set_ = device_->createDescriptorSets(
+        descriptor_pool_, deferred_resolve_desc_set_layout_, 1)[0];
+
+    writeDeferredResolveDescriptors();
+}
+
+void RealWorldApplication::writeDeferredResolveDescriptors(
+    const std::shared_ptr<er::ImageView>& output_color_view) {
+    if (!deferred_resolve_desc_set_ || !gbuf_sampler_) return;
+    if (!gbuf_albedo_ao_.view || !gbuf_normal_rough_.view ||
+        !gbuf_emissive_metal_.view) {
+        return;
+    }
+
+    // Output target: explicit override → caller view; else fall back to
+    // object_scene_view_'s color buffer (the engine's main scene target);
+    // else hdr_color_buffer_ as a last-resort fallback (used at startup
+    // before object_scene_view_ is constructed — in that window deferred
+    // mode can't be on yet anyway).
+    std::shared_ptr<er::ImageView> out_view = output_color_view;
+    if (!out_view && object_scene_view_) {
+        auto cb = object_scene_view_->getColorBuffer();
+        if (cb) out_view = cb->view;
+    }
+    if (!out_view) out_view = hdr_color_buffer_.view;
+    if (!out_view) return;
+
+    // Depth source — must be the SAME depth target the cluster G-buffer
+    // pass writes (= object_scene_view_'s depth buffer when present, since
+    // that's the buffer the rest of the scene uses too).  Falls back to
+    // the application-level depth_buffer_ when object_scene_view_ hasn't
+    // been built yet (initVulkan startup ordering).
+    std::shared_ptr<er::ImageView> depth_view;
+    if (object_scene_view_) {
+        auto db = object_scene_view_->getDepthBuffer();
+        if (db) depth_view = db->view;
+    }
+    if (!depth_view) depth_view = depth_buffer_.view;
+    if (!depth_view) return;
+
+    er::WriteDescriptorList writes;
+    writes.reserve(6);
+    er::Helper::addOneTexture(writes, deferred_resolve_desc_set_,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER, 0,
+        gbuf_sampler_, gbuf_albedo_ao_.view,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    er::Helper::addOneTexture(writes, deferred_resolve_desc_set_,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER, 1,
+        gbuf_sampler_, gbuf_normal_rough_.view,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    er::Helper::addOneTexture(writes, deferred_resolve_desc_set_,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER, 2,
+        gbuf_sampler_, gbuf_emissive_metal_.view,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    er::Helper::addOneTexture(writes, deferred_resolve_desc_set_,
+        er::DescriptorType::COMBINED_IMAGE_SAMPLER, 3,
+        gbuf_sampler_, depth_view,
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    er::Helper::addOneTexture(writes, deferred_resolve_desc_set_,
+        er::DescriptorType::STORAGE_IMAGE, 4,
+        nullptr, out_view,
+        er::ImageLayout::GENERAL);
+    if (gbuf_velocity_.view) {
+        er::Helper::addOneTexture(writes, deferred_resolve_desc_set_,
+            er::DescriptorType::COMBINED_IMAGE_SAMPLER, 5,
+            gbuf_sampler_, gbuf_velocity_.view,
+            er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    }
+    device_->updateDescriptorSets(writes);
 }
 
 void RealWorldApplication::createRenderPasses() {
@@ -259,6 +481,22 @@ void RealWorldApplication::initVulkan() {
         push_back(er::Format::B10G11R11_UFLOAT_PACK32);
     renderbuffer_formats_[int(er::RenderPasses::kShadow)].depth_format =
         er::Format::D16_UNORM;
+
+    // ── Deferred G-buffer pipeline format descriptor ──────────────────────
+    // 3 colour RTs + reused main depth.  Used when (re)creating the cluster
+    // bindless GBUFFER variant pipeline; see ClusterRenderer::initBindless
+    // GBufferPipeline.  Order matches the layout(location=N) outputs in
+    // cluster_bindless.frag's GBUFFER_OUTPUT branch:
+    //   loc 0  RT0  albedo+ao
+    //   loc 1  RT1  octahedral normal + roughness
+    //   loc 2  RT2  emissive + metallic
+    gbuffer_renderbuffer_format_.color_formats = {
+        gbuf_albedo_ao_format_,
+        gbuf_normal_rough_format_,
+        gbuf_emissive_metal_format_,
+        gbuf_velocity_format_,
+    };
+    gbuffer_renderbuffer_format_.depth_format = er::Format::D24_UNORM_S8_UINT;
 
     static auto color_no_blend_attachment = er::helper::fillPipelineColorBlendAttachmentState();
     static auto color_blend_attachment =
@@ -436,6 +674,13 @@ void RealWorldApplication::initVulkan() {
     createSyncObjects();
 
     ego::CameraObject::createViewCameraDescriptorSetLayout(device_);
+
+    // Deferred resolve — needs descriptor pool + the global PBR / view /
+    // runtime-lights layouts above, plus the G-buffer image views created
+    // by recreateRenderBuffer (called earlier in initVulkan).  Safe to run
+    // even if the runtime user never opts into deferred mode: pipeline +
+    // desc set are created idle and only cost memory until first dispatch.
+    initDeferredResolve();
 
     auto desc_set_layouts = {
         pbr_lighting_desc_set_layout_,
@@ -689,7 +934,7 @@ void RealWorldApplication::initVulkan() {
             nullptr,
             glm::uvec2(kWindowSizeX, kWindowSizeY));
 
-    object_scene_view_ = 
+    object_scene_view_ =
         std::make_shared<es::ObjectSceneView>(
             device_,
             descriptor_pool_,
@@ -698,6 +943,11 @@ void RealWorldApplication::initVulkan() {
             nullptr,
             nullptr,
             glm::uvec2(kWindowSizeX, kWindowSizeY));
+
+    // Now that object_scene_view_ owns its color buffer, point the deferred
+    // resolve compute's storage-image binding at it.  Idempotent — safe to
+    // call again on swap-chain rebuild.
+    writeDeferredResolveDescriptors();
 
     // ── Create CSM shadow depth array (2048×2048×CSM_CASCADE_COUNT) ──────────
     {
@@ -1126,6 +1376,11 @@ void RealWorldApplication::recreateSwapChain() {
         const auto& shd_fmt =
             renderbuffer_formats_[int(er::RenderPasses::kShadow)];
         shadow_object_scene_view_->recreate(shd_fmt, glm::uvec2(2048));
+
+        // Re-point the deferred resolve compute at the (newly re-allocated)
+        // object_scene_view_ color buffer + G-buffer views.  No-op if the
+        // resolve hasn't been initialised.
+        writeDeferredResolveDescriptors();
     }
 
     // ---- Camera descriptor sets ----
@@ -1719,6 +1974,13 @@ void RealWorldApplication::drawScene(
     auto& cmd_buf = command_buffer;
 
     static int s_dbuf_idx = 0;
+
+    // Sync the deferred-vs-forward toggle from the Render Debug menu.
+    // The menu owns the canonical state; drawScene reads it each frame
+    // so flipping the menu item takes effect on the very next draw.
+    if (menu_) {
+        deferred_rendering_enabled_ = menu_->isDeferredRendering();
+    }
 
     // ----- GPU Profiler: begin frame -----------------------------------------
     if (!gpu_profiler_initialized_) {
@@ -2380,6 +2642,183 @@ void RealWorldApplication::drawScene(
             auto color_buf = object_scene_view_->getColorBuffer();
             auto depth_buf = object_scene_view_->getDepthBuffer();
 
+            // ── Deferred path (Phase 1 — cluster bindless only) ──────────
+            // Forward base above already cleared + lit terrain/grass/hair/
+            // etc into color_buf and stamped depth_buf.  Here we route the
+            // cluster opaque indirect draw through the 3-RT G-buffer
+            // pipeline, then run deferred_resolve.comp to light those
+            // pixels (only).  The resolve compute samples color_buf via
+            // the storage-image binding and skips pixels where the cluster
+            // pass didn't write (albedo_ao.a == 0), preserving the forward
+            // base content.  Translucent clusters and glass still go
+            // through the existing WBOIT path, called below.
+            if (deferred_rendering_enabled_ &&
+                deferred_resolve_pipeline_ &&
+                deferred_resolve_desc_set_ &&
+                gbuf_albedo_ao_.image) {
+                auto _scope_def = gpu_profiler_.beginScope(
+                    cmd_buf, "Deferred (G-buf + Resolve)");
+
+                // 1. G-buffer pass — 3 RTs CLEAR-to-zero, depth LOAD/STORE
+                //    so cluster fragments respect forward base depth.
+                auto make_gbuf_attach = [](const std::shared_ptr<er::ImageView>& v) {
+                    er::RenderingAttachmentInfo a;
+                    a.image_view   = v;
+                    a.image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+                    a.load_op      = er::AttachmentLoadOp::CLEAR;
+                    a.store_op     = er::AttachmentStoreOp::STORE;
+                    a.clear_value.color = { {0.0f, 0.0f, 0.0f, 0.0f} };
+                    return a;
+                };
+                er::RenderingAttachmentInfo gbuf0 = make_gbuf_attach(gbuf_albedo_ao_.view);
+                er::RenderingAttachmentInfo gbuf1 = make_gbuf_attach(gbuf_normal_rough_.view);
+                er::RenderingAttachmentInfo gbuf2 = make_gbuf_attach(gbuf_emissive_metal_.view);
+                // RT3 — velocity (NDC delta).  CLEAR to (0,0) so untouched
+                // pixels read as "no motion" for downstream TAA/motion
+                // blur consumers; cluster fragments overwrite with their
+                // computed curNDC - prevNDC.
+                er::RenderingAttachmentInfo gbuf3 = make_gbuf_attach(gbuf_velocity_.view);
+
+                er::RenderingAttachmentInfo gbuf_depth;
+                gbuf_depth.image_view   = depth_buf->view;
+                gbuf_depth.image_layout = er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                gbuf_depth.load_op      = er::AttachmentLoadOp::LOAD;
+                gbuf_depth.store_op     = er::AttachmentStoreOp::STORE;
+
+                er::RenderingInfo gri = {};
+                gri.render_area_offset = { 0, 0 };
+                gri.render_area_extent = screen_size;
+                gri.layer_count        = 1;
+                gri.view_mask          = 0;
+                gri.color_attachments  = { gbuf0, gbuf1, gbuf2, gbuf3 };
+                gri.depth_attachments  = { gbuf_depth };
+
+                cmd_buf->beginDynamicRendering(gri);
+
+                // Same descriptor set list the forward cluster path uses;
+                // the G-buffer pipeline's layout is identical (only the
+                // fragment SPV + RT formats differ).
+                er::DescriptorSetList cluster_desc_sets(
+                    RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
+                cluster_desc_sets[PBR_GLOBAL_PARAMS_SET] = pbr_lighting_desc_set_;
+                cluster_desc_sets[VIEW_PARAMS_SET] =
+                    main_camera_object_->getViewCameraDescriptorSet();
+                cluster_desc_sets[RUNTIME_LIGHTS_PARAMS_SET] =
+                    runtime_lights_desc_set_;
+
+                er::Viewport vp_g;
+                vp_g.x = 0; vp_g.y = 0;
+                vp_g.width  = float(screen_size.x);
+                vp_g.height = float(screen_size.y);
+                vp_g.min_depth = 0.0f;
+                vp_g.max_depth = 1.0f;
+                er::Scissor sc_g;
+                sc_g.offset = glm::ivec2(0);
+                sc_g.extent = screen_size;
+
+                cluster_renderer_->drawOpaqueGBuffer(
+                    cmd_buf, cluster_desc_sets, { vp_g }, { sc_g });
+
+                cmd_buf->endDynamicRendering();
+
+                // 2. Barriers for the resolve dispatch.
+                //    G-buffer + depth: COLOR/DEPTH attachment → SHADER_READ
+                //    color_buf:        COLOR_ATTACHMENT → GENERAL (storage write)
+                er::ImageResourceInfo from_color_att = {
+                    er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
+                    SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
+                er::ImageResourceInfo to_shader_read = {
+                    er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    SET_FLAG_BIT(Access, SHADER_READ_BIT),
+                    SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) };
+                cmd_buf->addImageBarrier(gbuf_albedo_ao_.image,
+                    from_color_att, to_shader_read, 0, 1, 0, 1);
+                cmd_buf->addImageBarrier(gbuf_normal_rough_.image,
+                    from_color_att, to_shader_read, 0, 1, 0, 1);
+                cmd_buf->addImageBarrier(gbuf_emissive_metal_.image,
+                    from_color_att, to_shader_read, 0, 1, 0, 1);
+                // Velocity isn't read by the resolve compute, but transition
+                // it now alongside the others so it ends the frame in a
+                // sample-friendly layout for any TAA/motion-blur pass that
+                // the application may add in the future.  The post-resolve
+                // restore below puts it back to COLOR_ATTACHMENT_OPTIMAL
+                // for next frame's clear.
+                cmd_buf->addImageBarrier(gbuf_velocity_.image,
+                    from_color_att, to_shader_read, 0, 1, 0, 1);
+
+                er::ImageResourceInfo from_depth_att = {
+                    er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                    SET_FLAG_BIT(Access, DEPTH_STENCIL_ATTACHMENT_WRITE_BIT),
+                    SET_FLAG_BIT(PipelineStage, LATE_FRAGMENT_TESTS_BIT) };
+                cmd_buf->addImageBarrier(depth_buf->image,
+                    from_depth_att, to_shader_read, 0, 1, 0, 1);
+
+                er::ImageResourceInfo color_att_to_general = {
+                    er::ImageLayout::GENERAL,
+                    SET_2_FLAG_BITS(Access, SHADER_READ_BIT, SHADER_WRITE_BIT),
+                    SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) };
+                cmd_buf->addImageBarrier(color_buf->image,
+                    from_color_att, color_att_to_general, 0, 1, 0, 1);
+
+                // 3. Bind compute resolve and dispatch.  Set indices match
+                //    the forward path — see initDeferredResolve.
+                er::DescriptorSetList resolve_sets(
+                    RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
+                resolve_sets[PBR_GLOBAL_PARAMS_SET]     = pbr_lighting_desc_set_;
+                resolve_sets[VIEW_PARAMS_SET]           =
+                    main_camera_object_->getViewCameraDescriptorSet();
+                resolve_sets[PBR_MATERIAL_PARAMS_SET]   = deferred_resolve_desc_set_;
+                resolve_sets[RUNTIME_LIGHTS_PARAMS_SET] = runtime_lights_desc_set_;
+                cmd_buf->bindPipeline(
+                    er::PipelineBindPoint::COMPUTE, deferred_resolve_pipeline_);
+                cmd_buf->bindDescriptorSets(
+                    er::PipelineBindPoint::COMPUTE,
+                    deferred_resolve_pipeline_layout_,
+                    resolve_sets);
+                const uint32_t kGroupSize = 8;
+                uint32_t gx = (screen_size.x + kGroupSize - 1) / kGroupSize;
+                uint32_t gy = (screen_size.y + kGroupSize - 1) / kGroupSize;
+                cmd_buf->dispatch(gx, gy, 1);
+
+                // 4. Barriers back to attachment-friendly layouts so the
+                //    upcoming translucent / sky / debug passes can attach
+                //    color and depth.  G-buffer images ride next-frame in
+                //    SHADER_READ_ONLY → COLOR_ATTACHMENT (re-cleared).
+                er::ImageResourceInfo general_to_color_att = {
+                    er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
+                    SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
+                cmd_buf->addImageBarrier(color_buf->image,
+                    color_att_to_general, general_to_color_att, 0, 1, 0, 1);
+
+                er::ImageResourceInfo shader_read_to_depth_att = {
+                    er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                    SET_2_FLAG_BITS(Access,
+                        DEPTH_STENCIL_ATTACHMENT_READ_BIT,
+                        DEPTH_STENCIL_ATTACHMENT_WRITE_BIT),
+                    SET_2_FLAG_BITS(PipelineStage,
+                        EARLY_FRAGMENT_TESTS_BIT,
+                        LATE_FRAGMENT_TESTS_BIT) };
+                cmd_buf->addImageBarrier(depth_buf->image,
+                    to_shader_read, shader_read_to_depth_att, 0, 1, 0, 1);
+
+                er::ImageResourceInfo shader_read_to_color_att = {
+                    er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    SET_FLAG_BIT(Access, COLOR_ATTACHMENT_WRITE_BIT),
+                    SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
+                cmd_buf->addImageBarrier(gbuf_albedo_ao_.image,
+                    to_shader_read, shader_read_to_color_att, 0, 1, 0, 1);
+                cmd_buf->addImageBarrier(gbuf_normal_rough_.image,
+                    to_shader_read, shader_read_to_color_att, 0, 1, 0, 1);
+                cmd_buf->addImageBarrier(gbuf_emissive_metal_.image,
+                    to_shader_read, shader_read_to_color_att, 0, 1, 0, 1);
+                cmd_buf->addImageBarrier(gbuf_velocity_.image,
+                    to_shader_read, shader_read_to_color_att, 0, 1, 0, 1);
+
+                gpu_profiler_.endScope(cmd_buf, _scope_def);
+            }
+
             er::RenderingAttachmentInfo color_attach;
             color_attach.image_view   = color_buf->view;
             color_attach.image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
@@ -2428,19 +2867,37 @@ void RealWorldApplication::drawScene(
             sc.offset = glm::ivec2(0);
             sc.extent = screen_size;
 
-            // cluster_renderer_->draw now manages its own dynamic-rendering
-            // sub-passes for the WBOIT translucent + composite stages, so we
-            // hand it the host pass's color/depth views + screen size.  It
-            // re-begins our pass with LOAD/LOAD before returning so the
-            // matching endDynamicRendering() below still has a pass to close.
-            cluster_renderer_->draw(
-                cmd_buf,
-                cluster_desc_sets,
-                { vp },
-                { sc },
-                color_buf->view,
-                depth_buf->view,
-                screen_size);
+            // Deferred mode already ran the opaque cluster pass into the
+            // G-buffer + resolved into color_buf above; here we only need
+            // to overlay the WBOIT translucent (glass / windows) pass.
+            // Forward mode keeps the original combined call which does
+            // both opaque and translucent in one go.
+            if (deferred_rendering_enabled_ &&
+                deferred_resolve_pipeline_ &&
+                gbuf_albedo_ao_.image) {
+                cluster_renderer_->drawTranslucentForward(
+                    cmd_buf,
+                    cluster_desc_sets,
+                    { vp },
+                    { sc },
+                    color_buf->view,
+                    depth_buf->view,
+                    screen_size);
+            } else {
+                // cluster_renderer_->draw now manages its own dynamic-rendering
+                // sub-passes for the WBOIT translucent + composite stages, so we
+                // hand it the host pass's color/depth views + screen size.  It
+                // re-begins our pass with LOAD/LOAD before returning so the
+                // matching endDynamicRendering() below still has a pass to close.
+                cluster_renderer_->draw(
+                    cmd_buf,
+                    cluster_desc_sets,
+                    { vp },
+                    { sc },
+                    color_buf->view,
+                    depth_buf->view,
+                    screen_size);
+            }
 
             // Probe debug-draw — small icospheres at every probe
             // position, colored by SH-evaluated irradiance.  Toggled
@@ -3046,6 +3503,13 @@ void RealWorldApplication::drawFrame() {
                         graphic_pipeline_info_,
                         renderbuffer_formats_[
                             int(er::RenderPasses::kForward)]);
+                    // Deferred G-buffer variant — paired with the forward
+                    // pipeline above; reuses its bindless layout, swaps
+                    // the fragment SPV for cluster_bindless_gbuf_frag.spv,
+                    // and targets the application's 3-RT G-buffer format.
+                    cluster_renderer_->initBindlessGBufferPipeline(
+                        graphic_pipeline_info_,
+                        gbuffer_renderbuffer_format_);
                 }
             }
         }
@@ -3400,6 +3864,14 @@ void RealWorldApplication::cleanupSwapChain() {
     depth_buffer_copy_.destroy(device_);
     hdr_color_buffer_.destroy(device_);
     hdr_color_buffer_copy_.destroy(device_);
+    // Deferred G-buffer targets — paired with the swap-chain extent and so
+    // recreated alongside the depth/HDR colour buffers above.  Sampler /
+    // pipeline / descriptor set / layout outlive the swap chain (they are
+    // size-independent) and are torn down in cleanup() instead.
+    gbuf_albedo_ao_.destroy(device_);
+    gbuf_normal_rough_.destroy(device_);
+    gbuf_emissive_metal_.destroy(device_);
+    gbuf_velocity_.destroy(device_);
     device_->destroyFramebuffer(hdr_frame_buffer_);
     device_->destroyFramebuffer(hdr_water_frame_buffer_);
 
