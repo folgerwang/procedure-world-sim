@@ -292,6 +292,8 @@ add_library(engine STATIC
     "${ENGINE_DIR}/scene_rendering/view_capture.cpp"
     "${ENGINE_DIR}/scene_rendering/ssao.cpp"
     "${ENGINE_DIR}/scene_rendering/cluster_renderer.cpp"
+    "${ENGINE_DIR}/scene_rendering/dynamic_cubemap.cpp"
+    "${ENGINE_DIR}/scene_rendering/ambient_probe_system.cpp"
     "${ENGINE_DIR}/scene_rendering/volume_cloud.cpp"
     "${ENGINE_DIR}/scene_rendering/volume_noise.cpp"
     "${ENGINE_DIR}/scene_rendering/weather_system.cpp"

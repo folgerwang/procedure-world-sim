@@ -25,6 +25,8 @@
 #include "scene_rendering/volume_noise.h"
 #include "scene_rendering/ssao.h"
 #include "scene_rendering/cluster_renderer.h"
+#include "scene_rendering/dynamic_cubemap.h"
+#include "scene_rendering/ambient_probe_system.h"
 #include "scene_rendering/conemap.h"
 #include "scene_rendering/prt_shadow.h"
 #include "scene_rendering/terrain_scene_view.h"
@@ -191,6 +193,16 @@ private:
     std::shared_ptr<es::VolumeCloud> volume_cloud_;
     std::shared_ptr<es::SSAO> ssao_;
     std::shared_ptr<es::ClusterRenderer> cluster_renderer_;
+    // Real-time reflection cubemap centred at the active ambient probe.
+    // Captures one face per frame; depth-aware reprojection keeps the
+    // other 5 faces consistent as the probe origin moves.  See
+    // scene_rendering/dynamic_cubemap.h.
+    std::shared_ptr<es::DynamicCubemap> dynamic_cubemap_;
+    // Auto-placed grid of SH ambient probes; lit by moving the dynamic
+    // cubemap between probe positions and projecting each captured cube
+    // into 9 SH coefficients per probe.  See
+    // scene_rendering/ambient_probe_system.h.
+    std::shared_ptr<es::AmbientProbeSystem> ambient_probe_system_;
     std::shared_ptr<es::VolumeNoise> volume_noise_;
     std::shared_ptr<es::IblCreator> ibl_creator_;
     std::shared_ptr<ego::ConemapObj> conemap_obj_;

@@ -843,6 +843,66 @@ void RealWorldApplication::initVulkan() {
         device_,
         descriptor_pool_);
 
+    // ── Dynamic reflection cubemap + ambient probe system ────────────
+    // The dynamic cubemap is the moving "scratch probe" — it captures
+    // one cube face per frame at whatever world position the ambient
+    // probe system currently has it parked over.  After 6 frames per
+    // probe the probe system bakes the cube into 9 SH coefficients in
+    // its grid SSBO.  Both feed cluster_bindless.frag's ambient term
+    // via the ambient_probes.glsl.h helpers (descriptor set wired in
+    // the cluster pipeline layout).  See scene_rendering/dynamic_cubemap.h
+    // and scene_rendering/ambient_probe_system.h for the per-class
+    // architecture.
+    dynamic_cubemap_ = std::make_shared<es::DynamicCubemap>(
+        device_,
+        descriptor_pool_,
+        texture_sampler_,
+        cubemap_render_pass_);
+
+    ambient_probe_system_ = std::make_shared<es::AmbientProbeSystem>(
+        device_,
+        descriptor_pool_,
+        texture_sampler_);
+
+    // Source-cube descriptor for the SH projection pass — point at the
+    // dynamic cubemap's current read view.  We re-bind whenever the
+    // ping-pong index swaps (every frame), but the initial binding
+    // here gets us through the first frame before any swap.
+    ambient_probe_system_->writeProjectDescriptorsForCube(
+        device_,
+        dynamic_cubemap_->getColorCubeView(),
+        dynamic_cubemap_->getDepthCube().view);
+
+    // Hook the sky envmap as the per-frame face-capture source.  The
+    // dynamic cubemap will copy from this envmap into its active face
+    // each frame — sky content is at infinity so a position-independent
+    // copy is functionally equivalent to a per-probe sky render at a
+    // fraction of the cost.  When you extend to scene-content capture
+    // later, replace this with a render pass into the active face slice.
+    dynamic_cubemap_->setSkyEnvmap(
+        ibl_creator_->getEnvmapTexture().image,
+        kCubemapSize);
+
+    // Probe debug-draw pipeline.  Renders a small icosphere at each
+    // probe's world position into the forward pass; colored by the
+    // probe's SH-evaluated irradiance.  Toggleable via menu (see
+    // Render Debug → Show Probes).
+    ambient_probe_system_->initDebugPipeline(
+        device_,
+        ego::CameraObject::getViewCameraDescriptorSetLayout(),
+        renderbuffer_formats_[int(er::RenderPasses::kForward)],
+        graphic_pipeline_info_);
+
+    // Initial probe placement.  Uses a generous default bounding box
+    // centred at the world origin — covers typical scene scales (out to
+    // ±50 m horizontal, ±15 m vertical).  When the level's actual
+    // bounding box is known (e.g. after assets stream in) the
+    // application can re-call placeProbeGrid() to retarget the grid.
+    ambient_probe_system_->placeProbeGrid(
+        device_,
+        glm::vec3(-50.0f, -10.0f, -50.0f),
+        glm::vec3( 50.0f,  30.0f,  50.0f));
+
     ego::DebugDrawObject::updateStaticDescriptorSet(
         device_,
         descriptor_pool_,
@@ -1588,6 +1648,25 @@ void RealWorldApplication::registerIblDebugImTextureIds() {
         const int n = register_all_mips(ibl_creator_->getIblSheenTexture(), ids);
         menu_->setIblSheenFaceMipTextureIds(ids, n);
     }
+
+    // ── Dynamic cubemap face thumbnails for the Render Debug viewer ──
+    // Both ping-pong buffers' six per-face 2D layer views are wrapped
+    // as ImTextureIDs.  The viewer picks the right ping-pong slice each
+    // frame using getCurrentReadIdx() (forwarded via setDynamicCubeFrameInfo
+    // each frame in renderFrame).
+    if (menu_ && dynamic_cubemap_) {
+        std::array<engine::ui::Menu::IblDebugFaceArray, 2> dyn_ids{};
+        for (int p = 0; p < 2; ++p) {
+            for (uint32_t f = 0; f < es::DynamicCubemap::kNumFaces; ++f) {
+                const auto& view = dynamic_cubemap_->getColorFaceView(p, f);
+                if (view) {
+                    dyn_ids[p][f] = er::Helper::addImTextureID(
+                        texture_sampler_, view);
+                }
+            }
+        }
+        menu_->setDynamicCubeFaceTextureIds(dyn_ids);
+    }
 }
 
 void RealWorldApplication::createTextureSampler() {
@@ -1714,6 +1793,14 @@ void RealWorldApplication::drawScene(
             ibl_creator_->getEnvmapTexture(),
             kCubemapSize);
 
+        // updateIblDiffuseMapMini now (a) convolves into the 4× / 16×-
+        // area accumulator rt_ibl_diffuse_tex_ for higher dither
+        // coverage per frame, then (b) LINEAR-filter blits down to the
+        // 1× consumer-facing tmp_ibl_diffuse_tex_ — the 4×4 → 1
+        // downsample is a free 16-tap box filter that absorbs the
+        // residual Monte-Carlo speckle without an explicit Gaussian
+        // blur pass.  See IblCreator::updateIblDiffuseMapMini for the
+        // size choice and blit setup.
         ibl_creator_->updateIblDiffuseMapMini(cmd_buf, kCubemapSize);
         ibl_creator_->updateIblSpecularMapMini(cmd_buf, kCubemapSize);
         // Sheen runs last - it advances the shared mini_frame_index_ so
@@ -1722,7 +1809,17 @@ void RealWorldApplication::drawScene(
         ibl_creator_->updateIblSheenMapMini(cmd_buf, kCubemapSize);
         gpu_profiler_.endScope(cmd_buf, _scope);
     }
- 
+
+    // NOTE: ambient probe update USED to live here (right after IBL
+    // / Skydome update), but that was BEFORE cluster_renderer_->cull()
+    // runs — and cull's first action is a host-write to zero
+    // draw_count_buffer_.  Since the count buffer is HOST_COHERENT,
+    // the GPU sees the zeroed value at the moment it executes the
+    // probe's drawIndexedIndirectCount, which then draws nothing.
+    // The probe-pass code is therefore moved to AFTER the cluster
+    // cull dispatch (search for the "Ambient probe system" block
+    // below).
+
     er::DescriptorSetList desc_sets{
         pbr_lighting_desc_set_,
         view_desc_set };
@@ -2037,13 +2134,105 @@ void RealWorldApplication::drawScene(
         // ---- End CSM debug --------------------------------------------------
 
         // ── GPU cluster culling (Nanite-lite) ──
-        if (cluster_renderer_ && cluster_renderer_->isEnabled()) {
+        // Originally this was the only cluster cull dispatch per frame.
+        // After adding the dynamic cubemap probe pass we now run the
+        // cull TWICE per frame:
+        //   1. INSIDE DynamicCubemap::update — once per face capture
+        //      with the FACE's view-proj, so each cube face sees its
+        //      proper frustum (not just the main camera's).
+        //   2. AFTER the probe pass — with the main camera's view-proj
+        //      so the main forward pass below reads the right set.
+        // The second of those is in a separate dispatch a few blocks
+        // down (search "Cluster Cull (main, post-probe)").  This
+        // first one is kept for the case where the probe path is
+        // disabled — when ambient_probe_system_ isn't initialized,
+        // we still need the main cull to populate the indirect
+        // buffer for the forward pass.
+        if (cluster_renderer_ && cluster_renderer_->isEnabled() &&
+            !ambient_probe_system_) {
             auto _scope_cull = gpu_profiler_.beginScope(cmd_buf, "Cluster Cull");
             cluster_renderer_->cull(
                 cmd_buf,
                 main_camera_object_->getViewProjMatrix(),
                 main_camera_object_->getCameraPosition());
             gpu_profiler_.endScope(cmd_buf, _scope_cull);
+        }
+
+        // ── Ambient probe system ──────────────────────────────────────
+        // Drives the dynamic cubemap to the active grid probe each frame
+        // and bakes the resulting cubemap into 9 SH coefficients per
+        // probe every 6 frames.  Runs AFTER cluster_renderer_->cull()
+        // because cull's host-side counter zeroing (HOST_COHERENT) is
+        // visible to the GPU immediately at submission time — placing
+        // the probe draw before cull would make the indirect draw read
+        // a count of 0 (cull's zeroed state) and render nothing.
+        // See scene_rendering/ambient_probe_system.h.
+        if (ambient_probe_system_ && dynamic_cubemap_) {
+            auto _scope_probes =
+                gpu_profiler_.beginScope(cmd_buf, "Ambient Probes");
+
+            ambient_probe_system_->writeProjectDescriptorsForCube(
+                device_,
+                dynamic_cubemap_->getColorCubeView(),
+                dynamic_cubemap_->getDepthCube().view);
+
+            // Lock the dynamic cubemap origin to the main camera —
+            // this is now the production architecture, not a debug
+            // override.  The cubemap captures the camera's view; each
+            // probe's SH integration uses parallax-aware sampling
+            // (see sh_project.comp) to reconstruct what THAT PROBE
+            // would see from its grid position, using camera depth as
+            // the world-geometry approximation.
+            ambient_probe_system_->setLockedOrigin(
+                /*enable*/ true,
+                main_camera_object_->getCameraPosition());
+
+            er::DescriptorSetList probe_shared_sets(
+                RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
+            probe_shared_sets[PBR_GLOBAL_PARAMS_SET] = pbr_lighting_desc_set_;
+            probe_shared_sets[VIEW_PARAMS_SET]       = view_desc_set;
+            probe_shared_sets[RUNTIME_LIGHTS_PARAMS_SET] =
+                runtime_lights_desc_set_;
+            ambient_probe_system_->update(
+                device_,
+                cmd_buf,
+                dynamic_cubemap_,
+                cluster_renderer_,
+                skydome_,
+                probe_shared_sets,
+                main_camera_object_->getCameraPosition());
+
+            if (menu_) {
+                glm::vec3 face_pos[6];
+                for (int f = 0; f < 6; ++f) {
+                    face_pos[f] = dynamic_cubemap_->getFaceCapturePos(f);
+                }
+                menu_->setDynamicCubeFrameInfo(
+                    dynamic_cubemap_->getCurrentReadIdx(),
+                    static_cast<int>(dynamic_cubemap_->getCurrentFace()),
+                    dynamic_cubemap_->getFrameIndex(),
+                    face_pos);
+            }
+
+            gpu_profiler_.endScope(cmd_buf, _scope_probes);
+        }
+
+        // ── Re-cull cluster set for the MAIN camera ───────────────────
+        // The probe pass internally re-culls cluster_renderer_'s
+        // indirect_draw_buffer_ with each face's frustum (see
+        // DynamicCubemap::update — the per-face cull picks up clusters
+        // off the main camera's view that probes still need to see).
+        // After it returns, the indirect buffer holds the LAST face's
+        // cull results; we rebuild it for the main camera's frustum
+        // here so the main render pass below draws the correct set.
+        if (cluster_renderer_ && cluster_renderer_->isEnabled()) {
+            auto _scope_recull = gpu_profiler_.beginScope(
+                cmd_buf, "Cluster Cull (main, post-probe)");
+            cluster_renderer_->cull(
+                cmd_buf,
+                main_camera_object_->getViewProjMatrix(),
+                main_camera_object_->getCameraPosition());
+            gpu_profiler_.endScope(cmd_buf, _scope_recull);
         }
 
         // ── Per-mesh frustum culling ──────────────────────────────────
@@ -2097,7 +2286,12 @@ void RealWorldApplication::drawScene(
                 color_attach.image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
                 color_attach.load_op      = er::AttachmentLoadOp::CLEAR;
                 color_attach.store_op     = er::AttachmentStoreOp::STORE;
-                color_attach.clear_value.color = { {0.05f, 0.05f, 0.05f, 1.0f} };
+                // Scene color clear.  Pure blue (0, 0, 1) — chosen as
+                // a vivid, clearly-non-natural colour so any pixel that
+                // ends up still showing this value at end-of-frame is
+                // an obvious "nothing drew here" signal (sky pass skip,
+                // depth-test reject, fullscreen pass that didn't fire).
+                color_attach.clear_value.color = { {0.0f, 0.0f, 1.0f, 1.0f} };
 
                 er::RenderingAttachmentInfo depth_attach;
                 depth_attach.image_view   = depth_buf->view;
@@ -2247,6 +2441,22 @@ void RealWorldApplication::drawScene(
                 color_buf->view,
                 depth_buf->view,
                 screen_size);
+
+            // Probe debug-draw — small icospheres at every probe
+            // position, colored by SH-evaluated irradiance.  Toggled
+            // via the Render Debug menu.  Drawn inside the cluster
+            // pass so it shares depth state with the main scene.
+            if (ambient_probe_system_ && menu_ &&
+                menu_->showProbeDebug()) {
+                auto _scope_probe_dbg = gpu_profiler_.beginScope(
+                    cmd_buf, "Probe Debug Draw");
+                ambient_probe_system_->drawDebug(
+                    cmd_buf,
+                    cluster_desc_sets,
+                    { vp },
+                    { sc });
+                gpu_profiler_.endScope(cmd_buf, _scope_probe_dbg);
+            }
 
             cmd_buf->endDynamicRendering();
 
@@ -3305,6 +3515,8 @@ void RealWorldApplication::cleanup() {
     volume_cloud_->destroy(device_);
     if (ssao_) ssao_->destroy(device_);
     if (cluster_renderer_) cluster_renderer_->destroy();
+    if (ambient_probe_system_) ambient_probe_system_->destroy(device_);
+    if (dynamic_cubemap_) dynamic_cubemap_->destroy(device_);
     unit_plane_->destroy(device_);
     unit_box_->destroy(device_);
     unit_sphere_->destroy(device_);

@@ -159,6 +159,35 @@ add_spirv(SPIRV_FILES "cluster_cull_comp.spv"         "cluster_cull.comp"     co
 # composited translucent layer back over the scene colour buffer.
 add_spirv(SPIRV_FILES "oit_composite_frag.spv"        "oit_composite.frag"    fragment)
 
+# ── Dynamic reflection cubemap ───────────────────────────────────────────────
+# Depth-aware reprojection compute pass for the temporally-amortised
+# reflection probe (see scene_rendering/dynamic_cubemap.h).  One face is
+# freshly rendered per frame; this shader warps the other 5 to the new
+# camera position.
+add_spirv(SPIRV_FILES "cube_reproject_comp.spv"       "cube_reproject.comp"   compute)
+
+# Per-face depth → linear-distance conversion for the dynamic cubemap.
+# Runs once per face render (just after the face render pass) to feed
+# the linear distances that sh_project.comp's parallax-aware probe
+# sampling reads from depth_cube_.
+add_spirv(SPIRV_FILES "depth_to_linear_comp.spv"      "depth_to_linear.comp"  compute)
+
+# ── Ambient probe SH projection ──────────────────────────────────────────────
+# Projects a captured cubemap into the first 9 spherical-harmonic basis
+# functions and stores the cosine-convolved coefficients in one slot of
+# the probe SSBO.  See scene_rendering/ambient_probe_system.h for the
+# orchestrating class.
+add_spirv(SPIRV_FILES "sh_project_comp.spv"           "sh_project.comp"       compute)
+
+# ── Ambient probe debug-draw ─────────────────────────────────────────────────
+# Renders one icosphere per probe at its world-space position; the
+# fragment shader evaluates the probe's SH coefficients in the surface
+# normal direction so each sphere visually shows the irradiance it
+# contributes.  Geometry is generated procedurally in the vertex
+# shader (no vertex/index buffers needed).
+add_spirv(SPIRV_FILES "probe_debug_vert.spv"          "probe_debug.vert"      vertex)
+add_spirv(SPIRV_FILES "probe_debug_frag.spv"          "probe_debug.frag"      fragment)
+
 # ── Cluster debug draw ────────────────────────────────────────────────────────
 add_spirv(SPIRV_FILES "cluster_debug_vert.spv" "cluster_debug.vert" vertex)
 add_spirv(SPIRV_FILES "cluster_debug_frag.spv" "cluster_debug.frag" fragment)
