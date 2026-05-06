@@ -300,21 +300,27 @@ void RealWorldApplication::createGBuffer(const glm::uvec2& display_size) {
 }
 
 void RealWorldApplication::createHiZPyramid(const glm::uvec2& display_size) {
-    // Round up to next power of two so 2×2 reductions don't lose halves at
-    // odd swap-chain extents.  Mip count = log2(maxDim)+1 so the smallest
-    // mip is 1×1.  Each mip is half the previous in each dim (rounded up).
-    auto next_pow2 = [](uint32_t v) -> uint32_t {
-        if (v <= 1) return 1;
-        uint32_t p = 1;
-        while (p < v) p <<= 1;
-        return p;
-    };
-    glm::uvec2 size_p2 = {
-        next_pow2(display_size.x),
-        next_pow2(display_size.y) };
-    uint32_t max_dim = std::max(size_p2.x, size_p2.y);
+    // Hi-Z mip 0 is HALF the scene-depth resolution — the standard layout
+    // for a Hi-Z pyramid (Frostbite / Nanite / Doom Eternal all do this).
+    // It keeps the build shader's 2×2 max reduction natural at every
+    // level: mip 0 samples scene depth (full res) at a 2:1 ratio to
+    // produce the half-res mip 0; mips 1..N-1 are 2:1 reductions of the
+    // previous mip.  Higher mips ceil-divide so the last column/row is
+    // never dropped: size[k+1] = (size[k] + 1) / 2.  Mip count runs until
+    // the bigger dimension reaches 1.  E.g. 1280×720 →
+    //   mip 0 640×360 → 320×180 → 160×90 → 80×45 → 40×23 → 20×12 →
+    //   10×6 → 5×3 → 3×2 → 2×1 → 1×1   = 11 mips.
+    glm::uvec2 size = {
+        (display_size.x + 1u) / 2u,
+        (display_size.y + 1u) / 2u };
+    if (size.x == 0) size.x = 1;
+    if (size.y == 0) size.y = 1;
+    uint32_t max_dim = std::max(size.x, size.y);
     uint32_t mips = 1;
-    while ((1u << mips) <= max_dim) ++mips;
+    {
+        uint32_t d = max_dim;
+        while (d > 1) { d = (d + 1u) / 2u; ++mips; }
+    }
 
     // Tear down any previous allocation.
     hiz_mip_views_.clear();
@@ -323,7 +329,7 @@ void RealWorldApplication::createHiZPyramid(const glm::uvec2& display_size) {
         hiz_pyramid_.destroy(device_);
     }
 
-    hiz_pyramid_size_ = size_p2;
+    hiz_pyramid_size_ = size;
     hiz_pyramid_mips_ = mips;
 
     // STORAGE_BIT — written by hiz_build.comp via image2D.
@@ -332,7 +338,7 @@ void RealWorldApplication::createHiZPyramid(const glm::uvec2& display_size) {
     er::Helper::create2DTextureImage(
         device_,
         hiz_format_,
-        size_p2,
+        size,
         mips,
         hiz_pyramid_,
         SET_2_FLAG_BITS(ImageUsage, SAMPLED_BIT, STORAGE_BIT),
@@ -353,6 +359,18 @@ void RealWorldApplication::createHiZPyramid(const glm::uvec2& display_size) {
             /*base_mip*/  m,
             /*mip_count*/ 1));
     }
+
+    // Full-pyramid sampled view — covers all mips so the cull / debug
+    // shaders can pick a level with textureLod().  Separate from
+    // hiz_mip_views_ which are single-mip storage views.
+    hiz_pyramid_full_view_ = device_->createImageView(
+        hiz_pyramid_.image,
+        er::ImageViewType::VIEW_2D,
+        hiz_format_,
+        SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+        std::source_location::current(),
+        /*base_mip*/  0,
+        /*mip_count*/ mips);
 
     // Full-pyramid view — covers ALL mips so the cluster cull shader's
     // textureLod(samp, uv, mip) call can pick the right mip for the
@@ -454,27 +472,99 @@ void RealWorldApplication::writeHiZBuildDescriptors(
     }
 
     // Mip 0's source is the scene depth (read via depth-aspect view).
-    // Higher mips source the Hi-Z mip directly above.
+    // Higher mips source the Hi-Z mip directly above.  The pyramid stays
+    // in GENERAL layout throughout the build chain (storage-image writes
+    // need GENERAL, and sampler reads tolerate it), so mip-1+ source
+    // bindings must declare GENERAL too.  Mip 0's source is the scene
+    // depth which is in SHADER_READ_ONLY_OPTIMAL by the time the Hi-Z
+    // build dispatches (caller transitions it).
     for (uint32_t m = 0; m < hiz_pyramid_mips_; ++m) {
         std::shared_ptr<er::ImageView> src_view =
             (m == 0) ? scene_depth_view : hiz_mip_views_[m - 1];
+        const er::ImageLayout src_layout =
+            (m == 0) ? er::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                     : er::ImageLayout::GENERAL;
         if (!src_view || !hiz_mip_views_[m]) continue;
 
         er::WriteDescriptorList writes;
         writes.reserve(2);
-        // The source layout at sample time will be SHADER_READ_ONLY_OPTIMAL
-        // (set up by the host between dispatches).  Descriptor write layout
-        // is informational; actual at-dispatch layout is what matters.
         er::Helper::addOneTexture(writes, hiz_build_desc_sets_[m],
             er::DescriptorType::COMBINED_IMAGE_SAMPLER, 0,
-            hiz_sampler_, src_view,
-            er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+            hiz_sampler_, src_view, src_layout);
         er::Helper::addOneTexture(writes, hiz_build_desc_sets_[m],
             er::DescriptorType::STORAGE_IMAGE, 1,
             nullptr, hiz_mip_views_[m],
             er::ImageLayout::GENERAL);
         device_->updateDescriptorSets(writes);
     }
+}
+
+void RealWorldApplication::buildHiZPyramid(
+    const std::shared_ptr<er::CommandBuffer>& cmd_buf,
+    const glm::uvec2& scene_depth_size) {
+    if (!hiz_build_pipeline_ || hiz_pyramid_mips_ == 0) return;
+    if (hiz_build_desc_sets_.size() < hiz_pyramid_mips_) return;
+
+    cmd_buf->bindPipeline(
+        er::PipelineBindPoint::COMPUTE, hiz_build_pipeline_);
+
+    // Each iteration's src_size = previous iteration's dst_size, except
+    // the very first iteration (mip 0) whose src is the scene depth.
+    glm::uvec2 src_size = scene_depth_size;
+    glm::uvec2 dst_size = hiz_pyramid_size_;   // pyramid mip 0
+
+    // Reused barrier states — between mip writes and the next mip's reads
+    // we only need an execution + memory dependency, no layout change
+    // (pyramid stays in GENERAL).
+    er::ImageResourceInfo from_write = {
+        er::ImageLayout::GENERAL,
+        SET_FLAG_BIT(Access, SHADER_WRITE_BIT),
+        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) };
+    er::ImageResourceInfo to_read = {
+        er::ImageLayout::GENERAL,
+        SET_FLAG_BIT(Access, SHADER_READ_BIT),
+        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) };
+
+    struct PushC {
+        uint32_t dst_x, dst_y;
+        uint32_t src_x, src_y;
+    };
+
+    for (uint32_t m = 0; m < hiz_pyramid_mips_; ++m) {
+        if (m > 0) {
+            // Make mip (m-1)'s writes visible to mip m's reads.
+            cmd_buf->addImageBarrier(
+                hiz_pyramid_.image, from_write, to_read,
+                /*base_mip*/ m - 1, /*mip_count*/ 1, 0, 1);
+        }
+
+        cmd_buf->bindDescriptorSets(
+            er::PipelineBindPoint::COMPUTE,
+            hiz_build_pipeline_layout_,
+            { hiz_build_desc_sets_[m] });
+
+        PushC pc = { dst_size.x, dst_size.y, src_size.x, src_size.y };
+        cmd_buf->pushConstants(
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            hiz_build_pipeline_layout_,
+            &pc, sizeof(pc));
+
+        const uint32_t G = 8u;
+        uint32_t gx = (dst_size.x + G - 1u) / G;
+        uint32_t gy = (dst_size.y + G - 1u) / G;
+        cmd_buf->dispatch(gx, gy, 1);
+
+        src_size = dst_size;
+        dst_size = { std::max(1u, (dst_size.x + 1u) / 2u),
+                     std::max(1u, (dst_size.y + 1u) / 2u) };
+    }
+
+    // Make the entire pyramid's writes visible to whatever samples it
+    // next (the deferred resolve compute in DEBUG_RENDER_MODE_HIZ, the
+    // Phase B cluster cull when wired up).
+    cmd_buf->addImageBarrier(
+        hiz_pyramid_.image, from_write, to_read,
+        /*base_mip*/ 0, /*mip_count*/ hiz_pyramid_mips_, 0, 1);
 }
 
 // ─── Hi-Z pyramid build (per-frame) ─────────────────────────────────────────
@@ -640,7 +730,7 @@ void RealWorldApplication::initDeferredResolve() {
     // so the resolve compute simply binds them at the same indices it would
     // in the forward fragment shader.  See deferred_resolve.comp.
     {
-        std::vector<er::DescriptorSetLayoutBinding> bindings(6);
+        std::vector<er::DescriptorSetLayoutBinding> bindings(7);
         for (uint32_t i = 0; i < 4; ++i) {
             bindings[i] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(
                 i, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
@@ -651,6 +741,12 @@ void RealWorldApplication::initDeferredResolve() {
             er::DescriptorType::STORAGE_IMAGE);
         bindings[5] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(
             5, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::COMBINED_IMAGE_SAMPLER);
+        // Binding 6 — full-pyramid Hi-Z sampler.  Only consumed by the
+        // DEBUG_RENDER_MODE_HIZ visualisation; the regular lighting
+        // path doesn't sample it.  Bound to hiz_pyramid_full_view_.
+        bindings[6] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            6, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::COMBINED_IMAGE_SAMPLER);
         deferred_resolve_desc_set_layout_ =
             device_->createDescriptorSetLayout(bindings);
@@ -723,7 +819,7 @@ void RealWorldApplication::writeDeferredResolveDescriptors(
     if (!depth_view) return;
 
     er::WriteDescriptorList writes;
-    writes.reserve(6);
+    writes.reserve(7);
     er::Helper::addOneTexture(writes, deferred_resolve_desc_set_,
         er::DescriptorType::COMBINED_IMAGE_SAMPLER, 0,
         gbuf_sampler_, gbuf_albedo_ao_.view,
@@ -749,6 +845,20 @@ void RealWorldApplication::writeDeferredResolveDescriptors(
             er::DescriptorType::COMBINED_IMAGE_SAMPLER, 5,
             gbuf_sampler_, gbuf_velocity_.view,
             er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    }
+    // Full-pyramid Hi-Z sampler — consumed only by the
+    // DEBUG_RENDER_MODE_HIZ visualisation.  Stays in GENERAL throughout
+    // the build chain; the descriptor layout matches.  Both the view AND
+    // the sampler must exist; this function is also called from inside
+    // initDeferredResolve, which runs BEFORE initHiZBuild creates
+    // hiz_sampler_, so on first call the sampler is null and we have to
+    // skip the binding (a fresh writeDeferredResolveDescriptors after
+    // initHiZBuild fills it in — see initVulkan ordering).
+    if (hiz_pyramid_full_view_ && hiz_sampler_) {
+        er::Helper::addOneTexture(writes, deferred_resolve_desc_set_,
+            er::DescriptorType::COMBINED_IMAGE_SAMPLER, 6,
+            hiz_sampler_, hiz_pyramid_full_view_,
+            er::ImageLayout::GENERAL);
     }
     device_->updateDescriptorSets(writes);
 }
@@ -992,6 +1102,13 @@ void RealWorldApplication::initVulkan() {
     // up later (after object_scene_view_ exists, since mip-0's source is
     // the scene depth view).  See writeHiZBuildDescriptors() call below.
     initHiZBuild();
+
+    // initDeferredResolve above ran BEFORE hiz_sampler_ existed, so its
+    // internal writeDeferredResolveDescriptors call skipped binding 6
+    // (Hi-Z sampler).  Now that the sampler is created, refresh the
+    // resolve descriptors so the DEBUG_RENDER_MODE_HIZ visualisation
+    // actually has a valid binding to sample.
+    writeDeferredResolveDescriptors();
 
     // createHiZPyramid was called earlier inside createGBuffer (before
     // this initHiZBuild() ran), so its internal writeHiZBuildDescriptors
@@ -2558,6 +2675,20 @@ void RealWorldApplication::drawScene(
             input_flags |= (static_cast<uint32_t>(menu_->getDebugRenderMode())
                             << FEATURE_INPUT_DEBUG_MODE_SHIFT)
                            & FEATURE_INPUT_DEBUG_MODE_MASK;
+            // Pack the Hi-Z debug mip selector into bits 24..27, clamped
+            // to the actual pyramid mip count so the shader's textureLod
+            // never reads off the top of the chain when a high level was
+            // remembered from a different swap-chain size.
+            {
+                int mip = menu_->getHiZDebugMip();
+                if (mip < 0) mip = 0;
+                int max_mip = hiz_pyramid_mips_ > 0
+                    ? static_cast<int>(hiz_pyramid_mips_) - 1 : 0;
+                if (mip > max_mip) mip = max_mip;
+                input_flags |= (static_cast<uint32_t>(mip)
+                                << FEATURE_INPUT_HIZ_MIP_SHIFT)
+                               & FEATURE_INPUT_HIZ_MIP_MASK;
+            }
             main_camera_object_->setInputFeatureFlags(input_flags);
         }
 
@@ -3073,45 +3204,32 @@ void RealWorldApplication::drawScene(
                 auto _scope_def = gpu_profiler_.beginScope(
                     cmd_buf, "Deferred (G-buf + Resolve)");
 
-                // 1. G-buffer pass — 3 RTs CLEAR-to-zero, depth LOAD/STORE
-                //    so cluster fragments respect forward base depth.
-                auto make_gbuf_attach = [](const std::shared_ptr<er::ImageView>& v) {
+                // ── Two-pass occlusion culling (Nanite-style) ─────────
+                // Phase A renders only the clusters that were visible
+                // last frame (gated on the persistent visibility-bit
+                // buffer) — they're the trusted depth pre-pass.  Hi-Z
+                // is built from THAT depth, then Phase B tests every
+                // cluster against the Hi-Z and renders any newly
+                // disoccluded ones into the same G-buffer.  The union
+                // of A's draws + B's draws forms next frame's "visible
+                // last frame" set via Phase B's atomicOr writes.
+
+                // Helper for G-buffer attachments parameterised on load_op.
+                auto make_gbuf_attach = [](
+                        const std::shared_ptr<er::ImageView>& v,
+                        er::AttachmentLoadOp load_op) {
                     er::RenderingAttachmentInfo a;
                     a.image_view   = v;
                     a.image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
-                    a.load_op      = er::AttachmentLoadOp::CLEAR;
+                    a.load_op      = load_op;
                     a.store_op     = er::AttachmentStoreOp::STORE;
                     a.clear_value.color = { {0.0f, 0.0f, 0.0f, 0.0f} };
                     return a;
                 };
-                er::RenderingAttachmentInfo gbuf0 = make_gbuf_attach(gbuf_albedo_ao_.view);
-                er::RenderingAttachmentInfo gbuf1 = make_gbuf_attach(gbuf_normal_rough_.view);
-                er::RenderingAttachmentInfo gbuf2 = make_gbuf_attach(gbuf_emissive_metal_.view);
-                // RT3 — velocity (NDC delta).  CLEAR to (0,0) so untouched
-                // pixels read as "no motion" for downstream TAA/motion
-                // blur consumers; cluster fragments overwrite with their
-                // computed curNDC - prevNDC.
-                er::RenderingAttachmentInfo gbuf3 = make_gbuf_attach(gbuf_velocity_.view);
 
-                er::RenderingAttachmentInfo gbuf_depth;
-                gbuf_depth.image_view   = depth_buf->view;
-                gbuf_depth.image_layout = er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                gbuf_depth.load_op      = er::AttachmentLoadOp::LOAD;
-                gbuf_depth.store_op     = er::AttachmentStoreOp::STORE;
-
-                er::RenderingInfo gri = {};
-                gri.render_area_offset = { 0, 0 };
-                gri.render_area_extent = screen_size;
-                gri.layer_count        = 1;
-                gri.view_mask          = 0;
-                gri.color_attachments  = { gbuf0, gbuf1, gbuf2, gbuf3 };
-                gri.depth_attachments  = { gbuf_depth };
-
-                cmd_buf->beginDynamicRendering(gri);
-
-                // Same descriptor set list the forward cluster path uses;
-                // the G-buffer pipeline's layout is identical (only the
-                // fragment SPV + RT formats differ).
+                // Same descriptor set list both phases use — the
+                // G-buffer pipeline's layout is identical to the forward
+                // bindless one (only the fragment SPV + RT formats differ).
                 er::DescriptorSetList cluster_desc_sets(
                     RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
                 cluster_desc_sets[PBR_GLOBAL_PARAMS_SET] = pbr_lighting_desc_set_;
@@ -3130,10 +3248,140 @@ void RealWorldApplication::drawScene(
                 sc_g.offset = glm::ivec2(0);
                 sc_g.extent = screen_size;
 
-                cluster_renderer_->drawOpaqueGBuffer(
-                    cmd_buf, cluster_desc_sets, { vp_g }, { sc_g });
+                // ── Phase A: cull → render visible-last-frame set ──
+                // Cull dispatch reads visibility_bit_buffer_ and emits
+                // opaque draws to indirect_draw_buffer_phase_a_.  The
+                // method internally barriers the compute writes so the
+                // immediately-following indirect draw sees them.
+                {
+                    auto _scope_cullA = gpu_profiler_.beginScope(
+                        cmd_buf, "Cluster Cull (Phase A)");
+                    cluster_renderer_->cullPhaseA(
+                        cmd_buf,
+                        main_camera_object_->getViewProjMatrix(),
+                        main_camera_object_->getCameraPosition());
+                    gpu_profiler_.endScope(cmd_buf, _scope_cullA);
+                }
 
-                cmd_buf->endDynamicRendering();
+                {
+                    er::RenderingAttachmentInfo gbuf0 =
+                        make_gbuf_attach(gbuf_albedo_ao_.view,
+                                         er::AttachmentLoadOp::CLEAR);
+                    er::RenderingAttachmentInfo gbuf1 =
+                        make_gbuf_attach(gbuf_normal_rough_.view,
+                                         er::AttachmentLoadOp::CLEAR);
+                    er::RenderingAttachmentInfo gbuf2 =
+                        make_gbuf_attach(gbuf_emissive_metal_.view,
+                                         er::AttachmentLoadOp::CLEAR);
+                    er::RenderingAttachmentInfo gbuf3 =
+                        make_gbuf_attach(gbuf_velocity_.view,
+                                         er::AttachmentLoadOp::CLEAR);
+
+                    er::RenderingAttachmentInfo gbuf_depth;
+                    gbuf_depth.image_view   = depth_buf->view;
+                    gbuf_depth.image_layout = er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                    gbuf_depth.load_op      = er::AttachmentLoadOp::LOAD;
+                    gbuf_depth.store_op     = er::AttachmentStoreOp::STORE;
+
+                    er::RenderingInfo gri = {};
+                    gri.render_area_offset = { 0, 0 };
+                    gri.render_area_extent = screen_size;
+                    gri.layer_count        = 1;
+                    gri.view_mask          = 0;
+                    gri.color_attachments  = { gbuf0, gbuf1, gbuf2, gbuf3 };
+                    gri.depth_attachments  = { gbuf_depth };
+                    cmd_buf->beginDynamicRendering(gri);
+                    cluster_renderer_->drawOpaqueGBufferPhaseA(
+                        cmd_buf, cluster_desc_sets, { vp_g }, { sc_g });
+                    cmd_buf->endDynamicRendering();
+                }
+
+                // ── Hi-Z build sandwiched between the two render passes ──
+                // Depth must briefly leave attachment layout for the build
+                // compute to sample.  Phase B's render needs it back as
+                // a depth attachment immediately after, so we transition
+                // it twice — cheap relative to the cull / render cost.
+                {
+                    er::ImageResourceInfo depth_attach_to_read = {
+                        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                        SET_FLAG_BIT(Access, SHADER_READ_BIT),
+                        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) };
+                    er::ImageResourceInfo from_depth_att = {
+                        er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                        SET_FLAG_BIT(Access, DEPTH_STENCIL_ATTACHMENT_WRITE_BIT),
+                        SET_FLAG_BIT(PipelineStage, LATE_FRAGMENT_TESTS_BIT) };
+                    cmd_buf->addImageBarrier(depth_buf->image,
+                        from_depth_att, depth_attach_to_read, 0, 1, 0, 1);
+
+                    auto _scope_hiz = gpu_profiler_.beginScope(
+                        cmd_buf, "Hi-Z Build");
+                    buildHiZPyramid(cmd_buf, screen_size);
+                    gpu_profiler_.endScope(cmd_buf, _scope_hiz);
+
+                    // Restore depth as an attachment for Phase B render.
+                    er::ImageResourceInfo read_to_depth_att = {
+                        er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                        SET_2_FLAG_BITS(Access,
+                            DEPTH_STENCIL_ATTACHMENT_READ_BIT,
+                            DEPTH_STENCIL_ATTACHMENT_WRITE_BIT),
+                        SET_2_FLAG_BITS(PipelineStage,
+                            EARLY_FRAGMENT_TESTS_BIT,
+                            LATE_FRAGMENT_TESTS_BIT) };
+                    cmd_buf->addImageBarrier(depth_buf->image,
+                        depth_attach_to_read, read_to_depth_att, 0, 1, 0, 1);
+                }
+
+                // Clear last frame's visibility bits.  Phase A already
+                // consumed them; Phase B is about to atomicOr in this
+                // frame's true visible set.
+                cluster_renderer_->clearVisibilityBuffer(cmd_buf);
+
+                // ── Phase B: cull (with Hi-Z) → render newly-disoccluded ──
+                {
+                    auto _scope_cullB = gpu_profiler_.beginScope(
+                        cmd_buf, "Cluster Cull (Phase B)");
+                    cluster_renderer_->cullPhaseB(
+                        cmd_buf,
+                        main_camera_object_->getViewProjMatrix(),
+                        main_camera_object_->getCameraPosition());
+                    gpu_profiler_.endScope(cmd_buf, _scope_cullB);
+                }
+
+                {
+                    // LOAD all four colour RTs so Phase A's contributions
+                    // are preserved; Phase B writes additional pixels on
+                    // top wherever its clusters survive the Hi-Z test.
+                    er::RenderingAttachmentInfo gbuf0 =
+                        make_gbuf_attach(gbuf_albedo_ao_.view,
+                                         er::AttachmentLoadOp::LOAD);
+                    er::RenderingAttachmentInfo gbuf1 =
+                        make_gbuf_attach(gbuf_normal_rough_.view,
+                                         er::AttachmentLoadOp::LOAD);
+                    er::RenderingAttachmentInfo gbuf2 =
+                        make_gbuf_attach(gbuf_emissive_metal_.view,
+                                         er::AttachmentLoadOp::LOAD);
+                    er::RenderingAttachmentInfo gbuf3 =
+                        make_gbuf_attach(gbuf_velocity_.view,
+                                         er::AttachmentLoadOp::LOAD);
+
+                    er::RenderingAttachmentInfo gbuf_depth;
+                    gbuf_depth.image_view   = depth_buf->view;
+                    gbuf_depth.image_layout = er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                    gbuf_depth.load_op      = er::AttachmentLoadOp::LOAD;
+                    gbuf_depth.store_op     = er::AttachmentStoreOp::STORE;
+
+                    er::RenderingInfo gri = {};
+                    gri.render_area_offset = { 0, 0 };
+                    gri.render_area_extent = screen_size;
+                    gri.layer_count        = 1;
+                    gri.view_mask          = 0;
+                    gri.color_attachments  = { gbuf0, gbuf1, gbuf2, gbuf3 };
+                    gri.depth_attachments  = { gbuf_depth };
+                    cmd_buf->beginDynamicRendering(gri);
+                    cluster_renderer_->drawOpaqueGBufferPhaseB(
+                        cmd_buf, cluster_desc_sets, { vp_g }, { sc_g });
+                    cmd_buf->endDynamicRendering();
+                }
 
                 // 2. Barriers for the resolve dispatch.
                 //    G-buffer + depth: COLOR/DEPTH attachment → SHADER_READ
@@ -3167,6 +3415,14 @@ void RealWorldApplication::drawScene(
                     SET_FLAG_BIT(PipelineStage, LATE_FRAGMENT_TESTS_BIT) };
                 cmd_buf->addImageBarrier(depth_buf->image,
                     from_depth_att, to_shader_read, 0, 1, 0, 1);
+
+                // ── Hi-Z pyramid build ──────────────────────────────────
+                // (Hi-Z was already built once between Phase A and Phase B
+                // above — that's the pyramid the resolve's debug mode
+                // samples.  Building it a second time after Phase B would
+                // give a slightly more complete pyramid but cost another
+                // ~0.2 ms; not worth it for the debug viz, and the
+                // cull-side consumer is Phase B which already ran.)
 
                 er::ImageResourceInfo color_att_to_general = {
                     er::ImageLayout::GENERAL,
@@ -3516,8 +3772,16 @@ void RealWorldApplication::drawScene(
         // force_run handling.
         const int dbg_mode =
             menu_ ? menu_->getDebugRenderMode() : 0;
-        if (ssao_ && (ssao_->enabled ||
-                      dbg_mode == DEBUG_RENDER_MODE_SSAO)) {
+        // Only run the SSAO pipeline for the FINAL (=0) and SSAO (=11)
+        // debug modes.  Every other diagnostic (Hi-Z, velocity, albedo,
+        // normals, etc.) writes its visualisation directly into the
+        // colour buffer and should not be modulated by AO — running the
+        // gen/blur/apply chain is also wasted GPU work in those modes.
+        const bool ssao_mode_allowed =
+            dbg_mode == DEBUG_RENDER_MODE_FINAL ||
+            dbg_mode == DEBUG_RENDER_MODE_SSAO;
+        if (ssao_ && ssao_mode_allowed &&
+            (ssao_->enabled || dbg_mode == DEBUG_RENDER_MODE_SSAO)) {
             auto _scope_ssao = gpu_profiler_.beginScope(cmd_buf, "SSAO");
             // Pass the SAME image that's bound into the apply descriptor
             // (see SSAO creation site).  Using hdr_color_buffer_ here

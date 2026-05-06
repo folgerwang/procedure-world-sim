@@ -95,6 +95,16 @@ private:
     void initHiZBuild();   // one-time pipeline/layout/sampler creation
     void writeHiZBuildDescriptors(
         const std::shared_ptr<er::ImageView>& scene_depth_view);
+    // Dispatches the per-mip Hi-Z build chain: mip 0 reduces scene depth
+    // (passed as `scene_depth_size`) into the half-res pyramid mip 0;
+    // each subsequent mip 2:1-max-reduces the previous.  Caller must
+    // already have transitioned scene depth to SHADER_READ_ONLY_OPTIMAL.
+    // Pyramid stays in GENERAL throughout — the descriptor sets bind it
+    // that way for both source and dest, with an internal memory barrier
+    // between adjacent mip dispatches.
+    void buildHiZPyramid(
+        const std::shared_ptr<er::CommandBuffer>& cmd_buf,
+        const glm::uvec2& scene_depth_size);
     // Per-frame Hi-Z pyramid generation.  Dispatches the build compute
     // once per mip with appropriate barriers, leaving every mip in
     // SHADER_READ_ONLY_OPTIMAL so the cluster cull pass can sample it.
@@ -247,10 +257,11 @@ private:
     // takes the source mip as a sampled image and the dest mip as a
     // storage image.
     std::vector<std::shared_ptr<er::ImageView>> hiz_mip_views_;
-    // Full-mip-chain view of hiz_pyramid_, sampled by the cluster cull
-    // pass so it can call textureLod(uv, mip) and pick the right mip
-    // for each cluster's screen-space footprint.
-    std::shared_ptr<er::ImageView>              hiz_pyramid_full_view_;
+    // Full-pyramid sampled view (all mips).  Bound as a single sampler2D
+    // by downstream consumers so they can pick mips with textureLod():
+    // cluster cull (Phase B) for occlusion testing, and the deferred
+    // resolve in DEBUG_RENDER_MODE_HIZ for the visualisation.
+    std::shared_ptr<er::ImageView> hiz_pyramid_full_view_;
 
     std::shared_ptr<er::Sampler>             hiz_sampler_;
     std::shared_ptr<er::DescriptorSetLayout> hiz_build_desc_set_layout_;
