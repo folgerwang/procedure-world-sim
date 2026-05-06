@@ -283,6 +283,74 @@ void RealWorldApplication::createGBuffer(const glm::uvec2& display_size) {
     if (deferred_resolve_desc_set_) {
         writeDeferredResolveDescriptors();
     }
+
+    // Hi-Z pyramid scales with the swap-chain too.
+    createHiZPyramid(display_size);
+}
+
+void RealWorldApplication::createHiZPyramid(const glm::uvec2& display_size) {
+    // Round up to next power of two so 2×2 reductions don't lose halves at
+    // odd swap-chain extents.  Mip count = log2(maxDim)+1 so the smallest
+    // mip is 1×1.  Each mip is half the previous in each dim (rounded up).
+    auto next_pow2 = [](uint32_t v) -> uint32_t {
+        if (v <= 1) return 1;
+        uint32_t p = 1;
+        while (p < v) p <<= 1;
+        return p;
+    };
+    glm::uvec2 size_p2 = {
+        next_pow2(display_size.x),
+        next_pow2(display_size.y) };
+    uint32_t max_dim = std::max(size_p2.x, size_p2.y);
+    uint32_t mips = 1;
+    while ((1u << mips) <= max_dim) ++mips;
+
+    // Tear down any previous allocation.
+    hiz_mip_views_.clear();
+    if (hiz_pyramid_.image) {
+        hiz_pyramid_.destroy(device_);
+    }
+
+    hiz_pyramid_size_ = size_p2;
+    hiz_pyramid_mips_ = mips;
+
+    // STORAGE_BIT — written by hiz_build.comp via image2D.
+    // SAMPLED_BIT — read by the next mip's source binding AND by the Phase B
+    //               cluster cull shader once we wire that up.
+    er::Helper::create2DTextureImage(
+        device_,
+        hiz_format_,
+        size_p2,
+        mips,
+        hiz_pyramid_,
+        SET_2_FLAG_BITS(ImageUsage, SAMPLED_BIT, STORAGE_BIT),
+        er::ImageLayout::GENERAL,
+        std::source_location::current());
+
+    // Per-mip image views — needed because hiz_build.comp binds dst as a
+    // mip-0 storage image at each dispatch (a single-mip view), not the
+    // full chain.
+    hiz_mip_views_.reserve(mips);
+    for (uint32_t m = 0; m < mips; ++m) {
+        hiz_mip_views_.push_back(device_->createImageView(
+            hiz_pyramid_.image,
+            er::ImageViewType::VIEW_2D,
+            hiz_format_,
+            SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+            std::source_location::current(),
+            /*base_mip*/  m,
+            /*mip_count*/ 1));
+    }
+
+    // Refresh the per-mip Hi-Z build descriptor sets so each set's source
+    // binding points at the previous mip (or the scene depth view, for
+    // mip 0).  Caller must call writeHiZBuildDescriptors AFTER scene
+    // depth view exists; we route through that path here on resize too,
+    // but only if the build pipeline has already initialised.
+    if (hiz_build_pipeline_ && object_scene_view_) {
+        auto db = object_scene_view_->getDepthBuffer();
+        if (db) writeHiZBuildDescriptors(db->view);
+    }
 }
 
 void RealWorldApplication::recreateRenderBuffer(const glm::uvec2& display_size) {
@@ -291,6 +359,85 @@ void RealWorldApplication::recreateRenderBuffer(const glm::uvec2& display_size) 
     createColorBufferCopy(display_size);
     createGBuffer(display_size);
     createFramebuffers(display_size);
+}
+
+void RealWorldApplication::initHiZBuild() {
+    if (hiz_build_pipeline_) return;
+
+    if (!hiz_sampler_) {
+        // Linear-min/mag is fine — the build is one source texel per dest
+        // texel offset by a half-pixel, and the 2×2 max we compute manually
+        // doesn't depend on the sampler's filter mode.  CLAMP_TO_EDGE keeps
+        // the upper-mip samples honest at edges.
+        hiz_sampler_ = device_->createSampler(
+            er::Filter::LINEAR,
+            er::SamplerAddressMode::CLAMP_TO_EDGE,
+            er::SamplerMipmapMode::NEAREST,
+            /*anisotropy*/ 0.0f,
+            std::source_location::current());
+    }
+
+    // Layout:
+    //   binding 0 — sampler2D src  (previous mip OR scene depth)
+    //   binding 1 — image2D dst    (this mip, r32f writeonly)
+    {
+        std::vector<er::DescriptorSetLayoutBinding> bindings(2);
+        bindings[0] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            0, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::COMBINED_IMAGE_SAMPLER);
+        bindings[1] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            1, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::STORAGE_IMAGE);
+        hiz_build_desc_set_layout_ =
+            device_->createDescriptorSetLayout(bindings);
+    }
+
+    // Push constant: dst_size + src_size (uvec2 each) = 16 bytes.
+    hiz_build_pipeline_layout_ = er::helper::createComputePipelineLayout(
+        device_, { hiz_build_desc_set_layout_ }, /*push_const_size*/ 16);
+
+    hiz_build_pipeline_ = er::helper::createComputePipeline(
+        device_, hiz_build_pipeline_layout_,
+        "hiz_build_comp.spv",
+        std::source_location::current());
+}
+
+void RealWorldApplication::writeHiZBuildDescriptors(
+    const std::shared_ptr<er::ImageView>& scene_depth_view) {
+    if (!hiz_build_desc_set_layout_ || hiz_pyramid_mips_ == 0) return;
+
+    // Allocate one descriptor set per destination mip, freed implicitly
+    // when the pool is destroyed.  Recreated on resize.
+    hiz_build_desc_sets_.clear();
+    hiz_build_desc_sets_.reserve(hiz_pyramid_mips_);
+    for (uint32_t m = 0; m < hiz_pyramid_mips_; ++m) {
+        hiz_build_desc_sets_.push_back(
+            device_->createDescriptorSets(
+                descriptor_pool_, hiz_build_desc_set_layout_, 1)[0]);
+    }
+
+    // Mip 0's source is the scene depth (read via depth-aspect view).
+    // Higher mips source the Hi-Z mip directly above.
+    for (uint32_t m = 0; m < hiz_pyramid_mips_; ++m) {
+        std::shared_ptr<er::ImageView> src_view =
+            (m == 0) ? scene_depth_view : hiz_mip_views_[m - 1];
+        if (!src_view || !hiz_mip_views_[m]) continue;
+
+        er::WriteDescriptorList writes;
+        writes.reserve(2);
+        // The source layout at sample time will be SHADER_READ_ONLY_OPTIMAL
+        // (set up by the host between dispatches).  Descriptor write layout
+        // is informational; actual at-dispatch layout is what matters.
+        er::Helper::addOneTexture(writes, hiz_build_desc_sets_[m],
+            er::DescriptorType::COMBINED_IMAGE_SAMPLER, 0,
+            hiz_sampler_, src_view,
+            er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        er::Helper::addOneTexture(writes, hiz_build_desc_sets_[m],
+            er::DescriptorType::STORAGE_IMAGE, 1,
+            nullptr, hiz_mip_views_[m],
+            er::ImageLayout::GENERAL);
+        device_->updateDescriptorSets(writes);
+    }
 }
 
 void RealWorldApplication::initDeferredResolve() {
@@ -682,6 +829,11 @@ void RealWorldApplication::initVulkan() {
     // desc set are created idle and only cost memory until first dispatch.
     initDeferredResolve();
 
+    // Hi-Z build pipeline — one-time creation; descriptor sets are wired
+    // up later (after object_scene_view_ exists, since mip-0's source is
+    // the scene depth view).  See writeHiZBuildDescriptors() call below.
+    initHiZBuild();
+
     auto desc_set_layouts = {
         pbr_lighting_desc_set_layout_,
         ego::CameraObject::getViewCameraDescriptorSetLayout() };
@@ -948,6 +1100,13 @@ void RealWorldApplication::initVulkan() {
     // resolve compute's storage-image binding at it.  Idempotent — safe to
     // call again on swap-chain rebuild.
     writeDeferredResolveDescriptors();
+
+    // Same idea for the Hi-Z build chain — mip 0's source needs to be the
+    // scene depth view, which lives on object_scene_view_.
+    {
+        auto db = object_scene_view_->getDepthBuffer();
+        if (db) writeHiZBuildDescriptors(db->view);
+    }
 
     // ── Create CSM shadow depth array (2048×2048×CSM_CASCADE_COUNT) ──────────
     {
@@ -1381,6 +1540,11 @@ void RealWorldApplication::recreateSwapChain() {
         // object_scene_view_ color buffer + G-buffer views.  No-op if the
         // resolve hasn't been initialised.
         writeDeferredResolveDescriptors();
+
+        // Hi-Z build descriptors also need to point at the new scene depth.
+        if (auto db = object_scene_view_->getDepthBuffer(); db) {
+            writeHiZBuildDescriptors(db->view);
+        }
     }
 
     // ---- Camera descriptor sets ----
@@ -3872,6 +4036,12 @@ void RealWorldApplication::cleanupSwapChain() {
     gbuf_normal_rough_.destroy(device_);
     gbuf_emissive_metal_.destroy(device_);
     gbuf_velocity_.destroy(device_);
+    // Hi-Z pyramid + per-mip views are sized to the swap chain too.
+    hiz_mip_views_.clear();
+    if (hiz_pyramid_.image) hiz_pyramid_.destroy(device_);
+    hiz_pyramid_size_ = glm::uvec2(0);
+    hiz_pyramid_mips_ = 0;
+    hiz_build_desc_sets_.clear();
     device_->destroyFramebuffer(hdr_frame_buffer_);
     device_->destroyFramebuffer(hdr_water_frame_buffer_);
 

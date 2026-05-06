@@ -88,6 +88,13 @@ private:
     // Lifetime hooks: createGBuffer is called from recreateRenderBuffer so
     // the targets always match the swap-chain size.
     void createGBuffer(const glm::uvec2& display_size);
+    // Allocate Hi-Z pyramid sized for `display_size`, build per-mip image
+    // views, and (re)write the per-mip Hi-Z build descriptor sets.  Called
+    // from createGBuffer so the pyramid always tracks swap-chain extent.
+    void createHiZPyramid(const glm::uvec2& display_size);
+    void initHiZBuild();   // one-time pipeline/layout/sampler creation
+    void writeHiZBuildDescriptors(
+        const std::shared_ptr<er::ImageView>& scene_depth_view);
     void initDeferredResolve();
     // The resolve writes into a caller-supplied storage image — by default
     // object_scene_view_'s color buffer, since that's where the rest of the
@@ -208,6 +215,39 @@ private:
     er::TextureInfo gbuf_normal_rough_;
     er::TextureInfo gbuf_emissive_metal_;
     er::TextureInfo gbuf_velocity_;
+
+    // ── Hi-Z occlusion pyramid (Nanite-style two-pass culling) ───────────
+    // R32_SFLOAT mip-chained texture, log2(maxDim)+1 levels.  Mip 0 holds
+    // the post-Phase-A depth (max-reduced from the actual depth buffer),
+    // each higher mip stores the max of its 2x2 source — conservative-far
+    // Z so a cluster is only rejected if its near-plane depth is greater
+    // than the Hi-Z's far plane at that screen footprint.  Built each
+    // frame between Phase A render and Phase B cull.
+    //
+    // Lifetime: allocated alongside the G-buffer (createGBuffer) and torn
+    // down with it (cleanupSwapChain).  hiz_pyramid_size_ is the size of
+    // mip 0 (next-power-of-two-up of screen extent so 2x2 reductions don't
+    // lose half a pixel at odd sizes).
+    er::Format     hiz_format_ = er::Format::R32_SFLOAT;
+    er::TextureInfo hiz_pyramid_;
+    glm::uvec2     hiz_pyramid_size_   = glm::uvec2(0);
+    uint32_t       hiz_pyramid_mips_   = 0;
+    // Per-mip image views — one per mip, used as the writeonly storage
+    // image binding when building that mip.  Mip-0 is special: it's
+    // populated by sampling the scene depth buffer directly, while mips
+    // 1..N-1 are populated by sampling the previous mip.  hiz_build.comp
+    // takes the source mip as a sampled image and the dest mip as a
+    // storage image.
+    std::vector<std::shared_ptr<er::ImageView>> hiz_mip_views_;
+
+    std::shared_ptr<er::Sampler>             hiz_sampler_;
+    std::shared_ptr<er::DescriptorSetLayout> hiz_build_desc_set_layout_;
+    std::shared_ptr<er::PipelineLayout>      hiz_build_pipeline_layout_;
+    std::shared_ptr<er::Pipeline>            hiz_build_pipeline_;
+    // One descriptor set per mip we're building (mips 0..N-1).  Each
+    // binds source = previous mip (or scene depth for mip 0) and dest =
+    // this mip's storage view.
+    std::vector<std::shared_ptr<er::DescriptorSet>> hiz_build_desc_sets_;
     // Pipeline format descriptor used when (re)creating the cluster G-buffer
     // pipeline.  Built once in initVulkan and shared with cluster_renderer_->
     // initBindlessGBufferPipeline().
