@@ -3650,8 +3650,22 @@ void RealWorldApplication::drawFrame() {
                 const float kSpawnAhead = 3.0f;
                 glm::vec2 spawn_xz =
                     glm::vec2(cam_pos.x, cam_pos.z) + fwd_xz * kSpawnAhead;
-                float spawn_y = engine::game_object::getTerrainGroundHeight(
+                // Use the procedural terrain height ONLY if it's close to
+                // the camera's vertical level — otherwise the bistro
+                // (static glTF placed at world origin) and the heightmap
+                // sit in different coordinate systems and the player
+                // ends up tens of metres below the visible scene.
+                // Symptom seen with the original logic: terrain returned
+                // y=-120.6 while the bistro floor is near y=0, so the
+                // character spawned underground and was invisible.
+                float terrain_y = engine::game_object::getTerrainGroundHeight(
                     spawn_xz);
+                const float kPlayerEyeOffset = 1.7f; // approx character height
+                float fallback_y = cam_pos.y - kPlayerEyeOffset;
+                float spawn_y =
+                    (std::fabs(terrain_y - fallback_y) < 5.0f)
+                        ? terrain_y
+                        : fallback_y;
                 glm::vec3 spawn_pos(spawn_xz.x, spawn_y, spawn_xz.y);
                 player_controller_->spawnAt(spawn_pos, cam.yaw);
                 std::cout << "[player] Spawned at ("
