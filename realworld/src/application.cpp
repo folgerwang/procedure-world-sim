@@ -183,9 +183,20 @@ void RealWorldApplication::createDepthResources(const glm::uvec2& display_size) 
         depth_buffer_,
         std::source_location::current());
 
+    // Format MUST match the blit source — object_scene_view_'s depth
+    // buffer is D24_UNORM_S8_UINT (see initVulkan kForward.depth_format).
+    // vkCmdBlitImage between mismatched depth formats is undefined per
+    // the Vulkan spec; the previous D32_SFLOAT here meant the blitted
+    // bits got reinterpreted as floats and produced regular-looking
+    // garbage values (visible as moiré stripes in the SSAO debug
+    // visualisation, with sky pixels reading as ~0.5–0.9 instead of
+    // 1.0 so the early-out for sky never fired).
+    // The view created from a depth format auto-uses DEPTH_BIT aspect
+    // (renderer.cpp ~line 560), so shader sampling still returns a
+    // float in [0,1] — no consumer change needed.
     er::Helper::create2DTextureImage(
         device_,
-        er::Format::D32_SFLOAT,
+        er::Format::D24_UNORM_S8_UINT,
         display_size,
         1,
         depth_buffer_copy_,
@@ -1239,13 +1250,24 @@ void RealWorldApplication::initVulkan() {
         volume_noise_->getRoughNoiseTexture().view,
         swap_chain_info_.extent);
 
+    // SSAO writes into the SAME colour buffer the scene actually displays
+    // — that's object_scene_view_'s colour buffer once it exists, NOT
+    // hdr_color_buffer_ (which we used to bind here, but that buffer is
+    // never blitted to the swap chain in the current pipeline, so SSAO's
+    // output went nowhere — most visibly broken in DEBUG_RENDER_MODE_SSAO
+    // where the apply step's diagnostic write produced no on-screen change).
+    // Mirrors the comment around writeDeferredResolveDescriptors() above.
+    auto ssao_color_view =
+        (object_scene_view_ && object_scene_view_->getColorBuffer())
+            ? object_scene_view_->getColorBuffer()->view
+            : hdr_color_buffer_.view;
     ssao_ = std::make_shared<es::SSAO>(
         device_,
         descriptor_pool_,
         ego::CameraObject::getViewCameraDescriptorSetLayout(),
         texture_sampler_,
         depth_buffer_copy_.view,
-        hdr_color_buffer_.view,
+        ssao_color_view,
         swap_chain_info_.extent);
 
     cluster_renderer_ = std::make_shared<es::ClusterRenderer>(
@@ -1689,13 +1711,21 @@ void RealWorldApplication::recreateSwapChain() {
         swap_chain_info_.extent);
 
     if (ssao_) {
+        // Re-bind to the live scene colour view (see matching note at
+        // SSAO construction).  On swap-chain rebuild object_scene_view_'s
+        // colour buffer is recreated, so the SSAO apply descriptor needs
+        // to follow it — otherwise writes land on a dead image.
+        auto ssao_color_view =
+            (object_scene_view_ && object_scene_view_->getColorBuffer())
+                ? object_scene_view_->getColorBuffer()->view
+                : hdr_color_buffer_.view;
         ssao_->recreate(
             device_,
             descriptor_pool_,
             ego::CameraObject::getViewCameraDescriptorSetLayout(),
             texture_sampler_,
             depth_buffer_copy_.view,
-            hdr_color_buffer_.view,
+            ssao_color_view,
             swap_chain_info_.extent);
     }
 
@@ -3221,9 +3251,27 @@ void RealWorldApplication::drawScene(
             SET_FLAG_BIT(Access, SHADER_READ_BIT),
             SET_FLAG_BIT(PipelineStage, FRAGMENT_SHADER_BIT) };
 
+        // Source the blit from object_scene_view_'s depth buffer when it
+        // exists — that's the depth target the cluster pipeline + sky
+        // envmap pass actually write into.  The application-level
+        // depth_buffer_ is a leftover used only by some legacy render
+        // passes and is empty when the cluster/object_scene_view_ path
+        // runs, so blitting from it would feed SSAO (and the volume
+        // cloud, which also samples depth_buffer_copy_) garbage depth.
+        // Symptom of the old wiring: SSAO depth ≈ 0 everywhere → every
+        // pixel hits the "sky" early-out at ssao_compute.comp:70 and
+        // returns ao = 1.0, producing the all-red diagnostic output.
+        auto depth_blit_src =
+            (object_scene_view_ && object_scene_view_->getDepthBuffer())
+                ? object_scene_view_->getDepthBuffer()->image
+                : depth_buffer_.image;
+        auto depth_blit_src_size =
+            (object_scene_view_ && object_scene_view_->getDepthBuffer())
+                ? object_scene_view_->getDepthBuffer()->size
+                : depth_buffer_.size;
         er::Helper::blitImage(
             cmd_buf,
-            depth_buffer_.image,
+            depth_blit_src,
             depth_buffer_copy_.image,
             depth_src_info,
             depth_src_info,
@@ -3231,14 +3279,32 @@ void RealWorldApplication::drawScene(
             depth_dst_info,
             SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
             SET_FLAG_BIT(ImageAspect, DEPTH_BIT),
-            depth_buffer_.size,
+            depth_blit_src_size,
             depth_buffer_copy_.size);
 
         // ── SSAO: generate, blur, apply to HDR color ──
-        if (ssao_ && ssao_->enabled) {
+        // Run when SSAO is enabled OR the user has selected the SSAO
+        // render-debug mode — that mode wants the apply step to fire
+        // so the screen gets overwritten with the raw AO factor, even
+        // if the SSAO toggle in the menu is off.  See SSAO::render's
+        // force_run handling.
+        const int dbg_mode =
+            menu_ ? menu_->getDebugRenderMode() : 0;
+        if (ssao_ && (ssao_->enabled ||
+                      dbg_mode == DEBUG_RENDER_MODE_SSAO)) {
             auto _scope_ssao = gpu_profiler_.beginScope(cmd_buf, "SSAO");
+            // Pass the SAME image that's bound into the apply descriptor
+            // (see SSAO creation site).  Using hdr_color_buffer_ here
+            // worked when SSAO was bound to that view, but now its apply
+            // pass writes to object_scene_view_'s colour buffer, so the
+            // barrier transition has to target that image.
+            auto ssao_target_image =
+                (object_scene_view_ && object_scene_view_->getColorBuffer())
+                    ? object_scene_view_->getColorBuffer()->image
+                    : hdr_color_buffer_.image;
             ssao_->render(cmd_buf, view_desc_set,
-                          hdr_color_buffer_.image, screen_size);
+                          ssao_target_image, screen_size,
+                          dbg_mode);
             gpu_profiler_.endScope(cmd_buf, _scope_ssao);
         }
 
