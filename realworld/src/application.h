@@ -95,6 +95,14 @@ private:
     void initHiZBuild();   // one-time pipeline/layout/sampler creation
     void writeHiZBuildDescriptors(
         const std::shared_ptr<er::ImageView>& scene_depth_view);
+    // Per-frame Hi-Z pyramid generation.  Dispatches the build compute
+    // once per mip with appropriate barriers, leaving every mip in
+    // SHADER_READ_ONLY_OPTIMAL so the cluster cull pass can sample it.
+    // Mip 0 sources from depth_buffer_copy_; higher mips source the
+    // previous mip via the per-mip descriptor sets initialised by
+    // writeHiZBuildDescriptors().
+    void dispatchHiZBuild(
+        const std::shared_ptr<er::CommandBuffer>& cmd_buf);
     void initDeferredResolve();
     // The resolve writes into a caller-supplied storage image — by default
     // object_scene_view_'s color buffer, since that's where the rest of the
@@ -239,6 +247,10 @@ private:
     // takes the source mip as a sampled image and the dest mip as a
     // storage image.
     std::vector<std::shared_ptr<er::ImageView>> hiz_mip_views_;
+    // Full-mip-chain view of hiz_pyramid_, sampled by the cluster cull
+    // pass so it can call textureLod(uv, mip) and pick the right mip
+    // for each cluster's screen-space footprint.
+    std::shared_ptr<er::ImageView>              hiz_pyramid_full_view_;
 
     std::shared_ptr<er::Sampler>             hiz_sampler_;
     std::shared_ptr<er::DescriptorSetLayout> hiz_build_desc_set_layout_;
@@ -248,6 +260,13 @@ private:
     // binds source = previous mip (or scene depth for mip 0) and dest =
     // this mip's storage view.
     std::vector<std::shared_ptr<er::DescriptorSet>> hiz_build_desc_sets_;
+
+    // Last frame's view-projection matrix.  Passed into the cluster cull
+    // dispatch so the Hi-Z occlusion test can reproject cluster bounds
+    // into yesterday's screen space (matches the depth pyramid that was
+    // built from yesterday's depth buffer).  Initialised to identity;
+    // refreshed at the END of each frame after rendering uses it.
+    glm::mat4 last_view_proj_ = glm::mat4(1.0f);
     // Pipeline format descriptor used when (re)creating the cluster G-buffer
     // pipeline.  Built once in initVulkan and shared with cluster_renderer_->
     // initBindlessGBufferPipeline().

@@ -318,6 +318,7 @@ void RealWorldApplication::createHiZPyramid(const glm::uvec2& display_size) {
 
     // Tear down any previous allocation.
     hiz_mip_views_.clear();
+    hiz_pyramid_full_view_.reset();
     if (hiz_pyramid_.image) {
         hiz_pyramid_.destroy(device_);
     }
@@ -353,14 +354,39 @@ void RealWorldApplication::createHiZPyramid(const glm::uvec2& display_size) {
             /*mip_count*/ 1));
     }
 
+    // Full-pyramid view — covers ALL mips so the cluster cull shader's
+    // textureLod(samp, uv, mip) call can pick the right mip for the
+    // cluster's projected footprint.  The default view created by
+    // create2DTextureImage only covers mip 0.
+    hiz_pyramid_full_view_ = device_->createImageView(
+        hiz_pyramid_.image,
+        er::ImageViewType::VIEW_2D,
+        hiz_format_,
+        SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+        std::source_location::current(),
+        /*base_mip*/  0,
+        /*mip_count*/ mips);
+
+    // Push the new pyramid handles into the cluster renderer so binding
+    // 11 of the cull descriptor set sees them next dispatch.  No-op if
+    // the renderer hasn't been constructed yet (very-first-init case);
+    // initVulkan calls createHiZPyramid again after cluster_renderer_
+    // exists.
+    if (cluster_renderer_ && hiz_sampler_) {
+        cluster_renderer_->setHiZTexture(
+            hiz_sampler_, hiz_pyramid_full_view_,
+            hiz_pyramid_size_, hiz_pyramid_mips_);
+    }
+
     // Refresh the per-mip Hi-Z build descriptor sets so each set's source
     // binding points at the previous mip (or the scene depth view, for
-    // mip 0).  Caller must call writeHiZBuildDescriptors AFTER scene
-    // depth view exists; we route through that path here on resize too,
-    // but only if the build pipeline has already initialised.
-    if (hiz_build_pipeline_ && object_scene_view_) {
-        auto db = object_scene_view_->getDepthBuffer();
-        if (db) writeHiZBuildDescriptors(db->view);
+    // mip 0).  Mip 0 reads from depth_buffer_copy_ — that buffer is
+    // populated by the depth blit at end-of-render and ends up in
+    // SHADER_READ_ONLY_OPTIMAL, which is exactly the layout the build
+    // shader needs.  Sourcing from object_scene_view_'s live depth
+    // would require an extra layout transition each frame.
+    if (hiz_build_pipeline_ && depth_buffer_copy_.view) {
+        writeHiZBuildDescriptors(depth_buffer_copy_.view);
     }
 }
 
@@ -449,6 +475,128 @@ void RealWorldApplication::writeHiZBuildDescriptors(
             er::ImageLayout::GENERAL);
         device_->updateDescriptorSets(writes);
     }
+}
+
+// ─── Hi-Z pyramid build (per-frame) ─────────────────────────────────────────
+// One dispatch per mip:
+//   mip 0 reads scene depth (depth_buffer_copy_, in SHADER_READ_ONLY)
+//   mip N reads mip N-1
+// Each dispatch writes its destination mip in GENERAL layout and is
+// followed by a SHADER_WRITE → SHADER_READ barrier so the next mip's
+// source read sees the just-written values.  After all mips are built
+// the entire pyramid sits in SHADER_READ_ONLY_OPTIMAL — exactly the
+// layout the cluster cull pass binds at descriptor binding 11.
+//
+// Push constants per dispatch: dst_size (2 uints) + src_size (2 uints).
+//   src_size for mip 0 = depth_buffer_copy_ size (== swap chain extent
+//                        when matching, but we already know hi-z mip 0
+//                        is sized to next-pow2-of-extent so use that).
+void RealWorldApplication::dispatchHiZBuild(
+    const std::shared_ptr<er::CommandBuffer>& cmd_buf) {
+
+    if (!hiz_build_pipeline_ ||
+        hiz_pyramid_mips_ == 0 ||
+        hiz_build_desc_sets_.empty()) {
+        return;
+    }
+
+    cmd_buf->bindPipeline(
+        er::PipelineBindPoint::COMPUTE, hiz_build_pipeline_);
+
+    // Source dimensions for mip 0 reads.  depth_buffer_copy_ matches the
+    // swap-chain extent; mip 0 is sized to next-pow2 of that, so we
+    // store the actual depth size for this push constant and use the
+    // pyramid mip dimensions for subsequent mips.
+    glm::uvec2 mip0_src_size(
+        depth_buffer_copy_.size.x, depth_buffer_copy_.size.y);
+
+    er::ImageResourceInfo prev_info = {
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        SET_FLAG_BIT(Access, SHADER_READ_BIT),
+        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) };
+    er::ImageResourceInfo write_info = {
+        er::ImageLayout::GENERAL,
+        SET_FLAG_BIT(Access, SHADER_WRITE_BIT),
+        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) };
+    // Inter-mip barrier destination: GENERAL layout (image stays in
+    // GENERAL between dispatches) but with SHADER_READ access bits set
+    // so the next mip's `textureLod` sampler read can see the previous
+    // mip's writes.  Without SHADER_READ in the destination access
+    // mask, the barrier only synchronises write→write — symptom in
+    // testing: cluster cull alternates between 0% and 100% Hi-Z hits
+    // because reads of the pyramid sometimes catch the previous-mip
+    // writes and sometimes don't.
+    er::ImageResourceInfo gen_read_write = {
+        er::ImageLayout::GENERAL,
+        SET_FLAG_BIT(Access, SHADER_READ_BIT) |
+            SET_FLAG_BIT(Access, SHADER_WRITE_BIT),
+        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) };
+    er::ImageResourceInfo read_info = {
+        er::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        SET_FLAG_BIT(Access, SHADER_READ_BIT),
+        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) };
+
+    for (uint32_t m = 0; m < hiz_pyramid_mips_; ++m) {
+        // Destination mip dimensions = floor(mip0 / 2^m), clamped to 1.
+        glm::uvec2 dst_size(
+            std::max(1u, hiz_pyramid_size_.x >> m),
+            std::max(1u, hiz_pyramid_size_.y >> m));
+        glm::uvec2 src_size = (m == 0)
+            ? mip0_src_size
+            : glm::uvec2(
+                std::max(1u, hiz_pyramid_size_.x >> (m - 1)),
+                std::max(1u, hiz_pyramid_size_.y >> (m - 1)));
+
+        // Transition this mip subresource to GENERAL for the write.
+        // er::Helper::transitMapTextureToStoreImage handles the whole
+        // image — fine here because each mip is a distinct subresource
+        // of the same image and we only ever write one at a time.
+        // For stricter per-mip transitions a custom barrier with mip
+        // ranges would be needed; sufficient for now.
+        if (m == 0) {
+            er::helper::transitMapTextureToStoreImage(
+                cmd_buf, { hiz_pyramid_.image });
+        }
+
+        // Push constants: dst_size + src_size (16 bytes total).
+        struct HiZPC {
+            glm::uvec2 dst_size;
+            glm::uvec2 src_size;
+        } pc;
+        pc.dst_size = dst_size;
+        pc.src_size = src_size;
+        cmd_buf->pushConstants(
+            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            hiz_build_pipeline_layout_, &pc, sizeof(pc));
+
+        cmd_buf->bindDescriptorSets(
+            er::PipelineBindPoint::COMPUTE,
+            hiz_build_pipeline_layout_,
+            { hiz_build_desc_sets_[m] });
+
+        // 8×8 workgroups.
+        const uint32_t gx = (dst_size.x + 7u) / 8u;
+        const uint32_t gy = (dst_size.y + 7u) / 8u;
+        cmd_buf->dispatch(gx, gy, 1);
+
+        // Insert a SHADER_WRITE → SHADER_READ|WRITE barrier between
+        // mips so the next dispatch's textureLod read of the previous
+        // mip is correctly synchronized AND it can also write its own
+        // mip in GENERAL layout.  Skip after the last mip — caller
+        // transitions the whole pyramid back to SHADER_READ_ONLY below.
+        if (m + 1 < hiz_pyramid_mips_) {
+            cmd_buf->addImageBarrier(
+                hiz_pyramid_.image,
+                write_info, gen_read_write,
+                SET_FLAG_BIT(ImageAspect, COLOR_BIT),
+                0, hiz_pyramid_mips_);
+        }
+    }
+
+    // Final transition: every mip → SHADER_READ_ONLY_OPTIMAL so the
+    // cluster cull's binding 11 sample reads valid data.
+    er::helper::transitMapTextureFromStoreImage(
+        cmd_buf, { hiz_pyramid_.image });
 }
 
 void RealWorldApplication::initDeferredResolve() {
@@ -845,6 +993,19 @@ void RealWorldApplication::initVulkan() {
     // the scene depth view).  See writeHiZBuildDescriptors() call below.
     initHiZBuild();
 
+    // createHiZPyramid was called earlier inside createGBuffer (before
+    // this initHiZBuild() ran), so its internal writeHiZBuildDescriptors
+    // call was gated out (no pipeline yet → no descriptor set layout to
+    // allocate against).  Now that the pipeline exists, populate the
+    // per-mip descriptor sets so dispatchHiZBuild() actually has somewhere
+    // to dispatch into — without this the per-frame Hi-Z build silently
+    // early-exits because hiz_build_desc_sets_ is empty, the pyramid
+    // never gets populated, and the cluster cull's plausibility check
+    // rejects every sample (toggle has no effect).
+    if (depth_buffer_copy_.view) {
+        writeHiZBuildDescriptors(depth_buffer_copy_.view);
+    }
+
     auto desc_set_layouts = {
         pbr_lighting_desc_set_layout_,
         ego::CameraObject::getViewCameraDescriptorSetLayout() };
@@ -1112,11 +1273,14 @@ void RealWorldApplication::initVulkan() {
     // call again on swap-chain rebuild.
     writeDeferredResolveDescriptors();
 
-    // Same idea for the Hi-Z build chain — mip 0's source needs to be the
-    // scene depth view, which lives on object_scene_view_.
-    {
-        auto db = object_scene_view_->getDepthBuffer();
-        if (db) writeHiZBuildDescriptors(db->view);
+    // Hi-Z mip 0 sources from depth_buffer_copy_ — that buffer is
+    // populated by the depth blit late in the frame and is already in
+    // SHADER_READ_ONLY_OPTIMAL by the time the build dispatch runs,
+    // matching what hiz_build.comp expects.  Routing through the live
+    // object_scene_view_ depth would need an extra transition each
+    // frame.  See createHiZPyramid() for the matching write path.
+    if (depth_buffer_copy_.view) {
+        writeHiZBuildDescriptors(depth_buffer_copy_.view);
     }
 
     // ── Create CSM shadow depth array (2048×2048×CSM_CASCADE_COUNT) ──────────
@@ -1273,6 +1437,17 @@ void RealWorldApplication::initVulkan() {
     cluster_renderer_ = std::make_shared<es::ClusterRenderer>(
         device_,
         descriptor_pool_);
+
+    // Hand the just-created cluster renderer the Hi-Z handles that
+    // createHiZPyramid built earlier in initVulkan.  Without this call
+    // the cluster cull descriptor's binding 11 is left unbound when
+    // finalizeUploads writes the rest of the set, and any cull
+    // dispatch that tries to sample the Hi-Z reads garbage.
+    if (hiz_sampler_ && hiz_pyramid_full_view_) {
+        cluster_renderer_->setHiZTexture(
+            hiz_sampler_, hiz_pyramid_full_view_,
+            hiz_pyramid_size_, hiz_pyramid_mips_);
+    }
 
     // ── Dynamic reflection cubemap + ambient probe system ────────────
     // The dynamic cubemap is the moving "scratch probe" — it captures
@@ -1563,9 +1738,10 @@ void RealWorldApplication::recreateSwapChain() {
         // resolve hasn't been initialised.
         writeDeferredResolveDescriptors();
 
-        // Hi-Z build descriptors also need to point at the new scene depth.
-        if (auto db = object_scene_view_->getDepthBuffer(); db) {
-            writeHiZBuildDescriptors(db->view);
+        // Hi-Z build descriptors also need to point at the new depth
+        // copy (recreated above by createDepthResources).
+        if (depth_buffer_copy_.view) {
+            writeHiZBuildDescriptors(depth_buffer_copy_.view);
         }
     }
 
@@ -2098,6 +2274,27 @@ void RealWorldApplication::registerIblDebugImTextureIds() {
         menu_->setIblSheenFaceMipTextureIds(ids, n);
     }
 
+    // ── Hi-Z pyramid mip thumbnails for the Render Debug viewer ──
+    // One ImTextureID per mip wrapped via Helper::addImTextureID using
+    // the same Hi-Z sampler the build / cull passes use.  Lets the user
+    // visually verify each frame whether the pyramid actually contains
+    // depth data — black/grey thumbnails = real depth, uniform white =
+    // build dispatch never wrote, etc.  See menu.cpp's "Hi-Z Pyramid
+    // Debug" window.
+    if (menu_ && hiz_sampler_ && !hiz_mip_views_.empty()) {
+        std::vector<ImTextureID> hiz_ids;
+        hiz_ids.reserve(hiz_mip_views_.size());
+        for (const auto& mip_view : hiz_mip_views_) {
+            if (mip_view) {
+                hiz_ids.push_back(
+                    er::Helper::addImTextureID(hiz_sampler_, mip_view));
+            } else {
+                hiz_ids.push_back(ImTextureID(0));
+            }
+        }
+        menu_->setHiZDebugTextureIds(std::move(hiz_ids));
+    }
+
     // ── Dynamic cubemap face thumbnails for the Render Debug viewer ──
     // Both ping-pong buffers' six per-face 2D layer views are wrapped
     // as ImTextureIDs.  The viewer picks the right ping-pong slice each
@@ -2604,13 +2801,35 @@ void RealWorldApplication::drawScene(
         // disabled — when ambient_probe_system_ isn't initialized,
         // we still need the main cull to populate the indirect
         // buffer for the forward pass.
+        // Build the Hi-Z pyramid from LAST frame's depth (still sitting
+        // in depth_buffer_copy_ from the previous frame's end-of-frame
+        // blit) BEFORE the cluster cull samples it.  Doing this within
+        // the same command buffer guarantees the build's writes happen
+        // before the cull's reads via natural in-CB execution ordering,
+        // which side-steps the cross-command-buffer race that was
+        // producing 0% / 100% Hi-Z cull flickering when the build was
+        // at end-of-frame.
+        // Run the Hi-Z build whenever the cull-side toggle is on OR the
+        // viewer is open, so a user can inspect the pyramid contents in
+        // the Render Debug menu without having to also enable the
+        // cull-side switch.
+        const bool hiz_debug_open = menu_ && menu_->isHiZDebugOn();
+        if (cluster_renderer_ && cluster_renderer_->isEnabled() &&
+            (cluster_renderer_->getUseLastFrameDepthCull() ||
+             hiz_debug_open)) {
+            auto _scope_hiz = gpu_profiler_.beginScope(cmd_buf, "Hi-Z Build");
+            dispatchHiZBuild(cmd_buf);
+            gpu_profiler_.endScope(cmd_buf, _scope_hiz);
+        }
+
         if (cluster_renderer_ && cluster_renderer_->isEnabled() &&
             !ambient_probe_system_) {
             auto _scope_cull = gpu_profiler_.beginScope(cmd_buf, "Cluster Cull");
             cluster_renderer_->cull(
                 cmd_buf,
                 main_camera_object_->getViewProjMatrix(),
-                main_camera_object_->getCameraPosition());
+                main_camera_object_->getCameraPosition(),
+                last_view_proj_);
             gpu_profiler_.endScope(cmd_buf, _scope_cull);
         }
 
@@ -2687,7 +2906,8 @@ void RealWorldApplication::drawScene(
             cluster_renderer_->cull(
                 cmd_buf,
                 main_camera_object_->getViewProjMatrix(),
-                main_camera_object_->getCameraPosition());
+                main_camera_object_->getCameraPosition(),
+                last_view_proj_);
             gpu_profiler_.endScope(cmd_buf, _scope_recull);
         }
 
@@ -3282,6 +3502,12 @@ void RealWorldApplication::drawScene(
             depth_blit_src_size,
             depth_buffer_copy_.size);
 
+        // (Hi-Z build was here; moved earlier in the frame so it runs
+        // BEFORE the cluster cull's pyramid sample, eliminating the
+        // cross-command-buffer race that was producing 0%/100% flickery
+        // cull counts.  Sources from depth_buffer_copy_ which holds
+        // last-frame's depth at that point in the frame.)
+
         // ── SSAO: generate, blur, apply to HDR color ──
         // Run when SSAO is enabled OR the user has selected the SSAO
         // render-debug mode — that mode wants the apply step to fire
@@ -3361,6 +3587,13 @@ void RealWorldApplication::drawScene(
 
     // ----- GPU Profiler: end frame -------------------------------------------
     gpu_profiler_.endFrame(cmd_buf, static_cast<uint32_t>(current_frame_ % kMaxFramesInFlight));
+
+    // Snapshot this frame's view-projection so the NEXT frame's cluster
+    // cull can reproject cluster bounds into yesterday's screen space
+    // and sample the Hi-Z pyramid built from yesterday's depth.
+    if (main_camera_object_) {
+        last_view_proj_ = main_camera_object_->getViewProjMatrix();
+    }
 
     s_dbuf_idx = 1 - s_dbuf_idx;
 }
