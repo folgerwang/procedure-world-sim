@@ -398,13 +398,22 @@ void RealWorldApplication::createHiZPyramid(const glm::uvec2& display_size) {
 
     // Refresh the per-mip Hi-Z build descriptor sets so each set's source
     // binding points at the previous mip (or the scene depth view, for
-    // mip 0).  Mip 0 reads from depth_buffer_copy_ — that buffer is
-    // populated by the depth blit at end-of-render and ends up in
-    // SHADER_READ_ONLY_OPTIMAL, which is exactly the layout the build
-    // shader needs.  Sourcing from object_scene_view_'s live depth
-    // would require an extra layout transition each frame.
-    if (hiz_build_pipeline_ && depth_buffer_copy_.view) {
-        writeHiZBuildDescriptors(depth_buffer_copy_.view);
+    // mip 0).  Mip 0 reads object_scene_view_'s LIVE depth attachment —
+    // the same image Phase A's render pass just wrote into.  This is
+    // the true Nanite-style two-pass occlusion path: Phase A draws
+    // previously-visible clusters, the Hi-Z pyramid summarises THAT
+    // depth, Phase B tests every cluster against the pyramid.  Because
+    // the pyramid + the cull shader's projection both refer to THIS
+    // frame's coordinate system, no last_view_proj reprojection is
+    // needed.  An extra layout transition (DEPTH_ATTACHMENT →
+    // SHADER_READ_ONLY → DEPTH_ATTACHMENT) sits around the Hi-Z build
+    // dispatch in drawScene; cheap relative to the cull/render cost.
+    if (hiz_build_pipeline_) {
+        std::shared_ptr<er::ImageView> phase_a_depth_view;
+        if (object_scene_view_ && object_scene_view_->getDepthBuffer()) {
+            phase_a_depth_view = object_scene_view_->getDepthBuffer()->view;
+        }
+        writeHiZBuildDescriptors(phase_a_depth_view);
     }
 }
 
@@ -1119,8 +1128,16 @@ void RealWorldApplication::initVulkan() {
     // early-exits because hiz_build_desc_sets_ is empty, the pyramid
     // never gets populated, and the cluster cull's plausibility check
     // rejects every sample (toggle has no effect).
-    if (depth_buffer_copy_.view) {
-        writeHiZBuildDescriptors(depth_buffer_copy_.view);
+    //
+    // Source = object_scene_view_'s live depth attachment (Phase A's
+    // output).  See createHiZPyramid() for why we no longer route
+    // through depth_buffer_copy_.
+    {
+        std::shared_ptr<er::ImageView> phase_a_depth_view;
+        if (object_scene_view_ && object_scene_view_->getDepthBuffer()) {
+            phase_a_depth_view = object_scene_view_->getDepthBuffer()->view;
+        }
+        writeHiZBuildDescriptors(phase_a_depth_view);
     }
 
     auto desc_set_layouts = {
@@ -1390,14 +1407,15 @@ void RealWorldApplication::initVulkan() {
     // call again on swap-chain rebuild.
     writeDeferredResolveDescriptors();
 
-    // Hi-Z mip 0 sources from depth_buffer_copy_ — that buffer is
-    // populated by the depth blit late in the frame and is already in
-    // SHADER_READ_ONLY_OPTIMAL by the time the build dispatch runs,
-    // matching what hiz_build.comp expects.  Routing through the live
-    // object_scene_view_ depth would need an extra transition each
-    // frame.  See createHiZPyramid() for the matching write path.
-    if (depth_buffer_copy_.view) {
-        writeHiZBuildDescriptors(depth_buffer_copy_.view);
+    // Hi-Z mip 0 sources from object_scene_view_'s LIVE depth — Phase A
+    // writes into it, the build dispatch reads it, Phase B tests against
+    // the resulting pyramid all in the same frame.  See createHiZPyramid().
+    {
+        std::shared_ptr<er::ImageView> phase_a_depth_view;
+        if (object_scene_view_ && object_scene_view_->getDepthBuffer()) {
+            phase_a_depth_view = object_scene_view_->getDepthBuffer()->view;
+        }
+        writeHiZBuildDescriptors(phase_a_depth_view);
     }
 
     // ── Create CSM shadow depth array (2048×2048×CSM_CASCADE_COUNT) ──────────
@@ -1855,10 +1873,14 @@ void RealWorldApplication::recreateSwapChain() {
         // resolve hasn't been initialised.
         writeDeferredResolveDescriptors();
 
-        // Hi-Z build descriptors also need to point at the new depth
-        // copy (recreated above by createDepthResources).
-        if (depth_buffer_copy_.view) {
-            writeHiZBuildDescriptors(depth_buffer_copy_.view);
+        // Hi-Z build descriptors point at object_scene_view_'s freshly
+        // re-allocated depth attachment (Phase A's render target).
+        {
+            std::shared_ptr<er::ImageView> phase_a_depth_view;
+            if (object_scene_view_ && object_scene_view_->getDepthBuffer()) {
+                phase_a_depth_view = object_scene_view_->getDepthBuffer()->view;
+            }
+            writeHiZBuildDescriptors(phase_a_depth_view);
         }
     }
 
@@ -2946,7 +2968,7 @@ void RealWorldApplication::drawScene(
         // cull-side switch.
         const bool hiz_debug_open = menu_ && menu_->isHiZDebugOn();
         if (cluster_renderer_ && cluster_renderer_->isEnabled() &&
-            (cluster_renderer_->getUseLastFrameDepthCull() ||
+            (cluster_renderer_->getUseHiZOcclusionCull() ||
              hiz_debug_open)) {
             auto _scope_hiz = gpu_profiler_.beginScope(cmd_buf, "Hi-Z Build");
             dispatchHiZBuild(cmd_buf);
