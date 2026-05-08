@@ -1435,11 +1435,16 @@ void RealWorldApplication::initVulkan() {
         writeHiZBuildDescriptors(phase_a_depth_view);
     }
 
-    // ── Create CSM shadow depth array (2048×2048×CSM_CASCADE_COUNT) ──────────
+    // ── Create CSM shadow depth array (kCsmSize × kCsmSize × CSM_CASCADE_COUNT) ──
+    // 2048 px per cascade.  We took the smoothness benefit from going
+    // 4 → 6 cascades (which makes per-cascade extent ratios smaller),
+    // so 2048 per cascade is enough now without re-introducing visible
+    // shadow-texel stairstep.  At 6 cascades × 2048² × 4 bytes = 96 MB
+    // — back in line with typical AAA budgets.
+    constexpr uint32_t kCsmSize = 2048u;
     {
         const er::Format csm_fmt =
             renderbuffer_formats_[int(er::RenderPasses::kShadow)].depth_format;
-        constexpr uint32_t kCsmSize = 2048u;
 
         csm_shadow_tex_ = std::make_shared<er::TextureInfo>();
         csm_shadow_tex_->image = device_->createImage(
@@ -1502,7 +1507,7 @@ void RealWorldApplication::initVulkan() {
             shadow_camera_object_,
             nullptr,
             csm_shadow_tex_,   // provide our array texture as the depth buffer
-            glm::uvec2(2048),
+            glm::uvec2(kCsmSize),  // viewport must match the array texture
             true);
 
     main_camera_object_->createCameraDescSetWithTerrain(
@@ -1880,10 +1885,16 @@ void RealWorldApplication::recreateSwapChain() {
             renderbuffer_formats_[int(er::RenderPasses::kForward)];
         object_scene_view_->recreate(fwd_fmt, swap_chain_info_.extent);
         terrain_scene_view_->recreate(fwd_fmt, swap_chain_info_.extent);
-        // Shadow view keeps its fixed 2048×2048 size but needs new desc sets.
+        // Shadow view keeps its fixed CSM size (set in initVulkan from
+        // kCsmSize).  Window resize doesn't change the shadow map, but
+        // the desc sets need rebinding.  Read the size back from the
+        // existing texture rather than redeclaring kCsmSize so any
+        // future change to the constant only needs touching initVulkan.
         const auto& shd_fmt =
             renderbuffer_formats_[int(er::RenderPasses::kShadow)];
-        shadow_object_scene_view_->recreate(shd_fmt, glm::uvec2(2048));
+        const glm::uvec2 csm_extent(
+            csm_shadow_tex_->size.x, csm_shadow_tex_->size.y);
+        shadow_object_scene_view_->recreate(shd_fmt, csm_extent);
 
         // Re-point the deferred resolve compute at the (newly re-allocated)
         // object_scene_view_ color buffer + G-buffer views.  No-op if the
@@ -2668,7 +2679,12 @@ void RealWorldApplication::drawScene(
     }
 
     // Declared here so both the update block and the render block can access them.
-    const glm::vec4 csm_cascade_splits(5.0f, 20.0f, 80.0f, 300.0f);
+    // 6 view-space far depths spanning ~0–300 m with smooth ~2.5× ratios
+    // (was 4 splits with ~4× ratios — that produced visible cascade
+    // steps at boundaries because per-cascade extent doubled too fast).
+    const std::array<float, CSM_CASCADE_COUNT> csm_cascade_splits = {
+        3.0f, 8.0f, 20.0f, 50.0f, 120.0f, 300.0f
+    };
     std::array<glm::mat4, CSM_CASCADE_COUNT> csm_cascade_vps;
 
     // this has to be happened after tile update, or you wont get the right height info.
@@ -2780,7 +2796,16 @@ void RealWorldApplication::drawScene(
             for (int k = 0; k < CSM_CASCADE_COUNT; ++k) {
                 runtime_lights_params.light_view_proj[k] = csm_cascade_vps[k];
             }
-            runtime_lights_params.cascade_splits = csm_cascade_splits;
+            // Pack the 6 view-space far depths into vec4[2].  Slots 6
+            // and 7 are unused but must be initialised — leave them at
+            // a value larger than any cascade so misindexing falls
+            // through correctly to the last cascade in the shader.
+            runtime_lights_params.cascade_splits[0] = glm::vec4(
+                csm_cascade_splits[0], csm_cascade_splits[1],
+                csm_cascade_splits[2], csm_cascade_splits[3]);
+            runtime_lights_params.cascade_splits[1] = glm::vec4(
+                csm_cascade_splits[4], csm_cascade_splits[5],
+                1e9f, 1e9f);
             for (int l = 0; l < LIGHT_COUNT; l++) {
                 runtime_lights_params.lights[l].type = glsl::LightType_Directional;
                 runtime_lights_params.lights[l].color = glm::vec3(255.0f, 250.0f, 240.0f) / 255.0f;
