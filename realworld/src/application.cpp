@@ -429,12 +429,29 @@ void RealWorldApplication::initHiZBuild() {
     if (hiz_build_pipeline_) return;
 
     if (!hiz_sampler_) {
-        // Linear-min/mag is fine — the build is one source texel per dest
-        // texel offset by a half-pixel, and the 2×2 max we compute manually
-        // doesn't depend on the sampler's filter mode.  CLAMP_TO_EDGE keeps
-        // the upper-mip samples honest at edges.
+        // NEAREST min/mag is required for cluster_cull.comp's Hi-Z
+        // occlusion test to stay conservative.  The cull shader samples
+        // the pyramid at the four corners of each cluster's projected
+        // AABB (not at texel centres) — under LINEAR filtering each tap
+        // returns a bilinear blend of up to 4 mip texels, which can
+        // produce a value smaller than every individual texel's stored
+        // depth.  Because the pyramid is a max-of-far reduction, that
+        // underestimate makes "ndc_z_near > pyramid_max_z" trigger on
+        // visible geometry — false-positive occlusions.  In the
+        // two-pass path those false rejections in Phase B are sticky:
+        // the cluster never gets its visibility bit set, so Phase A
+        // doesn't redraw it next frame, Hi-Z stays the same, and the
+        // false rejection repeats — visually, geometry disappears and
+        // pops back only when the camera moves enough to perturb the
+        // sampling.
+        //
+        // hiz_build.comp samples at exact pixel centres (uv = (px+0.5)
+        // / src_size), so for it LINEAR and NEAREST are equivalent —
+        // changing this filter is a no-op for the build pass.  The
+        // ImGui debug visualisation that also uses this sampler just
+        // looks crisper, no correctness change.
         hiz_sampler_ = device_->createSampler(
-            er::Filter::LINEAR,
+            er::Filter::NEAREST,
             er::SamplerAddressMode::CLAMP_TO_EDGE,
             er::SamplerMipmapMode::NEAREST,
             /*anisotropy*/ 0.0f,
