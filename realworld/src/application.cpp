@@ -3328,6 +3328,8 @@ void RealWorldApplication::drawScene(
                 }
 
                 {
+                    auto _scope_drawA = gpu_profiler_.beginScope(
+                        cmd_buf, "Cluster Draw (Phase A)");
                     er::RenderingAttachmentInfo gbuf0 =
                         make_gbuf_attach(gbuf_albedo_ao_.view,
                                          er::AttachmentLoadOp::CLEAR);
@@ -3358,6 +3360,7 @@ void RealWorldApplication::drawScene(
                     cluster_renderer_->drawOpaqueGBufferPhaseA(
                         cmd_buf, cluster_desc_sets, { vp_g }, { sc_g });
                     cmd_buf->endDynamicRendering();
+                    gpu_profiler_.endScope(cmd_buf, _scope_drawA);
                 }
 
                 // ── Hi-Z build sandwiched between the two render passes ──
@@ -3398,7 +3401,12 @@ void RealWorldApplication::drawScene(
                 // Clear last frame's visibility bits.  Phase A already
                 // consumed them; Phase B is about to atomicOr in this
                 // frame's true visible set.
-                cluster_renderer_->clearVisibilityBuffer(cmd_buf);
+                {
+                    auto _scope_visclear = gpu_profiler_.beginScope(
+                        cmd_buf, "Visibility Bits Clear");
+                    cluster_renderer_->clearVisibilityBuffer(cmd_buf);
+                    gpu_profiler_.endScope(cmd_buf, _scope_visclear);
+                }
 
                 // ── Phase B: cull (with Hi-Z) → render newly-disoccluded ──
                 {
@@ -3412,6 +3420,8 @@ void RealWorldApplication::drawScene(
                 }
 
                 {
+                    auto _scope_drawB = gpu_profiler_.beginScope(
+                        cmd_buf, "Cluster Draw (Phase B)");
                     // LOAD all four colour RTs so Phase A's contributions
                     // are preserved; Phase B writes additional pixels on
                     // top wherever its clusters survive the Hi-Z test.
@@ -3445,6 +3455,7 @@ void RealWorldApplication::drawScene(
                     cluster_renderer_->drawOpaqueGBufferPhaseB(
                         cmd_buf, cluster_desc_sets, { vp_g }, { sc_g });
                     cmd_buf->endDynamicRendering();
+                    gpu_profiler_.endScope(cmd_buf, _scope_drawB);
                 }
 
                 // 2. Barriers for the resolve dispatch.
@@ -3497,23 +3508,28 @@ void RealWorldApplication::drawScene(
 
                 // 3. Bind compute resolve and dispatch.  Set indices match
                 //    the forward path — see initDeferredResolve.
-                er::DescriptorSetList resolve_sets(
-                    RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
-                resolve_sets[PBR_GLOBAL_PARAMS_SET]     = pbr_lighting_desc_set_;
-                resolve_sets[VIEW_PARAMS_SET]           =
-                    main_camera_object_->getViewCameraDescriptorSet();
-                resolve_sets[PBR_MATERIAL_PARAMS_SET]   = deferred_resolve_desc_set_;
-                resolve_sets[RUNTIME_LIGHTS_PARAMS_SET] = runtime_lights_desc_set_;
-                cmd_buf->bindPipeline(
-                    er::PipelineBindPoint::COMPUTE, deferred_resolve_pipeline_);
-                cmd_buf->bindDescriptorSets(
-                    er::PipelineBindPoint::COMPUTE,
-                    deferred_resolve_pipeline_layout_,
-                    resolve_sets);
-                const uint32_t kGroupSize = 8;
-                uint32_t gx = (screen_size.x + kGroupSize - 1) / kGroupSize;
-                uint32_t gy = (screen_size.y + kGroupSize - 1) / kGroupSize;
-                cmd_buf->dispatch(gx, gy, 1);
+                {
+                    auto _scope_resolve = gpu_profiler_.beginScope(
+                        cmd_buf, "Deferred Resolve Compute");
+                    er::DescriptorSetList resolve_sets(
+                        RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
+                    resolve_sets[PBR_GLOBAL_PARAMS_SET]     = pbr_lighting_desc_set_;
+                    resolve_sets[VIEW_PARAMS_SET]           =
+                        main_camera_object_->getViewCameraDescriptorSet();
+                    resolve_sets[PBR_MATERIAL_PARAMS_SET]   = deferred_resolve_desc_set_;
+                    resolve_sets[RUNTIME_LIGHTS_PARAMS_SET] = runtime_lights_desc_set_;
+                    cmd_buf->bindPipeline(
+                        er::PipelineBindPoint::COMPUTE, deferred_resolve_pipeline_);
+                    cmd_buf->bindDescriptorSets(
+                        er::PipelineBindPoint::COMPUTE,
+                        deferred_resolve_pipeline_layout_,
+                        resolve_sets);
+                    const uint32_t kGroupSize = 8;
+                    uint32_t gx = (screen_size.x + kGroupSize - 1) / kGroupSize;
+                    uint32_t gy = (screen_size.y + kGroupSize - 1) / kGroupSize;
+                    cmd_buf->dispatch(gx, gy, 1);
+                    gpu_profiler_.endScope(cmd_buf, _scope_resolve);
+                }
 
                 // 4. Barriers back to attachment-friendly layouts so the
                 //    upcoming translucent / sky / debug passes can attach
@@ -4195,45 +4211,6 @@ void RealWorldApplication::drawFrame() {
             menu_->setGameState(engine::ui::GameState::InGame);
             menu_->setBackgroundEnabled(false);
 
-            if (player_object_ && player_object_->isReady() &&
-                player_controller_ && !player_controller_->isSpawned()) {
-                const auto& cam = main_camera_object_->getCameraViewInfo();
-                glm::vec3 cam_pos = main_camera_object_->getCameraPosition();
-                glm::vec2 fwd_xz(cam.facing_dir.x, cam.facing_dir.z);
-                float fxz_len = glm::length(fwd_xz);
-                if (fxz_len > 1e-3f) {
-                    fwd_xz /= fxz_len;
-                } else {
-                    float yaw_rad = glm::radians(-cam.yaw);
-                    fwd_xz = glm::vec2(
-                        std::cos(yaw_rad), std::sin(yaw_rad));
-                }
-                const float kSpawnAhead = 3.0f;
-                glm::vec2 spawn_xz =
-                    glm::vec2(cam_pos.x, cam_pos.z) + fwd_xz * kSpawnAhead;
-                // Use the procedural terrain height ONLY if it's close to
-                // the camera's vertical level — otherwise the bistro
-                // (static glTF placed at world origin) and the heightmap
-                // sit in different coordinate systems and the player
-                // ends up tens of metres below the visible scene.
-                // Symptom seen with the original logic: terrain returned
-                // y=-120.6 while the bistro floor is near y=0, so the
-                // character spawned underground and was invisible.
-                float terrain_y = engine::game_object::getTerrainGroundHeight(
-                    spawn_xz);
-                const float kPlayerEyeOffset = 1.7f; // approx character height
-                float fallback_y = cam_pos.y - kPlayerEyeOffset;
-                float spawn_y =
-                    (std::fabs(terrain_y - fallback_y) < 5.0f)
-                        ? terrain_y
-                        : fallback_y;
-                glm::vec3 spawn_pos(spawn_xz.x, spawn_y, spawn_xz.y);
-                player_controller_->spawnAt(spawn_pos, cam.yaw);
-                std::cout << "[player] Spawned at ("
-                          << spawn_pos.x << ", " << spawn_pos.y << ", "
-                          << spawn_pos.z << ") yaw=" << cam.yaw << std::endl;
-            }
-
             // Upload cluster data to the GPU cluster renderer now that
             // meshes are fully loaded. Iterates every mesh in every
             // drawable and uploads its ClusterMesh sidecar.
@@ -4318,6 +4295,53 @@ void RealWorldApplication::drawFrame() {
                 }
             }
         }
+    }
+
+    // ── Player spawn (deferred-friendly retry) ──────────────────────
+    // Originally this was nested inside the Loading→InGame transition
+    // block above, which ran ONCE.  If the user picked a player AFTER
+    // bistro finished loading (i.e. after we'd already transitioned to
+    // InGame), the spawn block had already executed with player_object_
+    // null or not-yet-isReady, the !isSpawned() guard latched, and the
+    // character stayed at its default (0,0,0) position — invisible if
+    // that point was underground or behind something.  Moving the
+    // check here, gated on !isSpawned(), keeps it idempotent (only
+    // spawns once) but lets the check run every frame until the player
+    // genuinely is ready and spawnable.
+    if (player_object_ && player_object_->isReady() &&
+        player_controller_ && !player_controller_->isSpawned()) {
+        const auto& cam = main_camera_object_->getCameraViewInfo();
+        glm::vec3 cam_pos = main_camera_object_->getCameraPosition();
+        glm::vec2 fwd_xz(cam.facing_dir.x, cam.facing_dir.z);
+        float fxz_len = glm::length(fwd_xz);
+        if (fxz_len > 1e-3f) {
+            fwd_xz /= fxz_len;
+        } else {
+            float yaw_rad = glm::radians(-cam.yaw);
+            fwd_xz = glm::vec2(
+                std::cos(yaw_rad), std::sin(yaw_rad));
+        }
+        const float kSpawnAhead = 3.0f;
+        glm::vec2 spawn_xz =
+            glm::vec2(cam_pos.x, cam_pos.z) + fwd_xz * kSpawnAhead;
+        // Use the procedural terrain height ONLY if it's close to the
+        // camera's vertical level — otherwise the bistro (static glTF
+        // placed at world origin) and the heightmap sit in different
+        // coordinate systems and the player ends up tens of metres
+        // below the visible scene.
+        float terrain_y = engine::game_object::getTerrainGroundHeight(
+            spawn_xz);
+        const float kPlayerEyeOffset = 1.7f; // approx character height
+        float fallback_y = cam_pos.y - kPlayerEyeOffset;
+        float spawn_y =
+            (std::fabs(terrain_y - fallback_y) < 5.0f)
+                ? terrain_y
+                : fallback_y;
+        glm::vec3 spawn_pos(spawn_xz.x, spawn_y, spawn_xz.y);
+        player_controller_->spawnAt(spawn_pos, cam.yaw);
+        std::cout << "[player] Spawned at ("
+                  << spawn_pos.x << ", " << spawn_pos.y << ", "
+                  << spawn_pos.z << ") yaw=" << cam.yaw << std::endl;
     }
 
     // Build the collision world once both bistro scenes have actually
