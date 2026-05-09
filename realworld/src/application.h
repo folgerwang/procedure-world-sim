@@ -26,6 +26,7 @@
 #include "scene_rendering/ssao.h"
 #include "scene_rendering/cluster_renderer.h"
 #include "scene_rendering/dynamic_cubemap.h"
+#include "scene_rendering/virtual_texture.h"
 #include "scene_rendering/ambient_probe_system.h"
 #include "scene_rendering/conemap.h"
 #include "scene_rendering/prt_shadow.h"
@@ -130,6 +131,10 @@ private:
     // ordering as registerCsmDebugImTextureIds, plus a re-register on
     // swap-chain rebuild since ImGui state is reset).
     void registerIblDebugImTextureIds();
+    // Registers ImGui texture IDs for the VT pool viewer.  Same
+    // ordering constraint as the others: must run after Menu's
+    // constructor has initialised ImGui.
+    void registerVtPoolImTextureIds();
     void createCommandBuffers();
     void createSyncObjects();
     er::WriteDescriptorList addGlobalTextures(
@@ -337,6 +342,13 @@ private:
     std::shared_ptr<es::VolumeCloud> volume_cloud_;
     std::shared_ptr<es::SSAO> ssao_;
     std::shared_ptr<es::ClusterRenderer> cluster_renderer_;
+    // Runtime Virtual Texture manager — owns the per-layer 4096²
+    // pool textures and the global page table SSBO.  Materials
+    // register their textures via vt_manager_->registerTextureFromImage()
+    // during mesh upload; the returned VirtualTextureId is stored in
+    // BindlessMaterialParams and consumed by the sampling shaders'
+    // vtSample* helpers.  See virtual_texture.h for full architecture.
+    std::shared_ptr<es::VirtualTextureManager> vt_manager_;
     // Real-time reflection cubemap centred at the active ambient probe.
     // Captures one face per frame; depth-aware reprojection keeps the
     // other 5 faces consistent as the probe origin moves.  See

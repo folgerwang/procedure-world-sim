@@ -1595,6 +1595,37 @@ void RealWorldApplication::initVulkan() {
         device_,
         descriptor_pool_);
 
+    // ── Runtime Virtual Texture manager ────────────────────────────
+    // Allocates the 4 layer pool textures (4096² each), the page-table
+    // SSBO (HOST_VISIBLE so registerTexture writes are coherent without
+    // staging), and the per-VT meta SSBO.  Materials register their
+    // source textures during mesh upload; the returned VirtualTextureId
+    // resolves through the page table at sampling time in the shaders.
+    // See scene_rendering/virtual_texture.h for the full architecture.
+    vt_manager_ = std::make_shared<es::VirtualTextureManager>(
+        device_,
+        descriptor_pool_);
+
+    // Re-enabled now that:
+    //   (a) renderer.cpp::createTextureImage adds TRANSFER_SRC_BIT
+    //       to all loaded textures, satisfying the vkCmdCopyImage /
+    //       vkCmdCopyImageToBuffer prerequisite.
+    //   (b) The albedo BC7 path uses CPU readback + parallel BC7
+    //       encode (encode_pool_ in VirtualTextureManager) — no
+    //       longer requires source format-class compatibility with
+    //       the BC7 pool.  Other layers still use GPU-to-GPU copy
+    //       and assume source is RGBA8 — works for stb_image-loaded
+    //       assets (PNG/JPG); BC-source assets from DDS/KTX may
+    //       still emit a one-off validation warning the first time
+    //       they hit the copy path.  We can add a format-aware
+    //       skip-or-decode pass for those in a follow-up.
+    cluster_renderer_->setVtManager(vt_manager_.get());
+    // NOTE: pool ImTextureID registration moved to
+    // registerVtPoolImTextureIds(), called alongside
+    // registerCsmDebugImTextureIds() AFTER the menu is constructed.
+    // Doing it here would always no-op because menu_ doesn't exist
+    // until ~200 lines further down in initVulkan.
+
     // Hand the just-created cluster renderer the Hi-Z handles that
     // createHiZPyramid built earlier in initVulkan.  Without this call
     // the cluster cull descriptor's binding 11 is left unbound when
@@ -1771,6 +1802,7 @@ void RealWorldApplication::initVulkan() {
     // initialised by the Menu constructor before this can be called).
     registerCsmDebugImTextureIds();
     registerIblDebugImTextureIds();
+    registerVtPoolImTextureIds();
 
     // Wire the GPU profiler into the menu so it can display itself.
     menu_->setGpuProfiler(&gpu_profiler_);
@@ -2089,6 +2121,7 @@ void RealWorldApplication::recreateSwapChain() {
     // Re-register CSM debug textures — ImGui was re-initialized above.
     registerCsmDebugImTextureIds();
     registerIblDebugImTextureIds();
+    registerVtPoolImTextureIds();
 
     // Re-wire profiler after menu re-init.
     menu_->setGpuProfiler(&gpu_profiler_);
@@ -2373,6 +2406,25 @@ void RealWorldApplication::registerCsmDebugImTextureIds() {
             csm_debug_color_[k].view);
     }
     menu_->setCsmDebugTextureIds(ids);
+}
+
+void RealWorldApplication::registerVtPoolImTextureIds() {
+    if (!menu_ || !vt_manager_) return;
+    // Each ImTextureID is a long-lived (sampler, view) descriptor — safe
+    // to register once at init and reuse for the application's lifetime.
+    // The pool textures are created in the VirtualTextureManager
+    // constructor with SAMPLED_BIT usage, so this binding is well-formed
+    // even before any pages have been registered into them.
+    std::array<ImTextureID, 4> vt_ids{};
+    for (int k = 0; k < 4; ++k) {
+        auto view = vt_manager_->getPoolImageView(
+            static_cast<es::VtLayer>(k));
+        if (view) {
+            vt_ids[k] = er::Helper::addImTextureID(
+                vt_manager_->getPoolSampler(), view);
+        }
+    }
+    menu_->setVtPoolTextureIds(vt_ids);
 }
 
 void RealWorldApplication::registerIblDebugImTextureIds() {
@@ -4822,6 +4874,7 @@ void RealWorldApplication::cleanup() {
     volume_cloud_->destroy(device_);
     if (ssao_) ssao_->destroy(device_);
     if (cluster_renderer_) cluster_renderer_->destroy();
+    if (vt_manager_) vt_manager_->destroy();
     if (ambient_probe_system_) ambient_probe_system_->destroy(device_);
     if (dynamic_cubemap_) dynamic_cubemap_->destroy(device_);
     unit_plane_->destroy(device_);
