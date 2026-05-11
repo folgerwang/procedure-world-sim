@@ -2189,10 +2189,19 @@ void RealWorldApplication::createCommandPool() {
 }
 
 void RealWorldApplication::createCommandBuffers() {
-    command_buffers_ = 
+    // One command buffer per FRAMES-IN-FLIGHT slot — NOT per swapchain
+    // image.  Pairs 1:1 with in_flight_fences_[current_frame_], so the
+    // per-FIF fence wait at the top of drawFrame() guarantees the GPU
+    // is done with command_buffers_[current_frame_] before we reset
+    // and re-record it.  This is the invariant the rest of drawFrame
+    // assumes; sizing the array to swapchain image count and indexing
+    // by image_index (the previous approach) could let the CPU reset
+    // a CB still executing on the GPU under MAILBOX or out-of-order
+    // acquireNextImage.
+    command_buffers_ =
         device_->allocateCommandBuffers(
             command_pool_,
-            static_cast<uint32_t>(swap_chain_info_.framebuffers.size()));
+            static_cast<uint32_t>(kMaxFramesInFlight));
 }
 
 void RealWorldApplication::createSyncObjects() {
@@ -4164,6 +4173,15 @@ void RealWorldApplication::drawFrame() {
         gpu_profiler_.endCpuScope(_cpu_wait_fence);
     }
 
+    // NOTE: The prev-frame fence wait that used to live here has been
+    // moved down to just before command_buffer->reset() / drawScene().
+    // Rationale: the host-UBO write race it guards against (single-
+    // buffered per-frame UBOs like view_camera_buffer_) only happens
+    // inside drawScene; the ~600 lines of CPU pre-work between
+    // acquireNextImage and drawScene don't host-write per-frame
+    // buffers and can run concurrently with GPU frame N-1.  See the
+    // matching block below labelled "Wait Prev Frame Fence".
+
     // ── Collect GPU-profiler query results for the FIF slot we just
     //    drained ────────────────────────────────────────────────────────
     // We just waited on in_flight_fences_[current_frame_], so the GPU
@@ -4378,7 +4396,11 @@ void RealWorldApplication::drawFrame() {
         dump_volume_noise_ = false;
     }
 
-    auto command_buffer = command_buffers_[image_index];
+    // Pick the command buffer by FIF slot — image_index is still used
+    // below for the swapchain image we render INTO (framebuffer / blit
+    // destination) but NOT for selecting which CB to record.  See
+    // createCommandBuffers() for the rationale.
+    auto command_buffer = command_buffers_[current_frame_];
     std::vector<std::shared_ptr<er::CommandBuffer>>command_buffers(1, command_buffer);
 
     if (current_time_ == 0) {
@@ -4733,6 +4755,46 @@ void RealWorldApplication::drawFrame() {
 
     for (auto& drawable_obj : drawable_objects_) {
         drawable_obj->update(device_, current_time_);
+    }
+
+    // ── Wait Prev Frame Fence ────────────────────────────────────────
+    // Drain frame N-1's submit before we touch any host-visible per-
+    // frame buffer or reset the command buffer below.
+    //
+    // Why here, not at the top of drawFrame:
+    //   FIF=2.  The per-FIF fence wait at the start drained FIF[N-2].
+    //   Frame N-1's submit is still running on the GPU through this
+    //   point, but everything above (input handling, player controller
+    //   update, mesh-load polling, collision-world build, drawable CPU
+    //   updates, skydome math) is either CPU-only or writes to GPU
+    //   resources that are already multi-buffered against s_dbuf_idx
+    //   or per-FIF.  Letting all of that run concurrently with frame
+    //   N-1's GPU work is the actual async win — frame time drops to
+    //   max(CPU_pre, GPU_prev) instead of CPU_pre + GPU_prev.
+    //
+    // What still needs the wait, and why this wait protects them:
+    //   * command_buffer->reset() below — the CB is now per-FIF, so it
+    //     was last submitted FIF cycles ago against THIS slot's fence,
+    //     which the (1)-block wait already drained.  Strictly, this
+    //     prev-frame wait isn't needed for CB safety — the (1) wait
+    //     is.  Keeping it here grouped with the host-UBO sync just
+    //     makes the "no GPU work in flight" point clear.
+    //   * drawScene's host-coherent updateBufferMemory writes to
+    //     view_camera_buffer_, m_cascade_bufs_[], rt_render_info->ubo,
+    //     etc.  Those buffers are single-buffered and read by frame
+    //     N-1's still-in-flight passes; overwriting them before this
+    //     wait would race and produce the every-other-frame ABAB
+    //     flicker we hit earlier.
+    //
+    // Lifecycle: we do NOT reset this fence here.  It will be reset
+    // next frame by the (1) block at drawFrame entry, since
+    // current_frame_ alternates between the two FIF slots.
+    {
+        auto _cpu_wait_prev = gpu_profiler_.beginCpuScope("Wait Prev Frame Fence");
+        const uint64_t prev_frame_slot =
+            (current_frame_ + 1) % kMaxFramesInFlight;
+        device_->waitForFences({ in_flight_fences_[prev_frame_slot] });
+        gpu_profiler_.endCpuScope(_cpu_wait_prev);
     }
 
     command_buffer->reset(0);
