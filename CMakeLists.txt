@@ -295,6 +295,7 @@ add_library(engine STATIC
     "${ENGINE_DIR}/scene_rendering/dynamic_cubemap.cpp"
     "${ENGINE_DIR}/scene_rendering/virtual_texture.cpp"
     "${ENGINE_DIR}/scene_rendering/bc7_encoder.cpp"
+    "${ENGINE_DIR}/third_parties/bc7enc/bc7enc.c"
     "${ENGINE_DIR}/helper/thread_pool.cpp"
     "${ENGINE_DIR}/scene_rendering/ambient_probe_system.cpp"
     "${ENGINE_DIR}/scene_rendering/volume_cloud.cpp"

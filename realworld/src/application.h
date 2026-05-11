@@ -349,6 +349,14 @@ private:
     // BindlessMaterialParams and consumed by the sampling shaders'
     // vtSample* helpers.  See virtual_texture.h for full architecture.
     std::shared_ptr<es::VirtualTextureManager> vt_manager_;
+    // Monotonic frame counter passed to both vt_manager_->tick() (at
+    // frame start, consumes previous frame's compact slot) and
+    // vt_manager_->compactFeedback() (after cluster bindless draw,
+    // produces this frame's compact slot).  Both calls must see the
+    // SAME counter value within one frame so the per-FIF slot indexing
+    // (idx % kVtCompactSlots) lines up — separate static counters at
+    // the two call sites would drift if either call were skipped.
+    uint64_t vt_frame_index_ = 0;
     // Real-time reflection cubemap centred at the active ambient probe.
     // Captures one face per frame; depth-aware reprojection keeps the
     // other 5 faces consistent as the probe origin moves.  See

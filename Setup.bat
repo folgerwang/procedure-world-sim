@@ -21,6 +21,7 @@ rem   -libtorch=<path>    Use existing LibTorch at this path (skip download)
 rem   -skip-deps          Skip Python dependency install
 rem   -skip-model         Skip ML model export
 rem   -skip-libtorch      Skip LibTorch download
+rem   -skip-bc7enc        Skip bc7enc clone (BC7 albedo encode for VT)
 rem   -skip-cuda          Skip CUDA torch install (use CPU wheel from requirements.txt)
 rem   -cuda=<wheel>       CUDA wheel tag (default: cu128). Examples:
 rem                         cu128  -- works with all current NVIDIA GPUs incl.
@@ -35,6 +36,7 @@ set "LIBTORCH_DIR_ARG="
 set "SKIP_DEPS=0"
 set "SKIP_MODEL=0"
 set "SKIP_LIBTORCH=0"
+set "SKIP_BC7ENC=0"
 set "SKIP_CUDA=0"
 set "CUDA_WHEEL=cu128"
 
@@ -45,6 +47,7 @@ if /i "!_a:~0,10!"=="-libtorch=" set "LIBTORCH_DIR_ARG=!_a:~10!"
 if /i "!_a!"=="-skip-deps" set "SKIP_DEPS=1"
 if /i "!_a!"=="-skip-model" set "SKIP_MODEL=1"
 if /i "!_a!"=="-skip-libtorch" set "SKIP_LIBTORCH=1"
+if /i "!_a!"=="-skip-bc7enc" set "SKIP_BC7ENC=1"
 if /i "!_a!"=="-skip-cuda" set "SKIP_CUDA=1"
 if /i "!_a:~0,6!"=="-cuda=" set "CUDA_WHEEL=!_a:~6!"
 shift
@@ -218,6 +221,88 @@ echo -----------------------------------------------------------
 echo.
 
 :model_done
+
+rem ── bc7enc (Rich Geldreich) ──────────────────────────────────────────────────
+rem   Production-grade BC7 encoder used by the Runtime Virtual Texture's
+rem   albedo layer. Replaces the in-tree minimal Mode-6 encoder that was
+rem   producing visibly wrong colours on the GPU (the streamer + page table
+rem   were verified independently with an RGBA8 pool; only the BC7 path
+rem   was at fault). bc7enc is a small two-file repo (~3000 LoC, MIT
+rem   licensed, no dependencies); we only need bc7enc.h + bc7enc.cpp.
+rem   Use -skip-bc7enc to bypass (build will fail to compile if the files
+rem   aren't already present from a previous run).
+set "BC7ENC_DIR=realworld\src\sim_engine\third_parties\bc7enc"
+set "BC7ENC_REPO=https://github.com/richgel999/bc7enc.git"
+
+if "!SKIP_BC7ENC!"=="1" (
+    echo [INFO]  Skipping bc7enc clone ^(-skip-bc7enc^)
+    goto :bc7enc_done
+)
+
+rem Note: the upstream source file is bc7enc.c (C, not C++) — the header
+rem uses `extern "C"` so we treat it as a C compilation unit and let the
+rem CMake build pick it up alongside our C++ wrapper bc7_encoder.cpp.
+if exist "!BC7ENC_DIR!\bc7enc.c" if exist "!BC7ENC_DIR!\bc7enc.h" (
+    echo [INFO]  bc7enc already present: !BC7ENC_DIR!
+    goto :bc7enc_done
+)
+
+if not exist "!BC7ENC_DIR!" mkdir "!BC7ENC_DIR!"
+
+echo.
+echo -- bc7enc clone -------------------------------------------
+where git >nul 2>&1
+if not errorlevel 1 (
+    rem Shallow clone into a temp dir, then move only the two files we
+    rem need into !BC7ENC_DIR!. We avoid `git clone` directly into
+    rem !BC7ENC_DIR! so we don't drop a .git folder + ~3 MB of unrelated
+    rem files (rgbcx, ert, test images) into our third_parties tree.
+    set "BC7ENC_TMP=%TEMP%\bc7enc-clone-%RANDOM%"
+    echo [INFO]  Cloning !BC7ENC_REPO!
+    git clone --depth 1 --quiet "!BC7ENC_REPO!" "!BC7ENC_TMP!"
+    if errorlevel 1 (
+        echo [WARN]  git clone failed. Trying direct file download...
+        goto :bc7enc_curl
+    )
+    if exist "!BC7ENC_TMP!\bc7enc.c" (
+        copy /Y "!BC7ENC_TMP!\bc7enc.h" "!BC7ENC_DIR!\bc7enc.h" >nul
+        copy /Y "!BC7ENC_TMP!\bc7enc.c" "!BC7ENC_DIR!\bc7enc.c" >nul
+        rmdir /S /Q "!BC7ENC_TMP!" 2>nul
+        echo [INFO]  bc7enc installed: !BC7ENC_DIR!
+        goto :bc7enc_done
+    )
+    rmdir /S /Q "!BC7ENC_TMP!" 2>nul
+    echo [WARN]  git clone produced no bc7enc.c. Trying direct download...
+)
+
+:bc7enc_curl
+set "BC7ENC_RAW_H=https://raw.githubusercontent.com/richgel999/bc7enc/master/bc7enc.h"
+set "BC7ENC_RAW_C=https://raw.githubusercontent.com/richgel999/bc7enc/master/bc7enc.c"
+where curl >nul 2>&1
+if not errorlevel 1 (
+    echo [INFO]  Downloading bc7enc.h via curl...
+    curl -L --silent --fail -o "!BC7ENC_DIR!\bc7enc.h" "!BC7ENC_RAW_H!"
+    echo [INFO]  Downloading bc7enc.c via curl...
+    curl -L --silent --fail -o "!BC7ENC_DIR!\bc7enc.c" "!BC7ENC_RAW_C!"
+) else (
+    echo [INFO]  curl not found, trying PowerShell...
+    powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '!BC7ENC_RAW_H!' -OutFile '!BC7ENC_DIR!\bc7enc.h'"
+    powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '!BC7ENC_RAW_C!' -OutFile '!BC7ENC_DIR!\bc7enc.c'"
+)
+
+if exist "!BC7ENC_DIR!\bc7enc.c" if exist "!BC7ENC_DIR!\bc7enc.h" (
+    echo [INFO]  bc7enc installed: !BC7ENC_DIR!
+) else (
+    echo [WARN]  bc7enc download failed. The VT albedo BC7 path will fail
+    echo         to compile. Either re-run Setup.bat with internet, or
+    echo         manually copy bc7enc.h / bc7enc.c into:
+    echo           !BC7ENC_DIR!
+    echo         from !BC7ENC_REPO!
+)
+echo -----------------------------------------------------------
+echo.
+
+:bc7enc_done
 
 rem ── LibTorch download ────────────────────────────────────────────────────────
 rem   Download LibTorch to third_parties\libtorch if it's not already there.

@@ -1826,6 +1826,9 @@ void RealWorldApplication::initVulkan() {
     if (cluster_renderer_) {
         menu_->setClusterRenderer(cluster_renderer_.get());
     }
+    if (vt_manager_) {
+        menu_->setVtManager(vt_manager_.get());
+    }
 }
 
 void RealWorldApplication::recreateSwapChain() {
@@ -2415,13 +2418,20 @@ void RealWorldApplication::registerVtPoolImTextureIds() {
     // The pool textures are created in the VirtualTextureManager
     // constructor with SAMPLED_BIT usage, so this binding is well-formed
     // even before any pages have been registered into them.
+    //
+    // Use the DEBUG view + sampler (single-mip-0 view, NEAREST mipmap):
+    // ImGui draws the pool image as a small thumbnail, and its
+    // implicit LOD calculation lands well past the regular trilinear
+    // view's mip range (only mip 0 + mip 1).  Some drivers return
+    // black instead of clamping in that case; binding ImGui to a
+    // single-mip view side-steps the issue.
     std::array<ImTextureID, 4> vt_ids{};
     for (int k = 0; k < 4; ++k) {
-        auto view = vt_manager_->getPoolImageView(
+        auto view = vt_manager_->getPoolDebugView(
             static_cast<es::VtLayer>(k));
         if (view) {
             vt_ids[k] = er::Helper::addImTextureID(
-                vt_manager_->getPoolSampler(), view);
+                vt_manager_->getPoolDebugSampler(), view);
         }
     }
     menu_->setVtPoolTextureIds(vt_ids);
@@ -2630,9 +2640,17 @@ void RealWorldApplication::drawScene(
         s_request_toggle_collision_debug = false;
     }
     gpu_profiler_.beginFrame(cmd_buf, static_cast<uint32_t>(current_frame_ % kMaxFramesInFlight));
+    // CPU frame is anchored at the top of drawFrame() (well before
+    // here) so its timeline covers the whole host work for this
+    // frame, not just the command-recording portion.  See drawFrame.
 
     {
-        auto _scope = gpu_profiler_.beginScope(cmd_buf, "IBL / Skydome");
+        // GpuProfiler::Scope = paired CPU + GPU scope (RAII).  The CPU
+        // bar measures host-side recording time, the GPU bar measures
+        // execution time; they share a name and align horizontally in
+        // the profiler timeline.
+        engine::helper::GpuProfiler::Scope _scope(
+            gpu_profiler_, cmd_buf, "IBL / Skydome");
         // ORDER MATTERS: the sky scattering LUT must be (re)generated
         // BEFORE the cubemap consumes it.  The LUT is gated by scale-
         // height changes (cheap no-op once converged), but on frame 0
@@ -2679,7 +2697,7 @@ void RealWorldApplication::drawScene(
         // all three IBL filters use the same per-frame dither offset and
         // sample stratum.
         ibl_creator_->updateIblSheenMapMini(cmd_buf, kCubemapSize);
-        gpu_profiler_.endScope(cmd_buf, _scope);
+        // _scope auto-closes via RAII.
     }
 
     // NOTE: ambient probe update USED to live here (right after IBL
@@ -2697,7 +2715,8 @@ void RealWorldApplication::drawScene(
         view_desc_set };
 
     {
-        auto _scope_terrain = gpu_profiler_.beginScope(cmd_buf, "Terrain / Weather Update");
+        engine::helper::GpuProfiler::Scope _scope_terrain(
+            gpu_profiler_, cmd_buf, "Terrain / Weather Update");
         // only init one time.
         static bool s_tile_buffer_inited = false;
         if (!s_tile_buffer_inited) {
@@ -2727,7 +2746,7 @@ void RealWorldApplication::drawScene(
             menu_->getLightExtFactor(),
             s_dbuf_idx,
             current_time);
-        gpu_profiler_.endScope(cmd_buf, _scope_terrain);
+        // _scope_terrain auto-closes via RAII.
     }
 
     // Declared here so both the update block and the render block can access them.
@@ -2741,7 +2760,8 @@ void RealWorldApplication::drawScene(
 
     // this has to be happened after tile update, or you wont get the right height info.
     {
-        auto _scope_go = gpu_profiler_.beginScope(cmd_buf, "Game Object Updates");
+        engine::helper::GpuProfiler::Scope _scope_go(
+            gpu_profiler_, cmd_buf, "Game Object Updates");
         static std::chrono::time_point s_last_time = std::chrono::steady_clock::now();
         auto cur_time = std::chrono::steady_clock::now();
         std::chrono::duration<double> elapsed_seconds = cur_time - s_last_time;
@@ -2891,7 +2911,7 @@ void RealWorldApplication::drawScene(
         if (s_update_frame_count >= 0) {
             s_update_frame_count++;
         }
-        gpu_profiler_.endScope(cmd_buf, _scope_go);
+        // _scope_go auto-closes via RAII.
     }
 
     {
@@ -2921,7 +2941,8 @@ void RealWorldApplication::drawScene(
         // instead of 4×, giving roughly 4× the throughput of separate passes.
         // The full 4-layer array view is used so the GS can write to all layers.
         if (!menu_->isShadowPassTurnOff()) {
-            auto _scope_shadow = gpu_profiler_.beginScope(cmd_buf, "CSM Shadow");
+            engine::helper::GpuProfiler::Scope _scope_shadow(
+                gpu_profiler_, cmd_buf, "CSM Shadow");
             shadow_object_scene_view_->draw(
                 cmd_buf,
                 desc_sets,
@@ -2932,7 +2953,6 @@ void RealWorldApplication::drawScene(
                 true,
                 csm_shadow_tex_->view,    // full CSM_CASCADE_COUNT-layer array view
                 CSM_CASCADE_COUNT);       // layer_count triggers GS layered path
-            gpu_profiler_.endScope(cmd_buf, _scope_shadow);
         }
 
         // Custom resource infos matching the shadow pass attachment layout.
@@ -3064,20 +3084,21 @@ void RealWorldApplication::drawScene(
         if (cluster_renderer_ && cluster_renderer_->isEnabled() &&
             (cluster_renderer_->getUseHiZOcclusionCull() ||
              hiz_debug_open)) {
-            auto _scope_hiz = gpu_profiler_.beginScope(cmd_buf, "Hi-Z Build");
+            engine::helper::GpuProfiler::Scope _scope_hiz(
+                gpu_profiler_, cmd_buf, "Hi-Z Build");
             dispatchHiZBuild(cmd_buf);
-            gpu_profiler_.endScope(cmd_buf, _scope_hiz);
+            // _scope_hiz auto-closes via RAII.
         }
 
         if (cluster_renderer_ && cluster_renderer_->isEnabled() &&
             !ambient_probe_system_) {
-            auto _scope_cull = gpu_profiler_.beginScope(cmd_buf, "Cluster Cull");
+            engine::helper::GpuProfiler::Scope _scope_cull(
+                gpu_profiler_, cmd_buf, "Cluster Cull");
             cluster_renderer_->cull(
                 cmd_buf,
                 main_camera_object_->getViewProjMatrix(),
                 main_camera_object_->getCameraPosition(),
                 last_view_proj_);
-            gpu_profiler_.endScope(cmd_buf, _scope_cull);
         }
 
         // ── Ambient probe system ──────────────────────────────────────
@@ -3090,8 +3111,8 @@ void RealWorldApplication::drawScene(
         // a count of 0 (cull's zeroed state) and render nothing.
         // See scene_rendering/ambient_probe_system.h.
         if (ambient_probe_system_ && dynamic_cubemap_) {
-            auto _scope_probes =
-                gpu_profiler_.beginScope(cmd_buf, "Ambient Probes");
+            engine::helper::GpuProfiler::Scope _scope_probes(
+                gpu_profiler_, cmd_buf, "Ambient Probes");
 
             ambient_probe_system_->writeProjectDescriptorsForCube(
                 device_,
@@ -3136,7 +3157,7 @@ void RealWorldApplication::drawScene(
                     face_pos);
             }
 
-            gpu_profiler_.endScope(cmd_buf, _scope_probes);
+            // _scope_probes auto-closes via RAII.
         }
 
         // ── Re-cull cluster set for the MAIN camera ───────────────────
@@ -3148,14 +3169,14 @@ void RealWorldApplication::drawScene(
         // cull results; we rebuild it for the main camera's frustum
         // here so the main render pass below draws the correct set.
         if (cluster_renderer_ && cluster_renderer_->isEnabled()) {
-            auto _scope_recull = gpu_profiler_.beginScope(
-                cmd_buf, "Cluster Cull (main, post-probe)");
+            engine::helper::GpuProfiler::Scope _scope_recull(
+                gpu_profiler_, cmd_buf, "Cluster Cull (main, post-probe)");
             cluster_renderer_->cull(
                 cmd_buf,
                 main_camera_object_->getViewProjMatrix(),
                 main_camera_object_->getCameraPosition(),
                 last_view_proj_);
-            gpu_profiler_.endScope(cmd_buf, _scope_recull);
+            // _scope_recull auto-closes via RAII.
         }
 
         // ── Per-mesh frustum culling ──────────────────────────────────
@@ -3192,7 +3213,8 @@ void RealWorldApplication::drawScene(
             menu_ && menu_->isCollisionDebugOn() && !collision_world_.empty();
 
         {
-            auto _scope_forward = gpu_profiler_.beginScope(cmd_buf, "Forward Pass");
+            engine::helper::GpuProfiler::Scope _scope_forward(
+                gpu_profiler_, cmd_buf, "Forward Pass");
 
             if (show_collision_dbg) {
                 // Replaces the normal forward pass: open our own dynamic
@@ -3280,7 +3302,7 @@ void RealWorldApplication::drawScene(
                     current_time);
             }
 
-            gpu_profiler_.endScope(cmd_buf, _scope_forward);
+            // _scope_forward auto-closes via RAII.
         }
 
         // Clear frustum cull state so depth-only / shadow passes are not culled.
@@ -3297,8 +3319,9 @@ void RealWorldApplication::drawScene(
         if (cluster_renderer_ && cluster_renderer_->isEnabled() &&
             !engine::helper::clusterRenderingEnabled() &&
             !show_collision_dbg) {
-            auto _scope_cluster = gpu_profiler_.beginScope(
-                cmd_buf, "Cluster Bindless Draw");
+            // CPU+GPU combined scope (records on CPU + executes on GPU).
+            engine::helper::GpuProfiler::Scope _scope_cluster(
+                gpu_profiler_, cmd_buf, "Cluster Bindless Draw");
 
             auto color_buf = object_scene_view_->getColorBuffer();
             auto depth_buf = object_scene_view_->getDepthBuffer();
@@ -3317,8 +3340,9 @@ void RealWorldApplication::drawScene(
                 deferred_resolve_pipeline_ &&
                 deferred_resolve_desc_set_ &&
                 gbuf_albedo_ao_.image) {
-                auto _scope_def = gpu_profiler_.beginScope(
-                    cmd_buf, "Deferred (G-buf + Resolve)");
+                // CPU+GPU combined scope.
+                engine::helper::GpuProfiler::Scope _scope_def(
+                    gpu_profiler_, cmd_buf, "Deferred (G-buf + Resolve)");
 
                 // ── Two-pass occlusion culling (Nanite-style) ─────────
                 // Phase A renders only the clusters that were visible
@@ -3370,18 +3394,18 @@ void RealWorldApplication::drawScene(
                 // method internally barriers the compute writes so the
                 // immediately-following indirect draw sees them.
                 {
-                    auto _scope_cullA = gpu_profiler_.beginScope(
-                        cmd_buf, "Cluster Cull (Phase A)");
+                    engine::helper::GpuProfiler::Scope _scope_cullA(
+                        gpu_profiler_, cmd_buf, "Cluster Cull (Phase A)");
                     cluster_renderer_->cullPhaseA(
                         cmd_buf,
                         main_camera_object_->getViewProjMatrix(),
                         main_camera_object_->getCameraPosition());
-                    gpu_profiler_.endScope(cmd_buf, _scope_cullA);
+                    // _scope_cullA auto-closes via RAII.
                 }
 
                 {
-                    auto _scope_drawA = gpu_profiler_.beginScope(
-                        cmd_buf, "Cluster Draw (Phase A)");
+                    engine::helper::GpuProfiler::Scope _scope_drawA(
+                        gpu_profiler_, cmd_buf, "Cluster Draw (Phase A)");
                     er::RenderingAttachmentInfo gbuf0 =
                         make_gbuf_attach(gbuf_albedo_ao_.view,
                                          er::AttachmentLoadOp::CLEAR);
@@ -3412,7 +3436,7 @@ void RealWorldApplication::drawScene(
                     cluster_renderer_->drawOpaqueGBufferPhaseA(
                         cmd_buf, cluster_desc_sets, { vp_g }, { sc_g });
                     cmd_buf->endDynamicRendering();
-                    gpu_profiler_.endScope(cmd_buf, _scope_drawA);
+                    // _scope_drawA auto-closes via RAII.
                 }
 
                 // ── Hi-Z build sandwiched between the two render passes ──
@@ -3432,10 +3456,12 @@ void RealWorldApplication::drawScene(
                     cmd_buf->addImageBarrier(depth_buf->image,
                         from_depth_att, depth_attach_to_read, 0, 1, 0, 1);
 
-                    auto _scope_hiz = gpu_profiler_.beginScope(
-                        cmd_buf, "Hi-Z Build");
-                    buildHiZPyramid(cmd_buf, screen_size);
-                    gpu_profiler_.endScope(cmd_buf, _scope_hiz);
+                    {
+                        engine::helper::GpuProfiler::Scope _scope_hiz(
+                            gpu_profiler_, cmd_buf, "Hi-Z Build");
+                        buildHiZPyramid(cmd_buf, screen_size);
+                        // _scope_hiz auto-closes via RAII.
+                    }
 
                     // Restore depth as an attachment for Phase B render.
                     er::ImageResourceInfo read_to_depth_att = {
@@ -3454,26 +3480,26 @@ void RealWorldApplication::drawScene(
                 // consumed them; Phase B is about to atomicOr in this
                 // frame's true visible set.
                 {
-                    auto _scope_visclear = gpu_profiler_.beginScope(
-                        cmd_buf, "Visibility Bits Clear");
+                    engine::helper::GpuProfiler::Scope _scope_visclear(
+                        gpu_profiler_, cmd_buf, "Visibility Bits Clear");
                     cluster_renderer_->clearVisibilityBuffer(cmd_buf);
-                    gpu_profiler_.endScope(cmd_buf, _scope_visclear);
+                    // _scope_visclear auto-closes via RAII.
                 }
 
                 // ── Phase B: cull (with Hi-Z) → render newly-disoccluded ──
                 {
-                    auto _scope_cullB = gpu_profiler_.beginScope(
-                        cmd_buf, "Cluster Cull (Phase B)");
+                    engine::helper::GpuProfiler::Scope _scope_cullB(
+                        gpu_profiler_, cmd_buf, "Cluster Cull (Phase B)");
                     cluster_renderer_->cullPhaseB(
                         cmd_buf,
                         main_camera_object_->getViewProjMatrix(),
                         main_camera_object_->getCameraPosition());
-                    gpu_profiler_.endScope(cmd_buf, _scope_cullB);
+                    // _scope_cullB auto-closes via RAII.
                 }
 
                 {
-                    auto _scope_drawB = gpu_profiler_.beginScope(
-                        cmd_buf, "Cluster Draw (Phase B)");
+                    engine::helper::GpuProfiler::Scope _scope_drawB(
+                        gpu_profiler_, cmd_buf, "Cluster Draw (Phase B)");
                     // LOAD all four colour RTs so Phase A's contributions
                     // are preserved; Phase B writes additional pixels on
                     // top wherever its clusters survive the Hi-Z test.
@@ -3507,7 +3533,7 @@ void RealWorldApplication::drawScene(
                     cluster_renderer_->drawOpaqueGBufferPhaseB(
                         cmd_buf, cluster_desc_sets, { vp_g }, { sc_g });
                     cmd_buf->endDynamicRendering();
-                    gpu_profiler_.endScope(cmd_buf, _scope_drawB);
+                    // _scope_drawB auto-closes via RAII.
                 }
 
                 // 2. Barriers for the resolve dispatch.
@@ -3561,8 +3587,8 @@ void RealWorldApplication::drawScene(
                 // 3. Bind compute resolve and dispatch.  Set indices match
                 //    the forward path — see initDeferredResolve.
                 {
-                    auto _scope_resolve = gpu_profiler_.beginScope(
-                        cmd_buf, "Deferred Resolve Compute");
+                    engine::helper::GpuProfiler::Scope _scope_resolve(
+                        gpu_profiler_, cmd_buf, "Deferred Resolve Compute");
                     er::DescriptorSetList resolve_sets(
                         RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
                     resolve_sets[PBR_GLOBAL_PARAMS_SET]     = pbr_lighting_desc_set_;
@@ -3580,7 +3606,7 @@ void RealWorldApplication::drawScene(
                     uint32_t gx = (screen_size.x + kGroupSize - 1) / kGroupSize;
                     uint32_t gy = (screen_size.y + kGroupSize - 1) / kGroupSize;
                     cmd_buf->dispatch(gx, gy, 1);
-                    gpu_profiler_.endScope(cmd_buf, _scope_resolve);
+                    // _scope_resolve auto-closes via RAII.
                 }
 
                 // 4. Barriers back to attachment-friendly layouts so the
@@ -3618,7 +3644,7 @@ void RealWorldApplication::drawScene(
                 cmd_buf->addImageBarrier(gbuf_velocity_.image,
                     to_shader_read, shader_read_to_color_att, 0, 1, 0, 1);
 
-                gpu_profiler_.endScope(cmd_buf, _scope_def);
+                // _scope_def auto-closes via RAII at end of this if-block.
             }
 
             er::RenderingAttachmentInfo color_attach;
@@ -3707,19 +3733,45 @@ void RealWorldApplication::drawScene(
             // pass so it shares depth state with the main scene.
             if (ambient_probe_system_ && menu_ &&
                 menu_->showProbeDebug()) {
-                auto _scope_probe_dbg = gpu_profiler_.beginScope(
-                    cmd_buf, "Probe Debug Draw");
+                engine::helper::GpuProfiler::Scope _scope_probe_dbg(
+                    gpu_profiler_, cmd_buf, "Probe Debug Draw");
                 ambient_probe_system_->drawDebug(
                     cmd_buf,
                     cluster_desc_sets,
                     { vp },
                     { sc });
-                gpu_profiler_.endScope(cmd_buf, _scope_probe_dbg);
+                // _scope_probe_dbg auto-closes via RAII.
             }
 
             cmd_buf->endDynamicRendering();
 
-            gpu_profiler_.endScope(cmd_buf, _scope_cluster);
+            // _scope_cluster auto-closes via RAII at end of this if-block.
+        }
+
+        // ── VT feedback compaction (GPU dedupe → small host-readable list) ─────
+        // After the cluster bindless draw has written its tile-key feedback,
+        // dispatch a tiny compute pass that scans the 1 MB feedback buffer on
+        // the GPU and writes a compact (typically few-KB) list to the per-FIF
+        // host-visible slot the next-next frame's tick() reads.  This replaces
+        // the previous CPU-side mapMemory+linear scan over 262144 entries
+        // (which was costing ~10 ms per frame on its own) with a pointer
+        // dereference at frame start.  The dispatch also clears
+        // feedback_buffer_ for next frame.
+        //
+        // Always run when vt_manager_ exists (even when the user has VT
+        // toggled off) — the dispatch is microseconds and keeps the
+        // compact buffer + feedback buffer in a clean state for instant
+        // re-enable.
+        if (vt_manager_) {
+            engine::helper::GpuProfiler::Scope _scope_vt_compact(
+                gpu_profiler_, cmd_buf, "VT Feedback Compact");
+            // Same counter as the start-of-frame tick() — produces the
+            // slot tick() will read on the next-next frame.  Counter
+            // advances ONCE per drawFrame, here at the end (after
+            // both calls have used the same value) so the increment
+            // doesn't desync the two halves.
+            vt_manager_->compactFeedback(cmd_buf, vt_frame_index_);
+            ++vt_frame_index_;
         }
 
         // ── Sky envmap background pass ─────────────────────────────────────────
@@ -3728,7 +3780,8 @@ void RealWorldApplication::drawScene(
         // Uses LESS_OR_EQUAL depth test + no depth write so it is a cheap
         // background fill that automatically respects the forward pass results.
         if (skydome_) {
-            auto _scope_sky = gpu_profiler_.beginScope(cmd_buf, "Sky Envmap");
+            engine::helper::GpuProfiler::Scope _scope_sky(
+                gpu_profiler_, cmd_buf, "Sky Envmap");
 
             auto color_buf = object_scene_view_->getColorBuffer();
             auto depth_buf = object_scene_view_->getDepthBuffer();
@@ -3774,7 +3827,7 @@ void RealWorldApplication::drawScene(
 
             cmd_buf->endDynamicRendering();
 
-            gpu_profiler_.endScope(cmd_buf, _scope_sky);
+            // _scope_sky auto-closes via RAII.
         }
 
         // Transition ALL cascade layers back to depth-attachment for next frame.
@@ -3914,7 +3967,8 @@ void RealWorldApplication::drawScene(
             dbg_mode == DEBUG_RENDER_MODE_SSAO;
         if (ssao_ && ssao_mode_allowed &&
             (ssao_->enabled || dbg_mode == DEBUG_RENDER_MODE_SSAO)) {
-            auto _scope_ssao = gpu_profiler_.beginScope(cmd_buf, "SSAO");
+            engine::helper::GpuProfiler::Scope _scope_ssao(
+                gpu_profiler_, cmd_buf, "SSAO");
             // Pass the SAME image that's bound into the apply descriptor
             // (see SSAO creation site).  Using hdr_color_buffer_ here
             // worked when SSAO was bound to that view, but now its apply
@@ -3927,11 +3981,12 @@ void RealWorldApplication::drawScene(
             ssao_->render(cmd_buf, view_desc_set,
                           ssao_target_image, screen_size,
                           dbg_mode);
-            gpu_profiler_.endScope(cmd_buf, _scope_ssao);
+            // _scope_ssao auto-closes via RAII.
         }
 
         if (!menu_->isVolumeMoistTurnOff()) {
-            auto _scope_cloud = gpu_profiler_.beginScope(cmd_buf, "Volume Cloud");
+            engine::helper::GpuProfiler::Scope _scope_cloud(
+                gpu_profiler_, cmd_buf, "Volume Cloud");
             volume_cloud_->renderVolumeCloud(
                 cmd_buf,
                 view_desc_set,
@@ -3950,7 +4005,7 @@ void RealWorldApplication::drawScene(
                 screen_size,
                 s_dbuf_idx,
                 current_time);
-            gpu_profiler_.endScope(cmd_buf, _scope_cloud);
+            // _scope_cloud auto-closes via RAII.
         }
     }
 
@@ -3965,7 +4020,8 @@ void RealWorldApplication::drawScene(
         SET_FLAG_BIT(PipelineStage, COLOR_ATTACHMENT_OUTPUT_BIT) };
 
     {
-        auto _scope_blit = gpu_profiler_.beginScope(cmd_buf, "Final Blit");
+        engine::helper::GpuProfiler::Scope _scope_blit(
+            gpu_profiler_, cmd_buf, "Final Blit");
         er::Helper::blitImage(
             cmd_buf,
             object_scene_view_->getColorBuffer()->image,
@@ -3978,7 +4034,7 @@ void RealWorldApplication::drawScene(
             SET_FLAG_BIT(ImageAspect, COLOR_BIT),
             object_scene_view_->getColorBuffer()->size,
             glm::ivec3(screen_size.x, screen_size.y, 1));
-        gpu_profiler_.endScope(cmd_buf, _scope_blit);
+        // _scope_blit auto-closes via RAII.
     }
 
     // ----- GPU Profiler: end frame -------------------------------------------
@@ -4073,26 +4129,138 @@ void RealWorldApplication::initDrawFrame() {
 }
 
 void RealWorldApplication::drawFrame() {
-    device_->waitForFences({ in_flight_fences_[current_frame_] });
-    device_->resetFences({ in_flight_fences_[current_frame_] });
+    // ── CPU frame anchor ──
+    // Capture host-side time relative to the same frame-in-flight slot
+    // that the GPU profiler will record into.  Doing this at the very
+    // top of drawFrame means CPU scopes cover the WHOLE host frame
+    // (fence wait, image acquire, all the per-frame state updates,
+    // command recording, submit, present).  endCpuFrame at the
+    // function bottom closes the recording.  drawScene runs inside
+    // this frame and adds its own beginScope/endScope pairs against
+    // the same slot.
+    const uint32_t cpu_frame_idx =
+        static_cast<uint32_t>(current_frame_ % kMaxFramesInFlight);
+    gpu_profiler_.beginCpuFrame(cpu_frame_idx);
+    auto _cpu_frame = gpu_profiler_.beginCpuScope("drawFrame");
 
+    // Outer "Fence Wait + Acquire" scope kept for at-a-glance timing
+    // of all the frame-start blocking calls.  Three inner sub-scopes
+    // pinpoint WHICH call is blocking when this region grows large
+    // (typical scenarios: GPU-bound → "Wait Frame Fence" dominates;
+    // VSync / compositor pacing → "Acquire Image" dominates;
+    // swapchain image starvation → "Wait Image Fence" dominates).
+    auto _cpu_wait = gpu_profiler_.beginCpuScope("Fence Wait + Acquire");
+
+    // (1) Wait for the GPU to be done with the work we submitted in
+    //     this same FIF slot one frame-cycle ago.  If the GPU work
+    //     for that frame is longer than our CPU work, the CPU has
+    //     nothing to do but block here — the canonical "GPU-bound"
+    //     stall.  Conversely, if this stays tiny, the CPU is the
+    //     bottleneck and the GPU is sitting idle on submit.
+    {
+        auto _cpu_wait_fence = gpu_profiler_.beginCpuScope("Wait Frame Fence");
+        device_->waitForFences({ in_flight_fences_[current_frame_] });
+        device_->resetFences({ in_flight_fences_[current_frame_] });
+        gpu_profiler_.endCpuScope(_cpu_wait_fence);
+    }
+
+    // ── Collect GPU-profiler query results for the FIF slot we just
+    //    drained ────────────────────────────────────────────────────────
+    // We just waited on in_flight_fences_[current_frame_], so the GPU
+    // work submitted FIF cycles ago against THIS slot's query pool is
+    // guaranteed complete.  Read its timestamps now — vkGetQueryPoolResults
+    // will succeed without VK_NOT_READY.
+    //
+    // This used to live at the END of drawFrame, reading slot
+    // (current_frame_ - 1) % FIF.  That worked only because the legacy
+    // per-image fence wait artificially slowed the CPU enough for the
+    // GPU to catch up by the time of the read.  With that wait gone,
+    // the CPU outruns the GPU, the read keeps returning VK_NOT_READY,
+    // collectResults silently drops every frame, and the profiler
+    // appears frozen on the last successfully-ingested frame.
+    //
+    // Doing it RIGHT after the fence wait is the standard pattern:
+    // the slot is provably complete, no stall, FIF-frame latency
+    // (acceptable for a profile display).
+    if (gpu_profiler_initialized_) {
+        gpu_profiler_.collectResults(
+            device_,
+            static_cast<uint32_t>(current_frame_));
+    }
+
+    // (2) Get the next swapchain image.  With FIFO present mode this
+    //     blocks for the next vblank if the prior frame's present is
+    //     still queued.  With MAILBOX it blocks only when the swapchain
+    //     ring is empty (all images presenting / queued for present).
+    //     If your refresh rate × frame time = 1.0 (e.g., 16.67 ms at
+    //     60 Hz), this scope is where the VSync wait shows up.
     uint32_t image_index = 0;
-    bool need_recreate_swap_chain = er::Helper::acquireNextImage(
-        device_,
-        swap_chain_info_.swap_chain,
-        image_available_semaphores_[current_frame_],
-        image_index);
+    bool need_recreate_swap_chain = false;
+    {
+        auto _cpu_acquire = gpu_profiler_.beginCpuScope("Acquire Image");
+        need_recreate_swap_chain = er::Helper::acquireNextImage(
+            device_,
+            swap_chain_info_.swap_chain,
+            image_available_semaphores_[current_frame_],
+            image_index);
+        gpu_profiler_.endCpuScope(_cpu_acquire);
+    }
 
     if (need_recreate_swap_chain) {
+        gpu_profiler_.endCpuScope(_cpu_wait);
+        gpu_profiler_.endCpuScope(_cpu_frame);
+        gpu_profiler_.endCpuFrame(cpu_frame_idx);
         recreateSwapChain();
         return;
     }
 
-    if (images_in_flight_[image_index] != VK_NULL_HANDLE) {
-        device_->waitForFences({ images_in_flight_[image_index] });
-    }
-    // Mark the image as now being in use by this frame
+    // (3) Per-IMAGE fence wait — REMOVED (was a tutorial-grade copy-
+    //     paste hazard, dominated frame time at 11+ ms).
+    //
+    // The Khronos Vulkan tutorial includes this wait to handle two
+    // edge cases generically:
+    //   (a) MAX_FRAMES_IN_FLIGHT > swapchain image count, so the
+    //       per-FIF fence in (1) doesn't necessarily drain the
+    //       previous use of this specific swapchain image.
+    //   (b) vkAcquireNextImageKHR returning images out-of-order,
+    //       so the image we just acquired might still be in use
+    //       by a frame between the "oldest in flight" (drained by
+    //       (1)) and "right now".
+    //
+    // Neither applies in this engine, AND the wait is actively
+    // harmful when swapchain_image_count > FIF (our typical case:
+    // 3 swapchain images + FIF=2):
+    //
+    //   Frame N+2 acquires image (N+1)%3 — an image the compositor
+    //   handed back early.  images_in_flight_[that] = fence from
+    //   frame N+1, which is STILL EXECUTING ON THE GPU.  The wait
+    //   blocks the CPU for the remainder of frame N+1's GPU work.
+    //   Result: even though we have 3 images and FIF=2 (i.e., room
+    //   for the CPU to run 2 frames ahead of the GPU), the per-image
+    //   wait silently throttles us to "CPU at most 1 frame ahead",
+    //   which destroys the FIF-2 pipelining we actually configured.
+    //
+    // What we have instead:
+    //   * One command buffer per FIF slot (not per image), reset
+    //     safely after the per-FIF fence in (1).
+    //   * The image_available_semaphores_[current_frame_] semaphore
+    //     bound as a wait on submit, with TRANSFER_BIT dst stage —
+    //     guarantees the GPU won't blit-write to the image before
+    //     the compositor releases it.
+    //   * The render_finished_semaphores_[current_frame_] signal
+    //     bound on submit and waited on by present — guarantees
+    //     present doesn't read the image before our blit completes.
+    //
+    // Together those three give complete swapchain-image safety.
+    // The per-image fence wait was redundant safety belt.
+    //
+    // (Kept the images_in_flight_ vector itself + the assignment
+    // below for now in case we want to bring back a DIAGNOSTIC
+    // version that times the wait but doesn't actually wait — easier
+    // to spot regressions if FIF or swapchain count changes.  The
+    // assignment is essentially free.)
     images_in_flight_[image_index] = in_flight_fences_[current_frame_];
+    gpu_profiler_.endCpuScope(_cpu_wait);
 
     time_t now = time(0);
     tm localtm;
@@ -4570,6 +4738,28 @@ void RealWorldApplication::drawFrame() {
     command_buffer->reset(0);
     command_buffer->beginCommandBuffer(SET_FLAG_BIT(CommandBufferUsage, ONE_TIME_SUBMIT_BIT));
 
+    // ── VT streaming tick (Phase A: feedback log) ─────────────────────
+    // Reads previous frame's tile-key feedback (visible because the
+    // previous frame's submit fence has been waited on by the
+    // beginCommandBuffer reset path) and queues a fillBuffer at the
+    // start of THIS frame's command buffer to clear the buffer before
+    // any bindless fragment writes it again.  The bindless draw later
+    // in drawScene runs after the fill, so by submit time the order
+    // is: fill → bindless writes fresh keys.  Phase B will replace the
+    // log inside tick() with actual page uploads.
+    if (vt_manager_) {
+        // CPU scope: tick() reads the GPU-compacted request list (a
+        // few-KB pointer dereference, no big map+scan anymore) and
+        // schedules uploads onto cmd_buf.  Used to dominate at
+        // ~30 ms/frame from a synchronous transient submit-and-wait
+        // plus a 1 MB cold map walk; both are gone.  Frame counter
+        // is shared with the matching compactFeedback() call later
+        // in the frame so the per-FIF slot indexing lines up.
+        auto _cpu_vt = gpu_profiler_.beginCpuScope("VT tick (CPU)");
+        vt_manager_->tick(command_buffer, vt_frame_index_);
+        gpu_profiler_.endCpuScope(_cpu_vt);
+    }
+
     std::shared_ptr<ego::ViewObject> display_scene_view = nullptr;
 
     display_scene_view = object_scene_view_;
@@ -4583,6 +4773,7 @@ void RealWorldApplication::drawFrame() {
     // and background image are shown. This avoids partially-loaded
     // meshes drawing garbage geometry through the background.
     if (menu_->getGameState() != engine::ui::GameState::TitleScreen) {
+        auto _cpu_scene = gpu_profiler_.beginCpuScope("drawScene (record)");
         drawScene(command_buffer,
             swap_chain_info_,
             main_camera_object_->getViewCameraDescriptorSet(),
@@ -4590,6 +4781,7 @@ void RealWorldApplication::drawFrame() {
             image_index,
             delta_t_,
             current_time_);
+        gpu_profiler_.endCpuScope(_cpu_scene);
     }
 
     if (!menu_->isRayTracingTurnOff()) {
@@ -4669,6 +4861,7 @@ void RealWorldApplication::drawFrame() {
 
     command_buffer->endCommandBuffer();
 
+    auto _cpu_submit = gpu_profiler_.beginCpuScope("Submit + Present");
     er::Helper::submitQueue(
         graphics_queue_,
         in_flight_fences_[current_frame_],
@@ -4683,19 +4876,21 @@ void RealWorldApplication::drawFrame() {
         { render_finished_semaphores_[current_frame_] },
         image_index,
         framebuffer_resized_);
+    gpu_profiler_.endCpuScope(_cpu_submit);
 
     if (need_recreate_swap_chain) {
         recreateSwapChain();
     }
 
-    // Collect GPU timestamp results from the *previous* frame to avoid stalls.
-    // current_frame_ still holds the frame just submitted; the "previous" slot
-    // (one kMaxFramesInFlight period ago) should already be done.
+    // GPU timestamp collection moved to RIGHT AFTER the per-frame
+    // fence wait at the head of this function — the slot that wait
+    // drained is the one whose query results are guaranteed ready,
+    // and reading there avoids the "VK_NOT_READY → frame dropped"
+    // problem that surfaced once the CPU started outrunning the GPU.
+    // The per-second log dump still lives here because it runs after
+    // each successful collectResults regardless and just snapshots
+    // whatever's currently the latest ingested frame.
     if (gpu_profiler_initialized_) {
-        uint32_t collect_frame = static_cast<uint32_t>(
-            (current_frame_ + kMaxFramesInFlight - 1) % kMaxFramesInFlight);
-        gpu_profiler_.collectResults(device_, collect_frame);
-
         // ── Per-second GPU profile log dump ──────────────────────────────────
         // Append the latest FrameRecord to gpu_profile.log once per wall-clock
         // second.  Each entry is prefixed with a timestamp so the log is
@@ -4737,6 +4932,13 @@ void RealWorldApplication::drawFrame() {
     if (s_update_frame_count < 0) {
         s_update_frame_count = 0;
     }
+
+    // ── Close CPU frame ──
+    // Mirrors beginCpuFrame at the top of drawFrame.  endCpuScope on
+    // the wrapping "drawFrame" scope first so it's properly closed
+    // before we tell the profiler this frame's CPU recording is done.
+    gpu_profiler_.endCpuScope(_cpu_frame);
+    gpu_profiler_.endCpuFrame(cpu_frame_idx);
 }
 
 void RealWorldApplication::cleanupSwapChain() {
