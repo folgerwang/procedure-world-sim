@@ -1392,12 +1392,6 @@ void RealWorldApplication::initVulkan() {
             descriptor_pool_,
             glm::vec3(0.3f, -0.8f, 0.0f));
 
-    // Allocate 4 independent per-cascade storage buffers + descriptor sets.
-    // Without these each cascade draw would overwrite the same host-coherent
-    // buffer, and by the time the GPU runs all 4 draws every cascade would
-    // use the last-written VP matrix.
-    shadow_camera_object_->initCascadeDescriptorSets(device_, descriptor_pool_);
-
     terrain_scene_view_ =
         std::make_shared<es::TerrainSceneView>(
             device_,
@@ -1950,7 +1944,6 @@ void RealWorldApplication::recreateSwapChain() {
     // ---- Camera descriptor sets ----
     main_camera_object_->recreateDescriptorSet();
     shadow_camera_object_->recreateDescriptorSet();
-    shadow_camera_object_->recreateCascadeDescriptorSets(device_, descriptor_pool_);
 
     // re-create the terrain camera descriptor (binds terrain textures).
     main_camera_object_->createCameraDescSetWithTerrain(
@@ -4408,6 +4401,13 @@ void RealWorldApplication::drawFrame() {
     // as a cue to reset the sky / IBL mini-buffer accumulators so they
     // re-bootstrap cleanly instead of EMA-blending toward the new sun
     // position over many seconds.
+    // ── CPU profile: "TOD + Skydome math" ────────────────────────────
+    // Lumps three CPU-only blocks together: menu time-of-day stepping,
+    // local-solar-time computation, and skydome_->update (which evaluates
+    // the analytic sun position and refreshes a handful of scalar
+    // params).  Expected to stay sub-millisecond — if it grows, look at
+    // Skydome::update's transmittance/multiple-scattering recomputes.
+    auto _cpu_tod = gpu_profiler_.beginCpuScope("TOD + Skydome math");
     menu_->advanceTimeOfDay(delta_t_);
 
     // Convert the menu's UTC-based time to local solar time for the hardcoded
@@ -4445,15 +4445,39 @@ void RealWorldApplication::drawFrame() {
         tod_hour,
         tod_min,
         tod_sec);
+    gpu_profiler_.endCpuScope(_cpu_tod);
 
-    main_camera_object_->readGpuCameraInfo();
+    // ── CPU profile: "readGpuCameraInfo" ─────────────────────────────
+    // Dumps the camera UBO back to host memory so the CPU can read the
+    // newly-computed camera matrices (for shadow-cascade math etc.).
+    // This is a host-coherent buffer read — costs only the memcpy on
+    // sane drivers, but if vkInvalidateMappedMemoryRanges is implicit
+    // and the buffer is on a non-coherent heap it could stall.  Keep
+    // an eye on this one when the wait lane shrinks.
+    {
+        auto _cpu_read = gpu_profiler_.beginCpuScope("readGpuCameraInfo");
+        main_camera_object_->readGpuCameraInfo();
+        gpu_profiler_.endCpuScope(_cpu_read);
+    }
 
-    auto visible_tiles =
-        ego::TileObject::updateAllTiles(
-            device_,
-            descriptor_pool_,
-            128,
-            glm::vec2(main_camera_object_->getCameraPosition()));
+    // ── CPU profile: "Terrain updateAllTiles" ────────────────────────
+    // Walks the tile cache against the camera position: evicts out-of-
+    // range tiles, allocates new ones inside the visibility radius, and
+    // does a host-coherent updateBufferMemory write per visible tile to
+    // refresh its grass indirect-draw-cmd buffer.  Cost scales with
+    // visible-tile count (typically 9–25) and how many tiles cross the
+    // cache boundary this frame.
+    std::vector<std::shared_ptr<ego::TileObject>> visible_tiles;
+    {
+        auto _cpu_tiles = gpu_profiler_.beginCpuScope("Terrain updateAllTiles");
+        visible_tiles =
+            ego::TileObject::updateAllTiles(
+                device_,
+                descriptor_pool_,
+                128,
+                glm::vec2(main_camera_object_->getCameraPosition()));
+        gpu_profiler_.endCpuScope(_cpu_tiles);
+    }
 
     if (dump_volume_noise_) {
         const auto noise_texture_size = kDetailNoiseTextureSize;
@@ -4528,6 +4552,13 @@ void RealWorldApplication::drawFrame() {
     current_time_ += delta_t_;
     last_frame_time_point_ = current_time_point;
 
+    // ── CPU profile: "Mesh load poll" ────────────────────────────────
+    // Cheap when nothing is ready: peeks at the worker-thread's
+    // completion queue.  Spikes whenever a streaming load finishes —
+    // phase 3 (descriptor-set + pipeline creation) runs synchronously on
+    // the main thread inside poll(), so a single asset finalisation
+    // here can cost a couple of ms on first-frame populate.
+    auto _cpu_mesh_poll = gpu_profiler_.beginCpuScope("Mesh load poll");
     // Drain any in-flight async mesh loads whose GPU fence has signaled:
     // this runs phase 3 (descriptor-set + pipeline creation) on the main
     // thread. Cheap when nothing is ready. Must run before we touch
@@ -4536,6 +4567,7 @@ void RealWorldApplication::drawFrame() {
     if (mesh_load_task_manager_) {
         mesh_load_task_manager_->poll();
     }
+    gpu_profiler_.endCpuScope(_cpu_mesh_poll);
 
     // ---- "New Game" handler: add the bistro scenes (already created at
     // startup and streaming in the background) into the scene views so
@@ -4720,8 +4752,15 @@ void RealWorldApplication::drawFrame() {
         menu_->clearCollisionWorldDirty();
     }
 
+    // ── CPU profile: "Collision world build" ────────────────────────
+    // One-shot CPU work — fires the first frame Bistro is fully ready
+    // in InGame state.  Expected to be expensive (tens of ms) on that
+    // one frame, then zero afterwards.  If you see this lane spike
+    // every frame the build's `any_added` test is mis-latching the
+    // `collision_world_built_` flag.
     if (!collision_world_built_ &&
         menu_->getGameState() == engine::ui::GameState::InGame) {
+        auto _cpu_coll = gpu_profiler_.beginCpuScope("Collision world build");
         bool any_added = false;
 
         // Map the menu's user-facing CollisionDebugShape onto the
@@ -4793,6 +4832,7 @@ void RealWorldApplication::drawFrame() {
                       << collision_world_.meshCount()
                       << " mesh(es) total" << std::endl;
         }
+        gpu_profiler_.endCpuScope(_cpu_coll);
     }
 
     // Legacy background-disable check (for non-title-screen mesh loads).
@@ -4851,7 +4891,13 @@ void RealWorldApplication::drawFrame() {
         shadow_object_scene_view_->addDrawableObject(player_object_);
     }
 
+    // ── CPU profile: "Player controller" ────────────────────────────
+    // Reads input, runs movement integration, and resolves character
+    // capsule-vs-scene collision against the CollisionWorld BVH.  If
+    // this is slow, the BVH branch in CollisionWorld::resolveCapsule
+    // is the usual suspect.
     if (player_object_ && player_controller_) {
+        auto _cpu_player_ctrl = gpu_profiler_.beginCpuScope("Player controller");
         const float cam_yaw =
             main_camera_object_->getCameraViewInfo().yaw;
         player_controller_->update(
@@ -4861,14 +4907,25 @@ void RealWorldApplication::drawFrame() {
             player_object_,
             drawable_objects_,
             &collision_world_);
+        gpu_profiler_.endCpuScope(_cpu_player_ctrl);
     }
 
-    if (player_object_) {
-        player_object_->update(device_, current_time_);
-    }
+    // ── CPU profile: "Drawable updates (CPU)" ───────────────────────
+    // Walks every loaded DrawableObject and calls its CPU-side update
+    // (node-transform recomputes, animation step, etc.).  Cost grows
+    // ~linearly with drawable count and animation complexity.  The
+    // matching GPU buffer copies live in drawScene's "Game Object
+    // Updates" scope, not here.
+    {
+        auto _cpu_drw = gpu_profiler_.beginCpuScope("Drawable updates (CPU)");
+        if (player_object_) {
+            player_object_->update(device_, current_time_);
+        }
 
-    for (auto& drawable_obj : drawable_objects_) {
-        drawable_obj->update(device_, current_time_);
+        for (auto& drawable_obj : drawable_objects_) {
+            drawable_obj->update(device_, current_time_);
+        }
+        gpu_profiler_.endCpuScope(_cpu_drw);
     }
 
     // ── Wait Prev Frame Fence ────────────────────────────────────────
@@ -4894,11 +4951,11 @@ void RealWorldApplication::drawFrame() {
     //     is.  Keeping it here grouped with the host-UBO sync just
     //     makes the "no GPU work in flight" point clear.
     //   * drawScene's host-coherent updateBufferMemory writes to
-    //     view_camera_buffer_, m_cascade_bufs_[], rt_render_info->ubo,
-    //     etc.  Those buffers are single-buffered and read by frame
-    //     N-1's still-in-flight passes; overwriting them before this
-    //     wait would race and produce the every-other-frame ABAB
-    //     flicker we hit earlier.
+    //     view_camera_buffer_, runtime_lights_buffer_, and
+    //     rt_render_info->ubo.  Those buffers are single-buffered and
+    //     read by frame N-1's still-in-flight passes; overwriting
+    //     them before this wait would race and produce the every-
+    //     other-frame ABAB flicker we hit earlier.
     //
     // Lifecycle: we do NOT reset this fence here.  It will be reset
     // next frame by the (1) block at drawFrame entry, since
@@ -5025,7 +5082,13 @@ void RealWorldApplication::drawFrame() {
 #endif
     }
 
-    //
+    // ── CPU profile: "ImGui menu draw" ───────────────────────────────
+    // Records the ImGui menu / HUD into the command buffer.  This is
+    // ImGui's own NewFrame → Render → recordVulkanCommands chain — cost
+    // tracks both widget count and number of draw calls emitted.  Big
+    // tab-tree menus (profiler view, full Menu UI) easily hit 1–2 ms
+    // here.
+    auto _cpu_imgui = gpu_profiler_.beginCpuScope("ImGui menu draw");
     s_camera_paused = menu_->draw(
         command_buffer,
         final_render_pass_,
@@ -5034,25 +5097,45 @@ void RealWorldApplication::drawFrame() {
         skydome_,
         dump_volume_noise_,
         delta_t_);
+    gpu_profiler_.endCpuScope(_cpu_imgui);
 
-    command_buffer->endCommandBuffer();
+    // ── CPU profile: "End CB" ───────────────────────────────────────
+    // vkEndCommandBuffer.  Should be sub-100µs.  If it grows the
+    // driver is doing something interesting (validation layer, etc.).
+    {
+        auto _cpu_end_cb = gpu_profiler_.beginCpuScope("End CB");
+        command_buffer->endCommandBuffer();
+        gpu_profiler_.endCpuScope(_cpu_end_cb);
+    }
 
-    auto _cpu_submit = gpu_profiler_.beginCpuScope("Submit + Present");
-    er::Helper::submitQueue(
-        graphics_queue_,
-        in_flight_fences_[current_frame_],
-        { image_available_semaphores_[current_frame_] },
-        { command_buffer },
-        { render_finished_semaphores_[current_frame_] },
-        { });
+    // ── CPU profile: "Submit" / "Present" split ─────────────────────
+    // Old combined "Submit + Present" scope split into the two halves
+    // so the lane tells you whether the cost is in vkQueueSubmit (the
+    // driver kicking the GPU and prepping the per-frame fence) or in
+    // vkQueuePresentKHR (compositor pacing / vsync delay).  Both can
+    // block on Windows depending on present mode.
+    {
+        auto _cpu_submit = gpu_profiler_.beginCpuScope("Submit");
+        er::Helper::submitQueue(
+            graphics_queue_,
+            in_flight_fences_[current_frame_],
+            { image_available_semaphores_[current_frame_] },
+            { command_buffer },
+            { render_finished_semaphores_[current_frame_] },
+            { });
+        gpu_profiler_.endCpuScope(_cpu_submit);
+    }
 
-    need_recreate_swap_chain = er::Helper::presentQueue(
-        present_queue_,
-        { swap_chain_info_.swap_chain },
-        { render_finished_semaphores_[current_frame_] },
-        image_index,
-        framebuffer_resized_);
-    gpu_profiler_.endCpuScope(_cpu_submit);
+    {
+        auto _cpu_present = gpu_profiler_.beginCpuScope("Present");
+        need_recreate_swap_chain = er::Helper::presentQueue(
+            present_queue_,
+            { swap_chain_info_.swap_chain },
+            { render_finished_semaphores_[current_frame_] },
+            image_index,
+            framebuffer_resized_);
+        gpu_profiler_.endCpuScope(_cpu_present);
+    }
 
     if (need_recreate_swap_chain) {
         recreateSwapChain();
