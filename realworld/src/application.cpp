@@ -3704,28 +3704,37 @@ void RealWorldApplication::drawScene(
             sc.offset = glm::ivec2(0);
             sc.extent = screen_size;
 
-            // Deferred mode already ran the opaque cluster pass into the
-            // G-buffer + resolved into color_buf above; here we only need
-            // to overlay the WBOIT translucent (glass / windows) pass.
-            // Forward mode keeps the original combined call which does
-            // both opaque and translucent in one go.
+            // Opaque cluster draw only.  The translucent (alpha-blended
+            // glass) draw is issued LATER, AFTER the sky envmap pass —
+            // see the "Glass / Translucent Forward" block below.
+            //
+            // Reason for the order: glass uses depth_write OFF on its
+            // pipeline (so multi-layer glass can blend without depth-
+            // rejecting itself), which means pixels with NO opaque
+            // behind the glass keep the cleared depth (1.0).  If we
+            // drew glass before the sky envmap pass — which uses
+            // LESS_OR_EQUAL vs depth=1.0 — sky would then paint over
+            // those glass pixels, "deleting" any window panes whose
+            // backdrop is sky.  Drawing glass AFTER sky alpha-blends
+            // the glass colour over either opaque or sky content
+            // correctly.
+            //
+            // Deferred mode: the deferred G-buffer + resolve already
+            // ran above and wrote opaque content into color_buf.  No
+            // additional opaque cluster work needed here — the block
+            // is intentionally empty for the deferred path.
+            //
+            // Forward mode: cluster_renderer_->draw() does opaque
+            // (alpha-mask included) into the currently-open color/depth
+            // pass.  It used to also do translucent in the same call;
+            // that part was split out so both rendering modes follow
+            // the same opaque-then-sky-then-glass order.
             if (deferred_rendering_enabled_ &&
                 deferred_resolve_pipeline_ &&
                 gbuf_albedo_ao_.image) {
-                cluster_renderer_->drawTranslucentForward(
-                    cmd_buf,
-                    cluster_desc_sets,
-                    { vp },
-                    { sc },
-                    color_buf->view,
-                    depth_buf->view,
-                    screen_size);
+                // Deferred opaque already handled by the G-buf + resolve
+                // path above.  Nothing to draw here for the opaque pass.
             } else {
-                // cluster_renderer_->draw now manages its own dynamic-rendering
-                // sub-passes for the WBOIT translucent + composite stages, so we
-                // hand it the host pass's color/depth views + screen size.  It
-                // re-begins our pass with LOAD/LOAD before returning so the
-                // matching endDynamicRendering() below still has a pass to close.
                 cluster_renderer_->draw(
                     cmd_buf,
                     cluster_desc_sets,
@@ -3837,6 +3846,111 @@ void RealWorldApplication::drawScene(
             cmd_buf->endDynamicRendering();
 
             // _scope_sky auto-closes via RAII.
+        }
+
+        // ── Glass / Translucent draw — alpha-blend OR WBOIT ────────────────────
+        // Runs AFTER the sky envmap pass so glass renders correctly over
+        // either opaque geometry or sky background.  Two paths, picked at
+        // dispatch time by reading cluster_renderer_->getTranslucentMode():
+        //
+        //   ALPHA_BLEND (default):  open a colour/depth render pass with
+        //     LOAD/LOAD; call drawTranslucentForward (which writes into
+        //     the open pass with hardware src_alpha / one_minus_src_alpha
+        //     blending); close the pass.
+        //
+        //   WBOIT:  NO outer render pass — drawTranslucentOit manages every
+        //     pass it needs internally (the WBOIT accum/reveal draw and
+        //     the fullscreen composite resolve are on different render
+        //     targets, so the API can't share a single outer pass).
+        //
+        // The split entry-point design (rather than dispatching inside a
+        // single draw function) is deliberate — see the comment block
+        // at the top of drawTranslucentOit for the rationale.
+        if (cluster_renderer_ && cluster_renderer_->isEnabled() &&
+            !engine::helper::clusterRenderingEnabled() &&
+            !show_collision_dbg) {
+            engine::helper::GpuProfiler::Scope _scope_glass(
+                gpu_profiler_, cmd_buf, "Glass / Translucent");
+
+            auto color_buf = object_scene_view_->getColorBuffer();
+            auto depth_buf = object_scene_view_->getDepthBuffer();
+
+            // Shared descriptor-set list: glass uses the same bindless
+            // pipeline layout as the opaque cluster pass, so set 0
+            // (PBR / IBL), set 1 (camera VP), set 4 (runtime lights) are
+            // the same.  set 2 (PBR_MATERIAL_PARAMS_SET) is injected by
+            // the cluster_renderer's draw functions.
+            er::DescriptorSetList glass_desc_sets(
+                RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
+            glass_desc_sets[PBR_GLOBAL_PARAMS_SET] = pbr_lighting_desc_set_;
+            glass_desc_sets[VIEW_PARAMS_SET] =
+                main_camera_object_->getViewCameraDescriptorSet();
+            glass_desc_sets[RUNTIME_LIGHTS_PARAMS_SET] =
+                runtime_lights_desc_set_;
+
+            er::Viewport glass_vp;
+            glass_vp.x = 0; glass_vp.y = 0;
+            glass_vp.width  = static_cast<float>(screen_size.x);
+            glass_vp.height = static_cast<float>(screen_size.y);
+            glass_vp.min_depth = 0.0f;
+            glass_vp.max_depth = 1.0f;
+            er::Scissor glass_sc;
+            glass_sc.offset = glm::ivec2(0);
+            glass_sc.extent = screen_size;
+
+            using TMode = engine::scene_rendering::
+                ClusterRenderer::TranslucentMode;
+            const TMode mode = cluster_renderer_->getTranslucentMode();
+
+            if (mode == TMode::ALPHA_BLEND) {
+                // Open a single colour/depth pass and let the alpha-blend
+                // path draw straight into it.
+                er::RenderingAttachmentInfo glass_color_attach;
+                glass_color_attach.image_view   = color_buf->view;
+                glass_color_attach.image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+                glass_color_attach.load_op      = er::AttachmentLoadOp::LOAD;
+                glass_color_attach.store_op     = er::AttachmentStoreOp::STORE;
+
+                er::RenderingAttachmentInfo glass_depth_attach;
+                glass_depth_attach.image_view   = depth_buf->view;
+                glass_depth_attach.image_layout = er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                glass_depth_attach.load_op      = er::AttachmentLoadOp::LOAD;
+                glass_depth_attach.store_op     = er::AttachmentStoreOp::STORE;
+
+                er::RenderingInfo glass_ri = {};
+                glass_ri.render_area_offset  = { 0, 0 };
+                glass_ri.render_area_extent  = screen_size;
+                glass_ri.layer_count         = 1;
+                glass_ri.view_mask           = 0;
+                glass_ri.color_attachments   = { glass_color_attach };
+                glass_ri.depth_attachments   = { glass_depth_attach };
+                glass_ri.stencil_attachments = {};
+                cmd_buf->beginDynamicRendering(glass_ri);
+
+                cluster_renderer_->drawTranslucentForward(
+                    cmd_buf,
+                    glass_desc_sets,
+                    { glass_vp },
+                    { glass_sc },
+                    color_buf->view,
+                    depth_buf->view,
+                    screen_size);
+
+                cmd_buf->endDynamicRendering();
+            } else {
+                // WBOIT path: caller MUST NOT have a pass open — the
+                // function opens its own accum/reveal pass, draws, then
+                // opens a composite pass and resolves onto color_buf.
+                cluster_renderer_->drawTranslucentOit(
+                    cmd_buf,
+                    glass_desc_sets,
+                    { glass_vp },
+                    { glass_sc },
+                    color_buf->view,
+                    depth_buf->view,
+                    screen_size);
+            }
+            // _scope_glass auto-closes via RAII.
         }
 
         // Transition ALL cascade layers back to depth-attachment for next frame.
