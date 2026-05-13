@@ -154,6 +154,12 @@ add_spirv(SPIRV_FILES "cluster_bindless_frag.spv"     "cluster_bindless.frag" fr
 # single colour.  Used by the cluster translucent pipeline; resolved by
 # oit_composite_frag.spv in a fullscreen pass.
 add_spirv(SPIRV_FILES "cluster_bindless_oit_frag.spv" "cluster_bindless.frag" fragment OIT_OUTPUT)
+# Depth-only CSM shadow variant: vertex shader passes world-space position
+# through to a geometry shader which broadcasts each triangle to every
+# CSM_CASCADE_COUNT cascade in a single pass.  Replaces ~2400 individual
+# per-mesh shadow draws with a single drawIndirectCount call.
+add_spirv(SPIRV_FILES "cluster_bindless_shadow_vert.spv" "cluster_bindless_shadow.vert" vertex)
+add_spirv(SPIRV_FILES "cluster_bindless_shadow_geom.spv" "cluster_bindless_shadow.geom" geometry)
 add_spirv(SPIRV_FILES "cluster_cull_comp.spv"         "cluster_cull.comp"     compute)
 # WBOIT resolve — fullscreen pass that reads accum+reveal and writes the
 # composited translucent layer back over the scene colour buffer.

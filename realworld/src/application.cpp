@@ -65,6 +65,14 @@ std::shared_ptr<er::DescriptorSetLayout> createRuntimeLightsDescriptorSetLayout(
 
     bindings.push_back(er::helper::getBufferDescriptionSetLayoutBinding(
         RUNTIME_LIGHTS_CONSTANT_INDEX,
+        // FRAGMENT: forward-pass lighting math reads RuntimeLightsParams.
+        // COMPUTE:  cluster_cull.comp reads the translucent flag.
+        // GEOMETRY: base_depthonly_csm.geom (non-cluster shadow path)
+        //           reads light_view_proj[] for layered broadcast.
+        // VERTEX is NOT needed — the cluster shadow VS (Option B) takes
+        // its cascade VP via push constant directly, not through this
+        // UBO.  (An earlier multiview attempt did read this from the VS
+        // but was reverted; see cluster_bindless_shadow.vert comments.)
         SET_3_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT, GEOMETRY_BIT),
         er::DescriptorType::UNIFORM_BUFFER));
 
@@ -316,10 +324,17 @@ void RealWorldApplication::createHiZPyramid(const glm::uvec2& display_size) {
     if (size.x == 0) size.x = 1;
     if (size.y == 0) size.y = 1;
     uint32_t max_dim = std::max(size.x, size.y);
+    // Mip count must match Vulkan's own validation rule for VkImageCreateInfo,
+    // which is floor(log2(maxDim)) + 1.  Vulkan's per-mip extent is computed
+    // with bit-shift (floor) halving: mip[i] = max(1, baseDim >> i).  Using
+    // ceil halving `(d + 1) / 2` here overcounts by 1 for non-power-of-2
+    // dimensions — e.g. 1280 ceil-halves through 1280→640→320→160→80→40→
+    // 20→10→5→3→2→1 (12 steps) but Vulkan only permits 11 mips for that
+    // width.  Use floor halving to stay in sync with the spec's max.
     uint32_t mips = 1;
     {
         uint32_t d = max_dim;
-        while (d > 1) { d = (d + 1u) / 2u; ++mips; }
+        while (d > 1) { d >>= 1u; ++mips; }
     }
 
     // Tear down any previous allocation.
@@ -411,7 +426,19 @@ void RealWorldApplication::createHiZPyramid(const glm::uvec2& display_size) {
     if (hiz_build_pipeline_) {
         std::shared_ptr<er::ImageView> phase_a_depth_view;
         if (object_scene_view_ && object_scene_view_->getDepthBuffer()) {
-            phase_a_depth_view = object_scene_view_->getDepthBuffer()->view;
+            // Bind depth_buffer_copy_ (held in SHADER_READ_ONLY_OPTIMAL by
+            // the end-of-frame blit) rather than the LIVE object_scene_view_
+            // depth attachment.  writeHiZBuildDescriptors declares the
+            // descriptor layout as SHADER_READ_ONLY_OPTIMAL; pointing it at
+            // the live depth target trips VUID-vkCmdDraw-None-09600 every
+            // frame because that image is in DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+            // when the dispatch consumes the descriptor.  The dispatch's
+            // mip-0 push-constant size already references depth_buffer_copy_,
+            // so this also aligns the descriptor with the size the shader
+            // assumes.  Functionally identical: depth_buffer_copy_ holds
+            // last-frame's depth that the Hi-Z build was already designed to
+            // consume (see the comment at the Hi-Z dispatch site).
+            phase_a_depth_view = depth_buffer_copy_.view;
         }
         writeHiZBuildDescriptors(phase_a_depth_view);
     }
@@ -700,12 +727,22 @@ void RealWorldApplication::dispatchHiZBuild(
         // mip is correctly synchronized AND it can also write its own
         // mip in GENERAL layout.  Skip after the last mip — caller
         // transitions the whole pyramid back to SHADER_READ_ONLY below.
+        //
+        // The addImageBarrier signature is (image, src, dst, base_mip=0,
+        // mip_count=1, base_layer=0, layer_count=1) — no aspect-mask
+        // parameter.  An earlier version of this call incorrectly passed
+        // SET_FLAG_BIT(ImageAspect, COLOR_BIT) as base_mip and shifted
+        // everything else right, which produced base_mip = 1, mip_count
+        // = 0, base_layer = hiz_pyramid_mips_ (e.g. 11) — three back-to-
+        // back VUID violations per Hi-Z build per frame (levelCount = 0,
+        // baseArrayLayer ≥ arrayLayers, base+layerCount > arrayLayers).
+        // Aspect is auto-derived from layout (COLOR for GENERAL).
         if (m + 1 < hiz_pyramid_mips_) {
             cmd_buf->addImageBarrier(
                 hiz_pyramid_.image,
                 write_info, gen_read_write,
-                SET_FLAG_BIT(ImageAspect, COLOR_BIT),
-                0, hiz_pyramid_mips_);
+                /*base_mip*/ 0, /*mip_count*/ hiz_pyramid_mips_,
+                /*base_layer*/ 0, /*layer_count*/ 1);
         }
     }
 
@@ -1170,7 +1207,19 @@ void RealWorldApplication::initVulkan() {
     {
         std::shared_ptr<er::ImageView> phase_a_depth_view;
         if (object_scene_view_ && object_scene_view_->getDepthBuffer()) {
-            phase_a_depth_view = object_scene_view_->getDepthBuffer()->view;
+            // Bind depth_buffer_copy_ (held in SHADER_READ_ONLY_OPTIMAL by
+            // the end-of-frame blit) rather than the LIVE object_scene_view_
+            // depth attachment.  writeHiZBuildDescriptors declares the
+            // descriptor layout as SHADER_READ_ONLY_OPTIMAL; pointing it at
+            // the live depth target trips VUID-vkCmdDraw-None-09600 every
+            // frame because that image is in DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+            // when the dispatch consumes the descriptor.  The dispatch's
+            // mip-0 push-constant size already references depth_buffer_copy_,
+            // so this also aligns the descriptor with the size the shader
+            // assumes.  Functionally identical: depth_buffer_copy_ holds
+            // last-frame's depth that the Hi-Z build was already designed to
+            // consume (see the comment at the Hi-Z dispatch site).
+            phase_a_depth_view = depth_buffer_copy_.view;
         }
         writeHiZBuildDescriptors(phase_a_depth_view);
     }
@@ -1442,7 +1491,19 @@ void RealWorldApplication::initVulkan() {
     {
         std::shared_ptr<er::ImageView> phase_a_depth_view;
         if (object_scene_view_ && object_scene_view_->getDepthBuffer()) {
-            phase_a_depth_view = object_scene_view_->getDepthBuffer()->view;
+            // Bind depth_buffer_copy_ (held in SHADER_READ_ONLY_OPTIMAL by
+            // the end-of-frame blit) rather than the LIVE object_scene_view_
+            // depth attachment.  writeHiZBuildDescriptors declares the
+            // descriptor layout as SHADER_READ_ONLY_OPTIMAL; pointing it at
+            // the live depth target trips VUID-vkCmdDraw-None-09600 every
+            // frame because that image is in DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+            // when the dispatch consumes the descriptor.  The dispatch's
+            // mip-0 push-constant size already references depth_buffer_copy_,
+            // so this also aligns the descriptor with the size the shader
+            // assumes.  Functionally identical: depth_buffer_copy_ holds
+            // last-frame's depth that the Hi-Z build was already designed to
+            // consume (see the comment at the Hi-Z dispatch site).
+            phase_a_depth_view = depth_buffer_copy_.view;
         }
         writeHiZBuildDescriptors(phase_a_depth_view);
     }
@@ -1953,7 +2014,19 @@ void RealWorldApplication::recreateSwapChain() {
         {
             std::shared_ptr<er::ImageView> phase_a_depth_view;
             if (object_scene_view_ && object_scene_view_->getDepthBuffer()) {
-                phase_a_depth_view = object_scene_view_->getDepthBuffer()->view;
+                // Bind depth_buffer_copy_ (held in SHADER_READ_ONLY_OPTIMAL by
+            // the end-of-frame blit) rather than the LIVE object_scene_view_
+            // depth attachment.  writeHiZBuildDescriptors declares the
+            // descriptor layout as SHADER_READ_ONLY_OPTIMAL; pointing it at
+            // the live depth target trips VUID-vkCmdDraw-None-09600 every
+            // frame because that image is in DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+            // when the dispatch consumes the descriptor.  The dispatch's
+            // mip-0 push-constant size already references depth_buffer_copy_,
+            // so this also aligns the descriptor with the size the shader
+            // assumes.  Functionally identical: depth_buffer_copy_ holds
+            // last-frame's depth that the Hi-Z build was already designed to
+            // consume (see the comment at the Hi-Z dispatch site).
+            phase_a_depth_view = depth_buffer_copy_.view;
             }
             writeHiZBuildDescriptors(phase_a_depth_view);
         }
@@ -1999,7 +2072,7 @@ void RealWorldApplication::recreateSwapChain() {
             0,
             texture_sampler_,
             csm_shadow_tex_->view,
-            er::ImageLayout::DEPTH_READ_ONLY_OPTIMAL);
+            er::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL);
         device_->updateDescriptorSets(writes);
     }
 
@@ -2026,6 +2099,20 @@ void RealWorldApplication::recreateSwapChain() {
         weather_system_->getMoistureTex(0),
         weather_system_->getAirflowTex());
 
+    // ── Provide the view-camera buffer to the game-objects update path ──
+    // update_game_objects.comp declares a CameraInfoBuffer at binding
+    // CAMERA_OBJECT_BUFFER_INDEX (= 3) and reads camera_info.position to
+    // place newly-spawned game objects relative to the player.  The
+    // helper that populates the set (addGameObjectsInfoBuffer) has the
+    // CAMERA write commented out, so the slot is otherwise left
+    // unbound — validation flags VUID-vkCmdDispatch-None-08114 every
+    // frame.  Setting the static here BEFORE generateDescriptorSet ensures
+    // createGameObjectUpdateDescSet picks it up at descset-create time
+    // and writes the binding in the same batch as the other slots, so the
+    // descset is fully valid the moment it lands.
+    ego::DrawableObject::setViewCameraBufferForUpdate(
+        main_camera_object_->getViewCameraBuffer());
+
     ego::DrawableObject::generateDescriptorSet(
         device_,
         descriptor_pool_,
@@ -2037,6 +2124,12 @@ void RealWorldApplication::recreateSwapChain() {
         ego::TileObject::getSoilWaterLayer(1),
         ego::TileObject::getWaterFlow(),
         weather_system_->getAirflowTex());
+
+    // Late-arrival safety net: even if the static was unset at descset-
+    // create time (e.g. a recreate path runs before the static is set),
+    // this call patches the binding after the fact.
+    ego::DrawableObject::updateGameObjectsCameraBuffer(
+        device_, main_camera_object_->getViewCameraBuffer());
 
 /*    assert(ego::DrawableObject::getGameObjectsBuffer());
     ego::ViewCamera::generateDescriptorSet(
@@ -2268,7 +2361,7 @@ er::WriteDescriptorList RealWorldApplication::addGlobalTextures(
         DIRECT_SHADOW_INDEX,
         texture_sampler_,
         direct_shadow_tex->view,
-        er::ImageLayout::DEPTH_READ_ONLY_OPTIMAL);
+        er::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL);
 
     ibl_creator_->addToGlobalTextures(
         descriptor_writes,
@@ -2365,7 +2458,7 @@ void RealWorldApplication::setupCsmDebugDraw() {
             0,
             texture_sampler_,
             csm_shadow_tex_->view,
-            er::ImageLayout::DEPTH_READ_ONLY_OPTIMAL);
+            er::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL);
         device_->updateDescriptorSets(writes);
     }
 
@@ -2775,6 +2868,14 @@ void RealWorldApplication::drawScene(
     };
     std::array<glm::mat4, CSM_CASCADE_COUNT> csm_cascade_vps;
 
+    // Light-space orthographic projection fitted to the FULL view frustum
+    // (z_near → last cascade's far).  No longer used by the cluster
+    // shadow path (Option B switched to per-cascade culling, each
+    // dispatch with its own cascade VP).  computeCascadeMatrices's
+    // out_union_vp param is left in place for any future caller that
+    // wants a single "union of all cascades" frustum, but here we pass
+    // nullptr to skip the fit work.
+
     // this has to be happened after tile update, or you wont get the right height info.
     {
         engine::helper::GpuProfiler::Scope _scope_go(
@@ -2873,12 +2974,15 @@ void RealWorldApplication::drawScene(
         const auto& main_cam = main_camera_object_->getCameraViewInfo();
 
         // View-space far depths for each cascade (tune to scene scale).
+        // out_union_vp = nullptr — Option B per-cascade culling uses the
+        // individual cascade VPs directly, no union needed.
         shadow_camera_object_->computeCascadeMatrices(
             main_cam.view,
             main_cam.proj,
             csm_cascade_splits,
             0.1f,  // main camera z_near
-            csm_cascade_vps);
+            csm_cascade_vps,
+            /*out_union_vp*/ nullptr);
 
         glsl::RuntimeLightsParams runtime_lights_params = {};
         {
@@ -2960,6 +3064,7 @@ void RealWorldApplication::drawScene(
         if (!menu_->isShadowPassTurnOff()) {
             engine::helper::GpuProfiler::Scope _scope_shadow(
                 gpu_profiler_, cmd_buf, "CSM Shadow");
+
             shadow_object_scene_view_->draw(
                 cmd_buf,
                 desc_sets,
@@ -2970,6 +3075,66 @@ void RealWorldApplication::drawScene(
                 true,
                 csm_shadow_tex_->view,    // full CSM_CASCADE_COUNT-layer array view
                 CSM_CASCADE_COUNT);       // layer_count triggers GS layered path
+
+            // ── Cluster CSM shadow draw ──────────────────────────────────
+            // Single drawIndexed over the entire merged VB/IB; the GS
+            // (cluster_bindless_shadow.geom) broadcasts each tri to all
+            // CSM_CASCADE_COUNT layers.  No per-cluster cull, no per-
+            // cascade rendering — both were measured and shown worse on
+            // this hardware (see cluster_bindless_shadow.vert's comment
+            // block for the perf history).  Cluster meshes are excluded
+            // from the previous shadow_object_scene_view_->draw via the
+            // gate in drawable_object.cpp.
+            if (cluster_renderer_ &&
+                cluster_renderer_->isEnabled() &&
+                engine::helper::clusterIndirectActive()) {
+                er::RenderingAttachmentInfo depth_attach;
+                depth_attach.image_view   = csm_shadow_tex_->view;
+                depth_attach.image_layout =
+                    er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                depth_attach.load_op  = er::AttachmentLoadOp::LOAD;
+                depth_attach.store_op = er::AttachmentStoreOp::STORE;
+
+                er::RenderingInfo cluster_csm_ri = {};
+                cluster_csm_ri.render_area_offset = { 0, 0 };
+                cluster_csm_ri.render_area_extent = {
+                    csm_shadow_tex_->size.x, csm_shadow_tex_->size.y };
+                cluster_csm_ri.layer_count        = CSM_CASCADE_COUNT;
+                cluster_csm_ri.view_mask          = 0;
+                cluster_csm_ri.color_attachments  = {};
+                cluster_csm_ri.depth_attachments  = { depth_attach };
+                cluster_csm_ri.stencil_attachments = {};
+                cmd_buf->beginDynamicRendering(cluster_csm_ri);
+
+                er::Viewport vp;
+                vp.x = 0; vp.y = 0;
+                vp.width  = float(csm_shadow_tex_->size.x);
+                vp.height = float(csm_shadow_tex_->size.y);
+                vp.min_depth = 0.0f;
+                vp.max_depth = 1.0f;
+                er::Scissor sc;
+                sc.offset = glm::ivec2(0);
+                sc.extent = glm::uvec2(
+                    csm_shadow_tex_->size.x, csm_shadow_tex_->size.y);
+
+                // The GS reads light_view_proj[cascade] from the lights
+                // UBO.  Provide both VIEW_PARAMS_SET (for layout compat;
+                // the VS doesn't actually read it) and RUNTIME_LIGHTS_
+                // PARAMS_SET.
+                er::DescriptorSetList csm_cluster_desc(
+                    RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
+                csm_cluster_desc[VIEW_PARAMS_SET] =
+                    shadow_camera_object_->getViewCameraDescriptorSet();
+                csm_cluster_desc[RUNTIME_LIGHTS_PARAMS_SET] =
+                    runtime_lights_desc_set_;
+
+                cluster_renderer_->drawClusterShadow(
+                    cmd_buf,
+                    csm_cluster_desc,
+                    { vp }, { sc });
+
+                cmd_buf->endDynamicRendering();
+            }
         }
 
         // Custom resource infos matching the shadow pass attachment layout.
@@ -2980,8 +3145,20 @@ void RealWorldApplication::drawScene(
             er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             SET_2_FLAG_BITS(Access, DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, DEPTH_STENCIL_ATTACHMENT_READ_BIT),
             SET_2_FLAG_BITS(PipelineStage, EARLY_FRAGMENT_TESTS_BIT, LATE_FRAGMENT_TESTS_BIT) };
+        // Use DEPTH_STENCIL_READ_ONLY_OPTIMAL (combined-aspect "both read-
+        // only") instead of DEPTH_READ_ONLY_OPTIMAL.  The CSM depth array
+        // is D24_UNORM_S8_UINT, and without the separateDepthStencilLayouts
+        // device feature enabled, DEPTH_READ_ONLY_OPTIMAL applies only to
+        // the depth aspect — validation tracks the stencil aspect's layout
+        // independently and treats DEPTH_READ_ONLY as effectively
+        // SHADER_READ_ONLY for stencil.  Next frame the begin-rendering
+        // pass treats stencil as still in DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        // and our addImageBarrier's auto-aspect mask (DEPTH|STENCIL for
+        // D24_S8) hits a mismatch.  DEPTH_STENCIL_READ_ONLY_OPTIMAL applies
+        // cleanly to both aspects on a combined format, eliminating the
+        // VUID-VkImageMemoryBarrier-oldLayout-01197 cascade.
         er::ImageResourceInfo csm_as_shader_sampler = {
-            er::ImageLayout::DEPTH_READ_ONLY_OPTIMAL,
+            er::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
             SET_FLAG_BIT(Access, SHADER_READ_BIT),
             SET_2_FLAG_BITS(PipelineStage, FRAGMENT_SHADER_BIT, COMPUTE_SHADER_BIT) };
 
@@ -4691,6 +4868,27 @@ void RealWorldApplication::drawFrame() {
                     cluster_renderer_->initBindlessGBufferPipeline(
                         graphic_pipeline_info_,
                         gbuffer_renderbuffer_format_);
+
+                    // Depth-only CSM shadow variant.  Single drawIndirect-
+                    // Count broadcasts every cluster triangle to all
+                    // CSM_CASCADE_COUNT cascades via a geometry shader,
+                    // replacing the ~2400 individual per-mesh shadow draws
+                    // that were costing ~17 ms of CPU recording time per
+                    // frame.  Slim pipeline layout — only VIEW_PARAMS_SET
+                    // (for layout-compat) and RUNTIME_LIGHTS_PARAMS_SET
+                    // (GS reads cascade VP matrices).  Render target is
+                    // the kShadow pass's depth-array format.
+                    er::DescriptorSetLayoutList shadow_layouts(
+                        RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
+                    shadow_layouts[VIEW_PARAMS_SET] =
+                        ego::CameraObject::getViewCameraDescriptorSetLayout();
+                    shadow_layouts[RUNTIME_LIGHTS_PARAMS_SET] =
+                        runtime_lights_desc_set_layout_;
+                    cluster_renderer_->initBindlessShadowPipeline(
+                        shadow_layouts,
+                        graphic_pipeline_info_,
+                        renderbuffer_formats_[
+                            int(er::RenderPasses::kShadow)].depth_format);
                 }
             }
         }
