@@ -709,10 +709,28 @@ void RealWorldApplication::dispatchHiZBuild(
         }
     }
 
-    // Final transition: every mip → SHADER_READ_ONLY_OPTIMAL so the
-    // cluster cull's binding 11 sample reads valid data.
-    er::helper::transitMapTextureFromStoreImage(
-        cmd_buf, { hiz_pyramid_.image });
+    // Final pyramid sync.  Keep layout in GENERAL — cluster cull's
+    // binding 11 declares GENERAL (cluster_renderer.cpp:1268) and the
+    // hiz_build descriptor sets for mip-1+ sources declare GENERAL too
+    // (application.cpp:512).  Transitioning to SHADER_READ_ONLY_OPTIMAL
+    // here was the bug: next frame's dispatch would try to use the
+    // image at GENERAL via descriptors written assuming GENERAL, and
+    // the validation layer flagged it (VUID-VkDescriptorImageInfo-
+    // imageLayout-00344) every frame.  We only need a memory
+    // dependency from compute-write to subsequent sampler reads,
+    // without changing the layout.
+    er::ImageResourceInfo from_write_all = {
+        er::ImageLayout::GENERAL,
+        SET_FLAG_BIT(Access, SHADER_WRITE_BIT),
+        SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) };
+    er::ImageResourceInfo to_read_all = {
+        er::ImageLayout::GENERAL,
+        SET_FLAG_BIT(Access, SHADER_READ_BIT),
+        SET_2_FLAG_BITS(PipelineStage,
+            COMPUTE_SHADER_BIT, FRAGMENT_SHADER_BIT) };
+    cmd_buf->addImageBarrier(
+        hiz_pyramid_.image, from_write_all, to_read_all,
+        /*base_mip*/ 0, /*mip_count*/ hiz_pyramid_mips_, 0, 1);
 }
 
 void RealWorldApplication::initDeferredResolve() {
@@ -2294,10 +2312,8 @@ void RealWorldApplication::createDescriptorSets() {
             std::source_location::current());
     }
 
-    // create a global ibl texture descriptor set.
     er::WriteDescriptorList descriptor_writes;
     descriptor_writes.reserve(1);
-
     er::Helper::addOneBuffer(
         descriptor_writes,
         runtime_lights_desc_set_,
@@ -2305,7 +2321,6 @@ void RealWorldApplication::createDescriptorSets() {
         RUNTIME_LIGHTS_CONSTANT_INDEX,
         runtime_lights_buffer_->buffer,
         runtime_lights_buffer_->buffer->getSize());
-
     device_->updateDescriptorSets(descriptor_writes);
 }
 
@@ -4280,14 +4295,10 @@ void RealWorldApplication::drawFrame() {
         gpu_profiler_.endCpuScope(_cpu_wait_fence);
     }
 
-    // NOTE: The prev-frame fence wait that used to live here has been
-    // moved down to just before command_buffer->reset() / drawScene().
-    // Rationale: the host-UBO write race it guards against (single-
-    // buffered per-frame UBOs like view_camera_buffer_) only happens
-    // inside drawScene; the ~600 lines of CPU pre-work between
-    // acquireNextImage and drawScene don't host-write per-frame
-    // buffers and can run concurrently with GPU frame N-1.  See the
-    // matching block below labelled "Wait Prev Frame Fence".
+    // NOTE: prev-frame fence wait sits below, just before
+    // command_buffer->reset() / drawScene().  CPU pre-work above this
+    // point runs concurrently with frame N-1's GPU work because it
+    // doesn't touch per-frame host-coherent buffers.
 
     // ── Collect GPU-profiler query results for the FIF slot we just
     //    drained ────────────────────────────────────────────────────────
