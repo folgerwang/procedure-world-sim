@@ -3065,6 +3065,32 @@ void RealWorldApplication::drawScene(
             engine::helper::GpuProfiler::Scope _scope_shadow(
                 gpu_profiler_, cmd_buf, "CSM Shadow");
 
+            // ── Per-frame shadow-pass material classification stats ──
+            // Prints one line per frame to stdout showing how many
+            // engine-wide materials are taking the slow alpha-cutoff
+            // frag-shader path vs the fast no-frag path.  Counters
+            // live on ego::DrawableObject and are bumped by
+            // computeEffectiveOpaqueForMaterials at mesh-load time
+            // (sync constructor + async Phase2Fn), so the totals only
+            // change when a new mesh streams in — printing per frame
+            // gives a "before vs after" timeline that's easy to spot.
+            {
+                const int total = ego::DrawableObject::
+                    s_total_materials_count_.load(
+                        std::memory_order_relaxed);
+                const int cutoff = ego::DrawableObject::
+                    s_alpha_cutoff_materials_count_.load(
+                        std::memory_order_relaxed);
+                const double pct =
+                    (total > 0)
+                        ? (100.0 * double(cutoff) / double(total))
+                        : 0.0;
+                std::printf(
+                    "[shadow] frame=%llu alpha_cutoff=%d/%d (%.1f%%)\n",
+                    static_cast<unsigned long long>(current_frame_),
+                    cutoff, total, pct);
+            }
+
             shadow_object_scene_view_->draw(
                 cmd_buf,
                 desc_sets,
