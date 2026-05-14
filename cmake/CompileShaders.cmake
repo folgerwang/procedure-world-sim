@@ -162,12 +162,13 @@ add_spirv(SPIRV_FILES "base_depthonly_frag_NOMTL.spv" "base_depthonly.frag" frag
 add_spirv(SPIRV_FILES "base_depthonly_csm_geom.spv" "base_depthonly_csm.geom" geometry)
 
 # ── base_depthonly CSM mesh-shader task + mesh pair ──────────────────────────
-# Phase B drawable-path mesh-shader CSM.  Task: one workgroup per drawcall,
-# amplifies to CSM_CASCADE_COUNT mesh workgroups (one per cascade layer).
-# Mesh: fetches VB/IB via per-primitive SSBO bindings, transforms with
-# combined_world * light_view_proj[cascade], emits to gl_Layer=cascade.
-# Phase B MVP supports opaque non-skinned static meshes; skinned + cutout
-# primitives fall back to the GS path inside DrawableObject::draw.
+# Drawable-path mesh-shader CSM (DrawMode::kCsmMeshShader).  task: one
+# workgroup per drawcall, amplifies to CSM_CASCADE_COUNT mesh workgroups
+# (one per cascade layer).  mesh: fetches VB/IB/instance via per-
+# primitive SSBO bindings, transforms with light_view_proj[cascade] *
+# instance_transform * model_mat, emits to gl_Layer=cascade.  Supports
+# opaque non-skinned UINT32-indexed primitives with <=256 verts/tris;
+# everything else falls back to the GS pipeline inside drawMesh.
 add_spirv(SPIRV_FILES "base_depthonly_csm_task.spv" "base_depthonly_csm.task" task)
 add_spirv(SPIRV_FILES "base_depthonly_csm_mesh.spv" "base_depthonly_csm.mesh" mesh)
 

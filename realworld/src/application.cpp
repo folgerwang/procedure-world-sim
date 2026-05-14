@@ -3166,18 +3166,25 @@ void RealWorldApplication::drawScene(
 
             // ── Drawable-shadow draw-mode dispatch ────────────────────
             // Menu exposes three mutually-exclusive paths for CSM:
-            //   kRegular        — per-cascade single-layer passes (no GS,
-            //                      no mesh shader).  Loops cascades; each
-            //                      iteration draws into csm_layer_views_[k]
-            //                      and pushes cascade_idx=k.  The
-            //                      _CSMCASC vertex shader reads
+            //   kRegular        — N=CSM_CASCADE_COUNT single-layer passes
+            //                      driven by a host-side cascade loop.
+            //                      Each iteration draws into
+            //                      csm_layer_views_[k] with cascade_idx=k
+            //                      pushed via ModelParams; the _CSMCASC
+            //                      VS permutation reads
             //                      lights_params.light_view_proj[cascade_idx].
-            //   kGeometryShader — single layered draw +
-            //                      base_depthonly_csm.geom broadcast.
-            //   kMeshShader     — task+mesh shaders.  Not yet wired; falls
-            //                      back to GS with a warn-once log line
-            //                      (Phase B will author the shaders and
-            //                      pipeline).
+            //                      No GS, no mesh shader.
+            //   kGeometryShader — Single layered draw,
+            //                      base_depthonly_csm.geom broadcasts each
+            //                      triangle to every cascade layer.
+            //   kMeshShader     — Single layered draw routed through
+            //                      DrawMode::kCsmMeshShader.  Eligible
+            //                      primitives (opaque, non-skinned, UINT32
+            //                      indices, ≤256 verts/tris) dispatch via
+            //                      base_depthonly_csm.task + .mesh and
+            //                      per-primitive SSBO bindings.  Ineligible
+            //                      primitives fall back to the GS pipeline
+            //                      inside drawMesh.
             const auto csm_mode = menu_->getCsmDrawMode();
             using CsmDrawMode = engine::ui::Menu::CsmDrawMode;
 
@@ -3206,16 +3213,13 @@ void RealWorldApplication::drawScene(
             }
 
             if (csm_mode == CsmDrawMode::kRegular) {
-                // ── Regular mode: loop cascades, no GS, no mesh shader ──
+                // ── Regular mode: host loops cascades, no GS, no mesh.
                 // Each iteration opens a single-layer dynamic-rendering
                 // scope against csm_layer_views_[k] and dispatches the
-                // _CSMCASC pipeline via DrawMode::kCsmPerCascade.  The
-                // first iteration preserves whatever the silhouette
-                // prepass wrote (preserve_depth = silhouette_prefilled);
-                // subsequent iterations don't reapply the prepass per-
-                // cascade — each cascade's depth layer is independent so
-                // each iteration's load behaviour matches the prepass's
-                // intent (LOAD if prefilled, CLEAR otherwise).
+                // _CSMCASC pipeline via DrawMode::kCsmPerCascade.  Each
+                // cascade's depth layer is independent, so preserve_depth
+                // matches the silhouette-prepass intent (LOAD if pre-
+                // filled, CLEAR otherwise) for every iteration.
                 for (uint32_t k = 0; k < CSM_CASCADE_COUNT; ++k) {
                     shadow_object_scene_view_->draw(
                         cmd_buf,
@@ -3231,12 +3235,11 @@ void RealWorldApplication::drawScene(
                         /*csm_cascade_idx*/ int32_t(k));
                 }
             } else {
-                // kGeometryShader (default) or kMeshShader: single layered
-                // draw.  When kMeshShader, signal ObjectSceneView::draw to
-                // route through DrawMode::kCsmMeshShader (task+mesh
-                // shaders for eligible primitives, GS fallback inside
-                // drawMesh for the rest).  Otherwise use the GS path
-                // straight through.
+                // kGeometryShader or kMeshShader: single layered draw.
+                // When kMeshShader, ObjectSceneView::draw routes through
+                // DrawMode::kCsmMeshShader (task+mesh for eligible
+                // primitives, GS fallback inside drawMesh for the rest).
+                // Otherwise the GS path is used directly.
                 const bool use_mesh_shader =
                     (csm_mode == CsmDrawMode::kMeshShader);
                 shadow_object_scene_view_->draw(
