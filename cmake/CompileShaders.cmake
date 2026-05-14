@@ -138,6 +138,21 @@ add_spirv(SPIRV_FILES "base_depthonly_vert_SKIN.spv"     "base_depthonly.vert" v
 add_spirv(SPIRV_FILES "base_depthonly_vert_TEX_SKIN.spv" "base_depthonly.vert" vertex  HAS_UV_SET0 HAS_SKIN_SET_0 USE_SKINNING)
 add_spirv(SPIRV_FILES "base_depthonly_vert_NOMTL_SKIN.spv" "base_depthonly.vert" vertex  NO_MTL HAS_SKIN_SET_0 USE_SKINNING)
 
+# ── CSM_PER_CASCADE permutations of base_depthonly.vert ───────────────────
+# Same vertex shader, but reads RuntimeLightsParams.light_view_proj[
+# model_params.cascade_idx] instead of VIEW_PARAMS_SET's camera_info
+# .view_proj.  Consumed by the DrawMode::kCsmPerCascade pipeline (the
+# "Regular" option on the shadow draw-mode menu).  The host loops over
+# CSM_CASCADE_COUNT cascades and pushes cascade_idx per draw — no GS,
+# no mesh shader, no extra UBO upload (the lights UBO is already bound
+# for the GS path).  TEX / SKIN matrix mirrors the four non-CSMCASC
+# permutations above; NOMTL is omitted because CSM shadow draws always
+# have a material context.
+add_spirv(SPIRV_FILES "base_depthonly_vert_CSMCASC.spv"          "base_depthonly.vert" vertex  CSM_PER_CASCADE)
+add_spirv(SPIRV_FILES "base_depthonly_vert_TEX_CSMCASC.spv"      "base_depthonly.vert" vertex  CSM_PER_CASCADE HAS_UV_SET0)
+add_spirv(SPIRV_FILES "base_depthonly_vert_SKIN_CSMCASC.spv"     "base_depthonly.vert" vertex  CSM_PER_CASCADE HAS_SKIN_SET_0 USE_SKINNING)
+add_spirv(SPIRV_FILES "base_depthonly_vert_TEX_SKIN_CSMCASC.spv" "base_depthonly.vert" vertex  CSM_PER_CASCADE HAS_UV_SET0 HAS_SKIN_SET_0 USE_SKINNING)
+
 # ── base_depthonly.frag variants ─────────────────────────────────────────────
 add_spirv(SPIRV_FILES "base_depthonly_frag.spv"       "base_depthonly.frag" fragment)
 add_spirv(SPIRV_FILES "base_depthonly_frag_TEX.spv"   "base_depthonly.frag" fragment  HAS_UV_SET0)
@@ -145,6 +160,16 @@ add_spirv(SPIRV_FILES "base_depthonly_frag_NOMTL.spv" "base_depthonly.frag" frag
 
 # ── base_depthonly CSM geometry shader ───────────────────────────────────────
 add_spirv(SPIRV_FILES "base_depthonly_csm_geom.spv" "base_depthonly_csm.geom" geometry)
+
+# ── base_depthonly CSM mesh-shader task + mesh pair ──────────────────────────
+# Phase B drawable-path mesh-shader CSM.  Task: one workgroup per drawcall,
+# amplifies to CSM_CASCADE_COUNT mesh workgroups (one per cascade layer).
+# Mesh: fetches VB/IB via per-primitive SSBO bindings, transforms with
+# combined_world * light_view_proj[cascade], emits to gl_Layer=cascade.
+# Phase B MVP supports opaque non-skinned static meshes; skinned + cutout
+# primitives fall back to the GS path inside DrawableObject::draw.
+add_spirv(SPIRV_FILES "base_depthonly_csm_task.spv" "base_depthonly_csm.task" task)
+add_spirv(SPIRV_FILES "base_depthonly_csm_mesh.spv" "base_depthonly_csm.mesh" mesh)
 
 # ── Cluster bindless pass ─────────────────────────────────────────────────────
 add_spirv(SPIRV_FILES "cluster_bindless_vert.spv"     "cluster_bindless.vert" vertex)

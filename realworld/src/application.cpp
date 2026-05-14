@@ -74,13 +74,14 @@ std::shared_ptr<er::DescriptorSetLayout> createRuntimeLightsDescriptorSetLayout(
         // MESH:     cluster_bindless_shadow.mesh — mesh-shader CSM path
         //           reads light_view_proj[cascade] to project cluster
         //           vertices into the matching cascade's depth layer.
-        // VERTEX is NOT needed — the legacy cluster shadow VS (Option B)
-        // took its cascade VP via push constant directly, not through
-        // this UBO.  (An earlier multiview attempt did read this from
-        // the VS but was reverted; see cluster_bindless_shadow.vert
-        // comments.)
-        SET_5_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT,
-                        GEOMETRY_BIT, MESH_BIT_EXT, TASK_BIT_EXT),
+        // VERTEX:   base_depthonly.vert CSM_PER_CASCADE permutation
+        //           (DrawMode::kCsmPerCascade — "Regular" option on the
+        //           shadow draw-mode menu) reads
+        //           light_view_proj[model_params.cascade_idx] to
+        //           per-cascade-loop without a GS or mesh shader.
+        SET_6_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT,
+                        GEOMETRY_BIT, MESH_BIT_EXT, TASK_BIT_EXT,
+                        VERTEX_BIT),
         er::DescriptorType::UNIFORM_BUFFER));
 
     return device->createDescriptorSetLayout(bindings);
@@ -3078,30 +3079,35 @@ void RealWorldApplication::drawScene(
             engine::helper::GpuProfiler::Scope _scope_shadow(
                 gpu_profiler_, cmd_buf, "CSM Shadow");
 
-            // ── Per-frame shadow-pass material classification stats ──
-            // Prints one line per frame to stdout showing how many
-            // engine-wide materials are taking the slow alpha-cutoff
-            // frag-shader path vs the fast no-frag path.  Counters
-            // live on ego::DrawableObject and are bumped by
+            // ── Periodic shadow-pass material classification stats ───
+            // Prints one line every ~10 s of wall-clock time showing how
+            // many engine-wide materials are on the slow alpha-cutoff
+            // frag-shader path vs the fast no-frag path.  Counters live
+            // on ego::DrawableObject and are bumped by
             // computeEffectiveOpaqueForMaterials at mesh-load time
-            // (sync constructor + async Phase2Fn), so the totals only
-            // change when a new mesh streams in — printing per frame
-            // gives a "before vs after" timeline that's easy to spot.
+            // (sync constructor + async Phase2Fn).  Per-frame printing
+            // was too spammy; the totals only move when new meshes
+            // stream in, so a 10-second cadence still catches every
+            // change without flooding the log.
             {
-                const int total = ego::DrawableObject::
-                    s_total_materials_count_.load(
-                        std::memory_order_relaxed);
-                const int cutoff = ego::DrawableObject::
-                    s_alpha_cutoff_materials_count_.load(
-                        std::memory_order_relaxed);
-                const double pct =
-                    (total > 0)
-                        ? (100.0 * double(cutoff) / double(total))
-                        : 0.0;
-                std::printf(
-                    "[shadow] frame=%llu alpha_cutoff=%d/%d (%.1f%%)\n",
-                    static_cast<unsigned long long>(current_frame_),
-                    cutoff, total, pct);
+                static float s_last_print_time = -1e30f;
+                if (current_time - s_last_print_time >= 10.0f) {
+                    const int total = ego::DrawableObject::
+                        s_total_materials_count_.load(
+                            std::memory_order_relaxed);
+                    const int cutoff = ego::DrawableObject::
+                        s_alpha_cutoff_materials_count_.load(
+                            std::memory_order_relaxed);
+                    const double pct =
+                        (total > 0)
+                            ? (100.0 * double(cutoff) / double(total))
+                            : 0.0;
+                    std::printf(
+                        "[shadow] frame=%llu alpha_cutoff=%d/%d (%.1f%%)\n",
+                        static_cast<unsigned long long>(current_frame_),
+                        cutoff, total, pct);
+                    s_last_print_time = current_time;
+                }
             }
 
             // ── CSM silhouette prepass ───────────────────────────────────
@@ -3158,17 +3164,95 @@ void RealWorldApplication::drawScene(
                 silhouette_prefilled = true;
             }
 
-            shadow_object_scene_view_->draw(
-                cmd_buf,
-                desc_sets,
-                nullptr,
-                s_dbuf_idx,
-                delta_t,
-                current_time,
-                true,
-                csm_shadow_tex_->view,    // full CSM_CASCADE_COUNT-layer array view
-                CSM_CASCADE_COUNT,        // layer_count triggers GS layered path
-                silhouette_prefilled);    // preserve_depth — keep prepass output
+            // ── Drawable-shadow draw-mode dispatch ────────────────────
+            // Menu exposes three mutually-exclusive paths for CSM:
+            //   kRegular        — per-cascade single-layer passes (no GS,
+            //                      no mesh shader).  Loops cascades; each
+            //                      iteration draws into csm_layer_views_[k]
+            //                      and pushes cascade_idx=k.  The
+            //                      _CSMCASC vertex shader reads
+            //                      lights_params.light_view_proj[cascade_idx].
+            //   kGeometryShader — single layered draw +
+            //                      base_depthonly_csm.geom broadcast.
+            //   kMeshShader     — task+mesh shaders.  Not yet wired; falls
+            //                      back to GS with a warn-once log line
+            //                      (Phase B will author the shaders and
+            //                      pipeline).
+            const auto csm_mode = menu_->getCsmDrawMode();
+            using CsmDrawMode = engine::ui::Menu::CsmDrawMode;
+
+            // ── Periodic CSM-mode trace ──────────────────────────────
+            // Confirms the menu toggle is actually reaching the dispatch.
+            // Prints once on first frame after a mode change, and every
+            // ~10 s thereafter while that mode is active.  Lets the user
+            // verify "I picked Regular and the loop is running" without
+            // having to attach a debugger.
+            {
+                static CsmDrawMode s_last_mode  = CsmDrawMode::kRegular;
+                static float       s_last_print = -1e30f;
+                static bool        s_first      = true;
+                const bool mode_changed = s_first || (s_last_mode != csm_mode);
+                if (mode_changed ||
+                    (current_time - s_last_print >= 10.0f)) {
+                    const char* mode_name =
+                        (csm_mode == CsmDrawMode::kRegular)    ? "Regular (per-cascade)" :
+                        (csm_mode == CsmDrawMode::kMeshShader) ? "MeshShader (task+mesh, GS fallback for ineligible)" :
+                                                                 "GeometryShader (layered)";
+                    std::printf("[shadow] csm_draw_mode=%s\n", mode_name);
+                    s_last_mode  = csm_mode;
+                    s_last_print = current_time;
+                    s_first      = false;
+                }
+            }
+
+            if (csm_mode == CsmDrawMode::kRegular) {
+                // ── Regular mode: loop cascades, no GS, no mesh shader ──
+                // Each iteration opens a single-layer dynamic-rendering
+                // scope against csm_layer_views_[k] and dispatches the
+                // _CSMCASC pipeline via DrawMode::kCsmPerCascade.  The
+                // first iteration preserves whatever the silhouette
+                // prepass wrote (preserve_depth = silhouette_prefilled);
+                // subsequent iterations don't reapply the prepass per-
+                // cascade — each cascade's depth layer is independent so
+                // each iteration's load behaviour matches the prepass's
+                // intent (LOAD if prefilled, CLEAR otherwise).
+                for (uint32_t k = 0; k < CSM_CASCADE_COUNT; ++k) {
+                    shadow_object_scene_view_->draw(
+                        cmd_buf,
+                        desc_sets,
+                        nullptr,
+                        s_dbuf_idx,
+                        delta_t,
+                        current_time,
+                        /*depth_only*/ true,
+                        csm_layer_views_[k],      // single-layer view of cascade k
+                        /*layer_count*/ 1,        // 1 = single-cascade draw
+                        /*preserve_depth*/ silhouette_prefilled,
+                        /*csm_cascade_idx*/ int32_t(k));
+                }
+            } else {
+                // kGeometryShader (default) or kMeshShader: single layered
+                // draw.  When kMeshShader, signal ObjectSceneView::draw to
+                // route through DrawMode::kCsmMeshShader (task+mesh
+                // shaders for eligible primitives, GS fallback inside
+                // drawMesh for the rest).  Otherwise use the GS path
+                // straight through.
+                const bool use_mesh_shader =
+                    (csm_mode == CsmDrawMode::kMeshShader);
+                shadow_object_scene_view_->draw(
+                    cmd_buf,
+                    desc_sets,
+                    nullptr,
+                    s_dbuf_idx,
+                    delta_t,
+                    current_time,
+                    true,
+                    csm_shadow_tex_->view,    // full CSM_CASCADE_COUNT-layer array view
+                    CSM_CASCADE_COUNT,        // layer_count triggers layered path
+                    silhouette_prefilled,     // preserve_depth — keep prepass output
+                    /*csm_cascade_idx*/ -1,
+                    /*csm_use_mesh_shader*/ use_mesh_shader);
+            }
 
             // ── Cluster CSM shadow draw ──────────────────────────────────
             // Single drawIndexed over the entire merged VB/IB; the GS
