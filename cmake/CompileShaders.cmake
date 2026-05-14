@@ -166,6 +166,11 @@ add_spirv(SPIRV_FILES "cluster_bindless_shadow_mesh.spv" "cluster_bindless_shado
 # clusters against all CSM_CASCADE_COUNT cascade frustums and emitting
 # mesh workgroups only for surviving (cluster, cascade) pairs.
 add_spirv(SPIRV_FILES "cluster_bindless_shadow_task.spv" "cluster_bindless_shadow.task" task)
+# Silhouette prepass — fills each cascade's in-camera-frustum region of
+# the shadow map with depth=1.0 (forced via gl_Position.z = gl_Position.w)
+# so the cleared 0.0 outside the silhouette rejects every later shadow
+# caster via the LESS_OR_EQUAL depth test.  Hi-Z then drops whole tiles.
+add_spirv(SPIRV_FILES "csm_silhouette_prepass_mesh.spv" "csm_silhouette_prepass.mesh" mesh)
 add_spirv(SPIRV_FILES "cluster_cull_comp.spv"         "cluster_cull.comp"     compute)
 # WBOIT resolve — fullscreen pass that reads accum+reveal and writes the
 # composited translucent layer back over the scene colour buffer.

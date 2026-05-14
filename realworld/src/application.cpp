@@ -2983,18 +2983,24 @@ void RealWorldApplication::drawScene(
         // View-space far depths for each cascade (tune to scene scale).
         // out_union_vp = nullptr — Option B per-cascade culling uses the
         // individual cascade VPs directly, no union needed.
+        std::array<glm::vec3, CSM_CASCADE_COUNT * 8> csm_slab_corners_ws;
         shadow_camera_object_->computeCascadeMatrices(
             main_cam.view,
             main_cam.proj,
             csm_cascade_splits,
             0.1f,  // main camera z_near
             csm_cascade_vps,
-            /*out_union_vp*/ nullptr);
+            /*out_union_vp*/ nullptr,
+            &csm_slab_corners_ws);
 
         glsl::RuntimeLightsParams runtime_lights_params = {};
         {
             for (int k = 0; k < CSM_CASCADE_COUNT; ++k) {
                 runtime_lights_params.light_view_proj[k] = csm_cascade_vps[k];
+            }
+            for (int i = 0; i < CSM_CASCADE_COUNT * 8; ++i) {
+                runtime_lights_params.cascade_slab_corners_ws[i] =
+                    glm::vec4(csm_slab_corners_ws[i], 1.0f);
             }
             // Pack the 6 view-space far depths into vec4[2].  Slots 6
             // and 7 are unused but must be initialised — leave them at
@@ -3098,6 +3104,60 @@ void RealWorldApplication::drawScene(
                     cutoff, total, pct);
             }
 
+            // ── CSM silhouette prepass ───────────────────────────────────
+            // Runs in its OWN dynamic-rendering scope BEFORE the legacy
+            // shadow draw.  Clears the depth buffer to 0.0 and fills each
+            // cascade's main-camera-frustum interior with depth=1.0.
+            // Subsequent shadow draws (legacy + cluster) use LOAD_OP_LOAD
+            // so their writes layer on top of this pre-fill.  Out-of-
+            // silhouette texels remain at 0.0 → reject every caster via
+            // LESS_OR_EQUAL → Hi-Z propagates to per-tile primitive culling
+            // at the PD.  Only runs when the cluster pipeline is up (it
+            // owns the prepass pipeline + shader).
+            bool silhouette_prefilled = false;
+            if (cluster_renderer_ &&
+                cluster_renderer_->isEnabled() &&
+                engine::helper::clusterIndirectActive() &&
+                menu_->isCsmSilhouettePrepassEnabled()) {
+                er::RenderingAttachmentInfo prepass_depth_attach;
+                prepass_depth_attach.image_view   = csm_shadow_tex_->view;
+                prepass_depth_attach.image_layout =
+                    er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                prepass_depth_attach.load_op  = er::AttachmentLoadOp::CLEAR;
+                prepass_depth_attach.store_op = er::AttachmentStoreOp::STORE;
+                prepass_depth_attach.clear_value.depth_stencil = { 0.0f, 0 };
+
+                er::RenderingInfo prepass_ri = {};
+                prepass_ri.render_area_offset = { 0, 0 };
+                prepass_ri.render_area_extent = {
+                    csm_shadow_tex_->size.x, csm_shadow_tex_->size.y };
+                prepass_ri.layer_count        = CSM_CASCADE_COUNT;
+                prepass_ri.view_mask          = 0;
+                prepass_ri.color_attachments  = {};
+                prepass_ri.depth_attachments  = { prepass_depth_attach };
+                prepass_ri.stencil_attachments = {};
+                cmd_buf->beginDynamicRendering(prepass_ri);
+
+                er::Viewport vp;
+                vp.x = 0; vp.y = 0;
+                vp.width  = float(csm_shadow_tex_->size.x);
+                vp.height = float(csm_shadow_tex_->size.y);
+                vp.min_depth = 0.0f;
+                vp.max_depth = 1.0f;
+                er::Scissor sc;
+                sc.offset = glm::ivec2(0);
+                sc.extent = glm::uvec2(
+                    csm_shadow_tex_->size.x, csm_shadow_tex_->size.y);
+
+                cluster_renderer_->drawCsmSilhouettePrepass(
+                    cmd_buf,
+                    runtime_lights_desc_set_,
+                    { vp }, { sc });
+
+                cmd_buf->endDynamicRendering();
+                silhouette_prefilled = true;
+            }
+
             shadow_object_scene_view_->draw(
                 cmd_buf,
                 desc_sets,
@@ -3107,7 +3167,8 @@ void RealWorldApplication::drawScene(
                 current_time,
                 true,
                 csm_shadow_tex_->view,    // full CSM_CASCADE_COUNT-layer array view
-                CSM_CASCADE_COUNT);       // layer_count triggers GS layered path
+                CSM_CASCADE_COUNT,        // layer_count triggers GS layered path
+                silhouette_prefilled);    // preserve_depth — keep prepass output
 
             // ── Cluster CSM shadow draw ──────────────────────────────────
             // Single drawIndexed over the entire merged VB/IB; the GS
@@ -4919,6 +4980,19 @@ void RealWorldApplication::drawFrame() {
                         runtime_lights_desc_set_layout_;
                     cluster_renderer_->initBindlessShadowPipeline(
                         shadow_layouts,
+                        graphic_pipeline_info_,
+                        renderbuffer_formats_[
+                            int(er::RenderPasses::kShadow)].depth_format);
+
+                    // Silhouette prepass pipeline — small mesh-shader
+                    // pass that pre-fills each cascade's in-camera-
+                    // frustum interior with depth=1 so out-of-frustum
+                    // texels (cleared 0) reject every shadow caster via
+                    // LESS_OR_EQUAL.  Independent of the cluster pipe-
+                    // line; only needs RUNTIME_LIGHTS for cascade VPs
+                    // and slab corners.
+                    cluster_renderer_->initCsmSilhouettePrepassPipeline(
+                        runtime_lights_desc_set_layout_,
                         graphic_pipeline_info_,
                         renderbuffer_formats_[
                             int(er::RenderPasses::kShadow)].depth_format);
