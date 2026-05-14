@@ -69,11 +69,18 @@ std::shared_ptr<er::DescriptorSetLayout> createRuntimeLightsDescriptorSetLayout(
         // COMPUTE:  cluster_cull.comp reads the translucent flag.
         // GEOMETRY: base_depthonly_csm.geom (non-cluster shadow path)
         //           reads light_view_proj[] for layered broadcast.
-        // VERTEX is NOT needed — the cluster shadow VS (Option B) takes
-        // its cascade VP via push constant directly, not through this
-        // UBO.  (An earlier multiview attempt did read this from the VS
-        // but was reverted; see cluster_bindless_shadow.vert comments.)
-        SET_3_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT, GEOMETRY_BIT),
+        // TASK:     cluster_bindless_shadow.task — per-cluster cull
+        //           against all CSM_CASCADE_COUNT cascade frustums.
+        // MESH:     cluster_bindless_shadow.mesh — mesh-shader CSM path
+        //           reads light_view_proj[cascade] to project cluster
+        //           vertices into the matching cascade's depth layer.
+        // VERTEX is NOT needed — the legacy cluster shadow VS (Option B)
+        // took its cascade VP via push constant directly, not through
+        // this UBO.  (An earlier multiview attempt did read this from
+        // the VS but was reverted; see cluster_bindless_shadow.vert
+        // comments.)
+        SET_5_FLAG_BITS(ShaderStage, FRAGMENT_BIT, COMPUTE_BIT,
+                        GEOMETRY_BIT, MESH_BIT_EXT, TASK_BIT_EXT),
         er::DescriptorType::UNIFORM_BUFFER));
 
     return device->createDescriptorSetLayout(bindings);

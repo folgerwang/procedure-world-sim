@@ -42,7 +42,7 @@ file(GLOB_RECURSE SHADER_HEADERS "${SHADER_SRC_DIR}/*.glsl.h")
 #                or "subdir/foo_frag.spv")
 #   source_rel — source file relative to SHADER_SRC_DIR
 #   stage      — glslc stage: vertex fragment compute geometry
-#                raygen miss closesthit callable mesh
+#                raygen miss closesthit callable mesh task
 #   [define …] — bare macro names, e.g. HAS_UV_SET0 DOUBLE_SIDED
 #
 function(add_spirv LIST_VAR output_spv source_rel stage)
@@ -154,12 +154,18 @@ add_spirv(SPIRV_FILES "cluster_bindless_frag.spv"     "cluster_bindless.frag" fr
 # single colour.  Used by the cluster translucent pipeline; resolved by
 # oit_composite_frag.spv in a fullscreen pass.
 add_spirv(SPIRV_FILES "cluster_bindless_oit_frag.spv" "cluster_bindless.frag" fragment OIT_OUTPUT)
-# Depth-only CSM shadow variant: vertex shader passes world-space position
-# through to a geometry shader which broadcasts each triangle to every
-# CSM_CASCADE_COUNT cascade in a single pass.  Replaces ~2400 individual
-# per-mesh shadow draws with a single drawIndirectCount call.
+# Depth-only CSM shadow variants for cluster rendering.
+#   _vert / _geom  — legacy VS+GS broadcast path (kept compileable for A/B).
+#   _mesh          — production mesh-shader path; one workgroup per
+#                    (cluster, cascade), emits surviving triangles
+#                    directly to the matching depth-array layer.
 add_spirv(SPIRV_FILES "cluster_bindless_shadow_vert.spv" "cluster_bindless_shadow.vert" vertex)
 add_spirv(SPIRV_FILES "cluster_bindless_shadow_geom.spv" "cluster_bindless_shadow.geom" geometry)
+add_spirv(SPIRV_FILES "cluster_bindless_shadow_mesh.spv" "cluster_bindless_shadow.mesh" mesh)
+# Task shader companion — drives the mesh shader's dispatch by culling
+# clusters against all CSM_CASCADE_COUNT cascade frustums and emitting
+# mesh workgroups only for surviving (cluster, cascade) pairs.
+add_spirv(SPIRV_FILES "cluster_bindless_shadow_task.spv" "cluster_bindless_shadow.task" task)
 add_spirv(SPIRV_FILES "cluster_cull_comp.spv"         "cluster_cull.comp"     compute)
 # WBOIT resolve — fullscreen pass that reads accum+reveal and writes the
 # composited translucent layer back over the scene colour buffer.
