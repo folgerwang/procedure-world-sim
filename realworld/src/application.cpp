@@ -3257,35 +3257,17 @@ void RealWorldApplication::drawScene(
                     /*csm_use_mesh_shader*/ use_mesh_shader);
             }
 
-            // ── Cluster CSM shadow draw ──────────────────────────────────
-            // Single drawIndexed over the entire merged VB/IB; the GS
-            // (cluster_bindless_shadow.geom) broadcasts each tri to all
-            // CSM_CASCADE_COUNT layers.  No per-cluster cull, no per-
-            // cascade rendering — both were measured and shown worse on
-            // this hardware (see cluster_bindless_shadow.vert's comment
-            // block for the perf history).  Cluster meshes are excluded
-            // from the previous shadow_object_scene_view_->draw via the
-            // gate in drawable_object.cpp.
+            // ── Cluster CSM shadow draw — 3-way menu dispatch ───────────
+            // The cluster path now mirrors the drawable path's three modes
+            // so the menu's "Drawable shadow draw mode" toggle drives the
+            // bulk of shadow work too (cluster meshes own ~95% of Bistro
+            // triangles; without this the toggle only changed the tiny
+            // legacy path).  Cluster meshes are excluded from the previous
+            // shadow_object_scene_view_->draw via the gate in
+            // drawable_object.cpp.
             if (cluster_renderer_ &&
                 cluster_renderer_->isEnabled() &&
                 engine::helper::clusterIndirectActive()) {
-                er::RenderingAttachmentInfo depth_attach;
-                depth_attach.image_view   = csm_shadow_tex_->view;
-                depth_attach.image_layout =
-                    er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                depth_attach.load_op  = er::AttachmentLoadOp::LOAD;
-                depth_attach.store_op = er::AttachmentStoreOp::STORE;
-
-                er::RenderingInfo cluster_csm_ri = {};
-                cluster_csm_ri.render_area_offset = { 0, 0 };
-                cluster_csm_ri.render_area_extent = {
-                    csm_shadow_tex_->size.x, csm_shadow_tex_->size.y };
-                cluster_csm_ri.layer_count        = CSM_CASCADE_COUNT;
-                cluster_csm_ri.view_mask          = 0;
-                cluster_csm_ri.color_attachments  = {};
-                cluster_csm_ri.depth_attachments  = { depth_attach };
-                cluster_csm_ri.stencil_attachments = {};
-                cmd_buf->beginDynamicRendering(cluster_csm_ri);
 
                 er::Viewport vp;
                 vp.x = 0; vp.y = 0;
@@ -3298,10 +3280,6 @@ void RealWorldApplication::drawScene(
                 sc.extent = glm::uvec2(
                     csm_shadow_tex_->size.x, csm_shadow_tex_->size.y);
 
-                // The GS reads light_view_proj[cascade] from the lights
-                // UBO.  Provide both VIEW_PARAMS_SET (for layout compat;
-                // the VS doesn't actually read it) and RUNTIME_LIGHTS_
-                // PARAMS_SET.
                 er::DescriptorSetList csm_cluster_desc(
                     RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
                 csm_cluster_desc[VIEW_PARAMS_SET] =
@@ -3309,12 +3287,70 @@ void RealWorldApplication::drawScene(
                 csm_cluster_desc[RUNTIME_LIGHTS_PARAMS_SET] =
                     runtime_lights_desc_set_;
 
-                cluster_renderer_->drawClusterShadow(
-                    cmd_buf,
-                    csm_cluster_desc,
-                    { vp }, { sc });
+                if (csm_mode == CsmDrawMode::kRegular) {
+                    // Per-cascade: 6 single-layer dispatches, each its own
+                    // dynamic-rendering scope against csm_layer_views_[k].
+                    // Push cascade_idx via the VS's push constant; no GS,
+                    // no mesh shader.  preserve_depth carries the
+                    // silhouette-prepass output through to LOAD on every
+                    // iteration.
+                    for (uint32_t k = 0; k < CSM_CASCADE_COUNT; ++k) {
+                        er::RenderingAttachmentInfo depth_attach;
+                        depth_attach.image_view   = csm_layer_views_[k];
+                        depth_attach.image_layout =
+                            er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                        depth_attach.load_op = er::AttachmentLoadOp::LOAD;
+                        depth_attach.store_op = er::AttachmentStoreOp::STORE;
 
-                cmd_buf->endDynamicRendering();
+                        er::RenderingInfo per_cascade_ri = {};
+                        per_cascade_ri.render_area_offset = { 0, 0 };
+                        per_cascade_ri.render_area_extent = {
+                            csm_shadow_tex_->size.x,
+                            csm_shadow_tex_->size.y };
+                        per_cascade_ri.layer_count        = 1;
+                        per_cascade_ri.view_mask          = 0;
+                        per_cascade_ri.color_attachments  = {};
+                        per_cascade_ri.depth_attachments  = { depth_attach };
+                        per_cascade_ri.stencil_attachments = {};
+                        cmd_buf->beginDynamicRendering(per_cascade_ri);
+
+                        cluster_renderer_->drawClusterShadowPerCascade(
+                            cmd_buf, csm_cluster_desc, { vp }, { sc }, k);
+
+                        cmd_buf->endDynamicRendering();
+                    }
+                } else {
+                    // kGeometryShader / kMeshShader: single layered scope
+                    // against the full CSM_CASCADE_COUNT-layer array view.
+                    er::RenderingAttachmentInfo depth_attach;
+                    depth_attach.image_view   = csm_shadow_tex_->view;
+                    depth_attach.image_layout =
+                        er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                    depth_attach.load_op  = er::AttachmentLoadOp::LOAD;
+                    depth_attach.store_op = er::AttachmentStoreOp::STORE;
+
+                    er::RenderingInfo cluster_csm_ri = {};
+                    cluster_csm_ri.render_area_offset = { 0, 0 };
+                    cluster_csm_ri.render_area_extent = {
+                        csm_shadow_tex_->size.x,
+                        csm_shadow_tex_->size.y };
+                    cluster_csm_ri.layer_count        = CSM_CASCADE_COUNT;
+                    cluster_csm_ri.view_mask          = 0;
+                    cluster_csm_ri.color_attachments  = {};
+                    cluster_csm_ri.depth_attachments  = { depth_attach };
+                    cluster_csm_ri.stencil_attachments = {};
+                    cmd_buf->beginDynamicRendering(cluster_csm_ri);
+
+                    if (csm_mode == CsmDrawMode::kMeshShader) {
+                        cluster_renderer_->drawClusterShadow(
+                            cmd_buf, csm_cluster_desc, { vp }, { sc });
+                    } else {
+                        cluster_renderer_->drawClusterShadowGs(
+                            cmd_buf, csm_cluster_desc, { vp }, { sc });
+                    }
+
+                    cmd_buf->endDynamicRendering();
+                }
             }
         }
 

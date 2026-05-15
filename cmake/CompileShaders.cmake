@@ -188,6 +188,11 @@ add_spirv(SPIRV_FILES "cluster_bindless_oit_frag.spv" "cluster_bindless.frag" fr
 add_spirv(SPIRV_FILES "cluster_bindless_shadow_vert.spv" "cluster_bindless_shadow.vert" vertex)
 add_spirv(SPIRV_FILES "cluster_bindless_shadow_geom.spv" "cluster_bindless_shadow.geom" geometry)
 add_spirv(SPIRV_FILES "cluster_bindless_shadow_mesh.spv" "cluster_bindless_shadow.mesh" mesh)
+# Per-cascade VS variant: takes a uint cascade_idx push constant and
+# transforms world-space cluster vertices by lights_params.light_view_proj
+# [cascade_idx].  Drives the "Regular" (per-cascade) shadow draw mode for
+# the cluster path — host loops cascades, each iteration single-layer FB.
+add_spirv(SPIRV_FILES "cluster_bindless_shadow_per_cascade_vert.spv" "cluster_bindless_shadow_per_cascade.vert" vertex)
 # Task shader companion — drives the mesh shader's dispatch by culling
 # clusters against all CSM_CASCADE_COUNT cascade frustums and emitting
 # mesh workgroups only for surviving (cluster, cascade) pairs.
