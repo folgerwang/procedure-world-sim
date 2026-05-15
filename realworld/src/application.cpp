@@ -3501,15 +3501,32 @@ void RealWorldApplication::drawScene(
             // _scope_hiz auto-closes via RAII.
         }
 
+        // ── Legacy main-camera cluster cull (forward path only) ──────
+        // In deferred mode this dispatch is dead work — Phase B's cull
+        // (run later inside the deferred block) re-emits the canonical
+        // opaque + translucent indirect buffers from scratch, so any
+        // counts/indirects we'd write here are about to be wiped.  Skip
+        // the dispatch, but still call pollDebugReadback() so the Smart
+        // Mesh "visible clusters / triangles" stats stay live — that
+        // readback is a host-only map of LAST frame's already-complete
+        // buffers and doesn't depend on the cull running this frame.
+        //
+        // Forward mode keeps the full dispatch: its cluster draw later
+        // in this command buffer consumes indirect_draw_buffer_ and has
+        // no Phase B to repopulate it.
         if (cluster_renderer_ && cluster_renderer_->isEnabled() &&
             !ambient_probe_system_) {
-            engine::helper::GpuProfiler::Scope _scope_cull(
-                gpu_profiler_, cmd_buf, "Cluster Cull");
-            cluster_renderer_->cull(
-                cmd_buf,
-                main_camera_object_->getViewProjMatrix(),
-                main_camera_object_->getCameraPosition(),
-                last_view_proj_);
+            if (deferred_rendering_enabled_) {
+                cluster_renderer_->pollDebugReadback();
+            } else {
+                engine::helper::GpuProfiler::Scope _scope_cull(
+                    gpu_profiler_, cmd_buf, "Cluster Cull");
+                cluster_renderer_->cull(
+                    cmd_buf,
+                    main_camera_object_->getViewProjMatrix(),
+                    main_camera_object_->getCameraPosition(),
+                    last_view_proj_);
+            }
         }
 
         // ── Ambient probe system ──────────────────────────────────────
@@ -3579,7 +3596,20 @@ void RealWorldApplication::drawScene(
         // After it returns, the indirect buffer holds the LAST face's
         // cull results; we rebuild it for the main camera's frustum
         // here so the main render pass below draws the correct set.
-        if (cluster_renderer_ && cluster_renderer_->isEnabled()) {
+        //
+        // DEFERRED MODE: skip this dispatch entirely.  Phase B (run
+        // inside the deferred block below) overwrites indirect_draw_
+        // buffer_ + trans_indirect_draw_buffer_ from scratch using
+        // freshly culled survivors against this frame's Hi-Z, so
+        // anything we'd write here is dead work.  The probe path's
+        // own per-face cull() calls already triggered the debug
+        // readback prologue, so stats stay live without an extra call.
+        //
+        // FORWARD MODE: still essential — the cluster forward draw
+        // immediately below reads indirect_draw_buffer_, which the
+        // probe pass left holding the last cube face's set.
+        if (cluster_renderer_ && cluster_renderer_->isEnabled() &&
+            !deferred_rendering_enabled_) {
             engine::helper::GpuProfiler::Scope _scope_recull(
                 gpu_profiler_, cmd_buf, "Cluster Cull (main, post-probe)");
             cluster_renderer_->cull(
@@ -5135,8 +5165,17 @@ void RealWorldApplication::drawFrame() {
     // check here, gated on !isSpawned(), keeps it idempotent (only
     // spawns once) but lets the check run every frame until the player
     // genuinely is ready and spawnable.
+    //
+    // The user can also force a re-spawn (snap to current camera) by
+    // picking "Reset player position" from the Game Objects menu,
+    // which sets a flag the menu surfaces via consumeResetPlayerPosition.
+    // We OR that flag with the !isSpawned() condition so the same
+    // code path serves both first-time spawning and on-demand recovery.
+    const bool reset_pos_req =
+        menu_ ? menu_->consumeResetPlayerPosition() : false;
     if (player_object_ && player_object_->isReady() &&
-        player_controller_ && !player_controller_->isSpawned()) {
+        player_controller_ &&
+        (!player_controller_->isSpawned() || reset_pos_req)) {
         const auto& cam = main_camera_object_->getCameraViewInfo();
         glm::vec3 cam_pos = main_camera_object_->getCameraPosition();
         glm::vec2 fwd_xz(cam.facing_dir.x, cam.facing_dir.z);
@@ -5166,8 +5205,9 @@ void RealWorldApplication::drawFrame() {
                 : fallback_y;
         glm::vec3 spawn_pos(spawn_xz.x, spawn_y, spawn_xz.y);
         player_controller_->spawnAt(spawn_pos, cam.yaw);
-        std::cout << "[player] Spawned at ("
-                  << spawn_pos.x << ", " << spawn_pos.y << ", "
+        std::cout << "[player] "
+                  << (reset_pos_req ? "Reset to " : "Spawned at ")
+                  << "(" << spawn_pos.x << ", " << spawn_pos.y << ", "
                   << spawn_pos.z << ") yaw=" << cam.yaw << std::endl;
     }
 
