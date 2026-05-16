@@ -1852,6 +1852,24 @@ void RealWorldApplication::initVulkan() {
             "assets/Characters/scene-skinned.gltf",
             glm::inverse(view_params_.view));
 
+    // The player is PlayerController-driven (procedural pose + spawnAt
+    // -driven world placement).  Opt it into "identity instance + skip
+    // imported animations" mode so:
+    //   1. update_instance_buffer.comp writes an identity instance
+    //      transform instead of the shared game_objects_buffer_'s
+    //      (camera-tracking, gravity-drifting) position — otherwise the
+    //      player double-transforms by adding camera_pos@frame0 on top
+    //      of the node-hierarchy translation.
+    //   2. Any imported glTF animation channels are NOT evaluated, so
+    //      PlayerController::applyPose's setRootNodeTransform +
+    //      setNodeRotationByName writes survive each frame instead of
+    //      being clobbered by the asset's authored animation timeline.
+    // See DrawableObject::setUseNodeTransformOnly() for the full
+    // rationale.
+    if (player_object_) {
+        player_object_->setUseNodeTransformOnly(true);
+    }
+
     player_controller_ = std::make_unique<ego::PlayerController>();
 
     // Bistro scenes contain a sky dome mesh that draws a purple atmospheric
@@ -1937,16 +1955,37 @@ void RealWorldApplication::recreateSwapChain() {
     createRenderPasses();
     createImageViews();
 
+    // Two-element variant kept for the consumers below (DebugDraw,
+    // ViewCamera) that only need PBR + VIEW slots.
     auto desc_set_layouts = {
         pbr_lighting_desc_set_layout_,
         ego::CameraObject::getViewCameraDescriptorSetLayout() };
+
+    // ── Full-width layout list for DrawableObject ────────────────────
+    // DrawableObject::createStaticMembers indexes the layout list at
+    // RUNTIME_LIGHTS_PARAMS_SET when constructing the mesh-shader CSM
+    // pipeline layout (see the mesh_shader_shadow_pipeline_layout_
+    // block).  The 2-element initializer above would assert-fire on
+    // any swapchain recreate (window resize, alt-tab, format change).
+    // Mirror the MAX_NUM_PARAMS_SETS-sized list the initial init uses
+    // at startup (search for "object_desc_set_layouts" near
+    // DrawableObject::initStaticMembers) so both code paths feed the
+    // same shape into createStaticMembers.
+    er::DescriptorSetLayoutList drawable_desc_set_layouts(
+        MAX_NUM_PARAMS_SETS);
+    drawable_desc_set_layouts[PBR_GLOBAL_PARAMS_SET] =
+        pbr_lighting_desc_set_layout_;
+    drawable_desc_set_layouts[VIEW_PARAMS_SET] =
+        ego::CameraObject::getViewCameraDescriptorSetLayout();
+    drawable_desc_set_layouts[RUNTIME_LIGHTS_PARAMS_SET] =
+        runtime_lights_desc_set_layout_;
 
     ego::TileObject::recreateStaticMembers(device_);
     ego::DrawableObject::recreateStaticMembers(
         device_,
         &renderbuffer_formats_[0],
         graphic_pipeline_info_,
-        desc_set_layouts);
+        drawable_desc_set_layouts);
     ego::ViewCamera::recreateStaticMembers(
         device_);
     ego::DebugDrawObject::recreateStaticMembers(
@@ -1955,8 +1994,49 @@ void RealWorldApplication::recreateSwapChain() {
         graphic_pipeline_info_,
         desc_set_layouts,
         swap_chain_info_.extent);
-    recreateRenderBuffer(swap_chain_info_.extent);
+    // ── Descriptor pool MUST be created BEFORE recreateRenderBuffer ──
+    // recreateRenderBuffer → createGBuffer → createHiZPyramid issues
+    // BOTH vkUpdateDescriptorSets (cluster_renderer_->setHiZTexture,
+    // writeDeferredResolveDescriptors) AND vkAllocateDescriptorSets
+    // (writeHiZBuildDescriptors allocates hiz_build_desc_sets_ one per
+    // mip).  Both operations require a live pool.  We used to create
+    // the new pool AFTER recreateRenderBuffer, which left the allocate
+    // call dispatching against the just-destroyed pool — NVIDIA crashes
+    // inside the driver dispatch with an nvoglv64.dll callstack.
+    // The pre-pool nullouts in cleanupSwapChain (deferred_resolve_desc_
+    // set_ = nullptr + cluster_renderer_->onDescriptorPoolDestroyed)
+    // are now belt-and-braces: those handles are still dead between
+    // cleanupSwapChain and this createDescriptorPool, but createGBuffer
+    // can also legitimately need to ALLOCATE — the early-return
+    // guards don't help there.  Moving the pool earlier is the right
+    // fix; the nullouts are still useful in case any other code path
+    // we don't see is touching a stale handle in this window.
     descriptor_pool_ = device_->createDescriptorPool();
+
+    // Re-allocate the deferred-resolve descriptor set from the fresh
+    // pool.  The set itself was destroyed alongside the previous pool
+    // in cleanupSwapChain (and the field nulled there); the pipeline
+    // layout it binds to is size-independent and survives.  Re-write
+    // happens later in this function via writeDeferredResolveDescriptors
+    // once object_scene_view_ has its new G-buffer / depth views.
+    if (deferred_resolve_desc_set_layout_) {
+        deferred_resolve_desc_set_ = device_->createDescriptorSets(
+            descriptor_pool_, deferred_resolve_desc_set_layout_, 1)[0];
+    }
+
+    // Same treatment for AmbientProbeSystem: its probe_desc_set_ and
+    // project_desc_set_ were nulled in cleanupSwapChain alongside the
+    // pool destruction; reallocate them from the fresh pool here so
+    // drawScene's per-frame writeProjectDescriptorsForCube call has a
+    // live handle to write through.  The probe_buffer_ binding is
+    // re-issued inside recreateDescriptorSets; the cube source/depth
+    // bindings are refreshed every frame by writeProjectDescriptorsForCube.
+    if (ambient_probe_system_) {
+        ambient_probe_system_->recreateDescriptorSets(
+            device_, descriptor_pool_);
+    }
+
+    recreateRenderBuffer(swap_chain_info_.extent);
     createCommandBuffers();
 
     skydome_->recreate(
@@ -5187,22 +5267,23 @@ void RealWorldApplication::drawFrame() {
             fwd_xz = glm::vec2(
                 std::cos(yaw_rad), std::sin(yaw_rad));
         }
-        const float kSpawnAhead = 3.0f;
+        // ── Spawn placement ───────────────────────────────────────────
+        // Put the character 2 m in front of the camera at "feet height"
+        // (cam_pos.y - eye offset).  Earlier this used 3 m + a terrain-Y
+        // heuristic that compared the heightmap to the camera Y and
+        // picked one or the other; on bistro that produced unstable
+        // spawn positions because the heightmap and the bistro mesh
+        // sit in different coordinate systems.  Dropping the heuristic
+        // and always using cam_pos.y - kPlayerEyeOffset gives a
+        // predictable "right where you're looking" placement — exactly
+        // what someone testing the character expects.  PlayerController
+        // does its own terrain snap in update() once WASD movement
+        // starts, so walking onto real terrain still lands correctly.
+        const float kSpawnAhead     = 2.0f;
+        const float kPlayerEyeOffset = 1.7f;  // approx character height
         glm::vec2 spawn_xz =
             glm::vec2(cam_pos.x, cam_pos.z) + fwd_xz * kSpawnAhead;
-        // Use the procedural terrain height ONLY if it's close to the
-        // camera's vertical level — otherwise the bistro (static glTF
-        // placed at world origin) and the heightmap sit in different
-        // coordinate systems and the player ends up tens of metres
-        // below the visible scene.
-        float terrain_y = engine::game_object::getTerrainGroundHeight(
-            spawn_xz);
-        const float kPlayerEyeOffset = 1.7f; // approx character height
-        float fallback_y = cam_pos.y - kPlayerEyeOffset;
-        float spawn_y =
-            (std::fabs(terrain_y - fallback_y) < 5.0f)
-                ? terrain_y
-                : fallback_y;
+        float spawn_y = cam_pos.y - kPlayerEyeOffset;
         glm::vec3 spawn_pos(spawn_xz.x, spawn_y, spawn_xz.y);
         player_controller_->spawnAt(spawn_pos, cam.yaw);
         std::cout << "[player] "
@@ -5339,36 +5420,14 @@ void RealWorldApplication::drawFrame() {
         shadow_object_scene_view_->addDrawableObject(drawable_obj);
     }
 
-    auto to_load_player_name = menu_->getToLoadPlayerNameAndClear();
-    if (to_load_player_name != "") {
-        if (player_object_) {
-            // Destroy has to wait until the previous async load (if any)
-            // finished — tearing down an object whose GPU upload is
-            // still in flight would use-after-free the staging buffers.
-            // In practice this is rare (the user can't spam the menu
-            // faster than a load completes) but being defensive here
-            // costs nothing.
-            if (!player_object_->isReady()) {
-                mesh_load_task_manager_->waitAll();
-            }
-            object_scene_view_->removeDrawableObject(player_object_);
-            shadow_object_scene_view_->removeDrawableObject(player_object_);
-            player_object_->destroy(device_);
-            player_object_ = nullptr;
-        }
-        player_object_ = ego::DrawableObject::createAsync(
-            *mesh_load_task_manager_,
-            device_,
-            descriptor_pool_,
-            renderbuffer_formats_,
-            graphic_pipeline_info_,
-            texture_sampler_,
-            thin_film_lut_tex_,
-            to_load_player_name,
-            glm::inverse(view_params_.view));
-        object_scene_view_->addDrawableObject(player_object_);
-        shadow_object_scene_view_->addDrawableObject(player_object_);
-    }
+    // (The menu-triggered async player-load path was removed: the
+    // player is eager-loaded at startup with assets/Characters/
+    // scene-skinned.gltf — see the createAsync call near application
+    // init.  That single source of truth removed the duplicate code
+    // path that destroyed and recreated player_object_ on every
+    // "Spawn player" menu click, which both forced a reload of the
+    // (already-loaded) rig and risked picking up an asset whose joint
+    // names PlayerController::applyPose doesn't know how to drive.)
 
     // ── CPU profile: "Player controller" ────────────────────────────
     // Reads input, runs movement integration, and resolves character
@@ -5561,6 +5620,27 @@ void RealWorldApplication::drawFrame() {
 #endif
     }
 
+    // ── Player debug overlay feed ────────────────────────────────────
+    // Stash the player's world position + camera VP into the menu so
+    // its ImGui draw can paint a red on-screen marker and HUD text
+    // showing where the character is.  Useful any time the player's
+    // 3D draw isn't visible — confirms whether the controller has the
+    // player at a sensible location vs. far off-screen.  Guard on
+    // isSpawned() so the overlay stays hidden until the spawn block
+    // has fired.
+    if (menu_ && main_camera_object_) {
+        const bool has_player =
+            player_controller_ && player_controller_->isSpawned();
+        const glm::vec3 ppos = has_player
+            ? player_controller_->getPosition()
+            : glm::vec3(0.0f);
+        menu_->setPlayerDebugInfo(
+            has_player,
+            ppos,
+            main_camera_object_->getViewProjMatrix(),
+            main_camera_object_->getCameraPosition());
+    }
+
     // ── CPU profile: "ImGui menu draw" ───────────────────────────────
     // Records the ImGui menu / HUD into the command buffer.  This is
     // ImGui's own NewFrame → Render → recordVulkanCommands chain — cost
@@ -5718,6 +5798,48 @@ void RealWorldApplication::cleanupSwapChain() {
     device_->destroySwapchain(swap_chain_info_.swap_chain);
 
     device_->destroyDescriptorPool(descriptor_pool_);
+
+    // The deferred-resolve descriptor set was allocated FROM
+    // descriptor_pool_ in initDeferredResolve.  Destroying the pool
+    // implicitly destroys every set allocated from it, leaving
+    // deferred_resolve_desc_set_ as a dangling Vulkan handle.  Null
+    // it out so writeDeferredResolveDescriptors (called from inside
+    // recreateRenderBuffer → createGBuffer below) hits its early-out
+    // guard instead of issuing vkUpdateDescriptorSets against the
+    // dead handle (which crashes inside the NVIDIA driver — the
+    // validation layer surfaces this as an UpdateDescriptorSets
+    // failure with a deep nvoglv64.dll callstack).  recreateSwapChain
+    // re-allocates the set from the fresh descriptor_pool_ before the
+    // canonical writeDeferredResolveDescriptors() call later in the
+    // recreate sequence.
+    deferred_resolve_desc_set_ = nullptr;
+
+    // Same hazard exists for ClusterRenderer's pool-owned sets — most
+    // notably cull_desc_set_, which createHiZPyramid (also called
+    // from inside recreateRenderBuffer → createGBuffer) tries to
+    // patch via cluster_renderer_->setHiZTexture before the new pool
+    // exists.  ClusterRenderer::onDescriptorPoolDestroyed nulls all
+    // the relevant handles (bindless / cull / per-cascade shadow /
+    // mesh-shader cluster data / OIT composite) so the existing
+    // "set is null" guards inside its consumers short-circuit until
+    // recreate() and the next finalizeUploads / setHiZTexture re-
+    // populate them.
+    if (cluster_renderer_) {
+        cluster_renderer_->onDescriptorPoolDestroyed();
+    }
+
+    // Same dangling-handle hazard for AmbientProbeSystem.  Its
+    // probe_desc_set_ and project_desc_set_ were allocated from
+    // descriptor_pool_ in AmbientProbeSystem::create; the per-frame
+    // writeProjectDescriptorsForCube call (drawScene's "Ambient
+    // Probes" block) would otherwise write through dead handles
+    // after this point — surfaces as the same NVIDIA / validation
+    // crash in vkUpdateDescriptorSets.  recreateSwapChain reallocates
+    // both sets right after the new pool is created (see
+    // ambient_probe_system_->recreateDescriptorSets call below).
+    if (ambient_probe_system_) {
+        ambient_probe_system_->onDescriptorPoolDestroyed();
+    }
 }
 
 void RealWorldApplication::cleanup() {
