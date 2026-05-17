@@ -1866,9 +1866,16 @@ void RealWorldApplication::initVulkan() {
     //      being clobbered by the asset's authored animation timeline.
     // See DrawableObject::setUseNodeTransformOnly() for the full
     // rationale.
-    if (player_object_) {
-        player_object_->setUseNodeTransformOnly(true);
-    }
+    // NOTE — DO NOT call any flag setter on player_object_ here.
+    // createAsync() returned a SHELL: object_ is nullptr until the
+    // worker-thread load completes + phase 3 runs.  Every setter
+    // (setUseNodeTransformOnly, setDebugForceRed, setDebugSkipSkinning,
+    // setDebugScale) starts with `if (object_) ...` and silently
+    // no-ops when called now — that wasted the whole previous round
+    // of debugging because no override actually took effect.  All
+    // flag wiring is done inside the player-spawn block below, which
+    // is gated on isReady() (so object_ is guaranteed populated) and
+    // only fires once via the `!isSpawned()` latch.
 
     player_controller_ = std::make_unique<ego::PlayerController>();
 
@@ -2033,6 +2040,24 @@ void RealWorldApplication::recreateSwapChain() {
     // bindings are refreshed every frame by writeProjectDescriptorsForCube.
     if (ambient_probe_system_) {
         ambient_probe_system_->recreateDescriptorSets(
+            device_, descriptor_pool_);
+    }
+
+    // And same for VirtualTextureManager — its compact_desc_set_ was
+    // nulled in cleanupSwapChain; reallocate from the fresh pool and
+    // re-write the (stable) feedback-buffer bindings before the next
+    // tick / compactFeedback call fires this frame.
+    if (vt_manager_) {
+        vt_manager_->recreateDescriptorSets(descriptor_pool_);
+    }
+
+    // And DynamicCubemap — reallocate all three descriptor-set
+    // families (face_view, depth_to_linear, reproject) from the
+    // fresh pool.  AmbientProbeSystem::update binds these every
+    // frame; without this reallocation the release build crashes
+    // on the first post-resize frame.
+    if (dynamic_cubemap_) {
+        dynamic_cubemap_->recreateDescriptorSets(
             device_, descriptor_pool_);
     }
 
@@ -5256,6 +5281,41 @@ void RealWorldApplication::drawFrame() {
     if (player_object_ && player_object_->isReady() &&
         player_controller_ &&
         (!player_controller_->isSpawned() || reset_pos_req)) {
+        // ── Apply configuration flags on the player ───────────────────
+        // object_ is now guaranteed non-null (isReady true), so the
+        // setters can land.  IMPORTANT: do NOT move this back to the
+        // post-createAsync init site — the shell has object_=nullptr
+        // and the setters silently no-op there, which is the bug that
+        // caused the whole "player invisible" investigation.
+        //
+        // setUseNodeTransformOnly(true) is the production fix:
+        //   • identity instance buffer (no double-transform from the
+        //     shared game_objects_buffer_'s camera-tracking position)
+        //   • skip imported animations (PlayerController owns the rig
+        //     pose; the gltf timeline would otherwise clobber it)
+        //
+        // The debug overrides (force_red, skip_skinning, scale=30) are
+        // turned off — kept as setters in case we need to re-enable
+        // any of them for future visibility debugging without having
+        // to chase down the async-load gotcha again.
+        // Production configuration.  setUseNodeTransformOnly is the
+        // ONLY non-default flag the player needs — without it the
+        // shared game_objects_buffer_'s instance position double-
+        // transforms the character.  The debug overrides are all
+        // turned off; the bisect proved the character renders
+        // correctly through the skinned forward path at authored
+        // scale, with real materials.
+        player_object_->setUseNodeTransformOnly(true);
+        player_object_->setDebugForceRed(false);
+        player_object_->setDebugSkipSkinning(false);
+        player_object_->setDebugScale(0.0f);
+        // Decoupled-from-visuals diagnostic: enables the per-second
+        // [player.draw] indirect-draws-issued tally without tinting
+        // the character.  Useful for confirming the forward draw is
+        // actually running while we investigate the marker-vs-body
+        // offset.
+        player_object_->setDebugLogDraws(true);
+
         const auto& cam = main_camera_object_->getCameraViewInfo();
         glm::vec3 cam_pos = main_camera_object_->getCameraPosition();
         glm::vec2 fwd_xz(cam.facing_dir.x, cam.facing_dir.z);
@@ -5279,8 +5339,14 @@ void RealWorldApplication::drawFrame() {
         // what someone testing the character expects.  PlayerController
         // does its own terrain snap in update() once WASD movement
         // starts, so walking onto real terrain still lands correctly.
-        const float kSpawnAhead     = 2.0f;
-        const float kPlayerEyeOffset = 1.7f;  // approx character height
+        const float kSpawnAhead      = 2.0f;
+        // Camera-Y → player-feet vertical offset.  ~1.7m drops the
+        // character's feet to a plausible standing position when the
+        // camera is at adult eye level.  Was temporarily +1.5m extra
+        // during the giant-red-debug phase to keep the inflated mesh
+        // out of the camera's near volume — restored to 1.7m now
+        // that the character renders normally at authored scale.
+        const float kPlayerEyeOffset = 1.7f;
         glm::vec2 spawn_xz =
             glm::vec2(cam_pos.x, cam_pos.z) + fwd_xz * kSpawnAhead;
         float spawn_y = cam_pos.y - kPlayerEyeOffset;
@@ -5290,7 +5356,155 @@ void RealWorldApplication::drawFrame() {
                   << (reset_pos_req ? "Reset to " : "Spawned at ")
                   << "(" << spawn_pos.x << ", " << spawn_pos.y << ", "
                   << spawn_pos.z << ") yaw=" << cam.yaw << std::endl;
+
+        // ── One-shot diagnostic dump ──────────────────────────────────
+        // Print the loaded gltf's structure at spawn time so we can
+        // see node hierarchy, mesh count, per-primitive bbox + index
+        // count, and the root cached_matrix translation/basis.  Useful
+        // for diagnosing position / scale anomalies.  Fires once each
+        // time the spawn block runs (initial spawn + every Reset).
+        const auto& data = player_object_->getDrawableData();
+        std::cout << "[player.diag] nodes=" << data.nodes_.size()
+                  << " meshes=" << data.meshes_.size()
+                  << " scenes=" << data.scenes_.size()
+                  << " default_scene=" << data.default_scene_
+                  << std::endl;
+        if (!data.scenes_.empty() && data.default_scene_ >= 0 &&
+            data.default_scene_ < (int)data.scenes_.size()) {
+            const auto& sc = data.scenes_[data.default_scene_];
+            int rn = sc.nodes_.empty() ? -1 : sc.nodes_[0];
+            std::cout << "[player.diag] scene[" << data.default_scene_
+                      << "] root_node=" << rn
+                      << " bbox=(" << sc.bbox_min_.x << ","
+                      << sc.bbox_min_.y << "," << sc.bbox_min_.z
+                      << ")..(" << sc.bbox_max_.x << ","
+                      << sc.bbox_max_.y << "," << sc.bbox_max_.z << ")"
+                      << std::endl;
+            if (rn >= 0 && rn < (int)data.nodes_.size()) {
+                const auto& n = data.nodes_[rn];
+                std::cout << "[player.diag] root.name='" << n.name_
+                          << "' mesh_idx=" << n.mesh_idx_
+                          << " skin_idx=" << n.skin_idx_
+                          << " children=" << n.child_idx_.size()
+                          << " T=(" << n.translation_.x << ","
+                          << n.translation_.y << "," << n.translation_.z
+                          << ") S=(" << n.scale_.x << "," << n.scale_.y
+                          << "," << n.scale_.z << ")"
+                          << " R(wxyz)=(" << n.rotation_.w << ","
+                          << n.rotation_.x << "," << n.rotation_.y
+                          << "," << n.rotation_.z << ")" << std::endl;
+                // cached_matrix is what model_params.model_mat
+                // ultimately reads.  Decompose its translation column
+                // so we can see where the engine THINKS the root is in
+                // world space.
+                const glm::mat4& cm = n.cached_matrix_;
+                std::cout << "[player.diag] root.cached_matrix translation=("
+                          << cm[3][0] << "," << cm[3][1] << ","
+                          << cm[3][2] << ")  basis lengths=("
+                          << glm::length(glm::vec3(cm[0])) << ","
+                          << glm::length(glm::vec3(cm[1])) << ","
+                          << glm::length(glm::vec3(cm[2])) << ")"
+                          << std::endl;
+            }
+        }
+        // Deep mesh-data dump — checks that the loader actually
+        // populated geometry (not just an empty asset shell) and that
+        // each primitive has non-zero indices + valid vertex/attribute
+        // bindings.  If a primitive prints index_count=0 or
+        // attribute_count=0 the asset failed to load that primitive
+        // and the renderer has nothing to rasterise — that's what
+        // "missing" really means.
+        for (size_t mi = 0; mi < data.meshes_.size(); ++mi) {
+            const auto& m = data.meshes_[mi];
+            std::cout << "[player.diag] mesh[" << mi << "] bbox=("
+                      << m.bbox_min_.x << "," << m.bbox_min_.y << ","
+                      << m.bbox_min_.z << ")..(" << m.bbox_max_.x
+                      << "," << m.bbox_max_.y << "," << m.bbox_max_.z
+                      << ") prims=" << m.primitives_.size()
+                      << " cluster_global_mesh_idx="
+                      << m.cluster_global_mesh_idx_ << std::endl;
+            for (size_t pi = 0; pi < m.primitives_.size(); ++pi) {
+                const auto& p = m.primitives_[pi];
+                uint64_t idx_count = 0;
+                if (!p.index_desc_.empty()) {
+                    idx_count = p.index_desc_[0].index_count;
+                }
+                std::cout << "[player.diag]   prim[" << pi << "]"
+                          << " material_idx=" << p.material_idx_
+                          << " idx_count=" << idx_count
+                          << " attribs=" << p.attribute_descs_.size()
+                          << " bindings=" << p.binding_descs_.size()
+                          << " bbox=(" << p.bbox_min_.x << ","
+                          << p.bbox_min_.y << "," << p.bbox_min_.z
+                          << ")..(" << p.bbox_max_.x << ","
+                          << p.bbox_max_.y << "," << p.bbox_max_.z
+                          << ")  tri_count_eligible="
+                          << p.mesh_shader_tri_count_
+                          << std::endl;
+            }
+        }
+
+        // Also list any node that owns a mesh — this confirms the
+        // skinned mesh's owning node and that the node hierarchy
+        // surfaced it under the scene root we wrote spawn_pos to.
+        for (size_t ni = 0; ni < data.nodes_.size(); ++ni) {
+            const auto& n = data.nodes_[ni];
+            if (n.mesh_idx_ < 0) continue;
+            std::cout << "[player.diag] node[" << ni << "] '"
+                      << n.name_ << "' mesh=" << n.mesh_idx_
+                      << " skin=" << n.skin_idx_
+                      << " parent=" << n.parent_idx_
+                      << " children=" << n.child_idx_.size()
+                      << std::endl;
+        }
     }
+
+    // ── Per-frame "follow the camera" (TEMPORARILY DISABLED) ───────
+    // Wrapped in `#if 0` while debugging a release-only crash that
+    // appeared after this block was introduced.  Re-enable once the
+    // crash is identified.  Flip the `#if` to 1 to revive.
+#if 0
+    if (player_object_ && player_object_->isReady() &&
+        player_controller_ && player_controller_->isSpawned()) {
+        const auto& cam = main_camera_object_->getCameraViewInfo();
+        glm::vec3 cam_pos = main_camera_object_->getCameraPosition();
+        glm::vec2 fwd_xz(cam.facing_dir.x, cam.facing_dir.z);
+        float fxz_len = glm::length(fwd_xz);
+        if (fxz_len > 1e-3f) {
+            fwd_xz /= fxz_len;
+        } else {
+            float yaw_rad = glm::radians(-cam.yaw);
+            fwd_xz = glm::vec2(std::cos(yaw_rad), std::sin(yaw_rad));
+        }
+        const float kFollowAhead       = 2.0f;
+        const float kPlayerEyeOffset   = 1.7f;
+        glm::vec2 follow_xz =
+            glm::vec2(cam_pos.x, cam_pos.z) + fwd_xz * kFollowAhead;
+        glm::vec3 follow_pos(follow_xz.x,
+                             cam_pos.y - kPlayerEyeOffset,
+                             follow_xz.y);
+        player_controller_->setPositionAndYaw(follow_pos, cam.yaw);
+
+        // Per-second diagnostic for the follow block.  Compare these
+        // numbers against [player.live] root_T (printed in the same
+        // frame just after player_object_->update).  If cam_pos
+        // changes when you move the camera but root_T stays still,
+        // setPositionAndYaw isn't reaching applyPose (or applyPose
+        // isn't reaching cached_matrix).  If cam_pos itself doesn't
+        // change, the camera input isn't being read on the host side
+        // and we're chasing a CPU-vs-GPU camera-sync issue.
+        static uint64_t s_follow_frame = 0;
+        if ((s_follow_frame++ % 60u) == 0u) {
+            std::cout << "[follow] cam_pos=(" << cam_pos.x << ","
+                      << cam_pos.y << "," << cam_pos.z
+                      << ")  fwd=(" << cam.facing_dir.x << ","
+                      << cam.facing_dir.y << "," << cam.facing_dir.z
+                      << ")  follow_pos=(" << follow_pos.x << ","
+                      << follow_pos.y << "," << follow_pos.z
+                      << ")  yaw=" << cam.yaw << std::endl;
+        }
+    }
+#endif // 0 — follow block disabled while chasing release-only crash
 
     // Build the collision world once both bistro scenes have actually
     // populated their CPU-side mesh data. We retry every frame in
@@ -5466,6 +5680,53 @@ void RealWorldApplication::drawFrame() {
         gpu_profiler_.endCpuScope(_cpu_drw);
     }
 
+    // ── Periodic player live-state diagnostic ───────────────────────
+    // Once per ~60 frames, dump the root node's cached_matrix
+    // translation (= what model_params.model_mat carries into base.vert
+    // for the root mesh draws), the bbox WORLD center derived through
+    // that matrix, the bounding radius, and the camera distance.
+    // Lets us A/B the controller's spawn position vs. where the
+    // skinned mesh actually ends up in world space.
+    if (player_object_ && player_object_->isReady() &&
+        player_controller_ && player_controller_->isSpawned()) {
+        static uint64_t s_diag_frame = 0;
+        if ((s_diag_frame++ % 60u) == 0u) {
+            const auto& data = player_object_->getDrawableData();
+            int rn = -1;
+            if (!data.scenes_.empty() && data.default_scene_ >= 0 &&
+                data.default_scene_ < (int)data.scenes_.size() &&
+                !data.scenes_[data.default_scene_].nodes_.empty()) {
+                rn = data.scenes_[data.default_scene_].nodes_[0];
+            }
+            if (rn >= 0 && rn < (int)data.nodes_.size() &&
+                !data.meshes_.empty()) {
+                const auto& cm  = data.nodes_[rn].cached_matrix_;
+                const auto& mbb = data.meshes_[0];
+                glm::vec3 lc =
+                    (mbb.bbox_min_ + mbb.bbox_max_) * 0.5f;
+                glm::vec4 wc4 = cm * glm::vec4(lc, 1.0f);
+                glm::vec3 lh =
+                    (mbb.bbox_max_ - mbb.bbox_min_) * 0.5f;
+                float local_r = glm::length(lh);
+                float sx = glm::length(glm::vec3(cm[0]));
+                float sy = glm::length(glm::vec3(cm[1]));
+                float sz = glm::length(glm::vec3(cm[2]));
+                float world_r =
+                    local_r * glm::max(sx, glm::max(sy, sz));
+                glm::vec3 cam_pos =
+                    main_camera_object_->getCameraPosition();
+                std::cout << "[player.live] root_T=("
+                          << cm[3][0] << "," << cm[3][1] << ","
+                          << cm[3][2] << ")  mesh0_world_center=("
+                          << wc4.x << "," << wc4.y << "," << wc4.z
+                          << ")  world_r=" << world_r
+                          << "  dist_to_cam=" << glm::length(
+                                 glm::vec3(wc4) - cam_pos)
+                          << std::endl;
+            }
+        }
+    }
+
     // ── Wait Prev Frame Fence ────────────────────────────────────────
     // Drain frame N-1's submit before we touch any host-visible per-
     // frame buffer or reset the command buffer below.
@@ -5623,11 +5884,11 @@ void RealWorldApplication::drawFrame() {
     // ── Player debug overlay feed ────────────────────────────────────
     // Stash the player's world position + camera VP into the menu so
     // its ImGui draw can paint a red on-screen marker and HUD text
-    // showing where the character is.  Useful any time the player's
-    // 3D draw isn't visible — confirms whether the controller has the
-    // player at a sensible location vs. far off-screen.  Guard on
-    // isSpawned() so the overlay stays hidden until the spawn block
-    // has fired.
+    // showing where the character is.  Useful for verifying the
+    // controller's spawn position vs. where the 3D character actually
+    // renders — if the two diverge, the asset's bind-pose origin is
+    // offset from the root node (or the marker projection itself is
+    // off, which we still need to settle).
     if (menu_ && main_camera_object_) {
         const bool has_player =
             player_controller_ && player_controller_->isSpawned();
@@ -5839,6 +6100,29 @@ void RealWorldApplication::cleanupSwapChain() {
     // ambient_probe_system_->recreateDescriptorSets call below).
     if (ambient_probe_system_) {
         ambient_probe_system_->onDescriptorPoolDestroyed();
+    }
+
+    // Same hazard for VirtualTextureManager — owns compact_desc_set_
+    // allocated from descriptor_pool_, used every frame by
+    // compactFeedback / tick.  Without this nullout the very first
+    // frame after a window resize hits the NVIDIA driver crash with
+    // an EXCEPTION_ACCESS_VIOLATION_READ at a tiny offset (~0x38)
+    // while binding the dangling set.  Re-allocated below in
+    // recreateSwapChain right after the new pool is built.
+    if (vt_manager_) {
+        vt_manager_->onDescriptorPoolDestroyed();
+    }
+
+    // And DynamicCubemap — owns 3 families of pool-allocated sets
+    // (face_view, depth_to_linear, reproject).  AmbientProbeSystem
+    // calls into it every frame to capture a cube face, binding
+    // these sets.  Skipping this nullout is the most likely cause
+    // of the release-only resize crash that survived all earlier
+    // descriptor-set hooks — debug builds escape because validation
+    // detects the bad bind, release builds dispatch the dangling
+    // handle into the NVIDIA driver and crash.
+    if (dynamic_cubemap_) {
+        dynamic_cubemap_->onDescriptorPoolDestroyed();
     }
 }
 

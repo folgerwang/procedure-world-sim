@@ -12,6 +12,27 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# ── Debug symbols in Release ─────────────────────────────────────────────────
+# Force the MSVC compiler/linker to emit a .pdb alongside the optimized
+# Release .exe so release-only crash dumps resolve to function names and
+# source lines.  Needed for diagnosing bugs that DON'T reproduce in Debug
+# (typically Vulkan synchronisation / dangling-descriptor races that the
+# validation layer in Debug catches and silently aborts before they hit the
+# driver).  /OPT:REF and /OPT:ICF cancel the size penalty /DEBUG would
+# otherwise impose on Release — final binary stays the same size, with a
+# separate .pdb file.
+#
+# If you'd rather not touch Release, CMake also defines a built-in
+# RelWithDebInfo configuration that does the same thing: just pick
+# "RelWithDebInfo" in Visual Studio's configuration dropdown.
+if(MSVC)
+    add_compile_options($<$<CONFIG:Release>:/Zi>)
+    add_link_options(
+        $<$<CONFIG:Release>:/DEBUG>
+        $<$<CONFIG:Release>:/OPT:REF>
+        $<$<CONFIG:Release>:/OPT:ICF>)
+endif()
+
 # ── Optional LibTorch for ML-based auto-rigging ──────────────────────────────
 #  LibTorch is resolved in this order:
 #    1) CMAKE_PREFIX_PATH (user-specified via -DCMAKE_PREFIX_PATH=...)
