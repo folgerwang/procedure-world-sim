@@ -325,6 +325,19 @@ private:
     // capsule collision against the level.
     std::unique_ptr<ego::PlayerController> player_controller_;
 
+    // ── Debug: two small red cubes pinned to the player rig's foot
+    // bones each frame.  Drawn through the regular DrawableObject
+    // pipeline (debug_force_red + tiny debug_scale) so they obey
+    // depth / fog / lighting like the rest of the scene.  Asset is
+    // assets/debug_cube.gltf — a 264-byte embedded unit cube.
+    // Position is updated each frame from
+    // player_object_->getNodeWorldMatrixByName("left_foot" /
+    // "right_foot") in the same per-frame block that runs the player
+    // follow-cam.  Set to nullptr by default; createAsync wiring
+    // lives next to player_object_ creation.
+    std::shared_ptr<ego::DrawableObject> foot_marker_left_;
+    std::shared_ptr<ego::DrawableObject> foot_marker_right_;
+
     // Triangle-mesh collision world. Populated once both bistro scenes
     // are isReady(); PlayerController consults it every frame.
     engine::helper::CollisionWorld collision_world_;

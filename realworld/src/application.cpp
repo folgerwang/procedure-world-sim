@@ -1860,6 +1860,37 @@ void RealWorldApplication::initVulkan() {
             "assets/Characters/scene-skinned.gltf",
             glm::inverse(view_params_.view));
 
+    // ── Foot debug markers (two tiny red cubes pinned to the rig's
+    // left_foot / right_foot bones each frame).  Asset is the
+    // 264-byte assets/debug_cube.gltf.  Configured + repositioned
+    // in the "Drawable updates (CPU)" block once both markers and
+    // the player rig are isReady().  Kept out of drawable_objects_
+    // on purpose so PlayerController doesn't see them as collision
+    // obstacles (the player would otherwise bump into its own
+    // feet).
+    foot_marker_left_ =
+        ego::DrawableObject::createAsync(
+            *mesh_load_task_manager_,
+            device_,
+            descriptor_pool_,
+            renderbuffer_formats_,
+            graphic_pipeline_info_,
+            repeat_texture_sampler_,
+            thin_film_lut_tex_,
+            "assets/debug_cube.gltf",
+            glm::inverse(view_params_.view));
+    foot_marker_right_ =
+        ego::DrawableObject::createAsync(
+            *mesh_load_task_manager_,
+            device_,
+            descriptor_pool_,
+            renderbuffer_formats_,
+            graphic_pipeline_info_,
+            repeat_texture_sampler_,
+            thin_film_lut_tex_,
+            "assets/debug_cube.gltf",
+            glm::inverse(view_params_.view));
+
     // The player is PlayerController-driven (procedural pose + spawnAt
     // -driven world placement).  Opt it into "identity instance + skip
     // imported animations" mode so:
@@ -1898,6 +1929,19 @@ void RealWorldApplication::initVulkan() {
 
     shadow_object_scene_view_->addDrawableObject(
         player_object_);
+
+    // ── Foot debug markers: register with the same scene views as the
+    // player so they're picked up by the forward + shadow render
+    // passes.  This is the bit that was missing: scene_view iteration
+    // is what actually drives the visible draws; the direct draw()
+    // call sites further down are redundant for this path.  Shadow
+    // registration is optional (they're tiny cubes, casting shadows
+    // looks fine but isn't required) — kept in for parity with the
+    // player so toggling depth-test off doesn't make them flicker.
+    object_scene_view_->addDrawableObject(foot_marker_left_);
+    object_scene_view_->addDrawableObject(foot_marker_right_);
+    shadow_object_scene_view_->addDrawableObject(foot_marker_left_);
+    shadow_object_scene_view_->addDrawableObject(foot_marker_right_);
 
     menu_ = std::make_shared<engine::ui::Menu>(
         window_,
@@ -3143,6 +3187,12 @@ void RealWorldApplication::drawScene(
         if (player_object_) {
             player_object_->updateBuffers(cmd_buf);
         }
+
+        // Foot debug markers — same buffer-update step as the player
+        // so their instance / indirect-draw / joint-matrix uploads ride
+        // the same command-buffer recording window.
+        if (foot_marker_left_  && foot_marker_left_->isReady())  foot_marker_left_->updateBuffers(cmd_buf);
+        if (foot_marker_right_ && foot_marker_right_->isReady()) foot_marker_right_->updateBuffers(cmd_buf);
 
         // Bistro scene buffer updates — enabled once game has started.
         if (bistro_exterior_scene_ && bistro_exterior_scene_->isReady()) {
@@ -4552,6 +4602,14 @@ void RealWorldApplication::drawScene(
             if (player_object_) {
                 player_object_->draw(cmd_buf, desc_sets);
             }
+
+            // Foot debug markers — drawn through the regular forward
+            // path with setDebugForceRed so the tint pops against any
+            // backdrop.  Depth-tested like everything else so a marker
+            // hidden behind geometry will be occluded; if you want
+            // always-on-top, switch to an ImGui-overlay path instead.
+            if (foot_marker_left_  && foot_marker_left_->isReady())  foot_marker_left_->draw(cmd_buf, desc_sets);
+            if (foot_marker_right_ && foot_marker_right_->isReady()) foot_marker_right_->draw(cmd_buf, desc_sets);
 
             // render debug draw.
             if (menu_->getDebugDrawType() != NO_DEBUG_DRAW) {
@@ -6021,13 +6079,15 @@ void RealWorldApplication::drawFrame() {
         // material part paints in its own segmentation colour AND
         // carries its own MaterialInfo::name_ for gameplay surface
         // lookups (footstep sounds, friction, etc.). build_bvh is
-        // false here -- the BVH builder runs an O(N log N)
-        // multithreaded pass that on Bistro-sized input would freeze
-        // the render thread on the first in-game frame. The debug
-        // visualisation only needs the flat triangle list. Player
-        // capsule-vs-static-mesh collision (resolveCapsule) is
-        // disabled until we wire up an async BVH build, but that
-        // path was a no-op before this fix anyway.
+        // false here -- the synchronous BVH builder runs an
+        // O(N log N) multithreaded pass that on Bistro-sized input
+        // would freeze the render thread on the first in-game
+        // frame. Instead we kick off CollisionWorld::buildBVHsAsync
+        // below, which builds every per-mesh BVH on a background
+        // thread; foot raycasts / capsule physics fall back to
+        // brute-force (raycastDown) or no-op (resolveCapsule) per
+        // mesh whose BVH isn't ready yet, then transparently switch
+        // to BVH-accelerated descent once each mesh's build lands.
         auto buildAndAdd = [&](
             const std::shared_ptr<ego::DrawableObject>& obj) {
             if (!obj || !obj->isReady()) return;
@@ -6063,6 +6123,13 @@ void RealWorldApplication::drawFrame() {
             std::cout << "[collision] World ready: "
                       << collision_world_.meshCount()
                       << " mesh(es) total" << std::endl;
+            // Kick off per-mesh SAH BVH construction on a background
+            // thread.  Non-blocking — foot raycasts use brute force
+            // per mesh until that mesh's BVH lands, then switch to
+            // O(log N) descent.  See helper::CollisionWorld::
+            // buildBVHsAsync for the worker loop.
+            collision_world_.buildBVHsAsync();
+            std::cout << "[collision] BVH async build started" << std::endl;
         }
         gpu_profiler_.endCpuScope(_cpu_coll);
     }
@@ -6131,6 +6198,122 @@ void RealWorldApplication::drawFrame() {
         if (player_object_) {
             player_object_->update(device_, current_time_);
         }
+
+        // ── Foot debug markers ─────────────────────────────────────────
+        // Pin the two red-cube markers to the player rig's left_foot /
+        // right_foot bones.  Must run AFTER player_object_->update()
+        // (so cached_matrix_ on the foot nodes reflects the current
+        // frame's pose) but BEFORE the markers' own update() (which
+        // recomputes their root cached_matrix_ from setRootNodeTransform).
+        //
+        // Idempotent debug-flag setters are called every frame:
+        //   • setDebugForceRed(true)        — fragment output forced red
+        //   • setUseNodeTransformOnly(true) — bypass the shared
+        //     game_objects_buffer_ camera-tracking position, otherwise
+        //     the marker double-transforms and floats off to camera+foot
+        //   • setDebugScale(0.1)            — 10 cm visual size
+        //   • setDebugLogDraws(false)       — quiet; flip to true if a
+        //     marker stops appearing and you need to confirm draws are
+        //     actually being issued
+        // ── Foot debug markers ─────────────────────────────────────────
+        // Configuration: tiny red cubes pinned to the player rig's
+        // left_foot / right_foot bones each frame.  Rendering is wired
+        // through object_scene_view_ / shadow_object_scene_view_ —
+        // see the addDrawableObject calls next to player_object_'s
+        // scene-view registration.  No diagnostic prints in this path
+        // anymore; if you need to debug visibility, flip
+        // kDebugCubeSize up to 1.0 and add setDebugLogDraws(true) to
+        // configure_marker.
+        //
+        //   • setDebugScale(0.08) — 8 cm cube, roughly foot-sized.
+        //   • setDebugForceRed   — fragment forced red regardless of
+        //     lighting, so it pops against any backdrop.
+        //   • setUseNodeTransformOnly — bypass the shared
+        //     game_objects_buffer_ camera-tracking position so
+        //     setRootNodeTransform(world_pos) lands exactly there.
+        //
+        // Markers stay at world origin until the player spawns; once
+        // spawned, each frame we read the foot bone's cached_matrix
+        // and place the corresponding cube at that translation.
+        constexpr float kDebugCubeSize = 0.08f;
+        auto configure_marker = [](
+            const std::shared_ptr<ego::DrawableObject>& m) {
+            if (!m || !m->isReady()) return;
+            m->setDebugForceRed(true);
+            m->setUseNodeTransformOnly(true);
+            m->setDebugScale(kDebugCubeSize);
+        };
+        configure_marker(foot_marker_left_);
+        configure_marker(foot_marker_right_);
+
+        if (player_object_ && player_object_->isReady() &&
+            player_controller_ && player_controller_->isSpawned()) {
+            const glm::quat identity_q(1.0f, 0.0f, 0.0f, 0.0f);
+
+            // For each foot, take the bone's world translation, cast
+            // a ray straight down from a point ~0.3 m above it (to
+            // make sure we start ABOVE the floor mesh even when the
+            // ankle bone is slightly buried), and snap the marker to
+            // the closest triangle hit.  When the raycast misses (no
+            // floor under the foot — open air, edge of world) we fall
+            // back to the bone position so the marker doesn't snap to
+            // (0,0,0) or vanish.
+            //
+            // The raycast is gated on collision_world_built_ because
+            // the BVH builds asynchronously over the Bistro meshes;
+            // before that we just show the bone-position fallback.
+            constexpr float kFootRayStartLift = 0.3f;   // start ray 30 cm above the bone
+            constexpr float kFootRayMaxDist   = 2.0f;   // search 2 m down
+            // Throttled diagnostic — print once per second per foot so
+            // we can tell whether the raycast hit (and the marker just
+            // happens to be near the ankle because the foot bone IS
+            // close to the ground) vs. the raycast missing entirely
+            // and us silently falling back to the bone position.
+            static int s_foot_ray_frame = 0;
+            ++s_foot_ray_frame;
+            const bool log_this_frame =
+                (s_foot_ray_frame % 60 == 0);
+            auto place_at_foot = [&](
+                const std::shared_ptr<ego::DrawableObject>& marker,
+                const char* bone_name) {
+                if (!marker || !marker->isReady()) return;
+                glm::mat4 m =
+                    player_object_->getNodeWorldMatrixByName(bone_name);
+                glm::vec3 bone_pos(m[3]);
+
+                glm::vec3 target = bone_pos;
+                bool      ray_hit = false;
+                glm::vec3 hit_pos(0.0f);
+                if (collision_world_built_) {
+                    glm::vec3 ray_from = bone_pos;
+                    ray_from.y += kFootRayStartLift;
+                    glm::vec3 hit_normal;
+                    if (collision_world_.raycastDown(
+                            ray_from, kFootRayStartLift + kFootRayMaxDist,
+                            hit_pos, hit_normal)) {
+                        target = hit_pos;
+                        ray_hit = true;
+                    }
+                }
+                if (log_this_frame) {
+                    std::cout << "[foot_ray] " << bone_name
+                              << " bone=(" << bone_pos.x << "," << bone_pos.y << "," << bone_pos.z << ")"
+                              << " cw_built=" << (collision_world_built_ ? 1 : 0)
+                              << " hit=" << (ray_hit ? 1 : 0);
+                    if (ray_hit) {
+                        std::cout << " hit_pos=(" << hit_pos.x << "," << hit_pos.y << "," << hit_pos.z << ")"
+                                  << " drop=" << (bone_pos.y - hit_pos.y) << "m";
+                    }
+                    std::cout << std::endl;
+                }
+                marker->setRootNodeTransform(target, identity_q);
+            };
+
+            place_at_foot(foot_marker_left_,  "left_foot");
+            place_at_foot(foot_marker_right_, "right_foot");
+        }
+        if (foot_marker_left_)  foot_marker_left_->update(device_, current_time_);
+        if (foot_marker_right_) foot_marker_right_->update(device_, current_time_);
 
         for (auto& drawable_obj : drawable_objects_) {
             drawable_obj->update(device_, current_time_);

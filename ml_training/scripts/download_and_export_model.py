@@ -94,6 +94,11 @@ def coco_keypoints_to_heatmaps(keypoints, scores, height, width, sigma=4.0):
     -------
     heatmaps : (19, H, W) tensor
     """
+    # The heatmap grid is built on CPU (small, cheap), so make sure the
+    # keypoint inputs are on CPU too — otherwise mixing with CUDA tensors
+    # from the teacher model raises a device-mismatch error.
+    keypoints = keypoints.detach().cpu()
+    scores = scores.detach().cpu()
     heatmaps = torch.zeros(19, height, width)
 
     for std_idx in range(19):
