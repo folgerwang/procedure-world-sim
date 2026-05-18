@@ -5,9 +5,17 @@
 #include <map>
 #include <limits>
 #include <chrono>
+#include <cmath>
 #include <string>
 #include <filesystem>
 #include "Windows.h"
+
+// glm/gtc helpers used by the player pivot-offset compensation in the
+// spawn + per-frame follow blocks below (glm::angleAxis, glm::mat4_cast,
+// glm::translate, glm::scale).  Core glm.hpp transit comes through the
+// engine headers but the gtc extensions don't, so include them here.
+#include "glm/gtc/quaternion.hpp"
+#include "glm/gtc/matrix_transform.hpp"
 
 #include "renderer/renderer.h"
 #include "renderer/renderer_helper.h"
@@ -5347,15 +5355,221 @@ void RealWorldApplication::drawFrame() {
         // out of the camera's near volume — restored to 1.7m now
         // that the character renders normally at authored scale.
         const float kPlayerEyeOffset = 1.7f;
+
+        // ── Asset pivot-offset compensation (override-aware) ────────
+        // The glTF root's authored T,R,S placed the mesh somewhere
+        // in world space.  But PlayerController::applyPose overrides
+        // root.translation AND root.rotation each frame:
+        //   • root.translation = spawn_pos
+        //   • root.rotation    = quat(Y-axis, yaw_deg)
+        //   • root.scale       = preserved (asset-authored)
+        //
+        // The asset's authored rotation (for scene-skinned.gltf this
+        // is a 90° X-axis "Y-up → Z-up" swap baked into the root)
+        // gets wiped out by that override.  So measuring world Y
+        // through the CURRENT cached_matrix (which still holds the
+        // authored rotation) gives a feet-offset that's correct for
+        // the OLD orientation but wrong for the orientation the
+        // character will actually render in.  The character then
+        // either floats or — in scene-skinned's case — sinks.
+        //
+        // Fix: simulate the post-override world transform.  For each
+        // mesh-owning node, we have:
+        //   mesh.cached = root_cached_old * descendant_chain
+        //              = (T_old * R_old * S) * descendant_chain
+        // We want to swap the leading (T_old*R_old*S) for the
+        // post-override (T_new*R_new*S).  Since S is unchanged we
+        // can factor it out:
+        //   simulated_mesh = (T_new * R_new * S) * inverse(T_old * R_old * S) * mesh.cached
+        // Or equivalently:
+        //   simulated_mesh = (T_new * R_new) * inverse(T_old * R_old) * mesh.cached
+        // because the inverse-then-multiply cancels the scale.
+        //
+        // We can apply this to mesh AABB corners and find world Y.
+        // World Y is linear in T_new.y (R_new is a Y-axis rotation,
+        // which doesn't touch Y), so once we measure with T_new.y=0
+        // the result is a constant `f` and the equation to solve is
+        //   T_new.y + f = desired_feet_y
+        // giving T_new.y = desired_feet_y - f.
+        const auto& data_for_pivot = player_object_->getDrawableData();
+        int rn_for_pivot = -1;
+        if (!data_for_pivot.scenes_.empty() &&
+            data_for_pivot.default_scene_ >= 0 &&
+            data_for_pivot.default_scene_ <
+                (int)data_for_pivot.scenes_.size() &&
+            !data_for_pivot.scenes_[data_for_pivot.default_scene_]
+                .nodes_.empty()) {
+            rn_for_pivot = data_for_pivot
+                .scenes_[data_for_pivot.default_scene_].nodes_[0];
+        }
+
         glm::vec2 spawn_xz =
             glm::vec2(cam_pos.x, cam_pos.z) + fwd_xz * kSpawnAhead;
-        float spawn_y = cam_pos.y - kPlayerEyeOffset;
+        // ── Pick desired feet Y ─────────────────────────────────────
+        // Prefer the level's actual floor over "camera height minus
+        // eye offset".  The Bistro scene's local bbox_min.y, when
+        // transformed by its world location matrix, gives the
+        // lowest-point of the interior — which for Bistro is the
+        // floor (or basement level, close enough — the difference is
+        // a couple of metres).  Using cam.y - 1.7 only works when
+        // the camera happens to be at standing-eye height; if the
+        // user has flown the camera up to a balcony / ceiling angle
+        // the character pops into the sky.  Snapping to the bistro
+        // floor instead anchors her to a stable world reference
+        // regardless of where the camera ends up.
+        float bistro_floor_y = -std::numeric_limits<float>::max();
+        bool  have_floor = false;
+        // Sanity gate: any "floor" outside this range is treated as
+        // garbage (uninitialized bbox sentinel, degenerate matrix,
+        // NaN/Inf, etc.).  ±1e5 covers any plausible world unit;
+        // FLT_MAX / FLT_LOWEST / NaN are rejected.  Without this
+        // an FBX whose bbox or location matrix isn't fully populated
+        // the first ready frame propagates FLT_MAX through the spawn
+        // → setRootNodeTransform → cached_matrix chain and the
+        // character teleports to infinity (HUD shows the player Y
+        // and bbox Y as 3.4e38).
+        const float kFloorSanityLo = -1e5f;
+        const float kFloorSanityHi =  1e5f;
+        auto ingestFloorY = [&](const std::shared_ptr<ego::DrawableObject>& obj) {
+            if (!obj || !obj->isReady()) return;
+            glm::vec3 lo = obj->getModelBboxMin();
+            glm::vec3 hi = obj->getModelBboxMax();
+            if (lo.x > hi.x) return; // empty bbox sentinel
+            // 8 local corners → 8 world Ys; the min is the world
+            // floor of this drawable.  Cheaper than walking nodes.
+            const glm::mat4& M = obj->getLocation();
+            const glm::vec3 c[8] = {
+                {lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z},
+                {lo.x, hi.y, lo.z}, {hi.x, hi.y, lo.z},
+                {lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z},
+                {lo.x, hi.y, hi.z}, {hi.x, hi.y, hi.z},
+            };
+            float mn = std::numeric_limits<float>::max();
+            for (int k = 0; k < 8; ++k) {
+                glm::vec4 w = M * glm::vec4(c[k], 1.0f);
+                if (w.y < mn) mn = w.y;
+            }
+            // Reject garbage values: NaN, ±Inf, FLT_MAX-ish, or any
+            // sentinel that survived the empty-bbox check above.
+            if (!std::isfinite(mn) ||
+                mn < kFloorSanityLo || mn > kFloorSanityHi) {
+                std::cout << "[player.floor] rejected: mn=" << mn
+                          << " (bbox lo.y=" << lo.y << " hi.y=" << hi.y
+                          << " M[3].y=" << M[3][1] << ")" << std::endl;
+                return;
+            }
+            if (!have_floor || mn > bistro_floor_y) {
+                // Pick the HIGHER of available floors — Bistro
+                // interior + exterior both qualify; if interior is
+                // present we want it (it's where the character is
+                // standing) and it sits above any exterior basement.
+                bistro_floor_y = mn;
+                have_floor = true;
+            }
+        };
+        ingestFloorY(bistro_interior_scene_);
+        if (!have_floor) ingestFloorY(bistro_exterior_scene_);
+
+        float desired_feet_y_cam   = cam_pos.y - kPlayerEyeOffset;
+        // Manual nudge: drops the character below the auto-computed
+        // floor by this fixed delta.  Added because the bistro
+        // bbox_min.y picks up prop/basement geometry that sits well
+        // above the visible interior floor; the character ends up
+        // floating until we crank her down.  Tune by hand or expose
+        // via menu once we have a feel for the right value.
+        const float kManualFloorYAdjust = -6.0f;
+        float desired_feet_y       = (have_floor
+            ? bistro_floor_y
+            : desired_feet_y_cam) + kManualFloorYAdjust;
+        float spawn_y = desired_feet_y;        // fallback if no mesh
+        float pivot_feet_offset = 0.0f;        // for logging
+        bool  have_pivot_offset = false;
+
+        if (rn_for_pivot >= 0 &&
+            rn_for_pivot < (int)data_for_pivot.nodes_.size()) {
+            const auto& root_node = data_for_pivot.nodes_[rn_for_pivot];
+            const glm::mat4& old_root_cached = root_node.cached_matrix_;
+
+            // Build post-override root transform with spawn_xz set
+            // and Y temporarily 0 (we solve for Y below).
+            glm::quat yaw_quat = glm::angleAxis(
+                glm::radians(cam.yaw), glm::vec3(0, 1, 0));
+            glm::mat4 trial_root =
+                glm::translate(glm::mat4(1.0f),
+                               glm::vec3(spawn_xz.x, 0.0f, spawn_xz.y)) *
+                glm::mat4_cast(yaw_quat) *
+                glm::scale(glm::mat4(1.0f), root_node.scale_);
+
+            // root_old_to_new converts world coords expressed under
+            // the OLD root frame to world coords under the NEW root
+            // frame, with NEW T.y = 0.
+            glm::mat4 root_old_to_new =
+                trial_root * glm::inverse(old_root_cached);
+
+            float min_world_y_at_zero = std::numeric_limits<float>::max();
+            for (size_t ni = 0; ni < data_for_pivot.nodes_.size(); ++ni) {
+                const auto& n = data_for_pivot.nodes_[ni];
+                if (n.mesh_idx_ < 0 ||
+                    n.mesh_idx_ >= (int)data_for_pivot.meshes_.size())
+                    continue;
+                const auto& mb = data_for_pivot.meshes_[n.mesh_idx_];
+                const glm::vec3 c[8] = {
+                    {mb.bbox_min_.x, mb.bbox_min_.y, mb.bbox_min_.z},
+                    {mb.bbox_max_.x, mb.bbox_min_.y, mb.bbox_min_.z},
+                    {mb.bbox_min_.x, mb.bbox_max_.y, mb.bbox_min_.z},
+                    {mb.bbox_max_.x, mb.bbox_max_.y, mb.bbox_min_.z},
+                    {mb.bbox_min_.x, mb.bbox_min_.y, mb.bbox_max_.z},
+                    {mb.bbox_max_.x, mb.bbox_min_.y, mb.bbox_max_.z},
+                    {mb.bbox_min_.x, mb.bbox_max_.y, mb.bbox_max_.z},
+                    {mb.bbox_max_.x, mb.bbox_max_.y, mb.bbox_max_.z},
+                };
+                // Simulated cached: take the mesh node's existing
+                // cached_matrix, peel the OLD root off the front,
+                // then apply the NEW root (with Y=0).
+                glm::mat4 simulated_cached = root_old_to_new * n.cached_matrix_;
+                for (int k = 0; k < 8; ++k) {
+                    glm::vec4 w =
+                        simulated_cached * glm::vec4(c[k], 1.0f);
+                    if (w.y < min_world_y_at_zero) {
+                        min_world_y_at_zero = w.y;
+                    }
+                }
+                have_pivot_offset = true;
+            }
+
+            if (have_pivot_offset) {
+                // World Y at NEW T.y = 0 is min_world_y_at_zero.
+                // For feet at desired_feet_y, set T.y to make
+                //   T.y + min_world_y_at_zero = desired_feet_y.
+                spawn_y = desired_feet_y - min_world_y_at_zero;
+                pivot_feet_offset = -min_world_y_at_zero;
+            }
+        }
+
+        // Final guard: if any input was garbage (Inf, NaN, FLT_MAX-ish)
+        // and propagated, the spawn would teleport the character to
+        // infinity and every subsequent frame would render her bbox
+        // at FLT_MAX (HUD shows 3.4e38).  Reject and fall back to a
+        // neutral spawn at origin so the user can still see something.
+        if (!std::isfinite(spawn_y) ||
+            std::abs(spawn_y) > 1e5f) {
+            std::cout << "[player] spawn_y rejected as garbage ("
+                      << spawn_y << "), falling back to 0"
+                      << std::endl;
+            spawn_y = 0.0f;
+        }
+
         glm::vec3 spawn_pos(spawn_xz.x, spawn_y, spawn_xz.y);
         player_controller_->spawnAt(spawn_pos, cam.yaw);
         std::cout << "[player] "
                   << (reset_pos_req ? "Reset to " : "Spawned at ")
                   << "(" << spawn_pos.x << ", " << spawn_pos.y << ", "
-                  << spawn_pos.z << ") yaw=" << cam.yaw << std::endl;
+                  << spawn_pos.z << ") yaw=" << cam.yaw
+                  << "  pivot_feet_offset=" << pivot_feet_offset
+                  << "  desired_feet_y=" << desired_feet_y
+                  << "  (have_pivot_offset="
+                  << (have_pivot_offset ? 1 : 0) << ")"
+                  << std::endl;
 
         // ── One-shot diagnostic dump ──────────────────────────────────
         // Print the loaded gltf's structure at spawn time so we can
@@ -5457,13 +5671,119 @@ void RealWorldApplication::drawFrame() {
                       << " children=" << n.child_idx_.size()
                       << std::endl;
         }
+
+        // ── Skin / skeleton dump ───────────────────────────────────
+        // glTF skinning bypasses the mesh node's transform: rendered
+        // verts come from joint.cached_matrix * inverse_bind_matrix.
+        // If the skeleton joints are NOT descendants of the node
+        // setRootNodeTransform is writing to, only the mesh node moves
+        // (which is what our cyan bbox follows) while the actual
+        // rendered geometry stays wherever the bones live.  Dump:
+        //   • how many scene roots exist (we currently only translate
+        //     the first one — if the skeleton is a sibling root, that
+        //     explains "bbox high up, body on the floor"),
+        //   • skin count and the skeleton_root node index for each,
+        //   • each scene root's name + child count + has-mesh flag.
+        for (size_t si = 0; si < data.scenes_.size(); ++si) {
+            const auto& sc = data.scenes_[si];
+            std::cout << "[player.diag] scene[" << si << "] root_nodes={";
+            for (size_t k = 0; k < sc.nodes_.size(); ++k) {
+                std::cout << sc.nodes_[k];
+                if (k + 1 < sc.nodes_.size()) std::cout << ",";
+            }
+            std::cout << "}" << std::endl;
+            for (auto rn_idx : sc.nodes_) {
+                if (rn_idx < 0 || rn_idx >= (int)data.nodes_.size()) continue;
+                const auto& rn = data.nodes_[rn_idx];
+                std::cout << "[player.diag]   root_node[" << rn_idx
+                          << "] '" << rn.name_ << "'"
+                          << " mesh=" << rn.mesh_idx_
+                          << " skin=" << rn.skin_idx_
+                          << " children=" << rn.child_idx_.size()
+                          << " T=(" << rn.translation_.x << ","
+                          << rn.translation_.y << ","
+                          << rn.translation_.z << ")"
+                          << std::endl;
+            }
+        }
+        std::cout << "[player.diag] skins=" << data.skins_.size() << std::endl;
+        for (size_t si = 0; si < data.skins_.size(); ++si) {
+            const auto& sk = data.skins_[si];
+            std::cout << "[player.diag] skin[" << si << "] name='" << sk.name_
+                      << "' skeleton_root=" << sk.skeleton_root_
+                      << " joints=" << sk.joints_.size();
+            // Print where the skeleton root currently sits in world
+            // space — if it's at origin / far from the mesh node's
+            // cached translation, that's the bug.
+            if (sk.skeleton_root_ >= 0 &&
+                sk.skeleton_root_ < (int)data.nodes_.size()) {
+                const auto& srn = data.nodes_[sk.skeleton_root_];
+                std::cout << " skeleton_root.T=(" << srn.translation_.x
+                          << "," << srn.translation_.y << ","
+                          << srn.translation_.z << ")"
+                          << " skeleton_root.cached_T=("
+                          << srn.cached_matrix_[3][0] << ","
+                          << srn.cached_matrix_[3][1] << ","
+                          << srn.cached_matrix_[3][2] << ")";
+            }
+            std::cout << std::endl;
+        }
+
+        // ── Materials & textures dump ──────────────────────────────
+        // Diagnoses the "gray / untextured body" symptom by exposing
+        // (a) how many materials the asset shipped with, (b) what
+        // textures each material references, and (c) whether the
+        // texture slots actually resolved to non-null Vulkan handles.
+        // If all base_color_idx_ are -1 the asset has no albedo
+        // textures (untextured rig) — that explains the gray body
+        // entirely and the fix is asset-side.  If base_color_idx_ >= 0
+        // but the underlying TextureInfo has no .view, the loader
+        // failed to read/decode the image.
+        std::cout << "[player.diag] textures=" << data.textures_.size()
+                  << " materials=" << data.materials_.size() << std::endl;
+        for (size_t ti = 0; ti < data.textures_.size(); ++ti) {
+            const auto& tex = data.textures_[ti];
+            std::cout << "[player.diag] tex[" << ti << "] size=("
+                      << tex.size.x << "," << tex.size.y << "x"
+                      << tex.size.z << ")"
+                      << " mips=" << tex.mip_levels
+                      << " has_image=" << (tex.image ? 1 : 0)
+                      << " has_view=" << (tex.view  ? 1 : 0)
+                      << " has_memory=" << (tex.memory ? 1 : 0)
+                      << std::endl;
+        }
+        for (size_t mi = 0; mi < data.materials_.size(); ++mi) {
+            const auto& m = data.materials_[mi];
+            std::cout << "[player.diag] mat[" << mi << "] '"
+                      << m.name_ << "'"
+                      << " base_color_idx="     << m.base_color_idx_
+                      << " normal_idx="         << m.normal_idx_
+                      << " mr_idx="             << m.metallic_roughness_idx_
+                      << " emissive_idx="       << m.emissive_idx_
+                      << " occlusion_idx="      << m.occlusion_idx_
+                      << " specular_color_idx=" << m.specular_color_idx_
+                      << " alpha_mode="         << int(m.alpha_mode_)
+                      << " alpha_cutoff="       << m.alpha_cutoff_
+                      << " has_uniform_buffer="
+                      << (m.uniform_buffer_.buffer ? 1 : 0)
+                      << " has_desc_set="
+                      << (m.desc_set_ ? 1 : 0)
+                      << std::endl;
+        }
     }
 
-    // ── Per-frame "follow the camera" (TEMPORARILY DISABLED) ───────
-    // Wrapped in `#if 0` while debugging a release-only crash that
-    // appeared after this block was introduced.  Re-enable once the
-    // crash is identified.  Flip the `#if` to 1 to revive.
-#if 0
+    // ── Per-frame "follow the camera" ──────────────────────────────
+    // Updates the controller's world position + yaw EVERY frame so the
+    // character stays anchored 2 m in front of the camera at "feet
+    // height" (cam.y - kPlayerEyeOffset).  Without this block the
+    // character only ever gets one shot at being placed — spawnAt fires
+    // once when isReady() flips, then update() runs in stationary mode
+    // and never re-derives position from the camera.  The block was
+    // temporarily wrapped in `#if 0` while we chased a release-only
+    // resize crash that turned out to be unrelated (hiz_pyramid
+    // double-free in TextureInfo::destroy + ImGui clock_tex_id_
+    // dangling-set hazards — both fixed).  Re-enabled now.
+#if 1
     if (player_object_ && player_object_->isReady() &&
         player_controller_ && player_controller_->isSpawned()) {
         const auto& cam = main_camera_object_->getCameraViewInfo();
@@ -5480,10 +5800,146 @@ void RealWorldApplication::drawFrame() {
         const float kPlayerEyeOffset   = 1.7f;
         glm::vec2 follow_xz =
             glm::vec2(cam_pos.x, cam_pos.z) + fwd_xz * kFollowAhead;
-        glm::vec3 follow_pos(follow_xz.x,
-                             cam_pos.y - kPlayerEyeOffset,
-                             follow_xz.y);
-        player_controller_->setPositionAndYaw(follow_pos, cam.yaw);
+
+        // ── Pivot compensation (override-aware) ─────────────────────
+        // Same approach as the spawn block: peel the OLD root frame
+        // off each mesh node's cached_matrix and replace it with a
+        // simulated NEW root (T=(spawn_xz.x, 0, spawn_xz.y), R=yaw,
+        // S=preserved) so the measurement matches what the GPU will
+        // actually render, not what the asset's authored rotation
+        // currently looks like.  Without this the feet sink (or
+        // float) by an amount equal to how much the authored R+T
+        // moves the mesh's lowest point off the world Y axis.
+        const auto& data_for_follow = player_object_->getDrawableData();
+        int rn_for_follow = -1;
+        if (!data_for_follow.scenes_.empty() &&
+            data_for_follow.default_scene_ >= 0 &&
+            data_for_follow.default_scene_ <
+                (int)data_for_follow.scenes_.size() &&
+            !data_for_follow.scenes_[data_for_follow.default_scene_]
+                .nodes_.empty()) {
+            rn_for_follow = data_for_follow
+                .scenes_[data_for_follow.default_scene_].nodes_[0];
+        }
+
+        // ── Snap desired feet Y to bistro floor when available ─────
+        // Same approach as the spawn block: prefer the level's
+        // actual floor over the camera-eye-height heuristic.  Without
+        // this the per-frame follow re-derives a feet_y purely from
+        // cam.y - 1.7, which means flying the camera up reels the
+        // character into the air on the very next frame even after
+        // the spawn block placed her on the floor.
+        float bistro_floor_y_f = -std::numeric_limits<float>::max();
+        bool  have_floor_f = false;
+        // Same sanity gate as the spawn block — see comment there.
+        const float kFloorSanityLoF = -1e5f;
+        const float kFloorSanityHiF =  1e5f;
+        auto ingestFloorYFollow =
+            [&](const std::shared_ptr<ego::DrawableObject>& obj) {
+            if (!obj || !obj->isReady()) return;
+            glm::vec3 lo = obj->getModelBboxMin();
+            glm::vec3 hi = obj->getModelBboxMax();
+            if (lo.x > hi.x) return;
+            const glm::mat4& M = obj->getLocation();
+            const glm::vec3 c[8] = {
+                {lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z},
+                {lo.x, hi.y, lo.z}, {hi.x, hi.y, lo.z},
+                {lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z},
+                {lo.x, hi.y, hi.z}, {hi.x, hi.y, hi.z},
+            };
+            float mn = std::numeric_limits<float>::max();
+            for (int k = 0; k < 8; ++k) {
+                glm::vec4 w = M * glm::vec4(c[k], 1.0f);
+                if (w.y < mn) mn = w.y;
+            }
+            if (!std::isfinite(mn) ||
+                mn < kFloorSanityLoF || mn > kFloorSanityHiF) {
+                return;
+            }
+            if (!have_floor_f || mn > bistro_floor_y_f) {
+                bistro_floor_y_f = mn;
+                have_floor_f = true;
+            }
+        };
+        ingestFloorYFollow(bistro_interior_scene_);
+        if (!have_floor_f) ingestFloorYFollow(bistro_exterior_scene_);
+
+        // Same manual nudge as the spawn block — keep in sync
+        // (kManualFloorYAdjust constant defined inside the spawn
+        // block scope, mirrored here so the follow path matches).
+        const float kManualFloorYAdjustF = -6.0f;
+        float desired_feet_y = (have_floor_f
+            ? bistro_floor_y_f
+            : (cam_pos.y - kPlayerEyeOffset)) + kManualFloorYAdjustF;
+        float follow_y = desired_feet_y;       // fallback if no mesh
+        bool  have_follow_offset = false;
+
+        if (rn_for_follow >= 0 &&
+            rn_for_follow < (int)data_for_follow.nodes_.size()) {
+            const auto& root_node =
+                data_for_follow.nodes_[rn_for_follow];
+            const glm::mat4& old_root_cached = root_node.cached_matrix_;
+
+            glm::quat yaw_quat = glm::angleAxis(
+                glm::radians(cam.yaw), glm::vec3(0, 1, 0));
+            glm::mat4 trial_root =
+                glm::translate(glm::mat4(1.0f),
+                               glm::vec3(follow_xz.x, 0.0f, follow_xz.y)) *
+                glm::mat4_cast(yaw_quat) *
+                glm::scale(glm::mat4(1.0f), root_node.scale_);
+
+            glm::mat4 root_old_to_new =
+                trial_root * glm::inverse(old_root_cached);
+
+            float min_world_y_at_zero = std::numeric_limits<float>::max();
+            for (size_t ni = 0; ni < data_for_follow.nodes_.size(); ++ni) {
+                const auto& n = data_for_follow.nodes_[ni];
+                if (n.mesh_idx_ < 0 ||
+                    n.mesh_idx_ >= (int)data_for_follow.meshes_.size())
+                    continue;
+                const auto& mb = data_for_follow.meshes_[n.mesh_idx_];
+                const glm::vec3 c[8] = {
+                    {mb.bbox_min_.x, mb.bbox_min_.y, mb.bbox_min_.z},
+                    {mb.bbox_max_.x, mb.bbox_min_.y, mb.bbox_min_.z},
+                    {mb.bbox_min_.x, mb.bbox_max_.y, mb.bbox_min_.z},
+                    {mb.bbox_max_.x, mb.bbox_max_.y, mb.bbox_min_.z},
+                    {mb.bbox_min_.x, mb.bbox_min_.y, mb.bbox_max_.z},
+                    {mb.bbox_max_.x, mb.bbox_min_.y, mb.bbox_max_.z},
+                    {mb.bbox_min_.x, mb.bbox_max_.y, mb.bbox_max_.z},
+                    {mb.bbox_max_.x, mb.bbox_max_.y, mb.bbox_max_.z},
+                };
+                glm::mat4 simulated_cached =
+                    root_old_to_new * n.cached_matrix_;
+                for (int k = 0; k < 8; ++k) {
+                    glm::vec4 w =
+                        simulated_cached * glm::vec4(c[k], 1.0f);
+                    if (w.y < min_world_y_at_zero) {
+                        min_world_y_at_zero = w.y;
+                    }
+                }
+                have_follow_offset = true;
+            }
+
+            if (have_follow_offset) {
+                follow_y = desired_feet_y - min_world_y_at_zero;
+            }
+        }
+
+        // Last-resort guard: don't propagate Inf/NaN/FLT_MAX into the
+        // controller — once it lands there, setRootNodeTransform
+        // bakes it into every cached_matrix and the bbox blows up to
+        // FLT_MAX for every subsequent frame.  Hold the previous
+        // position instead (no-op the controller write this frame).
+        const bool follow_y_ok =
+            std::isfinite(follow_y) && std::abs(follow_y) <= 1e5f;
+        glm::vec3 follow_pos(follow_xz.x, follow_y, follow_xz.y);
+        if (follow_y_ok) {
+            player_controller_->setPositionAndYaw(follow_pos, cam.yaw);
+        } else {
+            std::cout << "[follow] follow_y rejected as garbage ("
+                      << follow_y << "), holding previous position"
+                      << std::endl;
+        }
 
         // Per-second diagnostic for the follow block.  Compare these
         // numbers against [player.live] root_T (printed in the same
@@ -5501,10 +5957,12 @@ void RealWorldApplication::drawFrame() {
                       << cam.facing_dir.y << "," << cam.facing_dir.z
                       << ")  follow_pos=(" << follow_pos.x << ","
                       << follow_pos.y << "," << follow_pos.z
-                      << ")  yaw=" << cam.yaw << std::endl;
+                      << ")  yaw=" << cam.yaw
+                      << "  applied=" << (follow_y_ok ? 1 : 0)
+                      << std::endl;
         }
     }
-#endif // 0 — follow block disabled while chasing release-only crash
+#endif // 1 — follow block re-enabled after resize crash root-cause fixed
 
     // Build the collision world once both bistro scenes have actually
     // populated their CPU-side mesh data. We retry every frame in
@@ -5882,24 +6340,131 @@ void RealWorldApplication::drawFrame() {
     }
 
     // ── Player debug overlay feed ────────────────────────────────────
-    // Stash the player's world position + camera VP into the menu so
-    // its ImGui draw can paint a red on-screen marker and HUD text
-    // showing where the character is.  Useful for verifying the
-    // controller's spawn position vs. where the 3D character actually
-    // renders — if the two diverge, the asset's bind-pose origin is
-    // offset from the root node (or the marker projection itself is
-    // off, which we still need to settle).
+    // Stash the player's world position + camera VP + world-space
+    // AABB into the menu so its ImGui draw can paint:
+    //   • a red on-screen marker at the controller position,
+    //   • HUD text with position / distance / bbox values,
+    //   • a wireframe box around the character's renderable volume.
+    // The wireframe is computed from the SHIPPING cached_matrix (what
+    // the GPU will actually use this frame), so it reflects every
+    // applyPose / setRootNodeTransform write.  Comparing the
+    // wireframe vs. the rendered body tells us whether the renderer
+    // and our CPU-side bbox math agree.
     if (menu_ && main_camera_object_) {
         const bool has_player =
             player_controller_ && player_controller_->isSpawned();
         const glm::vec3 ppos = has_player
             ? player_controller_->getPosition()
             : glm::vec3(0.0f);
+
+        bool      bbox_valid = false;
+        glm::vec3 bbox_min(0.0f), bbox_max(0.0f);
+        if (has_player && player_object_ && player_object_->isReady()) {
+            const auto& data = player_object_->getDrawableData();
+            float mn[3] = {  std::numeric_limits<float>::max(),
+                             std::numeric_limits<float>::max(),
+                             std::numeric_limits<float>::max() };
+            float mx[3] = {  std::numeric_limits<float>::lowest(),
+                             std::numeric_limits<float>::lowest(),
+                             std::numeric_limits<float>::lowest() };
+            auto accum = [&](const glm::vec3& w) {
+                mn[0] = std::min(mn[0], w.x);
+                mn[1] = std::min(mn[1], w.y);
+                mn[2] = std::min(mn[2], w.z);
+                mx[0] = std::max(mx[0], w.x);
+                mx[1] = std::max(mx[1], w.y);
+                mx[2] = std::max(mx[2], w.z);
+            };
+
+            // ── Skinned-mesh bbox: walk SKIN joints, not mesh nodes ─
+            // glTF skinned meshes ignore the mesh node's cached_matrix
+            // at render time — vertex world positions come from
+            //   v_world = sum(w_i * joint.cached_matrix * inv_bind) * v_local
+            // So our previous bbox (mesh.bbox * mesh_node.cached_matrix)
+            // showed the BIND-POSE mesh transformed by the mesh node's
+            // matrix, which is NOT where the rendered character actually
+            // sits.  Instead, compute the bbox from the skeleton's joint
+            // world positions: each joint contributes joint.cached_matrix
+            // * (0,0,0) as a world point.  The set of joint positions
+            // forms a skeleton AABB that closely approximates the
+            // rendered mesh's AABB (slightly tighter than the actual
+            // mesh — flesh extends a few cm beyond bones — but a much
+            // better visual match than the bind-pose-on-mesh-node box).
+            bool used_skin = false;
+            for (const auto& sk : data.skins_) {
+                for (int32_t joint_idx : sk.joints_) {
+                    if (joint_idx < 0 ||
+                        joint_idx >= (int)data.nodes_.size()) continue;
+                    const auto& jn = data.nodes_[joint_idx];
+                    glm::vec4 jw =
+                        jn.cached_matrix_ * glm::vec4(0, 0, 0, 1);
+                    accum(glm::vec3(jw));
+                    bbox_valid = true;
+                    used_skin = true;
+                }
+            }
+
+            // Fallback to the mesh-node bind-pose box ONLY when the
+            // asset has no skin (static meshes) — there we have no
+            // joints to walk, and mesh_node.cached_matrix actually is
+            // what the GPU uses to position the geometry.
+            if (!used_skin) {
+              for (size_t ni = 0; ni < data.nodes_.size(); ++ni) {
+                const auto& n = data.nodes_[ni];
+                if (n.mesh_idx_ < 0 ||
+                    n.mesh_idx_ >= (int)data.meshes_.size()) continue;
+                const auto& mb = data.meshes_[n.mesh_idx_];
+                const glm::vec3 c[8] = {
+                    {mb.bbox_min_.x, mb.bbox_min_.y, mb.bbox_min_.z},
+                    {mb.bbox_max_.x, mb.bbox_min_.y, mb.bbox_min_.z},
+                    {mb.bbox_min_.x, mb.bbox_max_.y, mb.bbox_min_.z},
+                    {mb.bbox_max_.x, mb.bbox_max_.y, mb.bbox_min_.z},
+                    {mb.bbox_min_.x, mb.bbox_min_.y, mb.bbox_max_.z},
+                    {mb.bbox_max_.x, mb.bbox_min_.y, mb.bbox_max_.z},
+                    {mb.bbox_min_.x, mb.bbox_max_.y, mb.bbox_max_.z},
+                    {mb.bbox_max_.x, mb.bbox_max_.y, mb.bbox_max_.z},
+                };
+                for (int k = 0; k < 8; ++k) {
+                    glm::vec4 w = n.cached_matrix_ * glm::vec4(c[k], 1.0f);
+                    accum(glm::vec3(w));
+                }
+                bbox_valid = true;
+              }
+            }
+            if (bbox_valid) {
+                bbox_min = glm::vec3(mn[0], mn[1], mn[2]);
+                bbox_max = glm::vec3(mx[0], mx[1], mx[2]);
+
+                // Per-second console mirror so the values appear in
+                // logs alongside the existing [player.live] /
+                // [follow] lines.  Easier to scroll through than
+                // squinting at the on-screen HUD across frames.
+                static uint64_t s_bbox_log_frame = 0;
+                if ((s_bbox_log_frame++ % 60u) == 0u) {
+                    std::cout
+                        << "[player.bbox] world_min=("
+                        << bbox_min.x << "," << bbox_min.y << ","
+                        << bbox_min.z << ") world_max=("
+                        << bbox_max.x << "," << bbox_max.y << ","
+                        << bbox_max.z << ") size=("
+                        << (bbox_max.x - bbox_min.x) << ","
+                        << (bbox_max.y - bbox_min.y) << ","
+                        << (bbox_max.z - bbox_min.z)
+                        << ")  controller_pos=(" << ppos.x << ","
+                        << ppos.y << "," << ppos.z << ")"
+                        << std::endl;
+                }
+            }
+        }
+
         menu_->setPlayerDebugInfo(
             has_player,
             ppos,
             main_camera_object_->getViewProjMatrix(),
-            main_camera_object_->getCameraPosition());
+            main_camera_object_->getCameraPosition(),
+            bbox_valid,
+            bbox_min,
+            bbox_max);
     }
 
     // ── CPU profile: "ImGui menu draw" ───────────────────────────────
