@@ -296,6 +296,7 @@ add_library(engine STATIC
     "${ENGINE_DIR}/helper/collision_mesh.cpp"
     "${ENGINE_DIR}/helper/engine_helper.cpp"
     "${ENGINE_DIR}/helper/gpu_profiler.cpp"
+    "${ENGINE_DIR}/helper/material_classifier.cpp"
     "${ENGINE_DIR}/helper/mesh_tool.cpp"
     "${ENGINE_DIR}/ray_tracing/raytracing_callable.cpp"
     "${ENGINE_DIR}/ray_tracing/raytracing_shadow.cpp"
@@ -355,6 +356,7 @@ if(WIN32)
         engine imgui glfw3 open-mesh
         vulkan-1
         gdi32 user32 shell32 ole32
+        winhttp
     )
 elseif(APPLE)
     # Prefer VULKAN_SDK env var; fall back to system libvulkan

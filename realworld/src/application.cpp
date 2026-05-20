@@ -2,10 +2,12 @@
 #include <fstream>
 #include <iomanip>
 #include <vector>
+#include <array>
 #include <map>
 #include <limits>
 #include <chrono>
 #include <cmath>
+#include <future>
 #include <string>
 #include <filesystem>
 #include "Windows.h"
@@ -23,6 +25,7 @@
 #include "ray_tracing/raytracing_shadow.h"
 #include "helper/engine_helper.h"
 #include "helper/cluster_mesh.h"
+#include "helper/material_classifier.h"
 #include "application.h"
 
 namespace er = engine::renderer;
@@ -2873,8 +2876,38 @@ void RealWorldApplication::drawScene(
     // Sync the deferred-vs-forward toggle from the Render Debug menu.
     // The menu owns the canonical state; drawScene reads it each frame
     // so flipping the menu item takes effect on the very next draw.
+    //
+    // EXCEPTION: a couple of debug-render modes depend on per-material
+    // flags (BindlessMaterialParams.flags) that the deferred G-buffer
+    // intentionally drops at write time -- the deferred_resolve.comp
+    // never sees them, so the mode would render as the regular shaded
+    // path with no visible difference and the user (rightly) reports
+    // "nothing shows up".  Force-flip back to forward for those modes:
+    //
+    //   9  DEBUG_RENDER_MODE_TRANSLUCENT — needs BINDLESS_MAT_TRANSLUCENT
+    //   13 DEBUG_RENDER_MODE_CATEGORY    — needs BINDLESS_MAT_CATEGORY_*
+    //
+    // The menu's deferred_rendering_ state is left untouched so flipping
+    // the debug mode back to 0 restores the user's chosen pipeline.
     if (menu_) {
         deferred_rendering_enabled_ = menu_->isDeferredRendering();
+        const int dbg_mode = menu_->getDebugRenderMode();
+        if (dbg_mode == DEBUG_RENDER_MODE_TRANSLUCENT ||
+            dbg_mode == DEBUG_RENDER_MODE_CATEGORY) {
+            if (deferred_rendering_enabled_) {
+                static bool s_logged = false;
+                if (!s_logged) {
+                    std::cout
+                        << "[render.debug] mode " << dbg_mode
+                        << " requires per-material flags; forcing "
+                           "forward rendering for this frame "
+                           "(deferred drops the bits in the G-buffer)"
+                        << std::endl;
+                    s_logged = true;
+                }
+                deferred_rendering_enabled_ = false;
+            }
+        }
     }
 
     // ----- GPU Profiler: begin frame -----------------------------------------
@@ -6042,6 +6075,23 @@ void RealWorldApplication::drawFrame() {
         menu_->clearCollisionWorldDirty();
     }
 
+    // ── Async LLM material classifier — function-scope state ─────────
+    // These statics live across the one-shot collision-world build
+    // block AND the per-frame poll block below.  Declared here at
+    // drawScene function scope so both blocks see the same storage
+    // (a `static` inside one `{}` wouldn't be visible to the other).
+    //
+    //   s_mat_classifier         — owns the collected name set and the
+    //                              eventual classified map.
+    //   s_mat_classifier_future  — the std::async handle for the
+    //                              background classifyAll() call.
+    //   s_mat_classifier_kicked  — gates re-entry into the kick-off
+    //                              block; once true the worker has
+    //                              been started (or already finished).
+    static engine::helper::MaterialClassifier s_mat_classifier;
+    static std::future<bool>                  s_mat_classifier_future;
+    static bool                               s_mat_classifier_kicked  = false;
+
     // ── CPU profile: "Collision world build" ────────────────────────
     // One-shot CPU work — fires the first frame Bistro is fully ready
     // in InGame state.  Expected to be expensive (tens of ms) on that
@@ -6058,8 +6108,8 @@ void RealWorldApplication::drawFrame() {
         // a curated 3-option subset (Original / Simplified / Volume)
         // instead of the full enum so the UI stays uncluttered.
         engine::helper::CollisionShape shape =
-            engine::helper::CollisionShape::VoxelCube;
-        const char* shape_label = "5cm voxel cubes";
+            engine::helper::CollisionShape::Decimate;
+        const char* shape_label = "gap-filled simplified";
         switch (menu_->collisionDebugShape()) {
         case engine::ui::Menu::CollisionDebugShape::Original:
             shape = engine::helper::CollisionShape::None;
@@ -6075,6 +6125,73 @@ void RealWorldApplication::drawFrame() {
             break;
         }
 
+        // ── Pass 1: AI-backed classifier (materials + objects) ────
+        // KICK OFF only — actual HTTP call runs on a background
+        // thread.  On a 3B model with bistro's ~500 names the
+        // classify takes minutes on CPU, which is way too long to
+        // block the render thread.  We snapshot every (material,
+        // albedo, object) name into the classifier synchronously
+        // (fast — pure walk of in-memory data), then std::async the
+        // classifyAll() and let the game keep rendering.
+        //
+        // The collision build below proceeds immediately using the
+        // substring fallback baked into CollisionMesh::
+        // buildFromDrawablePrimitive — so foot IK / capsule physics
+        // / collision-debug overlay all work from frame zero with
+        // best-effort categories.  When the LLM thread finishes
+        // (poll block further below), we patch the cluster
+        // renderer's per-material flags SSBO so DEBUG_RENDER_MODE_
+        // CATEGORY picks up the AI verdict on the next frame.
+        //
+        // s_mat_classifier / s_mat_classifier_future / s_mat_classifier_kicked
+        // are declared at drawScene function scope above so the poll
+        // block further down (which lives in a sibling brace scope)
+        // can see the same storage.
+
+        auto collectFromDrawable = [&](
+            const std::shared_ptr<ego::DrawableObject>& obj) {
+            if (!obj || !obj->isReady()) return;
+            const auto& data = obj->getDrawableData();
+
+            // Materials side: walk the material table once.
+            for (const auto& m : data.materials_) {
+                std::string albedo;
+                if (m.base_color_idx_ >= 0 &&
+                    static_cast<size_t>(m.base_color_idx_) <
+                        data.textures_.size()) {
+                    albedo = data.textures_[m.base_color_idx_]
+                                .source_filename_;
+                }
+                // Use the three-arg overload with an empty object
+                // name for the material-only side; the classifier
+                // accepts empty fields and skips them.
+                s_mat_classifier.collect(m.name_, albedo, std::string());
+            }
+            // Objects side: walk the node table once.  Only nodes
+            // that reference a real mesh produce CollisionMeshes,
+            // so we filter by mesh_idx_ >= 0 to keep skeleton /
+            // group nodes out of the classifier payload.
+            for (const auto& node : data.nodes_) {
+                if (node.mesh_idx_ < 0 || node.name_.empty()) continue;
+                s_mat_classifier.collect(
+                    std::string(), std::string(), node.name_);
+            }
+        };
+        if (!s_mat_classifier_kicked) {
+            collectFromDrawable(bistro_exterior_scene_);
+            collectFromDrawable(bistro_interior_scene_);
+            std::cout << "[collision] kicking off async LLM classifier "
+                      << "(mats=" << s_mat_classifier.collectedMaterialCount()
+                      << " objs=" << s_mat_classifier.collectedObjectCount()
+                      << "); collision build uses substring fallback "
+                         "until LLM finishes" << std::endl;
+            s_mat_classifier_future = std::async(
+                std::launch::async, []() {
+                    return s_mat_classifier.classifyAll("Bistro");
+                });
+            s_mat_classifier_kicked = true;
+        }
+
         // One CollisionMesh PER (mesh, primitive) pair so each
         // material part paints in its own segmentation colour AND
         // carries its own MaterialInfo::name_ for gameplay surface
@@ -6088,15 +6205,26 @@ void RealWorldApplication::drawFrame() {
         // brute-force (raycastDown) or no-op (resolveCapsule) per
         // mesh whose BVH isn't ready yet, then transparently switch
         // to BVH-accelerated descent once each mesh's build lands.
+        // Per-category histogram and a short sample of "Unknown"
+        // material names.  Accumulated across both buildAndAdd calls
+        // so the final summary covers exterior + interior together.
+        // The category enum has 11 values (Unknown..Ladder) -- see
+        // MeshCategory in collision_mesh.h.
+        std::array<int, 11> cat_counts{};
+        std::vector<std::string> unknown_sample;
+        constexpr size_t kUnknownSampleMax = 8;
+
         auto buildAndAdd = [&](
             const std::shared_ptr<ego::DrawableObject>& obj) {
             if (!obj || !obj->isReady()) return;
             const auto& data = obj->getDrawableData();
             int built = 0;
+            int attempted = 0;
             size_t total_tris = 0;
             for (size_t mi = 0; mi < data.meshes_.size(); ++mi) {
                 const auto& mesh = data.meshes_[mi];
                 for (size_t pi = 0; pi < mesh.primitives_.size(); ++pi) {
+                    ++attempted;
                     auto m = std::make_shared<engine::helper::CollisionMesh>();
                     if (m->buildFromDrawablePrimitive(
                             *obj, mi, pi,
@@ -6104,13 +6232,54 @@ void RealWorldApplication::drawFrame() {
                             shape)) {
                         total_tris += m->triangleCount();
                         ++built;
+                        // LLM override: lookup is best-effort — the
+                        // classifier runs ASYNCHRONOUSLY on a worker
+                        // thread, so at this point (first InGame
+                        // frame) it almost certainly hasn't finished
+                        // and lookup() returns Unknown for every
+                        // name.  We still call it: if you flip to
+                        // the Volume / Original collision shape and
+                        // back later, this whole block re-runs and
+                        // the LLM verdict (now ready) gets applied
+                        // to the per-CollisionMesh category.  Object
+                        // verdict wins over material verdict inside
+                        // lookup() — see MaterialClassifier::lookup.
+                        {
+                            const auto llm_cat = s_mat_classifier.lookup(
+                                m->materialName(),
+                                m->objectName());
+                            if (llm_cat !=
+                                engine::helper::MeshCategory::Unknown) {
+                                m->setCategory(llm_cat);
+                            }
+                        }
+                        // Tally the classified category before the
+                        // mesh moves into the world -- the histogram
+                        // is one of the main debugging tools when the
+                        // classifier mis-tags a primitive (e.g. a
+                        // horizontal door panel becoming Floor).
+                        const auto cat = m->category();
+                        const auto idx =
+                            static_cast<size_t>(cat);
+                        if (idx < cat_counts.size()) ++cat_counts[idx];
+                        if (cat == engine::helper::MeshCategory::Unknown &&
+                            unknown_sample.size() < kUnknownSampleMax &&
+                            !m->materialName().empty()) {
+                            unknown_sample.push_back(m->materialName());
+                        }
                         collision_world_.addMesh(std::move(m));
                         any_added = true;
                     }
                 }
             }
-            if (built > 0) {
-                std::cout << "[collision] " << built
+            if (attempted > 0) {
+                // Report attempted vs built so coverage gaps in the
+                // collision overlay become obvious — if attempted >>
+                // built, some primitives are being silently dropped
+                // inside buildFromDrawablePrimitive (see
+                // [collision.drop] logs for per-reason throttled
+                // detail).
+                std::cout << "[collision] " << built << "/" << attempted
                           << " primitive(s), " << total_tris
                           << " tris (" << shape_label
                           << ") from drawable" << std::endl;
@@ -6123,6 +6292,30 @@ void RealWorldApplication::drawFrame() {
             std::cout << "[collision] World ready: "
                       << collision_world_.meshCount()
                       << " mesh(es) total" << std::endl;
+            // Category histogram + sample of "Unknown" material names
+            // so the heuristic can be tuned by inspecting the log.
+            // Colour-key reminder matches the fragment shader switch:
+            //   Floor green, Wall red, Door amber, Object purple,
+            //   Glass cyan, Unknown grey.
+            std::cout << "[collision.cat] Unknown=" << cat_counts[0]
+                      << " Floor="      << cat_counts[1]
+                      << " Wall="       << cat_counts[2]
+                      << " Door="       << cat_counts[3]
+                      << " Object="     << cat_counts[4]
+                      << " Glass="      << cat_counts[5]
+                      << " Ceiling="    << cat_counts[6]
+                      << " Stairs="     << cat_counts[7]
+                      << " Vegetation=" << cat_counts[8]
+                      << " Elevator="   << cat_counts[9]
+                      << " Ladder="     << cat_counts[10]
+                      << std::endl;
+            if (!unknown_sample.empty()) {
+                std::cout << "[collision.cat] Unknown sample materials:";
+                for (const auto& s : unknown_sample) {
+                    std::cout << " \"" << s << "\"";
+                }
+                std::cout << std::endl;
+            }
             // Kick off per-mesh SAH BVH construction on a background
             // thread.  Non-blocking — foot raycasts use brute force
             // per mesh until that mesh's BVH lands, then switch to
@@ -6132,6 +6325,267 @@ void RealWorldApplication::drawFrame() {
             std::cout << "[collision] BVH async build started" << std::endl;
         }
         gpu_profiler_.endCpuScope(_cpu_coll);
+    }
+
+    // ── Async LLM classifier polling ─────────────────────────────────
+    // Runs EVERY frame (NOT gated on collision_world_built_) so it
+    // can fire after the one-shot collision build is done.  Reads
+    // the s_mat_classifier* statics declared at drawScene function
+    // scope above; both blocks see the same storage.
+    //
+    // First time the future is ready we pop the result, call
+    // applyMaterialCategories on the cluster renderer (patches the
+    // per-material flag bits so DEBUG_RENDER_MODE_CATEGORY paints in
+    // colour instead of grey), and latch s_mat_classifier_applied so
+    // the block becomes a single byte-load for the rest of the
+    // session.
+    {
+        static bool s_mat_classifier_applied = false;
+        // Wall-clock anchor for the progress heartbeat below.  Set on
+        // the first frame the worker is detected pending, then used
+        // to throttle status prints to one every 5 s — enough cadence
+        // for the user to confirm the daemon's still cranking,
+        // infrequent enough to not flood the console.
+        static std::chrono::steady_clock::time_point s_mat_classifier_started{};
+        static std::chrono::steady_clock::time_point s_mat_classifier_last_log{};
+        // Push the always-on banner state every frame so the menu
+        // doesn't have to walk the classifier itself.  Idle until
+        // kicked; Pending while the worker runs; Ready / Failed
+        // latched once the verdict is in.  Using `menu_` directly
+        // here is safe — the banner setter is a single inline assign,
+        // no Vulkan / no descriptor churn.
+        if (menu_) {
+            using S = engine::ui::Menu::ClassifierStatus;
+            S status = S::Idle;
+            float elapsed_s = 0.0f;
+            int mats = 0, objs = 0;
+            size_t bytes_received = 0;
+            size_t bytes_total    = 0;
+            if (s_mat_classifier_kicked) {
+                // Use the kick-off anchor (set when status was first
+                // observed pending below) if it's been initialised;
+                // otherwise the just-kicked frame shows 0s elapsed.
+                if (s_mat_classifier_started.time_since_epoch().count() != 0) {
+                    elapsed_s = std::chrono::duration<float>(
+                        std::chrono::steady_clock::now() -
+                        s_mat_classifier_started).count();
+                }
+                if (s_mat_classifier_applied) {
+                    // Ready vs Failed isn't preserved across frames
+                    // by the existing logic, so use the simple
+                    // heuristic: any classifications present = ready,
+                    // none = failed.  classifyAll() clears both maps
+                    // on failure so this is unambiguous.
+                    mats = static_cast<int>(
+                        s_mat_classifier.classifiedMaterialCount());
+                    objs = static_cast<int>(
+                        s_mat_classifier.classifiedObjectCount());
+                    status = (mats + objs > 0) ? S::Ready : S::Failed;
+                } else {
+                    mats = static_cast<int>(
+                        s_mat_classifier.collectedMaterialCount());
+                    objs = static_cast<int>(
+                        s_mat_classifier.collectedObjectCount());
+                    status = S::Pending;
+                }
+
+                // Live item-count progress — with batching we KNOW
+                // both the total names submitted and how many have
+                // been classified so far, so the bar is true
+                // progress rather than a byte estimate.  The
+                // `bytes_*` parameters retain their names for
+                // backward compat but now carry (classified / total
+                // items) — the menu overlay text was updated to
+                // say "items" instead of "bytes".
+                bytes_received =
+                    s_mat_classifier.classifiedMaterialCount() +
+                    s_mat_classifier.classifiedObjectCount();
+                bytes_total =
+                    s_mat_classifier.collectedMaterialCount() +
+                    s_mat_classifier.collectedObjectCount();
+                if (bytes_total == 0) bytes_total = 1;  // avoid /0
+            }
+            menu_->setClassifierStatus(
+                status, elapsed_s, mats, objs,
+                bytes_received, bytes_total);
+        }
+
+        // ── Incremental snapshot push ────────────────────────────
+        // The worker classifies in batches (default 10/req) and
+        // bumps mat_/obj_classified_count_ after each batch lands.
+        // Every frame here we check whether the totals grew; if
+        // so, copy the classifier's classified maps under its
+        // mutex (snapshotClassified) and push the result to the
+        // menu so the Mesh-Category Inspector window populates
+        // progressively instead of waiting for the entire run.
+        // No-op while the totals are flat — no allocations, no
+        // sort, no menu push.
+        static size_t s_last_snapshot_total = 0;
+        if (menu_ && s_mat_classifier_kicked) {
+            const size_t cur_total =
+                s_mat_classifier.classifiedMaterialCount() +
+                s_mat_classifier.classifiedObjectCount();
+            if (cur_total > s_last_snapshot_total) {
+                engine::helper::MaterialClassifier::TagMap mats_snap;
+                engine::helper::MaterialClassifier::TagMap objs_snap;
+                s_mat_classifier.snapshotClassified(
+                    mats_snap, objs_snap);
+                std::vector<std::pair<std::string, uint32_t>> mats_vec;
+                std::vector<std::pair<std::string, uint32_t>> objs_vec;
+                mats_vec.reserve(mats_snap.size());
+                objs_vec.reserve(objs_snap.size());
+                for (const auto& [name, cat] : mats_snap) {
+                    mats_vec.emplace_back(
+                        name, static_cast<uint32_t>(cat));
+                }
+                for (const auto& [name, cat] : objs_snap) {
+                    objs_vec.emplace_back(
+                        name, static_cast<uint32_t>(cat));
+                }
+                menu_->setMaterialCategorySnapshot(
+                    std::move(mats_vec), std::move(objs_vec));
+                s_last_snapshot_total = cur_total;
+            }
+        }
+
+        if (s_mat_classifier_kicked &&
+            !s_mat_classifier_applied &&
+            s_mat_classifier_future.valid()) {
+            const auto status = s_mat_classifier_future.wait_for(
+                std::chrono::seconds(0));
+            if (status != std::future_status::ready) {
+                // Pending — emit a heartbeat every 5 s of wall clock.
+                const auto now = std::chrono::steady_clock::now();
+                if (s_mat_classifier_started.time_since_epoch().count() == 0) {
+                    s_mat_classifier_started = now;
+                    s_mat_classifier_last_log = now;
+                }
+                if (now - s_mat_classifier_last_log >=
+                    std::chrono::seconds(5)) {
+                    const auto elapsed_s =
+                        std::chrono::duration_cast<std::chrono::seconds>(
+                            now - s_mat_classifier_started).count();
+                    std::cout
+                        << "[mat.cls] still waiting (" << elapsed_s
+                        << "s elapsed, mats="
+                        << s_mat_classifier.collectedMaterialCount()
+                        << " objs="
+                        << s_mat_classifier.collectedObjectCount()
+                        << " pending)" << std::endl;
+                    s_mat_classifier_last_log = now;
+                }
+            }
+            if (status == std::future_status::ready) {
+                const bool ok = s_mat_classifier_future.get();
+                std::cout
+                    << "[collision] async LLM classifier "
+                    << (ok ? "succeeded" : "fell back")
+                    << " (classified mats="
+                    << s_mat_classifier.classifiedMaterialCount()
+                    << " objs="
+                    << s_mat_classifier.classifiedObjectCount()
+                    << "); patching cluster renderer..." << std::endl;
+                if (cluster_renderer_) {
+                    cluster_renderer_->applyMaterialCategories(
+                        s_mat_classifier);
+                }
+
+                // Dump the full classification table to a timestamped
+                // log file so the user has a per-name verdict to grep
+                // through.  511 lines is too long for stdout but
+                // makes a perfect offline artefact -- pair it with
+                // the histogram in [collision.cat] to see exactly
+                // which materials drove each colour band in the
+                // Mesh-Category overlay.
+                {
+                    // Always write a file — even when the future
+                    // resolved to a "failed" verdict (HTTP error,
+                    // empty maps).  A zero-row dump is still a useful
+                    // breadcrumb: it confirms the dump code ran, and
+                    // the user can grep for the timestamped filename
+                    // to verify cwd.  Path is absolutised so the
+                    // confirmation log line tells the user exactly
+                    // where on disk to look — relative paths landing
+                    // in an unexpected cwd were the main source of
+                    // "where is the file?" confusion.
+                    std::error_code ec;
+                    std::filesystem::create_directories("logs", ec);
+                    auto now_t = std::chrono::system_clock::to_time_t(
+                        std::chrono::system_clock::now());
+                    std::tm tm_local{};
+                    localtime_s(&tm_local, &now_t);
+                    char fname[256];
+                    std::strftime(
+                        fname, sizeof(fname),
+                        "logs/material_categories_%Y-%m-%d_%H-%M-%S.log",
+                        &tm_local);
+                    std::filesystem::path abs_path =
+                        std::filesystem::absolute(fname, ec);
+                    std::ofstream dump(fname);
+                    if (dump.is_open()) {
+                        dump << "# Material/Object → MeshCategory dump\n"
+                             << "# classifier_ok="
+                             << (ok ? "true" : "false") << '\n'
+                             << "# materials_total="
+                             << s_mat_classifier
+                                    .classifiedMaterials().size()
+                             << " objects_total="
+                             << s_mat_classifier
+                                    .classifiedObjects().size()
+                             << '\n'
+                             << "# kind\tname\tcategory\n";
+                        for (const auto& [name, cat] :
+                                s_mat_classifier.classifiedMaterials()) {
+                            dump << "material\t" << name << '\t'
+                                 << engine::helper::meshCategoryTag(cat)
+                                 << '\n';
+                        }
+                        for (const auto& [name, cat] :
+                                s_mat_classifier.classifiedObjects()) {
+                            dump << "object\t" << name << '\t'
+                                 << engine::helper::meshCategoryTag(cat)
+                                 << '\n';
+                        }
+                        std::cout
+                            << "[mat.cls] full table dumped to "
+                            << abs_path.string() << std::endl;
+                    } else {
+                        std::cout
+                            << "[mat.cls] FAILED to open dump file "
+                            << abs_path.string()
+                            << " (errno=" << errno << ")" << std::endl;
+                    }
+                }
+
+                // Push a snapshot to the menu so the Mesh-Category
+                // Inspector ImGui window has data to display.  The
+                // menu stores (name, uint32_t) pairs so menu.h stays
+                // free of a collision_mesh.h include — we cast each
+                // MeshCategory enum to its underlying value here.
+                if (menu_) {
+                    std::vector<std::pair<std::string, uint32_t>> mats;
+                    std::vector<std::pair<std::string, uint32_t>> objs;
+                    mats.reserve(
+                        s_mat_classifier.classifiedMaterials().size());
+                    objs.reserve(
+                        s_mat_classifier.classifiedObjects().size());
+                    for (const auto& [name, cat] :
+                            s_mat_classifier.classifiedMaterials()) {
+                        mats.emplace_back(
+                            name, static_cast<uint32_t>(cat));
+                    }
+                    for (const auto& [name, cat] :
+                            s_mat_classifier.classifiedObjects()) {
+                        objs.emplace_back(
+                            name, static_cast<uint32_t>(cat));
+                    }
+                    menu_->setMaterialCategorySnapshot(
+                        std::move(mats), std::move(objs));
+                }
+
+                s_mat_classifier_applied = true;
+            }
+        }
     }
 
     // Legacy background-disable check (for non-title-screen mesh loads).
@@ -6648,6 +7102,92 @@ void RealWorldApplication::drawFrame() {
             bbox_valid,
             bbox_min,
             bbox_max);
+
+        // ── Per-frame player debug stream ────────────────────────────
+        // Mirror the data the Player Debug HUD shows on-screen (pos,
+        // dist, bbox, size) into a TSV log file so a long session can
+        // be analysed offline without scroll-back-hunting through
+        // stdout.  Opened lazily on the first frame the player is
+        // spawned; one fresh timestamped file per run, matching the
+        // naming convention in realworld/logs/.  Static local: no
+        // class-field change, no global, and the destructor flushes
+        // on shutdown.
+        //
+        // Filesystem path is relative to the working directory the
+        // exe was launched from (typically realworld/), same as
+        // gpu_profile.log.  We create the logs/ dir if it doesn't
+        // exist so this also works in a fresh checkout.
+        if (has_player) {
+            static std::ofstream s_player_dbg_log;
+            static bool          s_player_dbg_opened = false;
+            if (!s_player_dbg_opened) {
+                s_player_dbg_opened = true;
+                std::error_code ec;
+                std::filesystem::create_directories("logs", ec);
+                auto now_t = std::chrono::system_clock::to_time_t(
+                    std::chrono::system_clock::now());
+                std::tm tm_local{};
+                localtime_s(&tm_local, &now_t);
+                char fname[256];
+                std::strftime(
+                    fname, sizeof(fname),
+                    "logs/player_debug_%Y-%m-%d_%H-%M-%S.log",
+                    &tm_local);
+                s_player_dbg_log.open(fname, std::ios::out | std::ios::app);
+                if (s_player_dbg_log.is_open()) {
+                    // Tab-separated columns; '#' header line is
+                    // skipped by awk/pandas defaults so the file
+                    // tools can parse it directly.
+                    s_player_dbg_log
+                        << "# Player debug stream\n"
+                        << "# columns: frame\ttime\tpos_x\tpos_y\tpos_z"
+                           "\tdist_m\tbbox_valid\tbbox_min_x\tbbox_min_y"
+                           "\tbbox_min_z\tbbox_max_x\tbbox_max_y"
+                           "\tbbox_max_z\tsize_x\tsize_y\tsize_z\n";
+                    std::cout << "[player.dbg] streaming to "
+                              << fname << std::endl;
+                }
+            }
+            if (s_player_dbg_log.is_open()) {
+                static uint64_t s_player_dbg_frame = 0;
+                // Wall-clock HH:MM:SS.mmm for human-readable timeline.
+                auto now      = std::chrono::system_clock::now();
+                auto now_t    = std::chrono::system_clock::to_time_t(now);
+                auto now_ms   = std::chrono::duration_cast<
+                    std::chrono::milliseconds>(
+                        now.time_since_epoch()).count() % 1000;
+                std::tm tm_local{};
+                localtime_s(&tm_local, &now_t);
+                char tbuf[16];
+                std::strftime(tbuf, sizeof(tbuf), "%H:%M:%S", &tm_local);
+
+                const float dist = glm::length(
+                    ppos - main_camera_object_->getCameraPosition());
+                const glm::vec3 sz = bbox_valid
+                    ? (bbox_max - bbox_min) : glm::vec3(0.0f);
+
+                s_player_dbg_log
+                    << s_player_dbg_frame++ << '\t'
+                    << tbuf << '.'
+                    << std::setw(3) << std::setfill('0') << now_ms
+                    << std::setfill(' ') << '\t'
+                    << std::fixed << std::setprecision(3)
+                    << ppos.x << '\t' << ppos.y << '\t' << ppos.z << '\t'
+                    << dist << '\t'
+                    << (bbox_valid ? 1 : 0) << '\t'
+                    << bbox_min.x << '\t' << bbox_min.y << '\t' << bbox_min.z << '\t'
+                    << bbox_max.x << '\t' << bbox_max.y << '\t' << bbox_max.z << '\t'
+                    << sz.x      << '\t' << sz.y      << '\t' << sz.z
+                    << '\n';
+                // Flush every 60 frames (~1 s at 60 Hz) so a crash
+                // doesn't lose the last second.  Cheaper than
+                // per-line flushing because the underlying syscall
+                // is amortised across 60 writes.
+                if ((s_player_dbg_frame % 60u) == 0u) {
+                    s_player_dbg_log.flush();
+                }
+            }
+        }
     }
 
     // ── CPU profile: "ImGui menu draw" ───────────────────────────────

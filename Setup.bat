@@ -10,6 +10,7 @@ echo  This script prepares the build environment:
 echo    * Python dependencies (ml_training\requirements.txt)
 echo    * Auto-rig ML model export
 echo    * LibTorch download (if not already present)
+echo    * Ollama install + qwen3.5:2b pull (Mesh Category classifier)
 echo.
 echo  Run GenerateProjectFiles.bat afterwards to produce the VS
 echo  solution. GenerateProjectFiles.bat also invokes this script
@@ -22,6 +23,10 @@ rem   -skip-deps          Skip Python dependency install
 rem   -skip-model         Skip ML model export
 rem   -skip-libtorch      Skip LibTorch download
 rem   -skip-bc7enc        Skip bc7enc clone (BC7 albedo encode for VT)
+rem   -skip-ollama        Skip Ollama install + model pull (Mesh Category)
+rem   -ollama-model=<tag> Ollama model tag to pull (default: qwen3.5:2b).
+rem                         Must match OLLAMA_MODEL at runtime; the
+rem                         classifier reads that env var.
 rem   -skip-cuda          Skip CUDA torch install (use CPU wheel from requirements.txt)
 rem   -cuda=<wheel>       CUDA wheel tag (default: cu128). Examples:
 rem                         cu128  -- works with all current NVIDIA GPUs incl.
@@ -37,6 +42,8 @@ set "SKIP_DEPS=0"
 set "SKIP_MODEL=0"
 set "SKIP_LIBTORCH=0"
 set "SKIP_BC7ENC=0"
+set "SKIP_OLLAMA=0"
+set "OLLAMA_MODEL_ARG="
 set "SKIP_CUDA=0"
 set "CUDA_WHEEL=cu128"
 
@@ -48,6 +55,8 @@ if /i "!_a!"=="-skip-deps" set "SKIP_DEPS=1"
 if /i "!_a!"=="-skip-model" set "SKIP_MODEL=1"
 if /i "!_a!"=="-skip-libtorch" set "SKIP_LIBTORCH=1"
 if /i "!_a!"=="-skip-bc7enc" set "SKIP_BC7ENC=1"
+if /i "!_a!"=="-skip-ollama" set "SKIP_OLLAMA=1"
+if /i "!_a:~0,14!"=="-ollama-model=" set "OLLAMA_MODEL_ARG=!_a:~14!"
 if /i "!_a!"=="-skip-cuda" set "SKIP_CUDA=1"
 if /i "!_a:~0,6!"=="-cuda=" set "CUDA_WHEEL=!_a:~6!"
 shift
@@ -380,6 +389,134 @@ if exist "!LIBTORCH_LOCAL!\share\cmake\Torch\TorchConfig.cmake" (
 )
 
 :libtorch_done
+
+rem ── Ollama (local LLM for the Mesh Category classifier) ──────────────────────
+rem   The runtime classifier at helper/material_classifier.cpp talks to a local
+rem   Ollama daemon to tag each material / object node with one of the
+rem   MeshCategory enum values (Floor / Wall / Door / …).  Without Ollama
+rem   running the call returns Unknown for everything, the Render Debug →
+rem   Mesh Category overlay paints the whole scene grey, and the per-category
+rem   physics behaviour falls back to the substring heuristic.
+rem
+rem   This section:
+rem     1) Detects an existing Ollama install (PATH or
+rem        %LOCALAPPDATA%\Programs\Ollama\ollama.exe).
+rem     2) If absent, downloads OllamaSetup.exe from ollama.com and runs
+rem        it silently (per-user install, no admin required).
+rem     3) Starts the daemon if it isn't already serving (uses `ollama list`
+rem        as a liveness probe; on failure spawns the tray app which in turn
+rem        launches `ollama serve`).
+rem     4) `ollama pull <model>` so the chosen model is ready locally.
+rem
+rem   Override the default model with -ollama-model=qwen2.5:7b (or any other
+rem   tag).  Must match the OLLAMA_MODEL env var the engine reads at runtime
+rem   — set it before launching RealWorld if you're not using the default.
+rem
+set "OLLAMA_DIR=%LOCALAPPDATA%\Programs\Ollama"
+set "OLLAMA_EXE=!OLLAMA_DIR!\ollama.exe"
+set "OLLAMA_APP=!OLLAMA_DIR!\ollama app.exe"
+set "OLLAMA_INSTALLER_URL=https://ollama.com/download/OllamaSetup.exe"
+set "OLLAMA_MODEL=qwen3.5:2b"
+if not "!OLLAMA_MODEL_ARG!"=="" set "OLLAMA_MODEL=!OLLAMA_MODEL_ARG!"
+
+if "!SKIP_OLLAMA!"=="1" (
+    echo [INFO]  Skipping Ollama setup ^(-skip-ollama^) -- the Mesh
+    echo         Category classifier will fall back to substring matching
+    echo         until you install Ollama and run:  ollama pull !OLLAMA_MODEL!
+    goto :ollama_done
+)
+
+rem Locate ollama.exe -- PATH first, then default install dir.
+set "OLLAMA_BIN="
+where ollama >nul 2>&1
+if not errorlevel 1 set "OLLAMA_BIN=ollama"
+if "!OLLAMA_BIN!"=="" if exist "!OLLAMA_EXE!" set "OLLAMA_BIN=!OLLAMA_EXE!"
+
+if not "!OLLAMA_BIN!"=="" goto :ollama_have_bin
+
+echo.
+echo -- Ollama install -----------------------------------------
+echo [INFO]  Ollama not found -- downloading installer
+echo [INFO]  URL: !OLLAMA_INSTALLER_URL!
+echo [INFO]  One-time ~600 MB download (installer + base runtime).
+
+set "OLLAMA_DL=%TEMP%\OllamaSetup.exe"
+where curl >nul 2>&1
+if not errorlevel 1 (
+    echo [INFO]  Downloading with curl...
+    curl -L --progress-bar -o "!OLLAMA_DL!" "!OLLAMA_INSTALLER_URL!"
+) else (
+    echo [INFO]  curl not found, trying PowerShell...
+    powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '!OLLAMA_INSTALLER_URL!' -OutFile '!OLLAMA_DL!'"
+)
+
+if not exist "!OLLAMA_DL!" (
+    echo [WARN]  Ollama installer download failed.  Install manually
+    echo         from !OLLAMA_INSTALLER_URL! and re-run Setup.bat, or
+    echo         skip with -skip-ollama.
+    goto :ollama_done
+)
+
+rem /SILENT shows a small progress dialog; /VERYSILENT hides it
+rem entirely.  /SILENT is the gentler choice -- the user sees that
+rem an install is happening if it's slow.  The Inno Setup installer
+rem auto-creates the per-user install at %LOCALAPPDATA%\Programs\Ollama
+rem and registers the tray-app autostart entry.
+echo [INFO]  Running installer silently...
+"!OLLAMA_DL!" /SILENT /CLOSEAPPLICATIONS
+del "!OLLAMA_DL!" 2>nul
+
+if not exist "!OLLAMA_EXE!" (
+    echo [WARN]  Installation did not land at !OLLAMA_EXE!.
+    echo         Run the installer manually from !OLLAMA_INSTALLER_URL!.
+    goto :ollama_done
+)
+set "OLLAMA_BIN=!OLLAMA_EXE!"
+echo [INFO]  Ollama installed: !OLLAMA_DIR!
+echo -----------------------------------------------------------
+echo.
+
+:ollama_have_bin
+
+rem Daemon liveness probe -- `ollama list` queries the local server at
+rem 127.0.0.1:11434 and exits non-zero when it can't reach it.  If
+rem the probe fails, spawn the tray app (which launches `ollama serve`
+rem in the background) and wait a few seconds for the port to bind.
+"!OLLAMA_BIN!" list >nul 2>&1
+if errorlevel 1 (
+    if exist "!OLLAMA_APP!" (
+        echo [INFO]  Starting Ollama daemon ^(tray app^)...
+        start "" "!OLLAMA_APP!"
+        rem ~3 seconds for the server to bind 127.0.0.1:11434.
+        ping -n 4 127.0.0.1 >nul
+    ) else (
+        echo [WARN]  Could not reach the Ollama daemon and no tray app
+        echo         binary was found at !OLLAMA_APP!.  Start the daemon
+        echo         manually with:  ollama serve
+    )
+)
+
+echo.
+echo -- Pulling Ollama model -----------------------------------
+echo [INFO]  Model:    !OLLAMA_MODEL!
+echo [INFO]  Override: -ollama-model=^<tag^>   ^(see ollama.com/library^)
+echo [INFO]  Pull is idempotent -- a present model is a fast no-op.
+"!OLLAMA_BIN!" pull "!OLLAMA_MODEL!"
+if errorlevel 1 (
+    echo [WARN]  ollama pull failed.  The Mesh Category classifier will
+    echo         fall back to substring matching until the model is
+    echo         available.  Try manually:
+    echo            "!OLLAMA_BIN!" pull !OLLAMA_MODEL!
+) else (
+    echo [INFO]  Model ready: !OLLAMA_MODEL!
+    echo [INFO]  RealWorld reads OLLAMA_MODEL at runtime; if you change
+    echo         the tag here, also set the env var:
+    echo            set OLLAMA_MODEL=!OLLAMA_MODEL!
+)
+echo -----------------------------------------------------------
+echo.
+
+:ollama_done
 
 echo.
 echo ============================================================
