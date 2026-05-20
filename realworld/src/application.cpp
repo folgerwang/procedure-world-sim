@@ -6258,17 +6258,38 @@ void RealWorldApplication::drawFrame() {
                         // is one of the main debugging tools when the
                         // classifier mis-tags a primitive (e.g. a
                         // horizontal door panel becoming Floor).
-                        const auto cat = m->category();
-                        const auto idx =
-                            static_cast<size_t>(cat);
-                        if (idx < cat_counts.size()) ++cat_counts[idx];
-                        if (cat == engine::helper::MeshCategory::Unknown &&
-                            unknown_sample.size() < kUnknownSampleMax &&
-                            !m->materialName().empty()) {
-                            unknown_sample.push_back(m->materialName());
+                        auto tallyAndAdd =
+                            [&](std::shared_ptr<engine::helper::CollisionMesh> mm) {
+                                const auto cat = mm->category();
+                                const auto idx = static_cast<size_t>(cat);
+                                if (idx < cat_counts.size()) ++cat_counts[idx];
+                                if (cat == engine::helper::MeshCategory::Unknown &&
+                                    unknown_sample.size() < kUnknownSampleMax &&
+                                    !mm->materialName().empty()) {
+                                    unknown_sample.push_back(mm->materialName());
+                                }
+                                collision_world_.addMesh(std::move(mm));
+                                any_added = true;
+                            };
+
+                        // Floor patches frequently bundle non-walkable
+                        // vertical faces (curb sides, step risers,
+                        // planter / fountain walls modelled into the
+                        // same "road"/"sidewalk" primitive).  Peel
+                        // those off into a Wall sub-mesh so navigation
+                        // and foot-IK only ever see genuinely walkable,
+                        // up-facing geometry.  Done AFTER the LLM
+                        // override so it acts on the final category.
+                        std::shared_ptr<engine::helper::CollisionMesh>
+                            wall_split;
+                        if (m->category() ==
+                            engine::helper::MeshCategory::Floor) {
+                            wall_split = m->splitOffVerticalFaces();
                         }
-                        collision_world_.addMesh(std::move(m));
-                        any_added = true;
+                        tallyAndAdd(std::move(m));
+                        if (wall_split) {
+                            tallyAndAdd(std::move(wall_split));
+                        }
                     }
                 }
             }
