@@ -2893,7 +2893,8 @@ void RealWorldApplication::drawScene(
         deferred_rendering_enabled_ = menu_->isDeferredRendering();
         const int dbg_mode = menu_->getDebugRenderMode();
         if (dbg_mode == DEBUG_RENDER_MODE_TRANSLUCENT ||
-            dbg_mode == DEBUG_RENDER_MODE_CATEGORY) {
+            dbg_mode == DEBUG_RENDER_MODE_CATEGORY ||
+            dbg_mode == DEBUG_RENDER_MODE_OBJECT_ID) {
             if (deferred_rendering_enabled_) {
                 static bool s_logged = false;
                 if (!s_logged) {
@@ -6251,6 +6252,54 @@ void RealWorldApplication::drawFrame() {
                             if (llm_cat !=
                                 engine::helper::MeshCategory::Unknown) {
                                 m->setCategory(llm_cat);
+                            }
+                        }
+                        // ── Geometric ceiling guard ──────────────
+                        // A mesh whose AREA-WEIGHTED dominant normal
+                        // points clearly downward is overhead (ceiling/
+                        // soffit), never a floor — you can't stand on its
+                        // underside.  Object-name classification can't
+                        // tell a ceiling from a floor when they share one
+                        // interior node name, so demote such Floor
+                        // verdicts to Ceiling here.  Summing the RAW
+                        // triangle cross products area-weights the result
+                        // (|cross| == 2*area), so big surfaces dominate
+                        // tiny chamfer tris.  Sign follows triangle
+                        // winding, which the engine keeps consistent
+                        // (raycastDown relies on floors up, ceilings down).
+                        if (m->category() ==
+                            engine::helper::MeshCategory::Floor) {
+                            const auto& cv = m->debugVertices();
+                            const auto& ci = m->debugIndices();
+                            glm::dvec3 acc(0.0);
+                            for (size_t t = 0; t + 2 < ci.size(); t += 3) {
+                                const int a = ci[t], b = ci[t+1], c = ci[t+2];
+                                if (a < 0 || b < 0 || c < 0) continue;
+                                if ((size_t)a >= cv.size() ||
+                                    (size_t)b >= cv.size() ||
+                                    (size_t)c >= cv.size()) continue;
+                                acc += glm::dvec3(glm::cross(
+                                    cv[b] - cv[a], cv[c] - cv[a]));
+                            }
+                            const double len = glm::length(acc);
+                            const float ny = (len > 0.0)
+                                ? static_cast<float>(acc.y / len) : 1.0f;
+                            static int s_ceil_log = 0;
+                            if (ny < -0.5f) {
+                                m->setCategory(
+                                    engine::helper::MeshCategory::Ceiling);
+                                if (s_ceil_log < 30) {
+                                    ++s_ceil_log;
+                                    std::cout << "[collision.ceil] Floor->"
+                                        "Ceiling dom_n.y=" << ny
+                                        << " object='" << m->objectName()
+                                        << "'" << std::endl;
+                                }
+                            } else if (s_ceil_log < 30) {
+                                ++s_ceil_log;
+                                std::cout << "[collision.ceil] kept Floor "
+                                    "dom_n.y=" << ny << " object='"
+                                    << m->objectName() << "'" << std::endl;
                             }
                         }
                         // Tally the classified category before the
