@@ -136,6 +136,11 @@ static bool s_toggle_profiler_pause = false;
 // forwarded to Menu::toggleCollisionDebug() so the menu's checkbox
 // and the F1 hotkey share one canonical flag.
 static bool s_request_toggle_collision_debug = false;
+// Edge-trigger for Left/Right arrow keys: step the isolate-debug
+// collision-mesh index by -1 / +1.  Consumed in drawFrame() and routed
+// to Menu::stepCollisionIsolate so the slider and the hotkeys stay in
+// sync.  The camera uses W/A/S/D, so the arrow keys are free.
+static int s_collision_isolate_step = 0;
 
 static void keyInputCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
@@ -154,6 +159,15 @@ static void keyInputCallback(GLFWwindow* window, int key, int scancode, int acti
         // menu item.  We can't touch the menu directly from a GLFW
         // callback, so set an edge-trigger that drawFrame() consumes.
         s_request_toggle_collision_debug = true;
+    }
+    // Left/Right arrows step the isolate-debug collision mesh index.
+    // Accept REPEAT too, so holding the key scrubs quickly through the
+    // mesh list.  drawFrame() consumes the step (and auto-enables
+    // isolate mode), so this works even when the menu/slider is hidden
+    // behind the on-screen clock.
+    if (action == GLFW_PRESS || action == GLFW_REPEAT) {
+        if (key == GLFW_KEY_LEFT)  s_collision_isolate_step = -1;
+        if (key == GLFW_KEY_RIGHT) s_collision_isolate_step = +1;
     }
 }
 
@@ -2948,6 +2962,13 @@ void RealWorldApplication::drawScene(
         }
         s_request_toggle_collision_debug = false;
     }
+    // Consume Left/Right arrow edge-trigger: step the isolated collision
+    // mesh.  Routed through the menu (auto-enables isolate + clamps) so
+    // the slider and the hotkeys share one index.
+    if (s_collision_isolate_step != 0) {
+        if (menu_) menu_->stepCollisionIsolate(s_collision_isolate_step);
+        s_collision_isolate_step = 0;
+    }
     gpu_profiler_.beginFrame(cmd_buf, static_cast<uint32_t>(current_frame_ % kMaxFramesInFlight));
     // CPU frame is anchored at the top of drawFrame() (well before
     // here) so its timeline covers the whole host work for this
@@ -3926,8 +3947,81 @@ void RealWorldApplication::drawScene(
                     main_camera_object_->getViewCameraDescriptorSet(),
                 };
 
+                // Isolate-debug slider: feed the menu the live mesh count
+                // (slider range) and, when isolating, the identity of the
+                // selected mesh so the overlay shows index -> mesh.  Pass
+                // the isolate index to drawDebug so only that mesh draws.
+                int collision_isolate = -1;
+                if (menu_) {
+                    menu_->setCollisionMeshCount(collision_world_.meshCount());
+                    if (menu_->collisionIsolateEnabled()) {
+                        collision_isolate = menu_->collisionIsolateIndex();
+                        const auto* cm = collision_world_.meshAt(
+                            static_cast<size_t>(collision_isolate));
+                        if (cm) {
+                            std::string info =
+                                "index " +
+                                std::to_string(collision_isolate) + " / " +
+                                std::to_string(collision_world_.meshCount()) +
+                                "\ncategory = " +
+                                engine::helper::meshCategoryTag(cm->category()) +
+                                "\ntris = " +
+                                std::to_string(cm->triangleCount()) +
+                                "\nmaterial = '" + cm->materialName() + "'" +
+                                "\nobject = '" + cm->objectName() + "'";
+                            menu_->setCollisionIsolateInfo(info);
+                            // On index change: log the identity AND dump the
+                            // mesh's exact triangles to an OBJ in the
+                            // workspace folder so the geometry can be
+                            // inspected off-line (interior holes /
+                            // disconnected pieces a screenshot can't show).
+                            // The path is hard-coded to the project root for
+                            // debugging; remove this dump when done.
+                            static int s_last_iso = -1;
+                            if (collision_isolate != s_last_iso) {
+                                s_last_iso = collision_isolate;
+                                std::cout << "[collision.isolate] " << info
+                                          << std::endl;
+                                std::ofstream obj(
+                                    "G:/work/procedure-world-sim/"
+                                    "debug_isolated_mesh.obj");
+                                if (obj.is_open()) {
+                                    obj << "# collision mesh index "
+                                        << collision_isolate << "  cat="
+                                        << engine::helper::meshCategoryTag(
+                                               cm->category())
+                                        << "  tris=" << cm->triangleCount()
+                                        << "  mat=" << cm->materialName()
+                                        << "  obj=" << cm->objectName()
+                                        << "\n";
+                                    const auto& dv = cm->debugVertices();
+                                    const auto& di = cm->debugIndices();
+                                    for (const auto& v : dv)
+                                        obj << "v " << v.x << " " << v.y
+                                            << " " << v.z << "\n";
+                                    for (size_t t = 0; t + 2 < di.size();
+                                         t += 3)
+                                        obj << "f " << (di[t] + 1) << " "
+                                            << (di[t + 1] + 1) << " "
+                                            << (di[t + 2] + 1) << "\n";
+                                    std::cout << "[collision.isolate] dumped "
+                                                 "OBJ ("
+                                              << dv.size() << " verts, "
+                                              << di.size() / 3 << " tris) -> "
+                                                 "debug_isolated_mesh.obj"
+                                              << std::endl;
+                                }
+                            }
+                        } else {
+                            menu_->setCollisionIsolateInfo(
+                                "index out of range");
+                        }
+                    }
+                }
+
                 collision_world_.drawDebug(
-                    device_, cmd_buf, collision_desc_sets, viewports, scissors);
+                    device_, cmd_buf, collision_desc_sets, viewports,
+                    scissors, collision_isolate);
 
                 cmd_buf->endDynamicRendering();
             } else {
@@ -6068,11 +6162,50 @@ void RealWorldApplication::drawFrame() {
     // CollisionDebugMeshBuffers (the GPU-side companion) may still
     // be referenced by an in-flight command buffer; destroying its
     // buffers without synchronisation is a Vulkan validation error.
+    // ── Incremental collision-build state (persists across frames) ───
+    // The collision world is generated a batch of primitives PER FRAME
+    // (not all at once) so the render thread never hitches and the
+    // second progress bar can animate.  These statics carry the build
+    // across drawScene calls; they are RESET in the dirty block below
+    // (and re-enumerated lazily) so a shape-change rebuild starts clean.
+    //   s_coll_work            — flattened (drawable, mesh, prim) list.
+    //   s_coll_cursor          — index of the next work item to build.
+    //   s_coll_work_enumerated — true once the list has been populated.
+    //   s_coll_cat_counts / _unknown_sample — classification histogram,
+    //                            accumulated across the WHOLE build.
+    //   s_coll_attempted / _built / _total_tris — build coverage stats.
+    struct CollisionBuildItem {
+        std::shared_ptr<ego::DrawableObject> obj;
+        size_t mesh_idx;
+        size_t prim_idx;
+    };
+    static std::vector<CollisionBuildItem> s_coll_work;
+    static size_t                          s_coll_cursor = 0;
+    static bool                            s_coll_work_enumerated = false;
+    static std::array<int, 11>             s_coll_cat_counts{};
+    static std::vector<std::string>        s_coll_unknown_sample;
+    static size_t                          s_coll_attempted  = 0;
+    static size_t                          s_coll_built      = 0;
+    static size_t                          s_coll_total_tris = 0;
+    // Clears the work list + accumulators so the next build starts from
+    // scratch.  Referenced by the dirty block below.
+    auto resetCollisionBuild = [&]() {
+        s_coll_work.clear();
+        s_coll_cursor = 0;
+        s_coll_work_enumerated = false;
+        s_coll_cat_counts = {};
+        s_coll_unknown_sample.clear();
+        s_coll_attempted = s_coll_built = s_coll_total_tris = 0;
+        if (menu_) menu_->setCollisionBuildStatus(
+            engine::ui::Menu::CollisionBuildStatus::Idle, 0, 0, 0);
+    };
+
     if (menu_->collisionWorldDirty()) {
         device_->waitIdle();
         collision_world_.destroyDebugBuffers(device_);
         collision_world_.clear();
         collision_world_built_ = false;
+        resetCollisionBuild();   // restart the incremental build clean
         menu_->clearCollisionWorldDirty();
     }
 
@@ -6092,17 +6225,28 @@ void RealWorldApplication::drawFrame() {
     static engine::helper::MaterialClassifier s_mat_classifier;
     static std::future<bool>                  s_mat_classifier_future;
     static bool                               s_mat_classifier_kicked  = false;
+    //   s_mat_classifier_applied — latched true by the poll block the
+    //                              first frame classifyAll()'s future is
+    //                              ready (and consumed via .get()).  The
+    //                              collision-world build is GATED on this
+    //                              so each primitive's Floor verdict
+    //                              reflects the finished AI classifier
+    //                              instead of the substring fallback.
+    //                              Hoisted here (was poll-block-local) so
+    //                              the build block above can read it too.
+    static bool                               s_mat_classifier_applied = false;
 
     // ── CPU profile: "Collision world build" ────────────────────────
-    // One-shot CPU work — fires the first frame Bistro is fully ready
-    // in InGame state.  Expected to be expensive (tens of ms) on that
-    // one frame, then zero afterwards.  If you see this lane spike
-    // every frame the build's `any_added` test is mis-latching the
-    // `collision_world_built_` flag.
+    // INCREMENTAL CPU work — once the classifier has landed this lane
+    // shows up for a handful of consecutive frames, each capped at the
+    // ~6ms time budget below (kBuildBudgetMs), as the world is built a
+    // batch of primitives per frame.  The lane goes quiet for good once
+    // collision_world_built_ latches.  If it keeps spiking forever the
+    // finalise branch (build_done) isn't being reached — check that the
+    // work list enumerated (drawables ready) and the cursor advances.
     if (!collision_world_built_ &&
         menu_->getGameState() == engine::ui::GameState::InGame) {
         auto _cpu_coll = gpu_profiler_.beginCpuScope("Collision world build");
-        bool any_added = false;
 
         // Map the menu's user-facing CollisionDebugShape onto the
         // engine's CollisionShape -- the menu deliberately exposes
@@ -6135,14 +6279,18 @@ void RealWorldApplication::drawFrame() {
         // (fast — pure walk of in-memory data), then std::async the
         // classifyAll() and let the game keep rendering.
         //
-        // The collision build below proceeds immediately using the
-        // substring fallback baked into CollisionMesh::
-        // buildFromDrawablePrimitive — so foot IK / capsule physics
-        // / collision-debug overlay all work from frame zero with
-        // best-effort categories.  When the LLM thread finishes
-        // (poll block further below), we patch the cluster
-        // renderer's per-material flags SSBO so DEBUG_RENDER_MODE_
-        // CATEGORY picks up the AI verdict on the next frame.
+        // TEST CHANGE: the collision build below is now DEFERRED until
+        // the async classifier has finished — it is gated on
+        // s_mat_classifier_applied, which the poll block latches the
+        // first frame classifyAll()'s future is ready.  We wait so each
+        // primitive's Floor verdict comes from the finished AI
+        // classifier rather than the substring fallback.  Consequence:
+        // there is NO collision world (no foot IK / capsule physics /
+        // collision overlay) until the classifier lands.  That's
+        // acceptable for this floor-only test.  If classifyAll() fails
+        // (daemon down / model not pulled), the poll block STILL latches
+        // applied, so the build proceeds using the substring + geometric
+        // categories instead of blocking forever.
         //
         // s_mat_classifier / s_mat_classifier_future / s_mat_classifier_kicked
         // are declared at drawScene function scope above so the poll
@@ -6184,8 +6332,9 @@ void RealWorldApplication::drawFrame() {
             std::cout << "[collision] kicking off async LLM classifier "
                       << "(mats=" << s_mat_classifier.collectedMaterialCount()
                       << " objs=" << s_mat_classifier.collectedObjectCount()
-                      << "); collision build uses substring fallback "
-                         "until LLM finishes" << std::endl;
+                      << "); collision build is DEFERRED until the "
+                         "classifier finishes (floor-only test)"
+                      << std::endl;
             s_mat_classifier_future = std::async(
                 std::launch::async, []() {
                     return s_mat_classifier.classifyAll("Bistro");
@@ -6206,193 +6355,241 @@ void RealWorldApplication::drawFrame() {
         // brute-force (raycastDown) or no-op (resolveCapsule) per
         // mesh whose BVH isn't ready yet, then transparently switch
         // to BVH-accelerated descent once each mesh's build lands.
-        // Per-category histogram and a short sample of "Unknown"
-        // material names.  Accumulated across both buildAndAdd calls
-        // so the final summary covers exterior + interior together.
+        // Per-category histogram + a short sample of "Unknown" material
+        // names live in the s_coll_* statics (declared above) so they
+        // accumulate across the whole incremental build and the final
+        // [collision.cat] summary covers exterior + interior together.
         // The category enum has 11 values (Unknown..Ladder) -- see
         // MeshCategory in collision_mesh.h.
-        std::array<int, 11> cat_counts{};
-        std::vector<std::string> unknown_sample;
         constexpr size_t kUnknownSampleMax = 8;
 
-        auto buildAndAdd = [&](
-            const std::shared_ptr<ego::DrawableObject>& obj) {
-            if (!obj || !obj->isReady()) return;
-            const auto& data = obj->getDrawableData();
-            int built = 0;
-            int attempted = 0;
-            size_t total_tris = 0;
-            for (size_t mi = 0; mi < data.meshes_.size(); ++mi) {
-                const auto& mesh = data.meshes_[mi];
-                for (size_t pi = 0; pi < mesh.primitives_.size(); ++pi) {
-                    ++attempted;
-                    auto m = std::make_shared<engine::helper::CollisionMesh>();
-                    if (m->buildFromDrawablePrimitive(
-                            *obj, mi, pi,
-                            /*build_bvh=*/false,
-                            shape)) {
-                        total_tris += m->triangleCount();
-                        ++built;
-                        // LLM override: lookup is best-effort — the
-                        // classifier runs ASYNCHRONOUSLY on a worker
-                        // thread, so at this point (first InGame
-                        // frame) it almost certainly hasn't finished
-                        // and lookup() returns Unknown for every
-                        // name.  We still call it: if you flip to
-                        // the Volume / Original collision shape and
-                        // back later, this whole block re-runs and
-                        // the LLM verdict (now ready) gets applied
-                        // to the per-CollisionMesh category.  Object
-                        // verdict wins over material verdict inside
-                        // lookup() — see MaterialClassifier::lookup.
-                        {
-                            const auto llm_cat = s_mat_classifier.lookup(
-                                m->materialName(),
-                                m->objectName());
-                            if (llm_cat !=
-                                engine::helper::MeshCategory::Unknown) {
-                                m->setCategory(llm_cat);
+        if (s_mat_classifier_applied) {
+            // ── Enumerate the (drawable, mesh, primitive) work list
+            //    ONCE — the first frame the classifier is done AND the
+            //    drawables are ready.  While the scenes are still
+            //    streaming in the list comes back empty, so we leave
+            //    s_coll_work_enumerated false and retry next frame
+            //    instead of latching an empty collision world (this is
+            //    the incremental-build replacement for the old
+            //    any_added retry guard).
+            if (!s_coll_work_enumerated) {
+                s_coll_work.clear();
+                auto enumerateDrawable =
+                    [&](const std::shared_ptr<ego::DrawableObject>& obj) {
+                        if (!obj || !obj->isReady()) return;
+                        const auto& data = obj->getDrawableData();
+                        for (size_t mi = 0; mi < data.meshes_.size(); ++mi) {
+                            const auto& mesh = data.meshes_[mi];
+                            for (size_t pi = 0;
+                                 pi < mesh.primitives_.size(); ++pi) {
+                                s_coll_work.push_back({obj, mi, pi});
                             }
                         }
-                        // ── Geometric ceiling guard ──────────────
-                        // A mesh whose AREA-WEIGHTED dominant normal
-                        // points clearly downward is overhead (ceiling/
-                        // soffit), never a floor — you can't stand on its
-                        // underside.  Object-name classification can't
-                        // tell a ceiling from a floor when they share one
-                        // interior node name, so demote such Floor
-                        // verdicts to Ceiling here.  Summing the RAW
-                        // triangle cross products area-weights the result
-                        // (|cross| == 2*area), so big surfaces dominate
-                        // tiny chamfer tris.  Sign follows triangle
-                        // winding, which the engine keeps consistent
-                        // (raycastDown relies on floors up, ceilings down).
-                        if (m->category() ==
-                            engine::helper::MeshCategory::Floor) {
-                            const auto& cv = m->debugVertices();
-                            const auto& ci = m->debugIndices();
-                            glm::dvec3 acc(0.0);
-                            for (size_t t = 0; t + 2 < ci.size(); t += 3) {
-                                const int a = ci[t], b = ci[t+1], c = ci[t+2];
-                                if (a < 0 || b < 0 || c < 0) continue;
-                                if ((size_t)a >= cv.size() ||
-                                    (size_t)b >= cv.size() ||
-                                    (size_t)c >= cv.size()) continue;
-                                acc += glm::dvec3(glm::cross(
-                                    cv[b] - cv[a], cv[c] - cv[a]));
-                            }
-                            const double len = glm::length(acc);
-                            const float ny = (len > 0.0)
-                                ? static_cast<float>(acc.y / len) : 1.0f;
-                            static int s_ceil_log = 0;
-                            if (ny < -0.5f) {
-                                m->setCategory(
-                                    engine::helper::MeshCategory::Ceiling);
-                                if (s_ceil_log < 30) {
-                                    ++s_ceil_log;
-                                    std::cout << "[collision.ceil] Floor->"
-                                        "Ceiling dom_n.y=" << ny
-                                        << " object='" << m->objectName()
-                                        << "'" << std::endl;
-                                }
-                            } else if (s_ceil_log < 30) {
-                                ++s_ceil_log;
-                                std::cout << "[collision.ceil] kept Floor "
-                                    "dom_n.y=" << ny << " object='"
-                                    << m->objectName() << "'" << std::endl;
-                            }
-                        }
-                        // Tally the classified category before the
-                        // mesh moves into the world -- the histogram
-                        // is one of the main debugging tools when the
-                        // classifier mis-tags a primitive (e.g. a
-                        // horizontal door panel becoming Floor).
-                        auto tallyAndAdd =
-                            [&](std::shared_ptr<engine::helper::CollisionMesh> mm) {
-                                const auto cat = mm->category();
-                                const auto idx = static_cast<size_t>(cat);
-                                if (idx < cat_counts.size()) ++cat_counts[idx];
-                                if (cat == engine::helper::MeshCategory::Unknown &&
-                                    unknown_sample.size() < kUnknownSampleMax &&
-                                    !mm->materialName().empty()) {
-                                    unknown_sample.push_back(mm->materialName());
-                                }
-                                collision_world_.addMesh(std::move(mm));
-                                any_added = true;
-                            };
+                    };
+                enumerateDrawable(bistro_exterior_scene_);
+                enumerateDrawable(bistro_interior_scene_);
+                if (!s_coll_work.empty()) {
+                    s_coll_cursor = 0;
+                    s_coll_cat_counts = {};
+                    s_coll_unknown_sample.clear();
+                    s_coll_attempted = s_coll_built = s_coll_total_tris = 0;
+                    s_coll_work_enumerated = true;
+                    std::cout << "[collision] incremental build start: "
+                              << s_coll_work.size()
+                              << " primitive(s) queued (" << shape_label
+                              << ")" << std::endl;
+                }
+            }
 
-                        // Floor patches frequently bundle non-walkable
-                        // vertical faces (curb sides, step risers,
-                        // planter / fountain walls modelled into the
-                        // same "road"/"sidewalk" primitive).  Peel
-                        // those off into a Wall sub-mesh so navigation
-                        // and foot-IK only ever see genuinely walkable,
-                        // up-facing geometry.  Done AFTER the LLM
-                        // override so it acts on the final category.
-                        std::shared_ptr<engine::helper::CollisionMesh>
-                            wall_split;
-                        if (m->category() ==
-                            engine::helper::MeshCategory::Floor) {
-                            wall_split = m->splitOffVerticalFaces();
-                        }
-                        tallyAndAdd(std::move(m));
-                        if (wall_split) {
-                            tallyAndAdd(std::move(wall_split));
+            // ── Build ONE work item.  Same per-primitive logic as the
+            //    old single-frame loop body, factored out so the
+            //    time-budgeted driver below can call it one item at a
+            //    time across frames.
+            auto buildOne = [&](const CollisionBuildItem& it) {
+                const auto& obj = it.obj;
+                if (!obj || !obj->isReady()) return;
+                ++s_coll_attempted;
+                auto m = std::make_shared<engine::helper::CollisionMesh>();
+                if (m->buildFromDrawablePrimitive(
+                        *obj, it.mesh_idx, it.prim_idx,
+                        /*build_bvh=*/false,
+                        shape,
+                        // Sub-mm weld (NOT the 0.1m default, NOT zero):
+                        // merges only genuinely-coincident vertices so the
+                        // QEM pass can lock the true outer edge and
+                        // simplify the interior without holes.  The 10cm
+                        // default deleted real triangles (holes); 0
+                        // over-locked split-vertex floors so they never
+                        // simplified.  See git history for the full note.
+                        /*weld_eps=*/1.0e-3f)) {
+                    s_coll_total_tris += m->triangleCount();
+                    ++s_coll_built;
+                    // LLM override — object verdict wins over material
+                    // (see MaterialClassifier::lookup).  Now that the
+                    // build is gated on the classifier being applied,
+                    // this returns the real AI category, not Unknown.
+                    {
+                        const auto llm_cat = s_mat_classifier.lookup(
+                            m->materialName(), m->objectName());
+                        if (llm_cat !=
+                            engine::helper::MeshCategory::Unknown) {
+                            m->setCategory(llm_cat);
                         }
                     }
+                    // ── Ceiling guard: DISABLED — this was THE hole bug ──
+                    // It used to demote a Floor primitive to Ceiling (which
+                    // then EXCLUDED it from the floor-only world, leaving a
+                    // big black hole the exact shape of that primitive)
+                    // whenever the AREA-WEIGHTED *signed* normal pointed
+                    // down (ny < -0.5).
+                    //
+                    // That test summed raw triangle cross products, so it is
+                    // WINDING-DEPENDENT.  A floor primitive exported with
+                    // reversed or inconsistent triangle winding (very common
+                    // in FBX) has downward-pointing normals even though it is
+                    // a perfectly walkable, geometrically-horizontal floor —
+                    // so the guard demoted real floors and punched the holes.
+                    // Note classifyCategory's own floor/wall vote uses
+                    // abs(n.y) precisely BECAUSE winding can't be trusted;
+                    // this guard was the one winding-dependent step, hence
+                    // the bug.
+                    //
+                    // A horizontal surface is a floor regardless of which way
+                    // its (untrustworthy) normals point, so we no longer
+                    // demote.  The measurement is kept as an ADVISORY log
+                    // only; genuine overhead surfaces are already handled by
+                    // the LLM classifier's surface guard upstream.
+                    if (m->category() ==
+                        engine::helper::MeshCategory::Floor) {
+                        const auto& cv = m->debugVertices();
+                        const auto& ci = m->debugIndices();
+                        glm::dvec3 acc(0.0);
+                        for (size_t t = 0; t + 2 < ci.size(); t += 3) {
+                            const int a = ci[t], b = ci[t+1], c = ci[t+2];
+                            if (a < 0 || b < 0 || c < 0) continue;
+                            if ((size_t)a >= cv.size() ||
+                                (size_t)b >= cv.size() ||
+                                (size_t)c >= cv.size()) continue;
+                            acc += glm::dvec3(glm::cross(
+                                cv[b] - cv[a], cv[c] - cv[a]));
+                        }
+                        const double len = glm::length(acc);
+                        const float ny = (len > 0.0)
+                            ? static_cast<float>(acc.y / len) : 1.0f;
+                        if (ny < -0.5f) {
+                            // Would have been wrongly demoted+dropped before.
+                            static int s_ceil_log = 0;
+                            if (s_ceil_log < 30) {
+                                ++s_ceil_log;
+                                std::cout << "[collision.ceil] KEPT Floor "
+                                    "(guard disabled) despite downward signed "
+                                    "normal dom_n.y=" << ny << " object='"
+                                    << m->objectName()
+                                    << "' -- reversed/mixed winding"
+                                    << std::endl;
+                            }
+                        }
+                    }
+                    // Tally EVERY primitive's final category into the
+                    // histogram BEFORE the floor-only filter, so the
+                    // [collision.cat] summary still reflects the full
+                    // classification even though only Floor meshes are
+                    // added to the world.
+                    {
+                        const auto cat = m->category();
+                        const auto idx = static_cast<size_t>(cat);
+                        if (idx < s_coll_cat_counts.size())
+                            ++s_coll_cat_counts[idx];
+                        if (cat == engine::helper::MeshCategory::Unknown &&
+                            s_coll_unknown_sample.size() < kUnknownSampleMax &&
+                            !m->materialName().empty()) {
+                            s_coll_unknown_sample.push_back(
+                                m->materialName());
+                        }
+                    }
+                    // The collision map uses ONLY Floor-classified meshes.
+                    // No Wall / Object / Ceiling / Glass / Vegetation / etc.,
+                    // and NO vertical-face split (splitOffVerticalFaces would
+                    // produce Wall sub-meshes, which are "other category",
+                    // and it also PEELS triangles out of the floor mesh,
+                    // which was opening gaps).  Each Floor primitive is added
+                    // WHOLE.  Non-Floor primitives are still built + tallied
+                    // for the [collision.cat] histogram above, but never
+                    // added to the collision world.
+                    if (m->category() ==
+                        engine::helper::MeshCategory::Floor) {
+                        collision_world_.addMesh(std::move(m));
+                    }
+                }
+            };
+
+            // ── Time-budgeted slice: build work items until ~6ms of
+            //    wall clock has elapsed this frame, then resume next
+            //    frame.  Always advances at least one item so a single
+            //    expensive primitive can't stall the build.  Runs only
+            //    once the work list has actually been enumerated.
+            if (s_coll_work_enumerated) {
+                const auto _build_t0 = std::chrono::steady_clock::now();
+                constexpr double kBuildBudgetMs = 6.0;
+                while (s_coll_cursor < s_coll_work.size()) {
+                    buildOne(s_coll_work[s_coll_cursor]);
+                    ++s_coll_cursor;
+                    const double ms =
+                        std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - _build_t0)
+                        .count();
+                    if (ms >= kBuildBudgetMs) break;
+                }
+
+                // Push progress to the second (collision) bar every frame.
+                const bool build_done =
+                    (s_coll_cursor >= s_coll_work.size());
+                menu_->setCollisionBuildStatus(
+                    build_done
+                        ? engine::ui::Menu::CollisionBuildStatus::Done
+                        : engine::ui::Menu::CollisionBuildStatus::Building,
+                    s_coll_cursor,
+                    s_coll_work.size(),
+                    collision_world_.meshCount());
+
+                // Finalise once every queued primitive has been processed.
+                if (build_done) {
+                    collision_world_built_ = true;
+                    std::cout << "[collision] World ready: "
+                              << collision_world_.meshCount()
+                              << " mesh(es) total (" << s_coll_built << "/"
+                              << s_coll_attempted << " prims built, "
+                              << s_coll_total_tris << " tris)" << std::endl;
+                    // Category histogram + Unknown sample (colour key:
+                    // Floor green, Wall red, Door amber, Object purple,
+                    // Glass cyan, Unknown grey).
+                    std::cout << "[collision.cat] Unknown=" << s_coll_cat_counts[0]
+                              << " Floor="      << s_coll_cat_counts[1]
+                              << " Wall="       << s_coll_cat_counts[2]
+                              << " Door="       << s_coll_cat_counts[3]
+                              << " Object="     << s_coll_cat_counts[4]
+                              << " Glass="      << s_coll_cat_counts[5]
+                              << " Ceiling="    << s_coll_cat_counts[6]
+                              << " Stairs="     << s_coll_cat_counts[7]
+                              << " Vegetation=" << s_coll_cat_counts[8]
+                              << " Elevator="   << s_coll_cat_counts[9]
+                              << " Ladder="     << s_coll_cat_counts[10]
+                              << std::endl;
+                    if (!s_coll_unknown_sample.empty()) {
+                        std::cout << "[collision.cat] Unknown sample materials:";
+                        for (const auto& s : s_coll_unknown_sample) {
+                            std::cout << " \"" << s << "\"";
+                        }
+                        std::cout << std::endl;
+                    }
+                    // Kick off per-mesh SAH BVH construction on a
+                    // background thread (non-blocking — foot raycasts use
+                    // brute force per mesh until that mesh's BVH lands).
+                    collision_world_.buildBVHsAsync();
+                    std::cout << "[collision] BVH async build started"
+                              << std::endl;
                 }
             }
-            if (attempted > 0) {
-                // Report attempted vs built so coverage gaps in the
-                // collision overlay become obvious — if attempted >>
-                // built, some primitives are being silently dropped
-                // inside buildFromDrawablePrimitive (see
-                // [collision.drop] logs for per-reason throttled
-                // detail).
-                std::cout << "[collision] " << built << "/" << attempted
-                          << " primitive(s), " << total_tris
-                          << " tris (" << shape_label
-                          << ") from drawable" << std::endl;
-            }
-        };
-        buildAndAdd(bistro_exterior_scene_);
-        buildAndAdd(bistro_interior_scene_);
-        if (any_added) {
-            collision_world_built_ = true;
-            std::cout << "[collision] World ready: "
-                      << collision_world_.meshCount()
-                      << " mesh(es) total" << std::endl;
-            // Category histogram + sample of "Unknown" material names
-            // so the heuristic can be tuned by inspecting the log.
-            // Colour-key reminder matches the fragment shader switch:
-            //   Floor green, Wall red, Door amber, Object purple,
-            //   Glass cyan, Unknown grey.
-            std::cout << "[collision.cat] Unknown=" << cat_counts[0]
-                      << " Floor="      << cat_counts[1]
-                      << " Wall="       << cat_counts[2]
-                      << " Door="       << cat_counts[3]
-                      << " Object="     << cat_counts[4]
-                      << " Glass="      << cat_counts[5]
-                      << " Ceiling="    << cat_counts[6]
-                      << " Stairs="     << cat_counts[7]
-                      << " Vegetation=" << cat_counts[8]
-                      << " Elevator="   << cat_counts[9]
-                      << " Ladder="     << cat_counts[10]
-                      << std::endl;
-            if (!unknown_sample.empty()) {
-                std::cout << "[collision.cat] Unknown sample materials:";
-                for (const auto& s : unknown_sample) {
-                    std::cout << " \"" << s << "\"";
-                }
-                std::cout << std::endl;
-            }
-            // Kick off per-mesh SAH BVH construction on a background
-            // thread.  Non-blocking — foot raycasts use brute force
-            // per mesh until that mesh's BVH lands, then switch to
-            // O(log N) descent.  See helper::CollisionWorld::
-            // buildBVHsAsync for the worker loop.
-            collision_world_.buildBVHsAsync();
-            std::cout << "[collision] BVH async build started" << std::endl;
         }
         gpu_profiler_.endCpuScope(_cpu_coll);
     }
@@ -6410,7 +6607,8 @@ void RealWorldApplication::drawFrame() {
     // the block becomes a single byte-load for the rest of the
     // session.
     {
-        static bool s_mat_classifier_applied = false;
+        // s_mat_classifier_applied is now declared at drawScene function
+        // scope (above) so the collision-build block can gate on it.
         // Wall-clock anchor for the progress heartbeat below.  Set on
         // the first frame the worker is detected pending, then used
         // to throttle status prints to one every 5 s — enough cadence

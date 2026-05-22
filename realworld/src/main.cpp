@@ -7,6 +7,8 @@
 #include <cstring>
 #include <memory>
 #include <thread>
+#include <filesystem>
+#include <ctime>
 
 #include "application.h"
 #include "helper/cluster_mesh.h"  // engine::helper::clusterRenderingEnabled()
@@ -66,6 +68,43 @@ static bool parseClusterDebugFlag(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
+    // ── Route stdout to a log file ───────────────────────────────────
+    // The engine prints a lot of per-frame debug ([player.*], [cw.*],
+    // [foot_ray], [follow], …) plus one-shot load diagnostics
+    // ([collision.*], [mesh.fbx], [QEM.holes], …).  That floods the
+    // console, so send std::cout to a timestamped file under logs/.
+    // std::cerr is left on the console for genuine errors.  The
+    // ofstream is static so its buffer outlives every std::cout for the
+    // whole run.  Run with ENGINE_LOG_CONSOLE=1 to keep stdout on the
+    // terminal instead (e.g. for quick interactive debugging).
+    static std::ofstream s_stdout_log;
+    {
+        char*  keep_console = nullptr;
+        size_t keep_len     = 0;
+        _dupenv_s(&keep_console, &keep_len, "ENGINE_LOG_CONSOLE");
+        const bool to_console =
+            keep_console && keep_len && keep_console[0] == '1';
+        if (keep_console) free(keep_console);
+        if (!to_console) {
+            std::error_code ec;
+            std::filesystem::create_directories("logs", ec);
+            std::time_t now_t = std::time(nullptr);
+            std::tm     tm_local{};
+            localtime_s(&tm_local, &now_t);
+            char fname[256];
+            std::strftime(
+                fname, sizeof(fname),
+                "logs/engine_stdout_%Y-%m-%d_%H-%M-%S.log", &tm_local);
+            s_stdout_log.open(fname);
+            if (s_stdout_log.is_open()) {
+                std::cout.rdbuf(s_stdout_log.rdbuf());
+                std::cerr << "[log] stdout -> " << fname
+                          << "  (set ENGINE_LOG_CONSOLE=1 to keep it on "
+                             "the console)" << std::endl;
+            }
+        }
+    }
+
     // Flip the global toggle before any mesh loads so the build path can
     // pick it up and produce ClusterMesh sidecars.
     if (parseClusterDebugFlag(argc, argv)) {
