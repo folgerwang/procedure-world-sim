@@ -3154,6 +3154,17 @@ void RealWorldApplication::drawScene(
                                 << FEATURE_INPUT_HIZ_MIP_SHIFT)
                                & FEATURE_INPUT_HIZ_MIP_MASK;
             }
+            // Floor-only debug background: when the collision-LOD
+            // overlay is active AND the ML classifier has tagged the
+            // materials, restrict the textured scene to Floor-category
+            // geometry so it matches the floor-only collision overlay.
+            // Gated on categoriesApplied() so the background is NOT
+            // blanked before classification finishes (pre-ML the full
+            // scene shows under the fallback floor overlay).
+            if (menu_->isCollisionDebugOn() && !collision_world_.empty() &&
+                cluster_renderer_ && cluster_renderer_->categoriesApplied()) {
+                input_flags |= FEATURE_INPUT_FLOOR_ONLY;
+            }
             main_camera_object_->setInputFeatureFlags(input_flags);
         }
 
@@ -3875,164 +3886,13 @@ void RealWorldApplication::drawScene(
             engine::helper::GpuProfiler::Scope _scope_forward(
                 gpu_profiler_, cmd_buf, "Forward Pass");
 
-            if (show_collision_dbg) {
-                // Replaces the normal forward pass: open our own dynamic
-                // rendering scope on the same color/depth targets that
-                // ObjectSceneView::draw would have used. Without this the
-                // CollisionDebugDraw pipeline executes outside any render
-                // pass instance and produces no visible output (validation
-                // layers flag it; release builds just discard the draw).
-                auto color_buf = object_scene_view_->getColorBuffer();
-                auto depth_buf = object_scene_view_->getDepthBuffer();
-
-                er::RenderingAttachmentInfo color_attach;
-                color_attach.image_view   = color_buf->view;
-                color_attach.image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
-                color_attach.load_op      = er::AttachmentLoadOp::CLEAR;
-                color_attach.store_op     = er::AttachmentStoreOp::STORE;
-                // Scene color clear.  Pure blue (0, 0, 1) — chosen as
-                // a vivid, clearly-non-natural colour so any pixel that
-                // ends up still showing this value at end-of-frame is
-                // an obvious "nothing drew here" signal (sky pass skip,
-                // depth-test reject, fullscreen pass that didn't fire).
-                color_attach.clear_value.color = { {0.0f, 0.0f, 1.0f, 1.0f} };
-
-                er::RenderingAttachmentInfo depth_attach;
-                depth_attach.image_view   = depth_buf->view;
-                depth_attach.image_layout = er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                depth_attach.load_op      = er::AttachmentLoadOp::CLEAR;
-                depth_attach.store_op     = er::AttachmentStoreOp::STORE;
-                depth_attach.clear_value.depth_stencil = { 1.0f, 0 };
-
-                er::RenderingInfo ri = {};
-                ri.render_area_offset  = { 0, 0 };
-                ri.render_area_extent  = swap_chain_info.extent;
-                ri.layer_count         = 1;
-                ri.view_mask           = 0;
-                ri.color_attachments   = { color_attach };
-                ri.depth_attachments   = { depth_attach };
-                ri.stencil_attachments = {};
-
-                cmd_buf->beginDynamicRendering(ri);
-
-                er::Viewport vp;
-                vp.x = 0.0f; vp.y = 0.0f;
-                vp.width     = float(swap_chain_info.extent.x);
-                vp.height    = float(swap_chain_info.extent.y);
-                vp.min_depth = 0.0f;
-                vp.max_depth = 1.0f;
-                er::Scissor sc;
-                sc.offset = glm::ivec2(0);
-                sc.extent = swap_chain_info.extent;
-                std::vector<er::Viewport> viewports = { vp };
-                std::vector<er::Scissor>  scissors  = { sc };
-
-                // The collision pipeline layout is exactly two sets:
-                //   set 0 = PBR_GLOBAL_PARAMS_SET (shared layout, even
-                //           though the collision shaders don't sample
-                //           it -- the layout list at pipeline create
-                //           time included it for parity with ShapeBase
-                //           / ClusterDebugDraw)
-                //   set 1 = VIEW_PARAMS_SET (camera view-proj SSBO,
-                //           consumed by collision_debug.vert)
-                // We MUST pass exactly two descriptor sets here. The
-                // application's `desc_sets` has 5+ slots (PBR, VIEW,
-                // MATERIAL, SKIN, RUNTIME_LIGHTS, ...); calling
-                // bindDescriptorSets with that full list against a
-                // 2-layout pipeline crashes the driver inside
-                // CmdBindDescriptorSets.  Mirror the slicing pattern
-                // ClusterDebugDraw uses inside drawable_object.cpp.
-                er::DescriptorSetList collision_desc_sets = {
-                    desc_sets[PBR_GLOBAL_PARAMS_SET],
-                    main_camera_object_->getViewCameraDescriptorSet(),
-                };
-
-                // Isolate-debug slider: feed the menu the live mesh count
-                // (slider range) and, when isolating, the identity of the
-                // selected mesh so the overlay shows index -> mesh.  Pass
-                // the isolate index to drawDebug so only that mesh draws.
-                int collision_isolate = -1;
-                if (menu_) {
-                    menu_->setCollisionMeshCount(collision_world_.meshCount());
-                    if (menu_->collisionIsolateEnabled()) {
-                        collision_isolate = menu_->collisionIsolateIndex();
-                        const auto* cm = collision_world_.meshAt(
-                            static_cast<size_t>(collision_isolate));
-                        if (cm) {
-                            std::string info =
-                                "index " +
-                                std::to_string(collision_isolate) + " / " +
-                                std::to_string(collision_world_.meshCount()) +
-                                "\ncategory = " +
-                                engine::helper::meshCategoryTag(cm->category()) +
-                                "\ntris = " +
-                                std::to_string(cm->triangleCount()) +
-                                "\nmaterial = '" + cm->materialName() + "'" +
-                                "\nobject = '" + cm->objectName() + "'";
-                            menu_->setCollisionIsolateInfo(info);
-                            // On index change: log the identity AND dump the
-                            // mesh's exact triangles to an OBJ in the
-                            // workspace folder so the geometry can be
-                            // inspected off-line (interior holes /
-                            // disconnected pieces a screenshot can't show).
-                            // The path is hard-coded to the project root for
-                            // debugging; remove this dump when done.
-                            static int s_last_iso = -1;
-                            if (collision_isolate != s_last_iso) {
-                                s_last_iso = collision_isolate;
-                                std::cout << "[collision.isolate] " << info
-                                          << std::endl;
-                                std::ofstream obj(
-                                    "G:/work/procedure-world-sim/"
-                                    "debug_isolated_mesh.obj");
-                                if (obj.is_open()) {
-                                    obj << "# collision mesh index "
-                                        << collision_isolate << "  cat="
-                                        << engine::helper::meshCategoryTag(
-                                               cm->category())
-                                        << "  tris=" << cm->triangleCount()
-                                        << "  mat=" << cm->materialName()
-                                        << "  obj=" << cm->objectName()
-                                        << "\n";
-                                    const auto& dv = cm->debugVertices();
-                                    const auto& di = cm->debugIndices();
-                                    for (const auto& v : dv)
-                                        obj << "v " << v.x << " " << v.y
-                                            << " " << v.z << "\n";
-                                    for (size_t t = 0; t + 2 < di.size();
-                                         t += 3)
-                                        obj << "f " << (di[t] + 1) << " "
-                                            << (di[t + 1] + 1) << " "
-                                            << (di[t + 2] + 1) << "\n";
-                                    std::cout << "[collision.isolate] dumped "
-                                                 "OBJ ("
-                                              << dv.size() << " verts, "
-                                              << di.size() / 3 << " tris) -> "
-                                                 "debug_isolated_mesh.obj"
-                                              << std::endl;
-                                }
-                            }
-                        } else {
-                            menu_->setCollisionIsolateInfo(
-                                "index out of range");
-                        }
-                    }
-                }
-
-                collision_world_.drawDebug(
-                    device_, cmd_buf, collision_desc_sets, viewports,
-                    scissors, collision_isolate);
-
-                cmd_buf->endDynamicRendering();
-            } else {
-                object_scene_view_->draw(
-                    cmd_buf,
-                    desc_sets,
-                    nullptr,
-                    s_dbuf_idx,
-                    delta_t,
-                    current_time);
-            }
+            object_scene_view_->draw(
+                cmd_buf,
+                desc_sets,
+                nullptr,
+                s_dbuf_idx,
+                delta_t,
+                current_time);
 
             // _scope_forward auto-closes via RAII.
         }
@@ -4049,8 +3909,7 @@ void RealWorldApplication::drawScene(
         // drew per-mesh segmentation colors and we want them to remain the
         // only thing on screen.
         if (cluster_renderer_ && cluster_renderer_->isEnabled() &&
-            !engine::helper::clusterRenderingEnabled() &&
-            !show_collision_dbg) {
+            !engine::helper::clusterRenderingEnabled()) {
             // CPU+GPU combined scope (records on CPU + executes on GPU).
             engine::helper::GpuProfiler::Scope _scope_cluster(
                 gpu_profiler_, cmd_buf, "Cluster Bindless Draw");
@@ -4590,8 +4449,7 @@ void RealWorldApplication::drawScene(
         // single draw function) is deliberate — see the comment block
         // at the top of drawTranslucentOit for the rationale.
         if (cluster_renderer_ && cluster_renderer_->isEnabled() &&
-            !engine::helper::clusterRenderingEnabled() &&
-            !show_collision_dbg) {
+            !engine::helper::clusterRenderingEnabled()) {
             engine::helper::GpuProfiler::Scope _scope_glass(
                 gpu_profiler_, cmd_buf, "Glass / Translucent");
 
@@ -4674,6 +4532,139 @@ void RealWorldApplication::drawScene(
                     screen_size);
             }
             // _scope_glass auto-closes via RAII.
+        }
+
+        // ── Collision LOD overlay (debug) ────────────
+        // Draw the simplified collision meshes translucently (per-
+        // category colour, ~80% opacity) on TOP of the fully-rendered,
+        // textured scene so the LOD proxy can be compared against the
+        // original geometry.  LOAD the scene colour + depth so the
+        // overlay blends over the scene and is occluded by it; the
+        // collision solid pipeline is alpha-blended + biased toward the
+        // camera so it wins over the coincident original surface it
+        // approximates.  Replaces the old clear-to-blue segmentation
+        // view (same isolate-debug controls, now drawn over the scene).
+        if (show_collision_dbg) {
+            engine::helper::GpuProfiler::Scope _scope_coll_overlay(
+                gpu_profiler_, cmd_buf, "Collision LOD overlay");
+
+            auto color_buf = object_scene_view_->getColorBuffer();
+            auto depth_buf = object_scene_view_->getDepthBuffer();
+
+            er::RenderingAttachmentInfo color_attach;
+            color_attach.image_view   = color_buf->view;
+            color_attach.image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+            color_attach.load_op      = er::AttachmentLoadOp::LOAD;
+            color_attach.store_op     = er::AttachmentStoreOp::STORE;
+
+            er::RenderingAttachmentInfo depth_attach;
+            depth_attach.image_view   = depth_buf->view;
+            depth_attach.image_layout = er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            depth_attach.load_op      = er::AttachmentLoadOp::LOAD;
+            depth_attach.store_op     = er::AttachmentStoreOp::STORE;
+
+            er::RenderingInfo ri = {};
+            ri.render_area_offset  = { 0, 0 };
+            ri.render_area_extent  = screen_size;
+            ri.layer_count         = 1;
+            ri.view_mask           = 0;
+            ri.color_attachments   = { color_attach };
+            ri.depth_attachments   = { depth_attach };
+            ri.stencil_attachments = {};
+            cmd_buf->beginDynamicRendering(ri);
+
+            er::Viewport vp;
+            vp.x = 0.0f; vp.y = 0.0f;
+            vp.width  = static_cast<float>(screen_size.x);
+            vp.height = static_cast<float>(screen_size.y);
+            vp.min_depth = 0.0f; vp.max_depth = 1.0f;
+            er::Scissor sc;
+            sc.offset = glm::ivec2(0);
+            sc.extent = screen_size;
+            std::vector<er::Viewport> viewports = { vp };
+            std::vector<er::Scissor>  scissors  = { sc };
+
+            // Collision pipeline layout = exactly two descriptor sets:
+            // set 0 PBR-global (part of the layout, not sampled by the
+            // collision shaders) and set 1 the camera view-proj SSBO
+            // consumed by collision_debug.vert.
+            er::DescriptorSetList collision_desc_sets = {
+                pbr_lighting_desc_set_,
+                main_camera_object_->getViewCameraDescriptorSet(),
+            };
+
+                int collision_isolate = -1;
+                if (menu_) {
+                    menu_->setCollisionMeshCount(collision_world_.meshCount());
+                    if (menu_->collisionIsolateEnabled()) {
+                        collision_isolate = menu_->collisionIsolateIndex();
+                        const auto* cm = collision_world_.meshAt(
+                            static_cast<size_t>(collision_isolate));
+                        if (cm) {
+                            std::string info =
+                                "index " +
+                                std::to_string(collision_isolate) + " / " +
+                                std::to_string(collision_world_.meshCount()) +
+                                "\ncategory = " +
+                                engine::helper::meshCategoryTag(cm->category()) +
+                                "\ntris = " +
+                                std::to_string(cm->triangleCount()) +
+                                "\nmaterial = '" + cm->materialName() + "'" +
+                                "\nobject = '" + cm->objectName() + "'";
+                            menu_->setCollisionIsolateInfo(info);
+                            // On index change: log the identity AND dump the
+                            // mesh's exact triangles to an OBJ in the
+                            // workspace folder so the geometry can be
+                            // inspected off-line (interior holes /
+                            // disconnected pieces a screenshot can't show).
+                            // The path is hard-coded to the project root for
+                            // debugging; remove this dump when done.
+                            static int s_last_iso = -1;
+                            if (collision_isolate != s_last_iso) {
+                                s_last_iso = collision_isolate;
+                                std::cout << "[collision.isolate] " << info
+                                          << std::endl;
+                                std::ofstream obj(
+                                    "G:/work/procedure-world-sim/"
+                                    "debug_isolated_mesh.obj");
+                                if (obj.is_open()) {
+                                    obj << "# collision mesh index "
+                                        << collision_isolate << "  cat="
+                                        << engine::helper::meshCategoryTag(
+                                               cm->category())
+                                        << "  tris=" << cm->triangleCount()
+                                        << "  mat=" << cm->materialName()
+                                        << "  obj=" << cm->objectName()
+                                        << "\n";
+                                    const auto& dv = cm->debugVertices();
+                                    const auto& di = cm->debugIndices();
+                                    for (const auto& v : dv)
+                                        obj << "v " << v.x << " " << v.y
+                                            << " " << v.z << "\n";
+                                    for (size_t t = 0; t + 2 < di.size();
+                                         t += 3)
+                                        obj << "f " << (di[t] + 1) << " "
+                                            << (di[t + 1] + 1) << " "
+                                            << (di[t + 2] + 1) << "\n";
+                                    std::cout << "[collision.isolate] dumped "
+                                                 "OBJ ("
+                                              << dv.size() << " verts, "
+                                              << di.size() / 3 << " tris) -> "
+                                                 "debug_isolated_mesh.obj"
+                                              << std::endl;
+                                }
+                            }
+                        } else {
+                            menu_->setCollisionIsolateInfo(
+                                "index out of range");
+                        }
+                    }
+                }
+
+                collision_world_.drawDebug(
+                    device_, cmd_buf, collision_desc_sets, viewports,
+                    scissors, collision_isolate);
+            cmd_buf->endDynamicRendering();
         }
 
         // Transition ALL cascade layers back to depth-attachment for next frame.
