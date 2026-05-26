@@ -6354,6 +6354,22 @@ void RealWorldApplication::drawFrame() {
         // MeshCategory in collision_mesh.h.
         constexpr size_t kUnknownSampleMax = 8;
 
+        // GATED on the ML classifier finishing: the simplified collision
+        // meshes are generated only AFTER the material categories have been
+        // computed, so every primitive's Floor verdict reflects the finished
+        // ML classifier (the floor name-rule in buildOne still WINS on top of
+        // it).  s_mat_classifier_applied is latched true by the poll block
+        // the first frame classifyAll()'s future is ready (and stays false
+        // until then), so the enumerate + build below simply doesn't run
+        // while the classifier is still working its way through the 511
+        // material/object names.  (If classifyAll() fails outright the poll
+        // block STILL latches applied, so the build proceeds on the geometric
+        // + name categories instead of blocking forever.)
+        //
+        // NOTE: this deferral is intentional -- it is NOT what blanked the
+        // overlay earlier; that was a truncated cleanup() tail that stopped
+        // the whole file compiling.  With the file fixed, the overlay simply
+        // populates once the ML pass (orange progress bar) completes.
         if (s_mat_classifier_applied) {
             // ── Enumerate the (drawable, mesh, primitive) work list
             //    ONCE — the first frame the classifier is done AND the
@@ -6400,117 +6416,122 @@ void RealWorldApplication::drawFrame() {
                 const auto& obj = it.obj;
                 if (!obj || !obj->isReady()) return;
                 ++s_coll_attempted;
+
+                // ── Resolve material + object NAME first, WITHOUT building ──
+                // "Simplify AFTER material category": the kept-category
+                // decision is purely name-based (LLM verdict + the
+                // deterministic floor name-rule), so we make it BEFORE paying
+                // for the expensive weld + QEM decimation.  Only meshes we are
+                // going to keep (Floor) get simplified; every other primitive
+                // is tallied for the [collision.cat] histogram and skipped.
+                const auto& data = obj->getDrawableData();
+                if (it.mesh_idx >= data.meshes_.size()) return;
+                const auto& mesh = data.meshes_[it.mesh_idx];
+                if (it.prim_idx >= mesh.primitives_.size()) return;
+                const auto& prim = mesh.primitives_[it.prim_idx];
+
+                std::string mat_name;
+                if (prim.material_idx_ >= 0 &&
+                    static_cast<size_t>(prim.material_idx_) <
+                        data.materials_.size()) {
+                    mat_name = data.materials_[prim.material_idx_].name_;
+                }
+                std::string obj_name;
+                for (const auto& node : data.nodes_) {
+                    if (node.mesh_idx_ == static_cast<int32_t>(it.mesh_idx)) {
+                        obj_name = node.name_;
+                        break;
+                    }
+                }
+
+                // ── Decide the material category from NAME only ──
+                engine::helper::MeshCategory cat =
+                    engine::helper::MeshCategory::Unknown;
+                // LLM verdict — GUARDED on s_mat_classifier_applied so we only
+                // READ the classifier map once classifyAll() has finished on
+                // its background thread (never race the writer).
+                if (s_mat_classifier_applied) {
+                    const auto llm_cat =
+                        s_mat_classifier.lookup(mat_name, obj_name);
+                    if (llm_cat != engine::helper::MeshCategory::Unknown)
+                        cat = llm_cat;
+                }
+                // Deterministic floor name-rule — WINS over the LLM verdict.
+                // Catches the pavement / cobblestone ground the LLM mislabels
+                // as Object/Unknown (the holes).  Extend the keyword list if a
+                // ground material is still missed (watch [collision.excluded]).
+                {
+                    auto named = [&](const char* k) {
+                        return mat_name.find(k) != std::string::npos;
+                    };
+                    if (named("Pavement")  || named("Cobblestone") ||
+                        named("Sidewalk")  || named("Asphalt")     ||
+                        named("Road")      || named("Gutter")      ||
+                        named("Plaza")     || named("Floor")       ||
+                        named("Ground")) {
+                        cat = engine::helper::MeshCategory::Floor;
+                    }
+                }
+
+                // Tally EVERY primitive's category into the histogram BEFORE
+                // the floor-only filter so [collision.cat] still reflects the
+                // full classification even though only Floor meshes are built.
+                {
+                    const auto idx = static_cast<size_t>(cat);
+                    if (idx < s_coll_cat_counts.size())
+                        ++s_coll_cat_counts[idx];
+                    if (cat == engine::helper::MeshCategory::Unknown &&
+                        s_coll_unknown_sample.size() < kUnknownSampleMax &&
+                        !mat_name.empty()) {
+                        s_coll_unknown_sample.push_back(mat_name);
+                    }
+                }
+
+                // Non-Floor: do NOT simplify.  Log the excluded material once
+                // (worklist for the name-rule) and skip the build entirely.
+                if (cat != engine::helper::MeshCategory::Floor) {
+                    static std::vector<std::string> s_excluded_seen;
+                    if (!mat_name.empty()) {
+                        bool seen = false;
+                        for (const auto& s : s_excluded_seen) {
+                            if (s == mat_name) { seen = true; break; }
+                        }
+                        if (!seen) {
+                            s_excluded_seen.push_back(mat_name);
+                            std::cout << "[collision.excluded] cat="
+                                      << static_cast<int>(cat)
+                                      << " mat='" << mat_name
+                                      << "' obj='" << obj_name << "'"
+                                      << std::endl;
+                        }
+                    }
+                    return;
+                }
+
+                // ── Floor: NOW build + simplify (weld + QEM decimate) ──
+                // This is the ordering the request asks for: simplification
+                // happens only AFTER the material category is settled, and
+                // only for the meshes we keep.
                 auto m = std::make_shared<engine::helper::CollisionMesh>();
                 if (m->buildFromDrawablePrimitive(
                         *obj, it.mesh_idx, it.prim_idx,
                         /*build_bvh=*/false,
                         shape,
                         // Sub-mm weld (NOT the 0.1m default, NOT zero):
-                        // merges only genuinely-coincident vertices so the
-                        // QEM pass can lock the true outer edge and
-                        // simplify the interior without holes.  The 10cm
-                        // default deleted real triangles (holes); 0
-                        // over-locked split-vertex floors so they never
-                        // simplified.  See git history for the full note.
+                        // merges only genuinely-coincident vertices so the QEM
+                        // pass can lock the true outer edge and simplify the
+                        // interior without holes.  10cm deleted real triangles
+                        // (holes); 0 over-locked split-vertex floors so they
+                        // never simplified.  See git history for the note.
                         /*weld_eps=*/1.0e-3f)) {
                     s_coll_total_tris += m->triangleCount();
                     ++s_coll_built;
-                    // LLM override — object verdict wins over material
-                    // (see MaterialClassifier::lookup).  Now that the
-                    // build is gated on the classifier being applied,
-                    // this returns the real AI category, not Unknown.
-                    {
-                        const auto llm_cat = s_mat_classifier.lookup(
-                            m->materialName(), m->objectName());
-                        if (llm_cat !=
-                            engine::helper::MeshCategory::Unknown) {
-                            m->setCategory(llm_cat);
-                        }
-                    }
-                    // ── Ceiling guard: DISABLED — this was THE hole bug ──
-                    // It used to demote a Floor primitive to Ceiling (which
-                    // then EXCLUDED it from the floor-only world, leaving a
-                    // big black hole the exact shape of that primitive)
-                    // whenever the AREA-WEIGHTED *signed* normal pointed
-                    // down (ny < -0.5).
-                    //
-                    // That test summed raw triangle cross products, so it is
-                    // WINDING-DEPENDENT.  A floor primitive exported with
-                    // reversed or inconsistent triangle winding (very common
-                    // in FBX) has downward-pointing normals even though it is
-                    // a perfectly walkable, geometrically-horizontal floor —
-                    // so the guard demoted real floors and punched the holes.
-                    // Note classifyCategory's own floor/wall vote uses
-                    // abs(n.y) precisely BECAUSE winding can't be trusted;
-                    // this guard was the one winding-dependent step, hence
-                    // the bug.
-                    //
-                    // A horizontal surface is a floor regardless of which way
-                    // its (untrustworthy) normals point, so we no longer
-                    // demote.  The measurement is kept as an ADVISORY log
-                    // only; genuine overhead surfaces are already handled by
-                    // the LLM classifier's surface guard upstream.
-                    if (m->category() ==
-                        engine::helper::MeshCategory::Floor) {
-                        const auto& cv = m->debugVertices();
-                        const auto& ci = m->debugIndices();
-                        glm::dvec3 acc(0.0);
-                        for (size_t t = 0; t + 2 < ci.size(); t += 3) {
-                            const int a = ci[t], b = ci[t+1], c = ci[t+2];
-                            if (a < 0 || b < 0 || c < 0) continue;
-                            if ((size_t)a >= cv.size() ||
-                                (size_t)b >= cv.size() ||
-                                (size_t)c >= cv.size()) continue;
-                            acc += glm::dvec3(glm::cross(
-                                cv[b] - cv[a], cv[c] - cv[a]));
-                        }
-                        const double len = glm::length(acc);
-                        const float ny = (len > 0.0)
-                            ? static_cast<float>(acc.y / len) : 1.0f;
-                        if (ny < -0.5f) {
-                            // Would have been wrongly demoted+dropped before.
-                            static int s_ceil_log = 0;
-                            if (s_ceil_log < 30) {
-                                ++s_ceil_log;
-                                std::cout << "[collision.ceil] KEPT Floor "
-                                    "(guard disabled) despite downward signed "
-                                    "normal dom_n.y=" << ny << " object='"
-                                    << m->objectName()
-                                    << "' -- reversed/mixed winding"
-                                    << std::endl;
-                            }
-                        }
-                    }
-                    // Tally EVERY primitive's final category into the
-                    // histogram BEFORE the floor-only filter, so the
-                    // [collision.cat] summary still reflects the full
-                    // classification even though only Floor meshes are
-                    // added to the world.
-                    {
-                        const auto cat = m->category();
-                        const auto idx = static_cast<size_t>(cat);
-                        if (idx < s_coll_cat_counts.size())
-                            ++s_coll_cat_counts[idx];
-                        if (cat == engine::helper::MeshCategory::Unknown &&
-                            s_coll_unknown_sample.size() < kUnknownSampleMax &&
-                            !m->materialName().empty()) {
-                            s_coll_unknown_sample.push_back(
-                                m->materialName());
-                        }
-                    }
-                    // The collision map uses ONLY Floor-classified meshes.
-                    // No Wall / Object / Ceiling / Glass / Vegetation / etc.,
-                    // and NO vertical-face split (splitOffVerticalFaces would
-                    // produce Wall sub-meshes, which are "other category",
-                    // and it also PEELS triangles out of the floor mesh,
-                    // which was opening gaps).  Each Floor primitive is added
-                    // WHOLE.  Non-Floor primitives are still built + tallied
-                    // for the [collision.cat] histogram above, but never
-                    // added to the collision world.
-                    if (m->category() ==
-                        engine::helper::MeshCategory::Floor) {
-                        collision_world_.addMesh(std::move(m));
-                    }
+                    // Enforce the name/LLM Floor verdict over whatever the
+                    // geometric classifier voted inside the build (floor
+                    // primitives with reversed/mixed winding can otherwise
+                    // come back mis-voted as Wall/Ceiling).
+                    m->setCategory(engine::helper::MeshCategory::Floor);
+                    collision_world_.addMesh(std::move(m));
                 }
             };
 
