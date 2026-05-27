@@ -1934,6 +1934,18 @@ void RealWorldApplication::initVulkan() {
     // only fires once via the `!isSpawned()` latch.
 
     player_controller_ = std::make_unique<ego::PlayerController>();
+    // Feed the foot-IK solver a ground probe.  PlayerController plants each
+    // foot independently via two-bone IK and needs the ground height +
+    // surface normal under each foot; queryGroundAt reuses the walkable
+    // collision world (when populated) and falls back to the rendered scene
+    // geometry, so feet stay grounded even before / without the LLM
+    // walkable classification.  The lambda captures `this`; it is only
+    // invoked later (per frame) once the scene members are populated.
+    player_controller_->setGroundQuery(
+        [this](float gx, float gz, float yh,
+               float& gy, glm::vec3& gn) -> bool {
+            return this->queryGroundAt(gx, gz, yh, gy, gn);
+        });
 
     // Bistro scenes contain a sky dome mesh that draws a purple atmospheric
     // background.  Disabled so only game objects and the player render.
@@ -4954,6 +4966,115 @@ void RealWorldApplication::drawScene(
     s_dbuf_idx = 1 - s_dbuf_idx;
 }
 
+bool RealWorldApplication::queryGroundAt(
+    float x, float z, float y_hint,
+    float& out_y, glm::vec3& out_normal) {
+    // Tiers 1-2: the walkable collision world (BVH) when built & non-empty.
+    // Tier 1 starts just above the expected foot level (won't grab an upper
+    // storey); tier 2 starts high to recover a foot that sits below the floor.
+    if (collision_world_built_ && !collision_world_.empty()) {
+        glm::vec3 hit, nrm;
+        if (collision_world_.raycastDown(glm::vec3(x, y_hint + 2.0f, z),
+                                         200.0f, hit, nrm) ||
+            collision_world_.raycastDown(glm::vec3(x, y_hint + 80.0f, z),
+                                         200.0f, hit, nrm)) {
+            out_y = hit.y;
+            out_normal = (glm::length(nrm) > 0.1f)
+                ? glm::normalize(nrm) : glm::vec3(0.0f, 1.0f, 0.0f);
+            if (out_normal.y < 0.0f) out_normal = -out_normal;
+            return true;
+        }
+    }
+
+    // Tier 3: vertical ray through the ACTUAL rendered scene geometry,
+    // classification-independent (works even when nothing was tagged
+    // WALKABLE_SURFACE).  Picks the surface whose Y is nearest y_hint and
+    // returns its triangle normal.  Per-triangle work is budgeted; a
+    // world-AABB column test rejects most meshes first.
+    const glm::vec3 ro(x, y_hint + 100.0f, z);
+    bool  found  = false;
+    float best_y = 0.0f;
+    float best_d = std::numeric_limits<float>::max();
+    glm::vec3 best_n(0.0f, 1.0f, 0.0f);
+    int   budget = 120000;
+    auto probe = [&](const std::shared_ptr<ego::DrawableObject>& obj) {
+        if (!obj || !obj->isReady()) return;
+        const auto& d = obj->getDrawableData();
+        for (const auto& nd : d.nodes_) {
+            if (nd.mesh_idx_ < 0 || nd.mesh_idx_ >= (int)d.meshes_.size())
+                continue;
+            const auto& msh = d.meshes_[nd.mesh_idx_];
+            if (!msh.vertex_position_ || msh.bbox_min_.x > msh.bbox_max_.x)
+                continue;
+            const glm::mat4& M = nd.cached_matrix_;
+            glm::vec3 wmn(0.0f), wmx(0.0f);
+            for (int cc = 0; cc < 8; ++cc) {
+                const glm::vec3 lc(
+                    (cc & 1) ? msh.bbox_max_.x : msh.bbox_min_.x,
+                    (cc & 2) ? msh.bbox_max_.y : msh.bbox_min_.y,
+                    (cc & 4) ? msh.bbox_max_.z : msh.bbox_min_.z);
+                const glm::vec3 w = glm::vec3(M * glm::vec4(lc, 1.0f));
+                if (cc == 0) { wmn = wmx = w; }
+                else { wmn = glm::min(wmn, w); wmx = glm::max(wmx, w); }
+            }
+            if (x < wmn.x || x > wmx.x || z < wmn.z || z > wmx.z) continue;
+            if (ro.y < wmn.y) continue;
+            if (budget <= 0) return;
+            const glm::mat4 invM = glm::inverse(M);
+            const glm::vec3 rol = glm::vec3(invM * glm::vec4(ro, 1.0f));
+            const glm::vec3 rdl =
+                glm::vec3(invM * glm::vec4(0.0f, -1.0f, 0.0f, 0.0f));
+            const auto& Pv = *msh.vertex_position_;
+            for (const auto& prim : msh.primitives_) {
+                if (!prim.vertex_indices_) continue;
+                const auto& I = *prim.vertex_indices_;
+                for (size_t k = 0; k + 2 < I.size(); k += 3) {
+                    if (--budget <= 0) break;
+                    const size_t ia = (size_t)I[k + 0];
+                    const size_t ib = (size_t)I[k + 1];
+                    const size_t ic = (size_t)I[k + 2];
+                    if (ia >= Pv.size() || ib >= Pv.size() ||
+                        ic >= Pv.size()) continue;
+                    const glm::vec3 e1 = Pv[ib] - Pv[ia];
+                    const glm::vec3 e2 = Pv[ic] - Pv[ia];
+                    const glm::vec3 pv = glm::cross(rdl, e2);
+                    const float det = glm::dot(e1, pv);
+                    const float ad = det < 0.0f ? -det : det;
+                    if (ad < 1e-12f) continue;
+                    const float inv = 1.0f / det;
+                    const glm::vec3 tv = rol - Pv[ia];
+                    const float u = glm::dot(tv, pv) * inv;
+                    if (u < 0.0f || u > 1.0f) continue;
+                    const glm::vec3 qv = glm::cross(tv, e1);
+                    const float vb = glm::dot(rdl, qv) * inv;
+                    if (vb < 0.0f || u + vb > 1.0f) continue;
+                    const float tt = glm::dot(e2, qv) * inv;
+                    if (tt <= 0.0f) continue;
+                    const float wy = ro.y - tt;
+                    const float dd = wy > y_hint ? wy - y_hint : y_hint - wy;
+                    if (dd < best_d) {
+                        best_d = dd;
+                        best_y = wy;
+                        found  = true;
+                        glm::vec3 nl = glm::cross(e1, e2);
+                        glm::vec3 nw = glm::vec3(
+                            glm::transpose(invM) * glm::vec4(nl, 0.0f));
+                        if (glm::length(nw) > 1e-8f) nw = glm::normalize(nw);
+                        else nw = glm::vec3(0.0f, 1.0f, 0.0f);
+                        if (nw.y < 0.0f) nw = -nw;
+                        best_n = nw;
+                    }
+                }
+            }
+        }
+    };
+    probe(bistro_exterior_scene_);
+    probe(bistro_interior_scene_);
+    for (auto& dr : drawable_objects_) probe(dr);
+    if (found) { out_y = best_y; out_normal = best_n; }
+    return found;
+}
+
 void RealWorldApplication::initDrawFrame() {
     if (s_render_prt_test) {
         const auto full_buffer_size =
@@ -5522,9 +5643,16 @@ void RealWorldApplication::drawFrame() {
     // code path serves both first-time spawning and on-demand recovery.
     const bool reset_pos_req =
         menu_ ? menu_->consumeResetPlayerPosition() : false;
+    // First-time spawn waits until the level is fully loaded AND the
+    // (simplified) collision mesh has finished building, so the very first
+    // placement can land her on the ground (the per-frame follow block
+    // grounds her via the collision / real-floor raycast, which needs the
+    // collision world ready).  The manual "Reset player position" path
+    // (reset_pos_req) still fires anytime.
     if (player_object_ && player_object_->isReady() &&
         player_controller_ &&
-        (!player_controller_->isSpawned() || reset_pos_req)) {
+        ((!player_controller_->isSpawned() && collision_world_built_) ||
+         reset_pos_req)) {
         // ── Apply configuration flags on the player ───────────────────
         // object_ is now guaranteed non-null (isReady true), so the
         // setters can land.  IMPORTANT: do NOT move this back to the
@@ -6107,7 +6235,25 @@ void RealWorldApplication::drawFrame() {
         float desired_feet_y = (have_floor_f
             ? bistro_floor_y_f
             : (cam_pos.y - kPlayerEyeOffset)) + kManualFloorYAdjustF;
-        float follow_y = desired_feet_y;       // fallback if no mesh
+
+        // ── Attach to ground: snap the body-center feet height to the
+        // walkable surface directly under the player via a downward
+        // collision raycast, overriding the coarse scene-bbox / eye-height
+        // estimate above.  Falls back to the estimate on miss.
+        if (collision_world_built_ && !collision_world_.empty()) {
+            const glm::vec3 gc_from(follow_xz.x, cam_pos.y + 0.5f,
+                                    follow_xz.y);
+            glm::vec3 gc_hit, gc_nrm;
+            if (collision_world_.raycastDown(
+                    gc_from, /*max_distance=*/200.0f, gc_hit, gc_nrm)) {
+                desired_feet_y = gc_hit.y;
+            }
+        }
+
+        // Default Y: camera-relative feet height (eye - kPlayerEyeOffset),
+        // NOT desired_feet_y (which carries kManualFloorYAdjustF = -6 and
+        // dropped her metres underground when no real ground was found).
+        float follow_y = cam_pos.y - kPlayerEyeOffset;
         bool  have_follow_offset = false;
 
         if (rn_for_follow >= 0 &&
@@ -6127,37 +6273,185 @@ void RealWorldApplication::drawFrame() {
             glm::mat4 root_old_to_new =
                 trial_root * glm::inverse(old_root_cached);
 
-            float min_world_y_at_zero = std::numeric_limits<float>::max();
+            // Real-floor probe (independent of the LLM walkable
+            // classification): casts a vertical ray DOWN through the ACTUAL
+            // rendered scene geometry at (wx, wz) and returns the surface
+            // whose Y is closest to ref_y (the expected feet level).  Used
+            // only when the walkable collision world has nothing under the
+            // player (the classifier missed that floor).  Per-triangle work
+            // is budgeted; a world-AABB column test rejects most meshes.
+            auto sceneFloorNearest =
+                [&](float wx, float wz, float ref_y, float& out_y) -> bool {
+                const glm::vec3 ro(wx, ref_y + 100.0f, wz);
+                bool  found  = false;
+                float best_y = 0.0f;
+                float best_d = std::numeric_limits<float>::max();
+                int   budget = 120000;
+                auto probe =
+                    [&](const std::shared_ptr<ego::DrawableObject>& obj) {
+                    if (!obj || !obj->isReady()) return;
+                    const auto& d = obj->getDrawableData();
+                    for (const auto& nd : d.nodes_) {
+                        if (nd.mesh_idx_ < 0 ||
+                            nd.mesh_idx_ >= (int)d.meshes_.size()) continue;
+                        const auto& msh = d.meshes_[nd.mesh_idx_];
+                        if (!msh.vertex_position_ ||
+                            msh.bbox_min_.x > msh.bbox_max_.x) continue;
+                        const glm::mat4& M = nd.cached_matrix_;
+                        glm::vec3 wmn(0.0f), wmx(0.0f);
+                        for (int cc = 0; cc < 8; ++cc) {
+                            const glm::vec3 lc(
+                                (cc & 1) ? msh.bbox_max_.x : msh.bbox_min_.x,
+                                (cc & 2) ? msh.bbox_max_.y : msh.bbox_min_.y,
+                                (cc & 4) ? msh.bbox_max_.z : msh.bbox_min_.z);
+                            const glm::vec3 w =
+                                glm::vec3(M * glm::vec4(lc, 1.0f));
+                            if (cc == 0) { wmn = wmx = w; }
+                            else { wmn = glm::min(wmn, w); wmx = glm::max(wmx, w); }
+                        }
+                        if (wx < wmn.x || wx > wmx.x ||
+                            wz < wmn.z || wz > wmx.z) continue;
+                        if (ro.y < wmn.y) continue;
+                        if (budget <= 0) return;
+                        const glm::mat4 invM = glm::inverse(M);
+                        const glm::vec3 rol =
+                            glm::vec3(invM * glm::vec4(ro, 1.0f));
+                        const glm::vec3 rdl =
+                            glm::vec3(invM * glm::vec4(0.0f, -1.0f, 0.0f, 0.0f));
+                        const auto& P = *msh.vertex_position_;
+                        for (const auto& prim : msh.primitives_) {
+                            if (!prim.vertex_indices_) continue;
+                            const auto& I = *prim.vertex_indices_;
+                            for (size_t k = 0; k + 2 < I.size(); k += 3) {
+                                if (--budget <= 0) break;
+                                const size_t a  = (size_t)I[k + 0];
+                                const size_t b  = (size_t)I[k + 1];
+                                const size_t ci = (size_t)I[k + 2];
+                                if (a >= P.size() || b >= P.size() ||
+                                    ci >= P.size()) continue;
+                                const glm::vec3 e1 = P[b] - P[a];
+                                const glm::vec3 e2 = P[ci] - P[a];
+                                const glm::vec3 pv = glm::cross(rdl, e2);
+                                const float det = glm::dot(e1, pv);
+                                const float ad = det < 0.0f ? -det : det;
+                                if (ad < 1e-12f) continue;
+                                const float inv = 1.0f / det;
+                                const glm::vec3 tv = rol - P[a];
+                                const float u = glm::dot(tv, pv) * inv;
+                                if (u < 0.0f || u > 1.0f) continue;
+                                const glm::vec3 qv = glm::cross(tv, e1);
+                                const float vb = glm::dot(rdl, qv) * inv;
+                                if (vb < 0.0f || u + vb > 1.0f) continue;
+                                const float t = glm::dot(e2, qv) * inv;
+                                if (t <= 0.0f) continue;
+                                const float wy = ro.y - t;     // world hit Y
+                                const float dd =
+                                    wy > ref_y ? wy - ref_y : ref_y - wy;
+                                if (dd < best_d) {
+                                    best_d = dd; best_y = wy; found = true;
+                                }
+                            }
+                        }
+                    }
+                };
+                probe(bistro_exterior_scene_);
+                probe(bistro_interior_scene_);
+                for (auto& dr : drawable_objects_) probe(dr);
+                if (found) out_y = best_y;
+                return found;
+            };
+
+            // ── Plant the feet on the ground (per-foot) ──────────────
+            // For each foot bone, find its world XZ in the follow frame and
+            // raycast the walkable collision world straight DOWN under it
+            // (the SAME per-foot ground the red foot markers snap to), then
+            // compute the root height that puts that foot's SOLE on its own
+            // ground.  Take the MAX so the LOWER foot plants and neither
+            // foot sinks.  Priority: (1) per-foot raycast hit -> real ground;
+            // (2) no hit -> camera-relative feet height (eye - 1.7 m) via the
+            // lower foot -- NO scene-bbox + (-6) fudge (that put her under-
+            // ground).  kSoleDrop = ankle-bone -> sole distance.
+            constexpr float kSoleDrop = 0.08f;
+            float plant_follow_y   = -std::numeric_limits<float>::max();
+            float min_sole_at_zero =  std::numeric_limits<float>::max();
+            int   feet_found = 0, feet_planted = 0;
             for (size_t ni = 0; ni < data_for_follow.nodes_.size(); ++ni) {
                 const auto& n = data_for_follow.nodes_[ni];
-                if (n.mesh_idx_ < 0 ||
-                    n.mesh_idx_ >= (int)data_for_follow.meshes_.size())
+                if (n.name_ != "left_foot" && n.name_ != "right_foot")
                     continue;
-                const auto& mb = data_for_follow.meshes_[n.mesh_idx_];
-                const glm::vec3 c[8] = {
-                    {mb.bbox_min_.x, mb.bbox_min_.y, mb.bbox_min_.z},
-                    {mb.bbox_max_.x, mb.bbox_min_.y, mb.bbox_min_.z},
-                    {mb.bbox_min_.x, mb.bbox_max_.y, mb.bbox_min_.z},
-                    {mb.bbox_max_.x, mb.bbox_max_.y, mb.bbox_min_.z},
-                    {mb.bbox_min_.x, mb.bbox_min_.y, mb.bbox_max_.z},
-                    {mb.bbox_max_.x, mb.bbox_min_.y, mb.bbox_max_.z},
-                    {mb.bbox_min_.x, mb.bbox_max_.y, mb.bbox_max_.z},
-                    {mb.bbox_max_.x, mb.bbox_max_.y, mb.bbox_max_.z},
-                };
-                glm::mat4 simulated_cached =
-                    root_old_to_new * n.cached_matrix_;
-                for (int k = 0; k < 8; ++k) {
-                    glm::vec4 w =
-                        simulated_cached * glm::vec4(c[k], 1.0f);
-                    if (w.y < min_world_y_at_zero) {
-                        min_world_y_at_zero = w.y;
+                ++feet_found;
+                const glm::mat4 sim = root_old_to_new * n.cached_matrix_;
+                const float sole_at_zero = sim[3].y - kSoleDrop;
+                if (sole_at_zero < min_sole_at_zero)
+                    min_sole_at_zero = sole_at_zero;
+                glm::vec3 gh, gn;
+                bool hit = false;
+                // Tiers 1-2: walkable collision world (fast, BVH) when ready
+                // AND non-empty.  Tier 1 starts just above the camera (finds
+                // the floor she is near, won't grab an upper storey indoors);
+                // tier 2 starts HIGH and only runs if tier 1 misses, to
+                // recover her when she's below the floor.
+                if (collision_world_built_ && !collision_world_.empty()) {
+                    hit = collision_world_.raycastDown(
+                        glm::vec3(sim[3].x, cam_pos.y + 2.0f, sim[3].z),
+                        200.0f, gh, gn);
+                    if (!hit) {
+                        hit = collision_world_.raycastDown(
+                            glm::vec3(sim[3].x, cam_pos.y + 80.0f, sim[3].z),
+                            200.0f, gh, gn);
                     }
                 }
-                have_follow_offset = true;
+                // Tier 3: the ACTUAL rendered floor -- ALWAYS tried when the
+                // collision world found nothing.  Crucially this now runs even
+                // when the walkable collision world is EMPTY (the LLM-only
+                // classifier may tag nothing WALKABLE_SURFACE) -- that gate
+                // was previously skipping this fallback and leaving the feet
+                // ungrounded.
+                if (!hit) {
+                    float sy;
+                    if (sceneFloorNearest(sim[3].x, sim[3].z,
+                                          cam_pos.y - kPlayerEyeOffset, sy)) {
+                        gh.y = sy; hit = true;
+                    }
+                }
+                if (hit) {
+                    const float req = gh.y - sole_at_zero;
+                    if (req > plant_follow_y) plant_follow_y = req;
+                    ++feet_planted;
+                }
             }
 
-            if (have_follow_offset) {
-                follow_y = desired_feet_y - min_world_y_at_zero;
+            if (feet_planted > 0) {
+                // A foot found real walkable ground -> plant the lower
+                // foot's sole on it.
+                follow_y = plant_follow_y;
+                have_follow_offset = true;
+            } else if (feet_found > 0) {
+                // No walkable collision surface under the feet (that floor
+                // isn't classified WALKABLE_SURFACE, or she's over an edge).
+                // Fall back to the CAMERA-relative feet height referenced
+                // off the lower foot -- NEVER the scene-bbox + (-6) estimate
+                // that placed her metres underground.
+                const float cam_feet_y = cam_pos.y - kPlayerEyeOffset;
+                follow_y = cam_feet_y - min_sole_at_zero;
+                have_follow_offset = true;
+            }
+            // (No foot bones -> follow_y keeps the camera-relative default.)
+
+            // Diagnostic (once/sec): planted=0 with feet>0 means NO walkable
+            // collision surface under the feet (LLM didn't classify that
+            // floor, or she's over an edge) -> feet use the coarse estimate.
+            {
+                static uint64_t s_plant_log = 0;
+                if ((s_plant_log++ % 60u) == 0u) {
+                    std::cout << "[foot_plant] feet=" << feet_found
+                              << " planted=" << feet_planted
+                              << " follow_y=" << follow_y
+                              << " desired_feet_y=" << desired_feet_y
+                              << " cw_built=" << (collision_world_built_ ? 1 : 0)
+                              << " cw_meshes=" << collision_world_.meshCount()
+                              << std::endl;
+                }
             }
         }
 
@@ -6478,11 +6772,11 @@ void RealWorldApplication::drawFrame() {
 
                 // ── Resolve material + object NAME first, WITHOUT building ──
                 // "Simplify AFTER material category": the kept-category
-                // decision is purely name-based (LLM verdict + the
-                // deterministic floor name-rule), so we make it BEFORE paying
-                // for the expensive weld + QEM decimation.  Only meshes we are
-                // going to keep (Floor) get simplified; every other primitive
-                // is tallied for the [collision.cat] histogram and skipped.
+                // decision is the LLM classifier's verdict on the (material,
+                // object) names, so we make it BEFORE paying for the
+                // expensive weld + QEM decimation.  Only meshes we keep
+                // (walkable surface) get simplified; every other primitive is
+                // tallied for the [collision.cat] histogram and skipped.
                 const auto& data = obj->getDrawableData();
                 if (it.mesh_idx >= data.meshes_.size()) return;
                 const auto& mesh = data.meshes_[it.mesh_idx];
@@ -6503,7 +6797,7 @@ void RealWorldApplication::drawFrame() {
                     }
                 }
 
-                // ── Decide the material category from NAME only ──
+                // ── Decide the category via the LLM classifier ──
                 engine::helper::MeshCategory cat =
                     engine::helper::MeshCategory::Unknown;
                 // LLM verdict — GUARDED on s_mat_classifier_applied so we only
@@ -6515,22 +6809,16 @@ void RealWorldApplication::drawFrame() {
                     if (llm_cat != engine::helper::MeshCategory::Unknown)
                         cat = llm_cat;
                 }
-                // Deterministic floor name-rule — WINS over the LLM verdict.
-                // Catches the pavement / cobblestone ground the LLM mislabels
-                // as Object/Unknown (the holes).  Extend the keyword list if a
-                // ground material is still missed (watch [collision.excluded]).
-                {
-                    auto named = [&](const char* k) {
-                        return mat_name.find(k) != std::string::npos;
-                    };
-                    if (named("Pavement")  || named("Cobblestone") ||
-                        named("Sidewalk")  || named("Asphalt")     ||
-                        named("Road")      || named("Gutter")      ||
-                        named("Plaza")     || named("Floor")       ||
-                        named("Ground")) {
-                        cat = engine::helper::MeshCategory::Floor;
-                    }
-                }
+                // The walkable-surface verdict is the LLM classifier's
+                // ALONE.  The old deterministic material-name keyword rule
+                // (Pavement / Road / Floor / Ground / ...) was removed on
+                // request so the category is decided by the model, never by
+                // string analysis.  Trade-off: if the LLM mislabels a ground
+                // material, that floor piece is dropped (watch
+                // [collision.excluded]) -- fix it by improving the prompt or
+                // re-running the classifier, NOT by re-adding keyword matching.
+                // If the classifier never ran (Ollama down), cat stays
+                // Unknown and nothing is kept.
 
                 // Tally EVERY primitive's category into the histogram BEFORE
                 // the floor-only filter so [collision.cat] still reflects the
@@ -6993,6 +7281,19 @@ void RealWorldApplication::drawFrame() {
         auto _cpu_player_ctrl = gpu_profiler_.beginCpuScope("Player controller");
         const float cam_yaw =
             main_camera_object_->getCameraViewInfo().yaw;
+        // Apply live foot-IK tuning from the Physics > Foot IK menu,
+        // then read back the resulting pelvis drop for the menu's
+        // read-only readout.  Cheap setters; safe to call every frame.
+        if (menu_) {
+            const auto& ik = menu_->footIkParams();
+            player_controller_->setFootIkEnabled(ik.enabled);
+            player_controller_->setFootStrideAmp(ik.stride_amp);
+            player_controller_->setFootLiftAmp(ik.lift_amp);
+            player_controller_->setFootSoleDrop(ik.sole_drop);
+            player_controller_->setFootTiltWeight(ik.tilt_weight);
+            player_controller_->setPelvisDropMax(ik.pelvis_drop_max);
+            menu_->setFootIkPelvisDrop(player_controller_->pelvisDrop());
+        }
         player_controller_->update(
             window_,
             delta_t_,

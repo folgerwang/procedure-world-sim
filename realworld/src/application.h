@@ -345,6 +345,15 @@ private:
     std::shared_ptr<ego::DrawableObject> bistro_exterior_scene_;
     std::shared_ptr<ego::DrawableObject> bistro_interior_scene_;
 
+    // Ground probe used by PlayerController's foot IK.  Given a world XZ
+    // column and an expected foot level (y_hint), returns the ground
+    // height (out_y) + unit surface normal (out_normal) beneath it.  Tries
+    // the walkable collision world first, then the raw rendered scene
+    // geometry, so feet are grounded even before / without the LLM
+    // walkable-surface classification.  Returns false when nothing hit.
+    bool queryGroundAt(float x, float z, float y_hint,
+                       float& out_y, glm::vec3& out_normal);
+
     // Async mesh loader. Lives for the whole application run; its
     // worker thread is joined in the destructor. See
     // game_object/mesh_load_task_manager.{h,cpp} for the three-phase
