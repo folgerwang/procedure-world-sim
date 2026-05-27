@@ -3154,16 +3154,63 @@ void RealWorldApplication::drawScene(
                                 << FEATURE_INPUT_HIZ_MIP_SHIFT)
                                & FEATURE_INPUT_HIZ_MIP_MASK;
             }
-            // Floor-only debug background: when the collision-LOD
-            // overlay is active AND the ML classifier has tagged the
-            // materials, restrict the textured scene to Floor-category
-            // geometry so it matches the floor-only collision overlay.
-            // Gated on categoriesApplied() so the background is NOT
-            // blanked before classification finishes (pre-ML the full
-            // scene shows under the fallback floor overlay).
-            if (menu_->isCollisionDebugOn() && !collision_world_.empty() &&
-                cluster_renderer_ && cluster_renderer_->categoriesApplied()) {
-                input_flags |= FEATURE_INPUT_FLOOR_ONLY;
+            // Collision-LOD debug background.  Two mutually-exclusive
+            // modes, both gated on the overlay being active with a built
+            // (post-classification) collision world:
+            //
+            //   * ISOLATE — when the Left/Right-arrow isolate slider is
+            //     enabled, make the textured background follow the SAME
+            //     debug index as the collision overlay: resolve the
+            //     isolated collision mesh back to its source primitive
+            //     (drawable, mesh, prim), map that to the mesh's cluster
+            //     object id (MeshInfo::cluster_global_mesh_idx_) and then
+            //     to the globally-unique cluster material_idx of that
+            //     primitive, and restrict the background to JUST that
+            //     material via FEATURE_INPUT_ISOLATE_MESH.  Every other
+            //     mesh is discarded in cluster_bindless.frag.  Falls back
+            //     to FLOOR_ONLY when the source can't be resolved (the
+            //     aggregate build paths don't track a single primitive,
+            //     the mesh was never cluster-uploaded, or its geometry was
+            //     released).
+            //
+            //   * FLOOR_ONLY (default, unchanged) — restrict the textured
+            //     scene to Floor-category geometry so it matches the
+            //     floor-only collision overlay.  Gated on
+            //     categoriesApplied() so the background is NOT blanked
+            //     before classification finishes (pre-ML the full scene
+            //     shows under the fallback floor overlay).
+            if (menu_->isCollisionDebugOn() && !collision_world_.empty()) {
+                int isolate_material = -1;
+                if (menu_->collisionIsolateEnabled() && cluster_renderer_) {
+                    const auto* cm = collision_world_.meshAt(
+                        static_cast<size_t>(menu_->collisionIsolateIndex()));
+                    if (cm) {
+                        const auto* src = cm->sourceDrawable();
+                        const size_t smi = cm->sourceMeshIdx();
+                        const size_t spi = cm->sourcePrimIdx();
+                        if (src && smi < src->getMeshes().size()) {
+                            const int32_t gmi =
+                                src->getMeshes()[smi].cluster_global_mesh_idx_;
+                            if (gmi >= 0) {
+                                isolate_material =
+                                    cluster_renderer_->materialIdxForPrimitive(
+                                        static_cast<uint32_t>(gmi),
+                                        static_cast<uint32_t>(spi));
+                            }
+                        }
+                    }
+                }
+                if (isolate_material >= 0) {
+                    // setDebugIsolateMaterial stages the value; the
+                    // setInputFeatureFlags call below re-uploads the whole
+                    // camera struct, so it must come first.
+                    main_camera_object_->setDebugIsolateMaterial(
+                        static_cast<uint32_t>(isolate_material));
+                    input_flags |= FEATURE_INPUT_ISOLATE_MESH;
+                } else if (cluster_renderer_ &&
+                           cluster_renderer_->categoriesApplied()) {
+                    input_flags |= FEATURE_INPUT_FLOOR_ONLY;
+                }
             }
             main_camera_object_->setInputFeatureFlags(input_flags);
         }
@@ -4601,6 +4648,16 @@ void RealWorldApplication::drawScene(
                         const auto* cm = collision_world_.meshAt(
                             static_cast<size_t>(collision_isolate));
                         if (cm) {
+                            // Simplified (current proxy) vs original source
+                            // primitive polygon counts, plus the kept ratio.
+                            const size_t simp_tris = cm->triangleCount();
+                            const size_t orig_tris =
+                                cm->originalTriangleCount();
+                            const int kept_pct = orig_tris > 0
+                                ? static_cast<int>(
+                                      (static_cast<uint64_t>(simp_tris) * 100 +
+                                       orig_tris / 2) / orig_tris)
+                                : 0;
                             std::string info =
                                 "index " +
                                 std::to_string(collision_isolate) + " / " +
@@ -4608,7 +4665,9 @@ void RealWorldApplication::drawScene(
                                 "\ncategory = " +
                                 engine::helper::meshCategoryTag(cm->category()) +
                                 "\ntris = " +
-                                std::to_string(cm->triangleCount()) +
+                                std::to_string(simp_tris) +
+                                " / " + std::to_string(orig_tris) +
+                                " orig (" + std::to_string(kept_pct) + "%)" +
                                 "\nmaterial = '" + cm->materialName() + "'" +
                                 "\nobject = '" + cm->objectName() + "'";
                             menu_->setCollisionIsolateInfo(info);
@@ -6509,21 +6568,44 @@ void RealWorldApplication::drawFrame() {
                 }
 
                 // ── Floor: NOW build + simplify (weld + QEM decimate) ──
-                // This is the ordering the request asks for: simplification
-                // happens only AFTER the material category is settled, and
-                // only for the meshes we keep.
+                // Simplification happens only AFTER the material category is
+                // settled, and only for the meshes we keep.
+                //
+                // INDEX PARITY: a Floor primitive must occupy the SAME index
+                // in the collision world no matter which debug shape is
+                // selected, so the isolate-index slider points at the SAME
+                // floor piece whether you are viewing Original or Simplified.
+                // The candidate set is already shape-independent (category is
+                // decided by material NAME above, not by geometry).  To make
+                // the KEPT set shape-independent too: if the requested shape's
+                // build drops this primitive (e.g. decimation degenerates a
+                // sliver to <3 tris), fall back to the un-simplified (None)
+                // geometry so the entry still EXISTS at the same position.
+                // Net: Simplified enumerates exactly the same floor pieces as
+                // Original -- only their triangle density differs.
                 auto m = std::make_shared<engine::helper::CollisionMesh>();
-                if (m->buildFromDrawablePrimitive(
+                bool built = m->buildFromDrawablePrimitive(
+                    *obj, it.mesh_idx, it.prim_idx,
+                    /*build_bvh=*/false,
+                    shape,
+                    // Sub-mm weld (NOT the 0.1m default, NOT zero): merges
+                    // only genuinely-coincident vertices so the QEM pass can
+                    // lock the true outer edge and simplify the interior
+                    // without holes.  10cm deleted real triangles (holes); 0
+                    // over-locked split-vertex floors so they never simplified.
+                    /*weld_eps=*/1.0e-3f);
+                if (!built &&
+                    shape != engine::helper::CollisionShape::None) {
+                    // Requested shape dropped it -- keep the raw welded mesh so
+                    // Simplified and Original stay index-aligned.
+                    m = std::make_shared<engine::helper::CollisionMesh>();
+                    built = m->buildFromDrawablePrimitive(
                         *obj, it.mesh_idx, it.prim_idx,
                         /*build_bvh=*/false,
-                        shape,
-                        // Sub-mm weld (NOT the 0.1m default, NOT zero):
-                        // merges only genuinely-coincident vertices so the QEM
-                        // pass can lock the true outer edge and simplify the
-                        // interior without holes.  10cm deleted real triangles
-                        // (holes); 0 over-locked split-vertex floors so they
-                        // never simplified.  See git history for the note.
-                        /*weld_eps=*/1.0e-3f)) {
+                        engine::helper::CollisionShape::None,
+                        /*weld_eps=*/1.0e-3f);
+                }
+                if (built) {
                     s_coll_total_tris += m->triangleCount();
                     ++s_coll_built;
                     // Enforce the name/LLM Floor verdict over whatever the
@@ -7477,6 +7559,202 @@ void RealWorldApplication::drawFrame() {
     // tab-tree menus (profiler view, full Menu UI) easily hit 1–2 ms
     // here.
     auto _cpu_imgui = gpu_profiler_.beginCpuScope("ImGui menu draw");
+
+    // ── Hover-pick: name the object + surface under the mouse cursor ─────
+    // The name reflects WHAT IS DRAWN, not all scene geometry:
+    //   * collision-debug on  -> ray-pick the collision-world meshes (the
+    //     green floor proxies actually on screen) and report each proxy's
+    //     source object + material.  Lets you audit which source objects the
+    //     classifier put into the floor set, and matches the overlay rather
+    //     than naming a full-res scene mesh hidden behind it.
+    //   * otherwise            -> ray-pick the full scene (everything that
+    //     is rendered).
+    // Broad phase ray-AABB, narrow phase exact ray-triangle (Moller-
+    // Trumbore).  A per-frame triangle budget caps the work.
+    {
+        std::string hover_name;
+        const glm::uvec2 ss = swap_chain_info_.extent;
+        if (main_camera_object_ && ss.x > 0 && ss.y > 0) {
+            // Mouse pixel -> NDC.  Our projection already flips Y (see the
+            // player-HUD un-project in menu.cpp), so map y straight through.
+            const float nx = 2.0f * (s_last_mouse_pos.x / float(ss.x)) - 1.0f;
+            const float ny = 2.0f * (s_last_mouse_pos.y / float(ss.y)) - 1.0f;
+            const glm::mat4 inv_vp =
+                glm::inverse(main_camera_object_->getViewProjMatrix());
+            const glm::vec3 ro = main_camera_object_->getCameraPosition();
+            glm::vec4 fp = inv_vp * glm::vec4(nx, ny, 1.0f, 1.0f);  // far plane
+            glm::vec3 rd = glm::vec3(fp) / fp.w - ro;
+            const float rd_len = glm::length(rd);
+            if (rd_len > 1e-6f) {
+                rd /= rd_len;
+                const glm::vec3 inv_rd(
+                    1.0f / (rd.x != 0.0f ? rd.x : 1e-20f),
+                    1.0f / (rd.y != 0.0f ? rd.y : 1e-20f),
+                    1.0f / (rd.z != 0.0f ? rd.z : 1e-20f));
+                float best_dist = 1e30f;
+                size_t tri_budget = 400000;  // cap ray-triangle work / frame
+
+                // Moller-Trumbore (double-sided).  O/D is the ray in the
+                // SAME space as v0..v2; for a node's local space, pass the
+                // un-normalised M^-1*rd as D so the solved t stays a world
+                // distance and is comparable across objects.
+                auto rayTri = [](const glm::vec3& O, const glm::vec3& D,
+                                 const glm::vec3& v0, const glm::vec3& v1,
+                                 const glm::vec3& v2, float& out_t) -> bool {
+                    const glm::vec3 e1 = v1 - v0, e2 = v2 - v0;
+                    const glm::vec3 pv = glm::cross(D, e2);
+                    const float det = glm::dot(e1, pv);
+                    const float ad = det < 0.0f ? -det : det;
+                    if (ad < 1e-12f) return false;
+                    const float inv = 1.0f / det;
+                    const glm::vec3 tv = O - v0;
+                    const float u = glm::dot(tv, pv) * inv;
+                    if (u < 0.0f || u > 1.0f) return false;
+                    const glm::vec3 qv = glm::cross(tv, e1);
+                    const float v = glm::dot(D, qv) * inv;
+                    if (v < 0.0f || u + v > 1.0f) return false;
+                    const float t = glm::dot(e2, qv) * inv;
+                    if (t <= 1e-3f) return false;
+                    out_t = t; return true;
+                };
+                // Ray-AABB slab test in world space; out_tnear = entry dist.
+                auto rayAabb = [&](const glm::vec3& bmin, const glm::vec3& bmax,
+                                   float& out_tnear) -> bool {
+                    const glm::vec3 t0 = (bmin - ro) * inv_rd;
+                    const glm::vec3 t1 = (bmax - ro) * inv_rd;
+                    const glm::vec3 tsm = glm::min(t0, t1);
+                    const glm::vec3 tbg = glm::max(t0, t1);
+                    const float tn = glm::max(glm::max(tsm.x, tsm.y), tsm.z);
+                    const float tf = glm::min(glm::min(tbg.x, tbg.y), tbg.z);
+                    if (tf < glm::max(tn, 0.0f)) return false;
+                    out_tnear = glm::max(tn, 0.0f);
+                    return true;
+                };
+
+                const bool coll_dbg = menu_ && menu_->isCollisionDebugOn() &&
+                                      !collision_world_.empty();
+                if (coll_dbg) {
+                    // Pick among the VISIBLE collision-debug meshes only.
+                    // Their vertices_ are already world-space, so the ray is
+                    // tested directly.  Honour the isolate index (only the
+                    // single drawn mesh) when isolate mode is on.
+                    const int iso = menu_->collisionIsolateEnabled()
+                        ? menu_->collisionIsolateIndex() : -1;
+                    const size_t n = collision_world_.meshCount();
+                    for (size_t mi = 0; mi < n; ++mi) {
+                        if (iso >= 0 && mi != static_cast<size_t>(iso))
+                            continue;
+                        const auto* cm = collision_world_.meshAt(mi);
+                        if (!cm) continue;
+                        float box_t;
+                        if (!rayAabb(cm->bounds().min_bounds,
+                                     cm->bounds().max_bounds, box_t)) continue;
+                        if (box_t > best_dist) continue;
+                        if (tri_budget == 0) continue;
+                        const auto& V = cm->debugVertices();  // world space
+                        const auto& I = cm->debugIndices();
+                        for (size_t k = 0; k + 2 < I.size(); k += 3) {
+                            if (tri_budget == 0) break;
+                            --tri_budget;
+                            const int ia = I[k + 0], ib = I[k + 1],
+                                      ic = I[k + 2];
+                            if (ia < 0 || ib < 0 || ic < 0) continue;
+                            if (static_cast<size_t>(ia) >= V.size() ||
+                                static_cast<size_t>(ib) >= V.size() ||
+                                static_cast<size_t>(ic) >= V.size()) continue;
+                            float t;
+                            if (rayTri(ro, rd, V[ia], V[ib], V[ic], t) &&
+                                t < best_dist) {
+                                best_dist = t;
+                                hover_name = cm->objectName();
+                                const std::string& mat = cm->materialName();
+                                if (!mat.empty()) hover_name += "\n" + mat;
+                            }
+                        }
+                    }
+                } else {
+                    // Full-scene pick: ray-test every drawable mesh, in its
+                    // node-local space (so t is a world distance).
+                    auto testDrawable =
+                        [&](const std::shared_ptr<ego::DrawableObject>& obj) {
+                        if (!obj || !obj->isReady()) return;
+                        const auto& data = obj->getDrawableData();
+                        for (const auto& node : data.nodes_) {
+                            if (node.mesh_idx_ < 0 ||
+                                static_cast<size_t>(node.mesh_idx_) >=
+                                    data.meshes_.size())
+                                continue;
+                            const auto& mesh = data.meshes_[node.mesh_idx_];
+                            if (!mesh.vertex_position_ ||
+                                mesh.bbox_min_.x > mesh.bbox_max_.x) continue;
+                            const glm::mat4& M = node.cached_matrix_;
+                            glm::vec3 wmin(0.0f), wmax(0.0f);
+                            for (int cc = 0; cc < 8; ++cc) {
+                                const glm::vec3 lc(
+                                    (cc & 1) ? mesh.bbox_max_.x
+                                             : mesh.bbox_min_.x,
+                                    (cc & 2) ? mesh.bbox_max_.y
+                                             : mesh.bbox_min_.y,
+                                    (cc & 4) ? mesh.bbox_max_.z
+                                             : mesh.bbox_min_.z);
+                                const glm::vec3 w =
+                                    glm::vec3(M * glm::vec4(lc, 1.0f));
+                                if (cc == 0) { wmin = wmax = w; }
+                                else { wmin = glm::min(wmin, w);
+                                       wmax = glm::max(wmax, w); }
+                            }
+                            float box_t;
+                            if (!rayAabb(wmin, wmax, box_t)) continue;
+                            if (box_t > best_dist) continue;
+                            if (tri_budget == 0) continue;
+                            const glm::mat4 invM = glm::inverse(M);
+                            const glm::vec3 rol =
+                                glm::vec3(invM * glm::vec4(ro, 1.0f));
+                            const glm::vec3 rdl =
+                                glm::vec3(invM * glm::vec4(rd, 0.0f));
+                            const auto& P = *mesh.vertex_position_;
+                            for (const auto& prim : mesh.primitives_) {
+                                if (!prim.vertex_indices_) continue;
+                                const auto& I = *prim.vertex_indices_;
+                                for (size_t k = 0; k + 2 < I.size(); k += 3) {
+                                    if (tri_budget == 0) break;
+                                    --tri_budget;
+                                    const size_t a =
+                                        static_cast<size_t>(I[k + 0]);
+                                    const size_t b =
+                                        static_cast<size_t>(I[k + 1]);
+                                    const size_t ci =
+                                        static_cast<size_t>(I[k + 2]);
+                                    if (a >= P.size() || b >= P.size() ||
+                                        ci >= P.size()) continue;
+                                    float t;
+                                    if (rayTri(rol, rdl, P[a], P[b], P[ci],
+                                               t) && t < best_dist) {
+                                        best_dist = t;
+                                        std::string mat;
+                                        if (prim.material_idx_ >= 0 &&
+                                            static_cast<size_t>(
+                                                prim.material_idx_) <
+                                                data.materials_.size())
+                                            mat = data.materials_[
+                                                prim.material_idx_].name_;
+                                        hover_name = node.name_;
+                                        if (!mat.empty())
+                                            hover_name += "\n" + mat;
+                                    }
+                                }
+                            }
+                        }
+                    };
+                    testDrawable(bistro_exterior_scene_);
+                    testDrawable(bistro_interior_scene_);
+                    for (auto& d : drawable_objects_) testDrawable(d);
+                }
+            }
+        }
+        if (menu_) menu_->setHoverObjectName(hover_name);
+    }
+
     s_camera_paused = menu_->draw(
         command_buffer,
         final_render_pass_,
