@@ -9,6 +9,9 @@
 #include <thread>
 #include <filesystem>
 #include <ctime>
+#include <mutex>
+#include <streambuf>
+#include <string>
 
 #include "application.h"
 #include "helper/cluster_mesh.h"  // engine::helper::clusterRenderingEnabled()
@@ -67,6 +70,73 @@ static bool parseClusterDebugFlag(int argc, char** argv) {
     return false;
 }
 
+// ── Line-routing stream buffer: splits physics/IK/collision log lines into
+// a separate file ──────────────────────────────────────────────────────
+// std::cout carries everything; this buffer inspects each completed LINE and,
+// if it begins with a physics/IK/collision tag (or is an indented
+// continuation of one), writes it to the physics log instead of the main
+// engine log.  Centralising the split here means no call site has to change.
+// A mutex guards the shared line buffer because a few lines come from
+// background threads (async BVH build / classifier).
+namespace {
+class PhysicsRouteBuf : public std::streambuf {
+public:
+    PhysicsRouteBuf(std::streambuf* main_buf, std::streambuf* phys_buf)
+        : main_(main_buf), phys_(phys_buf) {}
+protected:
+    std::streamsize xsputn(const char* s, std::streamsize n) override {
+        std::lock_guard<std::mutex> lk(mtx_);
+        for (std::streamsize i = 0; i < n; ++i) putLocked(s[i]);
+        return n;
+    }
+    int overflow(int ch) override {
+        if (ch == traits_type::eof()) return ch;
+        std::lock_guard<std::mutex> lk(mtx_);
+        putLocked(static_cast<char>(ch));
+        return ch;
+    }
+    int sync() override {
+        // Flush the underlying targets; keep any partial (newline-less) line
+        // buffered so we can still route it once its tag is complete.
+        if (main_) main_->pubsync();
+        if (phys_) phys_->pubsync();
+        return 0;
+    }
+private:
+    void putLocked(char c) {
+        line_ += c;
+        if (c == '\n') { writeLine(); line_.clear(); }
+    }
+    void writeLine() {
+        std::streambuf* dst = routeIsPhysics(line_) ? phys_ : main_;
+        if (!dst) dst = main_ ? main_ : phys_;
+        if (dst) dst->sputn(line_.data(),
+                            static_cast<std::streamsize>(line_.size()));
+    }
+    bool routeIsPhysics(const std::string& s) {
+        std::size_t i = 0;
+        while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
+        if (i > 0) return last_phys_;   // indented continuation of prev line
+        static const char* const kPhys[] = {
+            "[collision", "[foot_", "[follow]", "[cw.", "[player.", "[QEM" };
+        last_phys_ = false;
+        for (const char* p : kPhys) {
+            const std::size_t lp = std::strlen(p);
+            if (s.size() >= lp && s.compare(0, lp, p) == 0) {
+                last_phys_ = true;
+                break;
+            }
+        }
+        return last_phys_;
+    }
+    std::streambuf* main_ = nullptr;
+    std::streambuf* phys_ = nullptr;
+    std::string     line_;
+    bool            last_phys_ = false;
+    std::mutex      mtx_;
+};
+} // namespace
+
 int main(int argc, char** argv) {
     // ── Route stdout to a log file ───────────────────────────────────
     // The engine prints a lot of per-frame debug ([player.*], [cw.*],
@@ -78,6 +148,7 @@ int main(int argc, char** argv) {
     // whole run.  Run with ENGINE_LOG_CONSOLE=1 to keep stdout on the
     // terminal instead (e.g. for quick interactive debugging).
     static std::ofstream s_stdout_log;
+    static std::ofstream s_physics_log;
     {
         char*  keep_console = nullptr;
         size_t keep_len     = 0;
@@ -95,12 +166,30 @@ int main(int argc, char** argv) {
             std::strftime(
                 fname, sizeof(fname),
                 "logs/engine_stdout_%Y-%m-%d_%H-%M-%S.log", &tm_local);
+            // Physics / IK / collision lines are split into their own file.
+            char pname[256];
+            std::strftime(
+                pname, sizeof(pname),
+                "logs/physics_%Y-%m-%d_%H-%M-%S.log", &tm_local);
             s_stdout_log.open(fname);
-            if (s_stdout_log.is_open()) {
+            s_physics_log.open(pname);
+            if (s_stdout_log.is_open() && s_physics_log.is_open()) {
+                // Route physics/IK/collision lines to the physics log,
+                // everything else to the main engine log.
+                static PhysicsRouteBuf s_route(s_stdout_log.rdbuf(),
+                                               s_physics_log.rdbuf());
+                std::cout.rdbuf(&s_route);
+                std::cerr << "[log] stdout -> " << fname
+                          << "\n[log] physics/IK/collision -> " << pname
+                          << "  (set ENGINE_LOG_CONSOLE=1 to keep both on "
+                             "the console)" << std::endl;
+            } else if (s_stdout_log.is_open()) {
+                // Physics file failed to open -> single combined log.
                 std::cout.rdbuf(s_stdout_log.rdbuf());
                 std::cerr << "[log] stdout -> " << fname
-                          << "  (set ENGINE_LOG_CONSOLE=1 to keep it on "
-                             "the console)" << std::endl;
+                          << "  (physics split disabled; set "
+                             "ENGINE_LOG_CONSOLE=1 to keep it on the console)"
+                          << std::endl;
             }
         }
     }

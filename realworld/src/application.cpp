@@ -6256,6 +6256,14 @@ void RealWorldApplication::drawFrame() {
         float follow_y = cam_pos.y - kPlayerEyeOffset;
         bool  have_follow_offset = false;
 
+        // Persistent body-Y for the closed-loop foot planter below.  Each
+        // frame we nudge THIS value by how far the lowest foot's sole sits
+        // below its ground, using the REAL world foot position -- immune to
+        // the rig's 0.1 scale / unusual root-node layout that threw the
+        // analytic trial-frame estimate off by ~0.88 m and sank her.
+        static float s_plant_follow_y = 0.0f;
+        static bool  s_plant_have     = false;
+
         if (rn_for_follow >= 0 &&
             rn_for_follow < (int)data_for_follow.nodes_.size()) {
             const auto& root_node =
@@ -6374,6 +6382,11 @@ void RealWorldApplication::drawFrame() {
             constexpr float kSoleDrop = 0.08f;
             float plant_follow_y   = -std::numeric_limits<float>::max();
             float min_sole_at_zero =  std::numeric_limits<float>::max();
+            // worst_sink = how far the LOWEST foot's sole is BELOW its ground
+            // (world space, > 0 means sinking).  Drives the closed-loop body
+            // raise.  max_foot_ground kept only for the diagnostic line.
+            float worst_sink       = -std::numeric_limits<float>::max();
+            float max_foot_ground  = -std::numeric_limits<float>::max();
             int   feet_found = 0, feet_planted = 0;
             for (size_t ni = 0; ni < data_for_follow.nodes_.size(); ++ni) {
                 const auto& n = data_for_follow.nodes_[ni];
@@ -6417,13 +6430,31 @@ void RealWorldApplication::drawFrame() {
                 if (hit) {
                     const float req = gh.y - sole_at_zero;
                     if (req > plant_follow_y) plant_follow_y = req;
+                    if (gh.y > max_foot_ground) max_foot_ground = gh.y;
+                    // Closed-loop signal: the REAL world sole of this foot vs
+                    // its ground.  Positive => foot is below ground (sinking).
+                    const float sole_world = n.cached_matrix_[3].y - kSoleDrop;
+                    const float sink = gh.y - sole_world;
+                    if (sink > worst_sink) worst_sink = sink;
                     ++feet_planted;
                 }
             }
 
-            if (feet_planted > 0) {
-                // A foot found real walkable ground -> plant the lower
-                // foot's sole on it.
+            if (feet_planted > 0 && s_plant_have &&
+                worst_sink > -1e5f && std::isfinite(worst_sink)) {
+                // Closed-loop body height: nudge the persistent body-Y by how
+                // far the lowest foot's sole sits below its ground.  Uses the
+                // REAL world foot (n.cached_matrix_), so it's immune to the
+                // trial-frame / scale / root-node coordinate mismatch that put
+                // her ~0.88 m underground.  Gain < 1 damps overshoot from the
+                // 1-frame foot-read lag; it converges in ~2-3 frames and is
+                // self-correcting (feet above ground -> sink < 0 -> lowers).
+                constexpr float kPlantGain = 0.6f;
+                follow_y = s_plant_follow_y + kPlantGain * worst_sink;
+                have_follow_offset = true;
+            } else if (feet_planted > 0) {
+                // First frame (no previous body-Y yet): seed from the analytic
+                // estimate; the closed loop refines it from next frame on.
                 follow_y = plant_follow_y;
                 have_follow_offset = true;
             } else if (feet_found > 0) {
@@ -6448,6 +6479,9 @@ void RealWorldApplication::drawFrame() {
                               << " planted=" << feet_planted
                               << " follow_y=" << follow_y
                               << " desired_feet_y=" << desired_feet_y
+                              << " worst_sink=" << worst_sink
+                              << " max_ground=" << max_foot_ground
+                              << " body_y=" << s_plant_follow_y
                               << " cw_built=" << (collision_world_built_ ? 1 : 0)
                               << " cw_meshes=" << collision_world_.meshCount()
                               << std::endl;
@@ -6465,6 +6499,10 @@ void RealWorldApplication::drawFrame() {
         glm::vec3 follow_pos(follow_xz.x, follow_y, follow_xz.y);
         if (follow_y_ok) {
             player_controller_->setPositionAndYaw(follow_pos, cam.yaw);
+            // Remember the applied body-Y so next frame's closed-loop planter
+            // can nudge it by the measured foot sink.
+            s_plant_follow_y = follow_y;
+            s_plant_have     = true;
         } else {
             std::cout << "[follow] follow_y rejected as garbage ("
                       << follow_y << "), holding previous position"
