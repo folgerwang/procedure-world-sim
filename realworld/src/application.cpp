@@ -7586,77 +7586,26 @@ void RealWorldApplication::drawFrame() {
             player_controller_ && player_controller_->isSpawned()) {
             const glm::quat identity_q(1.0f, 0.0f, 0.0f, 0.0f);
 
-            // For each foot, take the bone's world translation, cast
-            // a ray straight down from a point ~0.3 m above it (to
-            // make sure we start ABOVE the floor mesh even when the
-            // ankle bone is slightly buried), and snap the marker to
-            // the closest triangle hit.  When the raycast misses (no
-            // floor under the foot — open air, edge of world) we fall
-            // back to the bone position so the marker doesn't snap to
-            // (0,0,0) or vanish.
-            //
-            // The raycast is gated on collision_world_built_ because
-            // the BVH builds asynchronously over the Bistro meshes;
-            // before that we just show the bone-position fallback.
-            constexpr float kFootRayStartLift = 0.3f;   // start ray 30 cm above the bone
-            constexpr float kFootRayMaxDist   = 2.0f;   // search 2 m down
-            // Throttled diagnostic — print once per second per foot so
-            // we can tell whether the raycast hit (and the marker just
-            // happens to be near the ankle because the foot bone IS
-            // close to the ground) vs. the raycast missing entirely
-            // and us silently falling back to the bone position.
-            static int s_foot_ray_frame = 0;
-            ++s_foot_ray_frame;
-            const bool log_this_frame =
-                (s_foot_ray_frame % 60 == 0);
             // ── Place every bone marker at its joint's world position ──
-            // One loop over all 19 cubes.  The two FOOT bones snap to the
-            // ground via the collision raycast (so the visual sits on the
-            // floor instead of inside the ankle); every other bone goes
-            // straight to its cached_matrix translation.  Each call uses
-            // setInstanceRootTransform — the markers all share one loaded
-            // DrawableData, so writing into shared nodes_ would make every
-            // sibling jump to whichever marker called it last.
-            auto place_bone_marker = [&](
-                const std::shared_ptr<ego::DrawableObject>& marker,
-                const char* bone_name,
-                bool snap_to_ground) {
-                if (!marker || !marker->isReady()) return;
-                const glm::mat4 m =
-                    player_object_->getNodeWorldMatrixByName(bone_name);
-                const glm::vec3 bone_pos(m[3]);
-                glm::vec3 target = bone_pos;
-                if (snap_to_ground && collision_world_built_) {
-                    glm::vec3 ray_from = bone_pos;
-                    ray_from.y += kFootRayStartLift;
-                    glm::vec3 hit_pos(0.0f), hit_normal;
-                    bool ray_hit = collision_world_.raycastDown(
-                        ray_from, kFootRayStartLift + kFootRayMaxDist,
-                        hit_pos, hit_normal);
-                    if (ray_hit) target = hit_pos;
-                    if (log_this_frame) {
-                        std::cout << "[foot_ray] " << bone_name
-                                  << " bone=(" << bone_pos.x << "," << bone_pos.y
-                                  << "," << bone_pos.z << ")"
-                                  << " cw_built=1 hit=" << (ray_hit ? 1 : 0);
-                        if (ray_hit) {
-                            std::cout << " hit_pos=(" << hit_pos.x << ","
-                                      << hit_pos.y << "," << hit_pos.z << ")"
-                                      << " drop=" << (bone_pos.y - hit_pos.y)
-                                      << "m";
-                        }
-                        std::cout << std::endl;
-                    }
-                }
-                marker->setInstanceRootTransform(target, identity_q);
-            };
+            // One loop over all 19 cubes.  Every marker — including the
+            // two FOOT bones — goes straight to its cached_matrix
+            // translation now: snapping the foot cube to the ground (an
+            // old debug convenience) made it disagree with the link from
+            // lower_leg, which ends at the actual foot bone (the ankle)
+            // and not at the floor.  Result was a visible gap below the
+            // shin during stance and the foot cube staying planted while
+            // the leg lifted during a step.  Bone-accurate placement
+            // keeps the joint and the link end coincident.
+            // setInstanceRootTransform is used (not setRootNodeTransform)
+            // because all markers share one loaded DrawableData.
             for (size_t i = 0; i < kNumBoneMarkers && i < bone_markers_.size();
                  ++i) {
-                const char* name = kBoneNames[i];
-                const bool is_foot =
-                    (std::strcmp(name, "left_foot")  == 0) ||
-                    (std::strcmp(name, "right_foot") == 0);
-                place_bone_marker(bone_markers_[i], name, is_foot);
+                auto& marker = bone_markers_[i];
+                if (!marker || !marker->isReady()) continue;
+                const glm::mat4 m =
+                    player_object_->getNodeWorldMatrixByName(kBoneNames[i]);
+                const glm::vec3 bone_pos(m[3]);
+                marker->setInstanceRootTransform(bone_pos, identity_q);
             }
 
             // ── Bone-link sticks ────────────────────────────────────────
