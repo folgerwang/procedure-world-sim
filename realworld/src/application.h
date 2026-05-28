@@ -337,6 +337,19 @@ private:
     // lives next to player_object_ creation.
     std::shared_ptr<ego::DrawableObject> foot_marker_left_;
     std::shared_ptr<ego::DrawableObject> foot_marker_right_;
+    // ── Hip / knee debug markers ───────────────────────────────────
+    // Same pattern as the foot markers (debug_cube.gltf,
+    // setDebugForceRed + setUseNodeTransformOnly + small
+    // setDebugScale) but pinned to the upper_leg / lower_leg world
+    // positions.  Together with foot_marker_*, the six cubes trace
+    // the live skeleton hip→knee→foot per leg, independent of the
+    // skinned mesh.  If the markers animate while the mesh stays in
+    // T-pose, the skin path is bypassed; if the markers DON'T animate
+    // either, the bone chain itself isn't receiving our writes.
+    std::shared_ptr<ego::DrawableObject> hip_marker_left_;
+    std::shared_ptr<ego::DrawableObject> hip_marker_right_;
+    std::shared_ptr<ego::DrawableObject> knee_marker_left_;
+    std::shared_ptr<ego::DrawableObject> knee_marker_right_;
 
     // Triangle-mesh collision world. Populated once both bistro scenes
     // are isReady(); PlayerController consults it every frame.

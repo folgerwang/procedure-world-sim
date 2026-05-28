@@ -1908,6 +1908,33 @@ void RealWorldApplication::initVulkan() {
             "assets/debug_cube.gltf",
             glm::inverse(view_params_.view));
 
+    // ── Hip / knee debug markers ────────────────────────────────────
+    // Four more debug_cube.gltf shells, same pattern as the foot
+    // markers.  Together they form a six-cube skeleton-only render
+    // of the leg chain (hip→knee→foot per side) that animates
+    // straight off bone cached_matrix -- so we can SEE the live
+    // skeleton independent of whatever the skinned mesh path is doing.
+    hip_marker_left_ = ego::DrawableObject::createAsync(
+            *mesh_load_task_manager_, device_, descriptor_pool_,
+            renderbuffer_formats_, graphic_pipeline_info_,
+            repeat_texture_sampler_, thin_film_lut_tex_,
+            "assets/debug_cube.gltf", glm::inverse(view_params_.view));
+    hip_marker_right_ = ego::DrawableObject::createAsync(
+            *mesh_load_task_manager_, device_, descriptor_pool_,
+            renderbuffer_formats_, graphic_pipeline_info_,
+            repeat_texture_sampler_, thin_film_lut_tex_,
+            "assets/debug_cube.gltf", glm::inverse(view_params_.view));
+    knee_marker_left_ = ego::DrawableObject::createAsync(
+            *mesh_load_task_manager_, device_, descriptor_pool_,
+            renderbuffer_formats_, graphic_pipeline_info_,
+            repeat_texture_sampler_, thin_film_lut_tex_,
+            "assets/debug_cube.gltf", glm::inverse(view_params_.view));
+    knee_marker_right_ = ego::DrawableObject::createAsync(
+            *mesh_load_task_manager_, device_, descriptor_pool_,
+            renderbuffer_formats_, graphic_pipeline_info_,
+            repeat_texture_sampler_, thin_film_lut_tex_,
+            "assets/debug_cube.gltf", glm::inverse(view_params_.view));
+
     // The player is PlayerController-driven (procedural pose + spawnAt
     // -driven world placement).  Opt it into "identity instance + skip
     // imported animations" mode so:
@@ -1971,6 +1998,14 @@ void RealWorldApplication::initVulkan() {
     object_scene_view_->addDrawableObject(foot_marker_right_);
     shadow_object_scene_view_->addDrawableObject(foot_marker_left_);
     shadow_object_scene_view_->addDrawableObject(foot_marker_right_);
+    object_scene_view_->addDrawableObject(hip_marker_left_);
+    object_scene_view_->addDrawableObject(hip_marker_right_);
+    object_scene_view_->addDrawableObject(knee_marker_left_);
+    object_scene_view_->addDrawableObject(knee_marker_right_);
+    shadow_object_scene_view_->addDrawableObject(hip_marker_left_);
+    shadow_object_scene_view_->addDrawableObject(hip_marker_right_);
+    shadow_object_scene_view_->addDrawableObject(knee_marker_left_);
+    shadow_object_scene_view_->addDrawableObject(knee_marker_right_);
 
     menu_ = std::make_shared<engine::ui::Menu>(
         window_,
@@ -3318,6 +3353,10 @@ void RealWorldApplication::drawScene(
         // the same command-buffer recording window.
         if (foot_marker_left_  && foot_marker_left_->isReady())  foot_marker_left_->updateBuffers(cmd_buf);
         if (foot_marker_right_ && foot_marker_right_->isReady()) foot_marker_right_->updateBuffers(cmd_buf);
+        if (hip_marker_left_   && hip_marker_left_->isReady())   hip_marker_left_->updateBuffers(cmd_buf);
+        if (hip_marker_right_  && hip_marker_right_->isReady())  hip_marker_right_->updateBuffers(cmd_buf);
+        if (knee_marker_left_  && knee_marker_left_->isReady())  knee_marker_left_->updateBuffers(cmd_buf);
+        if (knee_marker_right_ && knee_marker_right_->isReady()) knee_marker_right_->updateBuffers(cmd_buf);
 
         // Bistro scene buffer updates — enabled once game has started.
         if (bistro_exterior_scene_ && bistro_exterior_scene_->isReady()) {
@@ -4800,6 +4839,10 @@ void RealWorldApplication::drawScene(
             // always-on-top, switch to an ImGui-overlay path instead.
             if (foot_marker_left_  && foot_marker_left_->isReady())  foot_marker_left_->draw(cmd_buf, desc_sets);
             if (foot_marker_right_ && foot_marker_right_->isReady()) foot_marker_right_->draw(cmd_buf, desc_sets);
+            if (hip_marker_left_   && hip_marker_left_->isReady())   hip_marker_left_->draw(cmd_buf, desc_sets);
+            if (hip_marker_right_  && hip_marker_right_->isReady())  hip_marker_right_->draw(cmd_buf, desc_sets);
+            if (knee_marker_left_  && knee_marker_left_->isReady())  knee_marker_left_->draw(cmd_buf, desc_sets);
+            if (knee_marker_right_ && knee_marker_right_->isReady()) knee_marker_right_->draw(cmd_buf, desc_sets);
 
             // render debug draw.
             if (menu_->getDebugDrawType() != NO_DEBUG_DRAW) {
@@ -6147,7 +6190,16 @@ void RealWorldApplication::drawFrame() {
     // resize crash that turned out to be unrelated (hiz_pyramid
     // double-free in TextureInfo::destroy + ImGui clock_tex_id_
     // dangling-set hazards — both fixed).  Re-enabled now.
-#if 1
+    //
+    // 2026-05: DISABLED again as part of the third-person inversion.
+    // The player now owns its OWN translation (PlayerController's step
+    // mode advances position_ on keyboard input; foot IK keeps it on
+    // the ground).  The camera trails the player via the new follow
+    // block below this `#if 0`.  Kept here as a reference for the
+    // per-foot ground raycast + closed-loop body-Y planter -- some of
+    // that logic will migrate into PlayerController later so the body
+    // ground-snaps as it steps onto new terrain.
+#if 0
     if (player_object_ && player_object_->isReady() &&
         player_controller_ && player_controller_->isSpawned()) {
         const auto& cam = main_camera_object_->getCameraViewInfo();
@@ -6530,7 +6582,112 @@ void RealWorldApplication::drawFrame() {
                       << std::endl;
         }
     }
-#endif // 1 — follow block re-enabled after resize crash root-cause fixed
+#endif // 0 — old player-follows-camera follow block, kept as reference
+
+    // ── Third-person camera follow ───────────────────────────────────
+    // Inverts the relationship the disabled block above used to enforce:
+    // the PLAYER drives its own position (PlayerController's step mode +
+    // foot IK), and the CAMERA trails it from a fixed offset along the
+    // camera's own facing direction.  Net effect: the camera behaves
+    // like any 3rd-person camera — orbits the character when the user
+    // mouse-looks, follows the character when it walks.
+    //
+    // Implementation:
+    //   1. Read the live player position.
+    //   2. Read the camera's current facing direction (driven by mouse
+    //      yaw/pitch in main_camera_object_->updateCamera, which was
+    //      called earlier this frame around line 3133).
+    //   3. Pull the camera back from the player along -facing_dir by
+    //      kFollowDistance, lift by kFollowHeightExtra so the camera
+    //      sits roughly head-high or a touch above.
+    //   4. Push that position into ViewCamera via the second
+    //      updateCamera overload, which calls updateViewCameraInfo
+    //      with an input_camera_pos override.  The override hook was
+    //      just added to the perspective branch of updateViewCameraInfo
+    //      (previously only the ortho branch honoured it), so the
+    //      override actually takes effect on the perspective camera.
+    //
+    // Known first-iteration trade-offs (kept simple on purpose so we
+    // can A/B against the old block):
+    //   * Two updateViewCameraInfo calls per frame — the first one
+    //     consumes WASD (which now does nothing useful for the player,
+    //     since the player owns its own translation), the second
+    //     overrides the position.  prev_view_proj briefly stores the
+    //     intermediate VP; only matters for TAA / velocity reproj,
+    //     neither of which the step animation iteration cares about.
+    //   * Camera Y is purely follow-relative; if the player walks up
+    //     a slope, the camera doesn't ground-snap.  Acceptable while
+    //     we work the leg/step animation; we'll add a ground clamp
+    //     for the camera once the player's own ground-snap is wired
+    //     through the step path.
+    if (player_object_ && player_object_->isReady() &&
+        player_controller_ && player_controller_->isSpawned()) {
+        const glm::vec3 player_pos = player_controller_->getPosition();
+        const auto& cam = main_camera_object_->getCameraViewInfo();
+        glm::vec3 cam_fwd = cam.facing_dir;
+        // Degenerate facing -- shouldn't happen post-init, but guard so
+        // a NaN doesn't propagate into the camera buffer (which would
+        // brick the whole render pass).
+        if (!std::isfinite(cam_fwd.x) || !std::isfinite(cam_fwd.y) ||
+            !std::isfinite(cam_fwd.z) ||
+            glm::length(cam_fwd) < 1e-3f) {
+            cam_fwd = glm::vec3(0.0f, 0.0f, 1.0f);
+        } else {
+            cam_fwd = glm::normalize(cam_fwd);
+        }
+
+        // Look target at the FEET (was 1.2 m above the root = chest
+        // height, which framed the upper body and put the feet near
+        // the bottom of the screen).  Pull back along the camera's
+        // current facing direction; mouse-look still orbits the
+        // camera around the look target.
+        //
+        // The rig's authored feet sit ~1.1 m below the root node (the
+        // root is at hip/pelvis level), so kLookHeight = -1.1 m puts
+        // the look target right at the feet.  kFollowHeightUp = 0
+        // means the camera stays on the same horizontal plane as the
+        // look target -- the pitch of the camera (driven by mouse)
+        // then determines how high above the ground it ends up; a
+        // small downward pitch keeps the feet centred.
+        const float kLookHeight     = -1.1f;   // below root, at feet
+        const float kFollowDistance =  4.0f;   // distance behind
+        const float kFollowHeightUp =  0.0f;   // no extra lift -- pitch handles it
+        const glm::vec3 look_target =
+            player_pos + glm::vec3(0.0f, kLookHeight, 0.0f);
+        const glm::vec3 follow_cam_pos =
+            look_target
+            - cam_fwd * kFollowDistance
+            + glm::vec3(0.0f, kFollowHeightUp, 0.0f);
+
+        // Note: this branch lives in drawFrame() (not drawScene()), so
+        // the local command-buffer name is `command_buffer`, not the
+        // `cmd_buf` alias drawScene declares -- DO NOT rename without
+        // confirming the enclosing function.
+        main_camera_object_->updateCamera(command_buffer, follow_cam_pos);
+
+        // ── Yaw hand-off ─────────────────────────────────────────────
+        // The player's facing yaw used to come from the camera via the
+        // old follow block (setPositionAndYaw).  Keep that hand-off
+        // here so the body still faces the camera's heading -- this is
+        // what makes the character turn when you mouse-look.  The
+        // controller's setPositionAndYaw drops the position argument
+        // when step mode owns translation, but it always accepts the
+        // yaw, so the call is safe in both modes.
+        player_controller_->setPositionAndYaw(player_pos, cam.yaw);
+
+        // Per-second diagnostic so we can see the new architecture's
+        // numbers in the log alongside [player.live] root_T.
+        static uint64_t s_tp_frame = 0;
+        if ((s_tp_frame++ % 60u) == 0u) {
+            std::cout << "[tpcam] player=(" << player_pos.x << ","
+                      << player_pos.y << "," << player_pos.z
+                      << ")  cam=(" << follow_cam_pos.x << ","
+                      << follow_cam_pos.y << "," << follow_cam_pos.z
+                      << ")  fwd=(" << cam_fwd.x << "," << cam_fwd.y
+                      << "," << cam_fwd.z << ")  yaw=" << cam.yaw
+                      << std::endl;
+        }
+    }
 
     // Build the collision world once both bistro scenes have actually
     // populated their CPU-side mesh data. We retry every frame in
@@ -7400,6 +7557,10 @@ void RealWorldApplication::drawFrame() {
         };
         configure_marker(foot_marker_left_);
         configure_marker(foot_marker_right_);
+        configure_marker(hip_marker_left_);
+        configure_marker(hip_marker_right_);
+        configure_marker(knee_marker_left_);
+        configure_marker(knee_marker_right_);
 
         if (player_object_ && player_object_->isReady() &&
             player_controller_ && player_controller_->isSpawned()) {
@@ -7466,9 +7627,62 @@ void RealWorldApplication::drawFrame() {
 
             place_at_foot(foot_marker_left_,  "left_foot");
             place_at_foot(foot_marker_right_, "right_foot");
+
+            // ── Hip / knee markers ─────────────────────────────────
+            // Same as place_at_foot but WITHOUT the ground raycast --
+            // hip and knee bones aren't supposed to sit on the floor,
+            // so we drop them at the bone's world position straight
+            // from cached_matrix.  If a marker moves visibly when the
+            // PlayerController writes a non-zero rotation_, the bone
+            // chain is wired all the way through.  If it stays put
+            // while the [step_anim.pose] log shows non-zero thetaL/R,
+            // we've isolated the bug to the engine-side of
+            // setNodeRotationByName.
+            auto place_at_bone = [&](
+                const std::shared_ptr<ego::DrawableObject>& marker,
+                const char* bone_name) {
+                if (!marker || !marker->isReady()) return;
+                const glm::mat4 m =
+                    player_object_->getNodeWorldMatrixByName(bone_name);
+                const glm::vec3 bone_pos(m[3]);
+                marker->setRootNodeTransform(bone_pos, identity_q);
+            };
+            place_at_bone(hip_marker_left_,   "left_upper_leg");
+            place_at_bone(hip_marker_right_,  "right_upper_leg");
+            place_at_bone(knee_marker_left_,  "left_lower_leg");
+            place_at_bone(knee_marker_right_, "right_lower_leg");
+
+            // Per-second skeleton dump so we can verify from the log
+            // whether the upper-leg / lower-leg bone world positions
+            // are actually moving frame-to-frame with the IK writes.
+            static int s_bone_dump_frame = 0;
+            if ((++s_bone_dump_frame % 60) == 0) {
+                const auto bone_xyz = [&](const char* n) -> glm::vec3 {
+                    return glm::vec3(
+                        player_object_->getNodeWorldMatrixByName(n)[3]);
+                };
+                const glm::vec3 hL = bone_xyz("left_upper_leg");
+                const glm::vec3 kL = bone_xyz("left_lower_leg");
+                const glm::vec3 fL = bone_xyz("left_foot");
+                const glm::vec3 hR = bone_xyz("right_upper_leg");
+                const glm::vec3 kR = bone_xyz("right_lower_leg");
+                const glm::vec3 fR = bone_xyz("right_foot");
+                std::cout << "[skel]"
+                          << " hL=(" << hL.x << "," << hL.y << "," << hL.z << ")"
+                          << " kL=(" << kL.x << "," << kL.y << "," << kL.z << ")"
+                          << " fL=(" << fL.x << "," << fL.y << "," << fL.z << ")"
+                          << " hR=(" << hR.x << "," << hR.y << "," << hR.z << ")"
+                          << " kR=(" << kR.x << "," << kR.y << "," << kR.z << ")"
+                          << " fR=(" << fR.x << "," << fR.y << "," << fR.z << ")"
+                          << std::endl;
+            }
         }
-        if (foot_marker_left_)  foot_marker_left_->update(device_, current_time_);
-        if (foot_marker_right_) foot_marker_right_->update(device_, current_time_);
+        if (foot_marker_left_)   foot_marker_left_->update(device_, current_time_);
+        if (foot_marker_right_)  foot_marker_right_->update(device_, current_time_);
+        if (hip_marker_left_)    hip_marker_left_->update(device_, current_time_);
+        if (hip_marker_right_)   hip_marker_right_->update(device_, current_time_);
+        if (knee_marker_left_)   knee_marker_left_->update(device_, current_time_);
+        if (knee_marker_right_)  knee_marker_right_->update(device_, current_time_);
 
         for (auto& drawable_obj : drawable_objects_) {
             drawable_obj->update(device_, current_time_);
