@@ -1,6 +1,8 @@
 #pragma once
 #include <array>
 #include <chrono>
+#include <memory>
+#include <vector>
 #include "renderer/renderer.h"
 #include "renderer/renderer_structs.h"
 #include "shaders/global_definition.glsl.h"
@@ -325,31 +327,32 @@ private:
     // capsule collision against the level.
     std::unique_ptr<ego::PlayerController> player_controller_;
 
-    // ── Debug: two small red cubes pinned to the player rig's foot
-    // bones each frame.  Drawn through the regular DrawableObject
-    // pipeline (debug_force_red + tiny debug_scale) so they obey
-    // depth / fog / lighting like the rest of the scene.  Asset is
-    // assets/debug_cube.gltf — a 264-byte embedded unit cube.
-    // Position is updated each frame from
-    // player_object_->getNodeWorldMatrixByName("left_foot" /
-    // "right_foot") in the same per-frame block that runs the player
-    // follow-cam.  Set to nullptr by default; createAsync wiring
-    // lives next to player_object_ creation.
-    std::shared_ptr<ego::DrawableObject> foot_marker_left_;
-    std::shared_ptr<ego::DrawableObject> foot_marker_right_;
-    // ── Hip / knee debug markers ───────────────────────────────────
-    // Same pattern as the foot markers (debug_cube.gltf,
-    // setDebugForceRed + setUseNodeTransformOnly + small
-    // setDebugScale) but pinned to the upper_leg / lower_leg world
-    // positions.  Together with foot_marker_*, the six cubes trace
-    // the live skeleton hip→knee→foot per leg, independent of the
-    // skinned mesh.  If the markers animate while the mesh stays in
-    // T-pose, the skin path is bypassed; if the markers DON'T animate
-    // either, the bone chain itself isn't receiving our writes.
-    std::shared_ptr<ego::DrawableObject> hip_marker_left_;
-    std::shared_ptr<ego::DrawableObject> hip_marker_right_;
-    std::shared_ptr<ego::DrawableObject> knee_marker_left_;
-    std::shared_ptr<ego::DrawableObject> knee_marker_right_;
+    // ── Debug: one small red cube per joint, pinned to the player rig's
+    // bones each frame ────────────────────────────────────────────────
+    // Drawn through the regular DrawableObject pipeline (debug_force_red
+    // + tiny debug_scale) so the markers obey depth / fog / lighting like
+    // the rest of the scene.  Asset is assets/debug_cube.gltf — loaded
+    // exactly ONCE; every marker shares that DrawableData via the in-
+    // flight load dedup in DrawableObject::createAsync, and each cube is
+    // placed at its bone via setInstanceRootTransform (which composes a
+    // per-instance world into model_mat without touching the shared
+    // node TRS, so siblings don't clobber each other).  Together the 19
+    // cubes trace the live skeleton independent of the skinned mesh: if
+    // the markers animate while the mesh stays in T-pose the skin path is
+    // bypassed; if neither animates the bone chain itself isn't receiving
+    // our writes.  Order matches kBoneNames in application.cpp (which
+    // mirrors the auto-rig's getStandardJointNames).
+    std::vector<std::shared_ptr<ego::DrawableObject>> bone_markers_;
+
+    // ── Bone-link sticks ──────────────────────────────────────────────
+    // One stretched debug-cube per non-root joint, drawn between its
+    // parent joint and itself so the skeleton reads as connected sticks
+    // instead of a sparse cloud of cubes.  Same shared mesh as
+    // bone_markers_ (deduped by createAsync's in-flight cache) but with a
+    // non-uniform per-instance scale: long along the bone axis, thin in
+    // the other two axes.  Index lines up with bone_markers_; entry 0
+    // (the root "hips") has no parent and is left null and skipped.
+    std::vector<std::shared_ptr<ego::DrawableObject>> bone_links_;
 
     // Triangle-mesh collision world. Populated once both bistro scenes
     // are isReady(); PlayerController consults it every frame.

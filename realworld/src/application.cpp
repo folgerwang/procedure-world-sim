@@ -7,6 +7,7 @@
 #include <limits>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <future>
 #include <string>
 #include <filesystem>
@@ -32,6 +33,52 @@ namespace er = engine::renderer;
 namespace ego = engine::game_object;
 
 namespace {
+// 19 canonical joint names from the auto-rig (mirrors
+// engine::plugins::auto_rig::getStandardJointNames in rig_types.h).
+// Index N here lines up with bone_markers_[N] so the per-frame loop
+// can resolve each cube's bone with a simple lookup.
+constexpr const char* const kBoneNames[19] = {
+    "hips", "spine", "chest", "neck", "head",
+    "left_shoulder",  "left_upper_arm",  "left_lower_arm",  "left_hand",
+    "right_shoulder", "right_upper_arm", "right_lower_arm", "right_hand",
+    "left_upper_leg",  "left_lower_leg",  "left_foot",
+    "right_upper_leg", "right_lower_leg", "right_foot"
+};
+constexpr size_t kNumBoneMarkers = 19;
+
+// Parent index per joint (-1 for the root).  Mirrors
+// engine::plugins::auto_rig::getStandardJointParents in rig_types.h —
+// the per-frame loop uses this to draw a stretched "stick" between each
+// non-root joint and its parent so the skeleton reads as connected
+// bones instead of a sparse cloud of cubes.
+constexpr int kBoneParents[19] = {
+    -1,   // 0  hips             (root)
+     0,   // 1  spine
+     1,   // 2  chest
+     2,   // 3  neck
+     3,   // 4  head
+     2,   // 5  left_shoulder
+     5,   // 6  left_upper_arm
+     6,   // 7  left_lower_arm
+     7,   // 8  left_hand
+     2,   // 9  right_shoulder
+     9,   // 10 right_upper_arm
+    10,   // 11 right_lower_arm
+    11,   // 12 right_hand
+     0,   // 13 left_upper_leg
+    13,   // 14 left_lower_leg
+    14,   // 15 left_foot
+     0,   // 16 right_upper_leg
+    16,   // 17 right_lower_leg
+    17    // 18 right_foot
+};
+// Bone cube edge length (debug_scale) and bone-stick cross-section.
+// The links carry instance_root_s_ = (length/cubeSize, thin/cubeSize,
+// thin/cubeSize) so the shared m_debug_scale_ scales them back to the
+// intended (length, thin, thin) on screen.
+constexpr float kBoneCubeSize     = 0.08f;
+constexpr float kBoneLinkThickness = 0.015f;
+
 constexpr int kWindowSizeX = 2560;
 constexpr int kWindowSizeY = 1440;
 static int s_update_frame_count = -1;
@@ -1877,63 +1924,40 @@ void RealWorldApplication::initVulkan() {
             "assets/Characters/scene-skinned.gltf",
             glm::inverse(view_params_.view));
 
-    // ── Foot debug markers (two tiny red cubes pinned to the rig's
-    // left_foot / right_foot bones each frame).  Asset is the
-    // 264-byte assets/debug_cube.gltf.  Configured + repositioned
-    // in the "Drawable updates (CPU)" block once both markers and
-    // the player rig are isReady().  Kept out of drawable_objects_
-    // on purpose so PlayerController doesn't see them as collision
-    // obstacles (the player would otherwise bump into its own
-    // feet).
-    foot_marker_left_ =
-        ego::DrawableObject::createAsync(
-            *mesh_load_task_manager_,
-            device_,
-            descriptor_pool_,
-            renderbuffer_formats_,
-            graphic_pipeline_info_,
-            repeat_texture_sampler_,
-            thin_film_lut_tex_,
-            "assets/debug_cube.gltf",
-            glm::inverse(view_params_.view));
-    foot_marker_right_ =
-        ego::DrawableObject::createAsync(
-            *mesh_load_task_manager_,
-            device_,
-            descriptor_pool_,
-            renderbuffer_formats_,
-            graphic_pipeline_info_,
-            repeat_texture_sampler_,
-            thin_film_lut_tex_,
-            "assets/debug_cube.gltf",
-            glm::inverse(view_params_.view));
-
-    // ── Hip / knee debug markers ────────────────────────────────────
-    // Four more debug_cube.gltf shells, same pattern as the foot
-    // markers.  Together they form a six-cube skeleton-only render
-    // of the leg chain (hip→knee→foot per side) that animates
-    // straight off bone cached_matrix -- so we can SEE the live
-    // skeleton independent of whatever the skinned mesh path is doing.
-    hip_marker_left_ = ego::DrawableObject::createAsync(
+    // ── Per-bone debug markers (one tiny red cube per joint) ────────
+    // 19 cubes pinned to every rig joint each frame.  Asset is the
+    // 264-byte assets/debug_cube.gltf — loaded EXACTLY ONCE: the first
+    // createAsync below kicks off the load, the other 18 attach as
+    // waiters in DrawableObject::createAsync's in-flight dedup and
+    // share the same DrawableData when phase 3 finishes.  Per-instance
+    // position is later applied via setInstanceRootTransform (NOT
+    // setRootNodeTransform — that would write into the shared nodes_
+    // and every sibling cube would jump to whichever wrapper called it
+    // last).  Markers stay out of drawable_objects_ so PlayerController
+    // doesn't see them as collision obstacles.
+    bone_markers_.resize(kNumBoneMarkers);
+    for (size_t i = 0; i < kNumBoneMarkers; ++i) {
+        bone_markers_[i] = ego::DrawableObject::createAsync(
             *mesh_load_task_manager_, device_, descriptor_pool_,
             renderbuffer_formats_, graphic_pipeline_info_,
             repeat_texture_sampler_, thin_film_lut_tex_,
             "assets/debug_cube.gltf", glm::inverse(view_params_.view));
-    hip_marker_right_ = ego::DrawableObject::createAsync(
+    }
+    // Bone-link sticks (one per non-root joint).  Same shared mesh, each
+    // stretched between its parent joint and itself in the per-frame
+    // placement loop.  Entry 0 corresponds to "hips" which has no parent;
+    // we still allocate the slot so the index lines up with bone_markers_
+    // and the loops below can iterate both vectors in lockstep.  bone_links_[0]
+    // is never positioned, never made visible, never drawn (visible_ stays
+    // false from setVisible(false) in the per-frame update).
+    bone_links_.resize(kNumBoneMarkers);
+    for (size_t i = 0; i < kNumBoneMarkers; ++i) {
+        bone_links_[i] = ego::DrawableObject::createAsync(
             *mesh_load_task_manager_, device_, descriptor_pool_,
             renderbuffer_formats_, graphic_pipeline_info_,
             repeat_texture_sampler_, thin_film_lut_tex_,
             "assets/debug_cube.gltf", glm::inverse(view_params_.view));
-    knee_marker_left_ = ego::DrawableObject::createAsync(
-            *mesh_load_task_manager_, device_, descriptor_pool_,
-            renderbuffer_formats_, graphic_pipeline_info_,
-            repeat_texture_sampler_, thin_film_lut_tex_,
-            "assets/debug_cube.gltf", glm::inverse(view_params_.view));
-    knee_marker_right_ = ego::DrawableObject::createAsync(
-            *mesh_load_task_manager_, device_, descriptor_pool_,
-            renderbuffer_formats_, graphic_pipeline_info_,
-            repeat_texture_sampler_, thin_film_lut_tex_,
-            "assets/debug_cube.gltf", glm::inverse(view_params_.view));
+    }
 
     // The player is PlayerController-driven (procedural pose + spawnAt
     // -driven world placement).  Opt it into "identity instance + skip
@@ -1994,18 +2018,18 @@ void RealWorldApplication::initVulkan() {
     // registration is optional (they're tiny cubes, casting shadows
     // looks fine but isn't required) — kept in for parity with the
     // player so toggling depth-test off doesn't make them flicker.
-    object_scene_view_->addDrawableObject(foot_marker_left_);
-    object_scene_view_->addDrawableObject(foot_marker_right_);
-    shadow_object_scene_view_->addDrawableObject(foot_marker_left_);
-    shadow_object_scene_view_->addDrawableObject(foot_marker_right_);
-    object_scene_view_->addDrawableObject(hip_marker_left_);
-    object_scene_view_->addDrawableObject(hip_marker_right_);
-    object_scene_view_->addDrawableObject(knee_marker_left_);
-    object_scene_view_->addDrawableObject(knee_marker_right_);
-    shadow_object_scene_view_->addDrawableObject(hip_marker_left_);
-    shadow_object_scene_view_->addDrawableObject(hip_marker_right_);
-    shadow_object_scene_view_->addDrawableObject(knee_marker_left_);
-    shadow_object_scene_view_->addDrawableObject(knee_marker_right_);
+    // Register every bone marker with both the forward and shadow scene
+    // views.  Shadow registration is optional for tiny debug cubes but
+    // kept on for parity with the player so toggling depth-test off
+    // doesn't make them flicker (matches the original foot-marker note).
+    for (auto& m : bone_markers_) {
+        object_scene_view_->addDrawableObject(m);
+        shadow_object_scene_view_->addDrawableObject(m);
+    }
+    for (auto& m : bone_links_) {
+        object_scene_view_->addDrawableObject(m);
+        shadow_object_scene_view_->addDrawableObject(m);
+    }
 
     menu_ = std::make_shared<engine::ui::Menu>(
         window_,
@@ -3351,12 +3375,12 @@ void RealWorldApplication::drawScene(
         // Foot debug markers — same buffer-update step as the player
         // so their instance / indirect-draw / joint-matrix uploads ride
         // the same command-buffer recording window.
-        if (foot_marker_left_  && foot_marker_left_->isReady())  foot_marker_left_->updateBuffers(cmd_buf);
-        if (foot_marker_right_ && foot_marker_right_->isReady()) foot_marker_right_->updateBuffers(cmd_buf);
-        if (hip_marker_left_   && hip_marker_left_->isReady())   hip_marker_left_->updateBuffers(cmd_buf);
-        if (hip_marker_right_  && hip_marker_right_->isReady())  hip_marker_right_->updateBuffers(cmd_buf);
-        if (knee_marker_left_  && knee_marker_left_->isReady())  knee_marker_left_->updateBuffers(cmd_buf);
-        if (knee_marker_right_ && knee_marker_right_->isReady()) knee_marker_right_->updateBuffers(cmd_buf);
+        for (auto& m : bone_markers_) {
+            if (m && m->isReady()) m->updateBuffers(cmd_buf);
+        }
+        for (auto& m : bone_links_) {
+            if (m && m->isReady()) m->updateBuffers(cmd_buf);
+        }
 
         // Bistro scene buffer updates — enabled once game has started.
         if (bistro_exterior_scene_ && bistro_exterior_scene_->isReady()) {
@@ -4837,12 +4861,12 @@ void RealWorldApplication::drawScene(
             // backdrop.  Depth-tested like everything else so a marker
             // hidden behind geometry will be occluded; if you want
             // always-on-top, switch to an ImGui-overlay path instead.
-            if (foot_marker_left_  && foot_marker_left_->isReady())  foot_marker_left_->draw(cmd_buf, desc_sets);
-            if (foot_marker_right_ && foot_marker_right_->isReady()) foot_marker_right_->draw(cmd_buf, desc_sets);
-            if (hip_marker_left_   && hip_marker_left_->isReady())   hip_marker_left_->draw(cmd_buf, desc_sets);
-            if (hip_marker_right_  && hip_marker_right_->isReady())  hip_marker_right_->draw(cmd_buf, desc_sets);
-            if (knee_marker_left_  && knee_marker_left_->isReady())  knee_marker_left_->draw(cmd_buf, desc_sets);
-            if (knee_marker_right_ && knee_marker_right_->isReady()) knee_marker_right_->draw(cmd_buf, desc_sets);
+            for (auto& m : bone_markers_) {
+                if (m && m->isReady()) m->draw(cmd_buf, desc_sets);
+            }
+            for (auto& m : bone_links_) {
+                if (m && m->isReady()) m->draw(cmd_buf, desc_sets);
+            }
 
             // render debug draw.
             if (menu_->getDebugDrawType() != NO_DEBUG_DRAW) {
@@ -7555,12 +7579,8 @@ void RealWorldApplication::drawFrame() {
             m->setUseNodeTransformOnly(true);
             m->setDebugScale(kDebugCubeSize);
         };
-        configure_marker(foot_marker_left_);
-        configure_marker(foot_marker_right_);
-        configure_marker(hip_marker_left_);
-        configure_marker(hip_marker_right_);
-        configure_marker(knee_marker_left_);
-        configure_marker(knee_marker_right_);
+        for (auto& m : bone_markers_) configure_marker(m);
+        for (auto& m : bone_links_)   configure_marker(m);
 
         if (player_object_ && player_object_->isReady() &&
             player_controller_ && player_controller_->isSpawned()) {
@@ -7589,68 +7609,139 @@ void RealWorldApplication::drawFrame() {
             ++s_foot_ray_frame;
             const bool log_this_frame =
                 (s_foot_ray_frame % 60 == 0);
-            auto place_at_foot = [&](
+            // ── Place every bone marker at its joint's world position ──
+            // One loop over all 19 cubes.  The two FOOT bones snap to the
+            // ground via the collision raycast (so the visual sits on the
+            // floor instead of inside the ankle); every other bone goes
+            // straight to its cached_matrix translation.  Each call uses
+            // setInstanceRootTransform — the markers all share one loaded
+            // DrawableData, so writing into shared nodes_ would make every
+            // sibling jump to whichever marker called it last.
+            auto place_bone_marker = [&](
                 const std::shared_ptr<ego::DrawableObject>& marker,
-                const char* bone_name) {
-                if (!marker || !marker->isReady()) return;
-                glm::mat4 m =
-                    player_object_->getNodeWorldMatrixByName(bone_name);
-                glm::vec3 bone_pos(m[3]);
-
-                glm::vec3 target = bone_pos;
-                bool      ray_hit = false;
-                glm::vec3 hit_pos(0.0f);
-                if (collision_world_built_) {
-                    glm::vec3 ray_from = bone_pos;
-                    ray_from.y += kFootRayStartLift;
-                    glm::vec3 hit_normal;
-                    if (collision_world_.raycastDown(
-                            ray_from, kFootRayStartLift + kFootRayMaxDist,
-                            hit_pos, hit_normal)) {
-                        target = hit_pos;
-                        ray_hit = true;
-                    }
-                }
-                if (log_this_frame) {
-                    std::cout << "[foot_ray] " << bone_name
-                              << " bone=(" << bone_pos.x << "," << bone_pos.y << "," << bone_pos.z << ")"
-                              << " cw_built=" << (collision_world_built_ ? 1 : 0)
-                              << " hit=" << (ray_hit ? 1 : 0);
-                    if (ray_hit) {
-                        std::cout << " hit_pos=(" << hit_pos.x << "," << hit_pos.y << "," << hit_pos.z << ")"
-                                  << " drop=" << (bone_pos.y - hit_pos.y) << "m";
-                    }
-                    std::cout << std::endl;
-                }
-                marker->setRootNodeTransform(target, identity_q);
-            };
-
-            place_at_foot(foot_marker_left_,  "left_foot");
-            place_at_foot(foot_marker_right_, "right_foot");
-
-            // ── Hip / knee markers ─────────────────────────────────
-            // Same as place_at_foot but WITHOUT the ground raycast --
-            // hip and knee bones aren't supposed to sit on the floor,
-            // so we drop them at the bone's world position straight
-            // from cached_matrix.  If a marker moves visibly when the
-            // PlayerController writes a non-zero rotation_, the bone
-            // chain is wired all the way through.  If it stays put
-            // while the [step_anim.pose] log shows non-zero thetaL/R,
-            // we've isolated the bug to the engine-side of
-            // setNodeRotationByName.
-            auto place_at_bone = [&](
-                const std::shared_ptr<ego::DrawableObject>& marker,
-                const char* bone_name) {
+                const char* bone_name,
+                bool snap_to_ground) {
                 if (!marker || !marker->isReady()) return;
                 const glm::mat4 m =
                     player_object_->getNodeWorldMatrixByName(bone_name);
                 const glm::vec3 bone_pos(m[3]);
-                marker->setRootNodeTransform(bone_pos, identity_q);
+                glm::vec3 target = bone_pos;
+                if (snap_to_ground && collision_world_built_) {
+                    glm::vec3 ray_from = bone_pos;
+                    ray_from.y += kFootRayStartLift;
+                    glm::vec3 hit_pos(0.0f), hit_normal;
+                    bool ray_hit = collision_world_.raycastDown(
+                        ray_from, kFootRayStartLift + kFootRayMaxDist,
+                        hit_pos, hit_normal);
+                    if (ray_hit) target = hit_pos;
+                    if (log_this_frame) {
+                        std::cout << "[foot_ray] " << bone_name
+                                  << " bone=(" << bone_pos.x << "," << bone_pos.y
+                                  << "," << bone_pos.z << ")"
+                                  << " cw_built=1 hit=" << (ray_hit ? 1 : 0);
+                        if (ray_hit) {
+                            std::cout << " hit_pos=(" << hit_pos.x << ","
+                                      << hit_pos.y << "," << hit_pos.z << ")"
+                                      << " drop=" << (bone_pos.y - hit_pos.y)
+                                      << "m";
+                        }
+                        std::cout << std::endl;
+                    }
+                }
+                marker->setInstanceRootTransform(target, identity_q);
             };
-            place_at_bone(hip_marker_left_,   "left_upper_leg");
-            place_at_bone(hip_marker_right_,  "right_upper_leg");
-            place_at_bone(knee_marker_left_,  "left_lower_leg");
-            place_at_bone(knee_marker_right_, "right_lower_leg");
+            for (size_t i = 0; i < kNumBoneMarkers && i < bone_markers_.size();
+                 ++i) {
+                const char* name = kBoneNames[i];
+                const bool is_foot =
+                    (std::strcmp(name, "left_foot")  == 0) ||
+                    (std::strcmp(name, "right_foot") == 0);
+                place_bone_marker(bone_markers_[i], name, is_foot);
+            }
+
+            // ── Bone-link sticks ────────────────────────────────────────
+            // Stretch a debug-cube along each parent→child bone so the
+            // skeleton reads as connected sticks.  Per-instance world =
+            // translate(midpoint) * rotation(local +X -> bone direction)
+            // * scale(length/cubeSize, thin/cubeSize, thin/cubeSize); the
+            // shared m_debug_scale_ (kBoneCubeSize) is applied after and
+            // brings the on-screen dimensions back to (length, thin,
+            // thin).  Link 0 (root "hips") has no parent and stays hidden.
+            auto unit_align_x_to = [](const glm::vec3& d) -> glm::quat {
+                // Rotation taking +X onto unit direction d (assumed |d|>0).
+                const glm::vec3 x(1.0f, 0.0f, 0.0f);
+                const float dot = glm::clamp(glm::dot(x, d), -1.0f, 1.0f);
+                if (dot > 0.9999f) return glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+                if (dot < -0.9999f) {
+                    // 180° flip — pick any axis perpendicular to +X.
+                    return glm::angleAxis(3.14159265358979f,
+                                          glm::vec3(0.0f, 1.0f, 0.0f));
+                }
+                glm::vec3 axis = glm::normalize(glm::cross(x, d));
+                return glm::angleAxis(std::acos(dot), axis);
+            };
+            for (size_t i = 1; i < kNumBoneMarkers &&
+                                i < bone_links_.size(); ++i) {
+                auto& link = bone_links_[i];
+                if (!link || !link->isReady()) continue;
+                const int parent = kBoneParents[i];
+                if (parent < 0) continue;
+                const glm::vec3 p0(player_object_->getNodeWorldMatrixByName(
+                    kBoneNames[parent])[3]);
+                const glm::vec3 p1(player_object_->getNodeWorldMatrixByName(
+                    kBoneNames[i])[3]);
+                glm::vec3 d   = p1 - p0;
+                const float L = glm::length(d);
+                if (L < 1e-4f) continue;  // degenerate (bones coincident)
+                d /= L;
+                const glm::vec3 mid = 0.5f * (p0 + p1);
+                const glm::quat rot = unit_align_x_to(d);
+                const glm::vec3 s(
+                    L / kBoneCubeSize,
+                    kBoneLinkThickness / kBoneCubeSize,
+                    kBoneLinkThickness / kBoneCubeSize);
+                link->setInstanceRootTransform(mid, rot, s);
+            }
+            // Root link (0) is never positioned -> hide it explicitly so
+            // it doesn't render at the asset-default location (origin).
+            if (!bone_links_.empty() && bone_links_[0]) {
+                bone_links_[0]->setVisible(false);
+            }
+
+            // ── Skeleton render-debug mode ──────────────────────────────
+            // Drive per-drawable visibility from the "Render Debug ->
+            // Skeleton view" menu so the bone cubes + links / character
+            // mesh can be hidden without touching scene_view registration:
+            //   CharacterOnly      -> character on, bones+links off (default)
+            //   BoneWithCharacter  -> all three on
+            //   BoneOnly           -> character off, bones+links on
+            // In the two bone modes we also force the walk gait on so the
+            // legs animate on their own (no need to hold WASD to inspect
+            // the skeleton); the WASD path still works on top.
+            // setVisible() short-circuits DrawableObject::draw() at the
+            // top, covering both forward and shadow passes.
+            if (menu_) {
+                const auto mode = menu_->skeletonDebugMode();
+                using SDM = engine::ui::Menu::SkeletonDebugMode;
+                const bool bone_modes =
+                    (mode == SDM::BoneOnly) ||
+                    (mode == SDM::BoneWithCharacter);
+                const bool show_character =
+                    (mode == SDM::CharacterOnly) ||
+                    (mode == SDM::BoneWithCharacter);
+                for (auto& m : bone_markers_) {
+                    if (m) m->setVisible(bone_modes);
+                }
+                // Skip index 0 (root link, already hidden above) so the
+                // mode toggle doesn't un-hide it.
+                for (size_t i = 1; i < bone_links_.size(); ++i) {
+                    if (bone_links_[i]) bone_links_[i]->setVisible(bone_modes);
+                }
+                if (player_object_) player_object_->setVisible(show_character);
+                if (player_controller_) {
+                    player_controller_->setForceWalking(bone_modes);
+                }
+            }
 
             // Per-second skeleton dump so we can verify from the log
             // whether the upper-leg / lower-leg bone world positions
@@ -7677,12 +7768,12 @@ void RealWorldApplication::drawFrame() {
                           << std::endl;
             }
         }
-        if (foot_marker_left_)   foot_marker_left_->update(device_, current_time_);
-        if (foot_marker_right_)  foot_marker_right_->update(device_, current_time_);
-        if (hip_marker_left_)    hip_marker_left_->update(device_, current_time_);
-        if (hip_marker_right_)   hip_marker_right_->update(device_, current_time_);
-        if (knee_marker_left_)   knee_marker_left_->update(device_, current_time_);
-        if (knee_marker_right_)  knee_marker_right_->update(device_, current_time_);
+        for (auto& m : bone_markers_) {
+            if (m) m->update(device_, current_time_);
+        }
+        for (auto& m : bone_links_) {
+            if (m) m->update(device_, current_time_);
+        }
 
         for (auto& drawable_obj : drawable_objects_) {
             drawable_obj->update(device_, current_time_);
