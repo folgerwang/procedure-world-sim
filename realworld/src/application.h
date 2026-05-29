@@ -344,6 +344,18 @@ private:
     // mirrors the auto-rig's getStandardJointNames).
     std::vector<std::shared_ptr<ego::DrawableObject>> bone_markers_;
 
+    // ── NPC: scifi_girl_v.01.glb ──────────────────────────────────────
+    // Static (non-controller-driven) character placed inside the bistro
+    // interior to populate the scene.  Loaded via createAsync the same
+    // way player_object_ is.  Positioned once both the NPC asset and the
+    // player have spawned, via a one-shot latch (`npc_placed_`) so the
+    // setRootNodeTransform write doesn't fire every frame.  Uses
+    // setUseNodeTransformOnly(true) so the shared game_objects_buffer_'s
+    // camera-tracking position doesn't double-transform her like it
+    // would have done to the player without the same opt-in.
+    std::shared_ptr<ego::DrawableObject> npc_scifi_girl_;
+    bool npc_placed_ = false;
+
     // ── Bone-link sticks ──────────────────────────────────────────────
     // One stretched debug-cube per non-root joint, drawn between its
     // parent joint and itself so the skeleton reads as connected sticks

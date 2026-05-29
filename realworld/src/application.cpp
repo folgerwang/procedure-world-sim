@@ -1924,6 +1924,24 @@ void RealWorldApplication::initVulkan() {
             "assets/Characters/scene-skinned.gltf",
             glm::inverse(view_params_.view));
 
+    // ── NPC: scifi_girl placed inside the bistro restaurant ─────────
+    // Static drawable (not driven by PlayerController).  createAsync
+    // returns a SHELL; the actual asset load runs on a worker thread
+    // and only completes once phase 3 finishes.  Position + the
+    // setUseNodeTransformOnly flag are wired later inside the spawn
+    // block, gated on isReady(), so the npc_placed_ latch fires once.
+    npc_scifi_girl_ =
+        ego::DrawableObject::createAsync(
+            *mesh_load_task_manager_,
+            device_,
+            descriptor_pool_,
+            renderbuffer_formats_,
+            graphic_pipeline_info_,
+            repeat_texture_sampler_,
+            thin_film_lut_tex_,
+            "assets/Characters/scifi_girl_v.01.glb",
+            glm::inverse(view_params_.view));
+
     // ── Per-bone debug markers (one tiny red cube per joint) ────────
     // 19 cubes pinned to every rig joint each frame.  Asset is the
     // 264-byte assets/debug_cube.gltf — loaded EXACTLY ONCE: the first
@@ -2009,6 +2027,12 @@ void RealWorldApplication::initVulkan() {
 
     shadow_object_scene_view_->addDrawableObject(
         player_object_);
+
+    // Register the NPC with the same scene views so the forward + shadow
+    // passes draw her each frame.  Position is set later (one-shot,
+    // inside the spawn block).
+    object_scene_view_->addDrawableObject(npc_scifi_girl_);
+    shadow_object_scene_view_->addDrawableObject(npc_scifi_girl_);
 
     // ── Foot debug markers: register with the same scene views as the
     // player so they're picked up by the forward + shadow render
@@ -3370,6 +3394,12 @@ void RealWorldApplication::drawScene(
 
         if (player_object_) {
             player_object_->updateBuffers(cmd_buf);
+        }
+
+        // NPC: same per-frame buffer upload so the rig + indirect draw
+        // commands ride the same command-buffer window.
+        if (npc_scifi_girl_ && npc_scifi_girl_->isReady()) {
+            npc_scifi_girl_->updateBuffers(cmd_buf);
         }
 
         // Foot debug markers — same buffer-update step as the player
@@ -6002,6 +6032,45 @@ void RealWorldApplication::drawFrame() {
                   << (have_pivot_offset ? 1 : 0) << ")"
                   << std::endl;
 
+        // ── NPC placement (one-shot) ────────────────────────────────
+        // Place scifi_girl 2.5 m to the player's RIGHT (perpendicular
+        // to cam.yaw), facing back toward the player so she reads as
+        // someone standing in the restaurant looking at the entrance.
+        //   • setUseNodeTransformOnly(true) so the shared
+        //     game_objects_buffer_'s camera-tracking instance position
+        //     doesn't double-translate her (same fix the player uses).
+        //   • setRootNodeTransform writes her world pose into the rig's
+        //     root node; nodes_ get cached_matrix_ refreshed each frame.
+        //   • npc_placed_ latch so this only fires ONCE -- if the
+        //     player spawn re-runs (reset_pos_req), the NPC stays where
+        //     she was.  Remove the latch if you want her to follow
+        //     the player's reset.
+        if (npc_scifi_girl_ && npc_scifi_girl_->isReady() && !npc_placed_) {
+            npc_scifi_girl_->setUseNodeTransformOnly(true);
+            // Right-of-player offset, computed in the bistro's world
+            // frame.  cam.yaw + 90° puts the offset on the player's
+            // right side.  Y matches the player's feet Y so she
+            // stands on the same floor.
+            const float npc_offset_yaw = glm::radians(cam.yaw + 90.0f);
+            const float npc_dist_m     = 2.5f;
+            const glm::vec3 npc_pos(
+                spawn_pos.x + std::cos(npc_offset_yaw) * npc_dist_m,
+                spawn_pos.y,
+                spawn_pos.z - std::sin(npc_offset_yaw) * npc_dist_m);
+            // Face her back toward the player (180° from her position
+            // offset bearing).  Use Y-axis rotation since the rig's
+            // root accepts yaw via the same setRootNodeTransform path.
+            const float npc_face_yaw = cam.yaw - 90.0f;
+            const glm::quat npc_rot = glm::angleAxis(
+                glm::radians(npc_face_yaw), glm::vec3(0.0f, 1.0f, 0.0f));
+            npc_scifi_girl_->setRootNodeTransform(npc_pos, npc_rot);
+            npc_placed_ = true;
+            std::cout << "[npc] scifi_girl placed at ("
+                      << npc_pos.x << ", " << npc_pos.y << ", "
+                      << npc_pos.z << ") yaw=" << npc_face_yaw
+                      << std::endl;
+        }
+
         // ── One-shot diagnostic dump ──────────────────────────────────
         // Print the loaded gltf's structure at spawn time so we can
         // see node hierarchy, mesh count, per-primitive bbox + index
@@ -7533,6 +7602,15 @@ void RealWorldApplication::drawFrame() {
         auto _cpu_drw = gpu_profiler_.beginCpuScope("Drawable updates (CPU)");
         if (player_object_) {
             player_object_->update(device_, current_time_);
+        }
+
+        // NPC: per-frame node-matrix refresh.  No imported-animation
+        // step (setUseNodeTransformOnly suppresses that path) -- this
+        // just re-runs the parent-chain matrix product so the rig's
+        // cached_matrix_ entries stay valid for the GPU's joint
+        // buffer upload that happened earlier this frame.
+        if (npc_scifi_girl_ && npc_scifi_girl_->isReady()) {
+            npc_scifi_girl_->update(device_, current_time_);
         }
 
         // ── Foot debug markers ─────────────────────────────────────────
