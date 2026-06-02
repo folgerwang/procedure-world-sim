@@ -645,6 +645,108 @@ bool AutoRigPlugin::loadMesh(const std::string& path) {
         mesh_.recomputeNormals();
     }
 
+    // ---- Normalize the source mesh into canonical Y-up, ~human scale ---------
+    //  EVERYTHING downstream assumes the character stands along +Y at roughly
+    //  human (metre) scale: the capture cameras frame a Y-up ~1.8 m figure, the
+    //  mesh-adaptive joint placement HARD-CODES up_ax=1 (Y), the floor-removal
+    //  pass below keys off bbox_min.y, and the predicted skeleton the engine
+    //  animates is Y-up ~1.8 m.
+    //
+    //  Source assets imported from FBX are frequently Z-up and in centimetres.
+    //  (e.g. this character: extent ~(6.5, 2.8, 19.2) — clearly Z-up, ~10x).
+    //  Nothing previously reoriented them, so the mesh sat in Z-up/×10 space
+    //  while the predicted joints sat in Y-up/metre space.  Every mesh vertex
+    //  was then ~18 units from the entire (tiny) skeleton, so the nearest-bone
+    //  weighting in computeSkinWeights() found ALL bones roughly equidistant
+    //  and smeared each vertex across ~4 bones — including opposite-side limbs
+    //  (left arm + right arm, both legs).  That cross-binding is what tears the
+    //  mesh (e.g. the head splitting) the instant any bone moves.
+    //
+    //  Fix: rotate the dominant extent axis to +Y, scale to a canonical height,
+    //  and centre X/Z with the feet at Y=0 — BEFORE captures, joint prediction,
+    //  weighting and IBM export.  The SAME transform is folded into
+    //  mesh_node_world_transform_ so the exported inverse-bind matrices (which
+    //  still operate on the ORIGINAL, un-normalized vertex positions) keep
+    //  reproducing the correct bind pose at runtime.
+    {
+        const glm::vec3 ext = mesh_.bbox_max - mesh_.bbox_min;
+
+        // Detect the up axis as the largest extent, but KEEP Y when the two
+        // largest extents are comparable: a Y-up T-pose has arm-span (X) ≈
+        // height (Y), which must not be mistaken for a sideways up-axis.
+        int a0 = 0;                       // largest-extent axis
+        if (ext[1] > ext[a0]) a0 = 1;
+        if (ext[2] > ext[a0]) a0 = 2;
+        int a1 = (a0 == 0) ? 1 : 0;       // runner-up axis
+        for (int k = 0; k < 3; ++k)
+            if (k != a0 && ext[k] > ext[a1]) a1 = k;
+        const int up = (ext[a0] > ext[a1] * 1.5f) ? a0 : 1;
+
+        const float height = (ext[up] > 1e-4f) ? ext[up] : 1.7f;
+
+        // Only act when something is actually off-convention: a non-Y up axis,
+        // or a wildly non-metric height (cm-scale or tiny).  Leave already-clean
+        // Y-up metre assets completely untouched.
+        const bool needs_fix = (up != 1) || (height > 4.0f) || (height < 0.4f);
+        if (needs_fix) {
+            constexpr float kTargetHeight = 1.8f;
+            const float s = kTargetHeight / height;
+
+            // Rotation sending the detected up axis to +Y (identity if up==Y).
+            glm::mat4 R(1.0f);
+            if (up == 2) {
+                // Z-up -> Y-up: rotate -90° about X  ((x,y,z) -> (x, z, -y)).
+                R = glm::rotate(glm::mat4(1.0f), -1.57079632679f,
+                                glm::vec3(1.0f, 0.0f, 0.0f));
+            } else if (up == 0) {
+                // X-up -> Y-up: rotate +90° about Z  ((x,y,z) -> (-y, x, z)).
+                R = glm::rotate(glm::mat4(1.0f),  1.57079632679f,
+                                glm::vec3(0.0f, 0.0f, 1.0f));
+            }
+
+            const glm::mat4 SR = glm::scale(glm::mat4(1.0f), glm::vec3(s)) * R;
+
+            // Transform the 8 bbox corners to find the post-rotate/scale bounds,
+            // then translate so the body is centred on X/Z with feet at Y=0.
+            glm::vec3 tmin( 1e30f), tmax(-1e30f);
+            for (int c = 0; c < 8; ++c) {
+                const glm::vec3 corner(
+                    (c & 1) ? mesh_.bbox_max.x : mesh_.bbox_min.x,
+                    (c & 2) ? mesh_.bbox_max.y : mesh_.bbox_min.y,
+                    (c & 4) ? mesh_.bbox_max.z : mesh_.bbox_min.z);
+                const glm::vec3 tc = glm::vec3(SR * glm::vec4(corner, 1.0f));
+                tmin = glm::min(tmin, tc);
+                tmax = glm::max(tmax, tc);
+            }
+            const glm::vec3 t(
+                -0.5f * (tmin.x + tmax.x),   // centre X
+                -tmin.y,                     // feet to Y = 0
+                -0.5f * (tmin.z + tmax.z));  // centre Z
+            const glm::mat4 norm_xform =
+                glm::translate(glm::mat4(1.0f), t) * SR;
+
+            const glm::mat3 normal_mat =
+                glm::transpose(glm::inverse(glm::mat3(norm_xform)));
+            for (auto& p : mesh_.positions)
+                p = glm::vec3(norm_xform * glm::vec4(p, 1.0f));
+            for (auto& n : mesh_.normals)
+                n = glm::normalize(normal_mat * n);
+
+            // Keep the exported inverse-bind matrices consistent: the exported
+            // primitives still carry the ORIGINAL vertex positions, so the
+            // original->world matrix must now include this normalization.
+            mesh_node_world_transform_ = norm_xform * mesh_node_world_transform_;
+
+            mesh_.recomputeBounds();
+            fprintf(stderr,
+                "[AutoRig] normalized mesh: detected up_axis=%d src_height=%.3f "
+                "scale=%.4f -> bbox (%.2f,%.2f,%.2f)..(%.2f,%.2f,%.2f)\n",
+                up, height, s,
+                mesh_.bbox_min.x, mesh_.bbox_min.y, mesh_.bbox_min.z,
+                mesh_.bbox_max.x, mesh_.bbox_max.y, mesh_.bbox_max.z);
+        }
+    }
+
     // ---- Ensure texcoords & vertex_colors are either empty or fully aligned ----
     //  Partial arrays cause out-of-bounds in the rasterizer.
     const size_t nv = mesh_.positions.size();
@@ -927,7 +1029,163 @@ bool AutoRigPlugin::predictJoints() {
 }
 
 // ============================================================================
-//  fuseAndBuildSkeleton – back-project 2D predictions into 3D, then fuse.
+//  Multi-view triangulation helpers (OpenCV-style: DLT + RANSAC)
+//
+//  Instead of reading a per-view depth buffer, we reconstruct each joint's
+//  3D position the way cv2.triangulatePoints does: every view contributes its
+//  camera matrix (view_proj) and the 2D image point where the joint was
+//  detected, giving two linear constraints on the unknown 3D point.  Stacking
+//  the constraints from >=2 views and solving the homogeneous least-squares
+//  system (smallest eigenvector of AᵀA via Jacobi) yields the 3D point.
+//  RANSAC over view pairs rejects views whose 2D detection is an outlier.
+// ============================================================================
+namespace {
+
+struct TriObs {
+    glm::mat4 P;       // view_proj (world -> clip)
+    glm::vec2 ndc;     // observed point in normalised device coords
+    float     conf;    // detection confidence (heatmap peak)
+    int       view;    // source view index
+};
+
+// Eigen-decompose a symmetric 4x4 (cyclic Jacobi).  Columns of V are the
+// eigenvectors; eval holds the corresponding eigenvalues.
+void jacobiEigen4(double A[4][4], double V[4][4], double eval[4]) {
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j) V[i][j] = (i == j) ? 1.0 : 0.0;
+
+    for (int sweep = 0; sweep < 100; ++sweep) {
+        int p = 0, q = 1; double off = 0.0;
+        for (int i = 0; i < 4; ++i)
+            for (int j = i + 1; j < 4; ++j)
+                if (std::fabs(A[i][j]) > off) { off = std::fabs(A[i][j]); p = i; q = j; }
+        if (off < 1e-20) break;
+
+        double app = A[p][p], aqq = A[q][q], apq = A[p][q];
+        double theta = 0.5 * std::atan2(2.0 * apq, aqq - app);
+        double c = std::cos(theta), s = std::sin(theta);
+
+        // A <- Jᵀ A J, applied as column rotation then row rotation.
+        double T[4][4];
+        for (int i = 0; i < 4; ++i) for (int j = 0; j < 4; ++j) T[i][j] = A[i][j];
+        for (int i = 0; i < 4; ++i) {
+            T[i][p] = c * A[i][p] - s * A[i][q];
+            T[i][q] = s * A[i][p] + c * A[i][q];
+        }
+        for (int i = 0; i < 4; ++i) for (int j = 0; j < 4; ++j) A[i][j] = T[i][j];
+        for (int i = 0; i < 4; ++i) for (int j = 0; j < 4; ++j) T[i][j] = A[i][j];
+        for (int j = 0; j < 4; ++j) {
+            T[p][j] = c * A[p][j] - s * A[q][j];
+            T[q][j] = s * A[p][j] + c * A[q][j];
+        }
+        for (int i = 0; i < 4; ++i) for (int j = 0; j < 4; ++j) A[i][j] = T[i][j];
+
+        double Vt[4][4];
+        for (int i = 0; i < 4; ++i) for (int j = 0; j < 4; ++j) Vt[i][j] = V[i][j];
+        for (int i = 0; i < 4; ++i) {
+            Vt[i][p] = c * V[i][p] - s * V[i][q];
+            Vt[i][q] = s * V[i][p] + c * V[i][q];
+        }
+        for (int i = 0; i < 4; ++i) for (int j = 0; j < 4; ++j) V[i][j] = Vt[i][j];
+    }
+    for (int i = 0; i < 4; ++i) eval[i] = A[i][i];
+}
+
+// Weighted DLT triangulation over the selected observations.
+bool triangulateDLT(const std::vector<TriObs>& obs,
+                    const std::vector<int>& sel, glm::vec3& out) {
+    double ATA[4][4] = {{0}};
+    int used = 0;
+    for (int idx : sel) {
+        const glm::mat4& P = obs[idx].P;
+        // Rows of P (glm is column-major: P[col][row]).
+        const double r0[4] = { P[0][0], P[1][0], P[2][0], P[3][0] };
+        const double r1[4] = { P[0][1], P[1][1], P[2][1], P[3][1] };
+        const double r3[4] = { P[0][3], P[1][3], P[2][3], P[3][3] };
+        const double w = std::sqrt((double)std::max(obs[idx].conf, 1e-3f));
+        double ex[4], ey[4];
+        for (int k = 0; k < 4; ++k) {
+            ex[k] = w * (obs[idx].ndc.x * r3[k] - r0[k]);
+            ey[k] = w * (obs[idx].ndc.y * r3[k] - r1[k]);
+        }
+        for (int a = 0; a < 4; ++a)
+            for (int b = 0; b < 4; ++b) ATA[a][b] += ex[a] * ex[b] + ey[a] * ey[b];
+        ++used;
+    }
+    if (used < 2) return false;
+
+    double V[4][4], ev[4];
+    jacobiEigen4(ATA, V, ev);
+    int kmin = 0;
+    for (int k = 1; k < 4; ++k) if (ev[k] < ev[kmin]) kmin = k;
+    const double Xh[4] = { V[0][kmin], V[1][kmin], V[2][kmin], V[3][kmin] };
+    if (std::fabs(Xh[3]) < 1e-12) return false;
+    out = glm::vec3(Xh[0] / Xh[3], Xh[1] / Xh[3], Xh[2] / Xh[3]);
+    return std::isfinite(out.x) && std::isfinite(out.y) && std::isfinite(out.z);
+}
+
+// NDC reprojection error of a candidate 3D point in one view.
+float reprojNdcErr(const glm::mat4& P, const glm::vec3& X, const glm::vec2& ndc) {
+    glm::vec4 c = P * glm::vec4(X, 1.0f);
+    if (std::fabs(c.w) < 1e-9f) return 1e9f;
+    return glm::length(glm::vec2(c.x / c.w, c.y / c.w) - ndc);
+}
+
+// RANSAC over view pairs, then refine a weighted DLT on the inliers.
+bool triangulateRansac(const std::vector<TriObs>& obs, float tol, glm::vec3& out) {
+    const int M = (int)obs.size();
+    if (M < 2) return false;
+    if (M == 2) return triangulateDLT(obs, { 0, 1 }, out);
+
+    std::vector<int> best_inliers;
+    for (int i = 0; i < M; ++i) {
+        for (int j = i + 1; j < M; ++j) {
+            glm::vec3 X;
+            if (!triangulateDLT(obs, { i, j }, X)) continue;
+            std::vector<int> inl;
+            for (int k = 0; k < M; ++k)
+                if (reprojNdcErr(obs[k].P, X, obs[k].ndc) < tol) inl.push_back(k);
+            if (inl.size() > best_inliers.size()) best_inliers.swap(inl);
+        }
+    }
+    if (best_inliers.size() < 2) return false;   // no consensus -> caller falls back
+    return triangulateDLT(obs, best_inliers, out);
+}
+
+// Depth-buffer unprojection fallback (the original method), per joint/view.
+bool depthUnproject(const ViewCapture& cap,
+                    const JointHeatmap& jh, glm::vec3& out) {
+    if (cap.depth.empty() || cap.width <= 0 || cap.height <= 0) return false;
+    float ndc_x = jh.peak_uv.x * 2.0f - 1.0f;
+    float ndc_y = jh.peak_uv.y * 2.0f - 1.0f;
+    int px = std::clamp((int)(jh.peak_uv.x * cap.width),  0, cap.width  - 1);
+    int py = std::clamp((int)(jh.peak_uv.y * cap.height), 0, cap.height - 1);
+    float depth_val = cap.depth[py * cap.width + px];
+    if (depth_val >= 0.999f) {
+        float best = 1.0f; int r = cap.width / 8;
+        for (int dy = -r; dy <= r; ++dy)
+            for (int dx = -r; dx <= r; ++dx) {
+                int sx = std::clamp(px + dx, 0, cap.width  - 1);
+                int sy = std::clamp(py + dy, 0, cap.height - 1);
+                float dv = cap.depth[sy * cap.width + sx];
+                if (dv < best) { best = dv;
+                    ndc_x = (sx + 0.5f) / cap.width  * 2.0f - 1.0f;
+                    ndc_y = (sy + 0.5f) / cap.height * 2.0f - 1.0f; }
+            }
+        depth_val = best;
+    }
+    if (depth_val >= 0.999f) return false;
+    float ndc_z = depth_val * 2.0f - 1.0f;
+    glm::vec4 clip = glm::inverse(cap.view_proj) * glm::vec4(ndc_x, ndc_y, ndc_z, 1.0f);
+    if (std::fabs(clip.w) < 1e-9f) return false;
+    out = glm::vec3(clip) / clip.w;
+    return true;
+}
+
+}  // namespace
+
+// ============================================================================
+//  fuseAndBuildSkeleton – triangulate 2D predictions into 3D, then fuse.
 // ============================================================================
 
 bool AutoRigPlugin::fuseAndBuildSkeleton() {
@@ -944,56 +1202,52 @@ bool AutoRigPlugin::fuseAndBuildSkeleton() {
     };
     std::vector<JointAccum> accum(J);
 
+    // ── Multi-view triangulation (RANSAC + DLT), depth as fallback ────
+    // Gather every confident 2D detection of each joint across views,
+    // each carrying its camera (view_proj) and normalised image point.
+    constexpr float kConfMin      = 0.05f;
+    constexpr float kInlierNdcTol = 0.05f;   // NDC reprojection tolerance
+
+    std::vector<std::vector<TriObs>> obs(J);
     for (auto& vp : view_predictions_) {
         if (vp.view_idx < 0 || vp.view_idx >= (int)captures_.size()) continue;
         const auto& cap = captures_[vp.view_idx];
-
-        glm::mat4 inv_vp = glm::inverse(cap.view_proj);
-
         for (int j = 0; j < (int)vp.joints.size() && j < J; ++j) {
-            auto& jh = vp.joints[j];
-            if (jh.confidence < 0.05f) continue;
-
-            // UV -> NDC.
-            float ndc_x = jh.peak_uv.x * 2.0f - 1.0f;
-            float ndc_y = jh.peak_uv.y * 2.0f - 1.0f;
-
-            // Sample depth from the depth buffer at the peak location.
-            int px = std::clamp((int)(jh.peak_uv.x * cap.width),  0, cap.width  - 1);
-            int py = std::clamp((int)(jh.peak_uv.y * cap.height), 0, cap.height - 1);
-            float depth_val = cap.depth[py * cap.width + px];
-
-            // If the peak falls on background (depth == 1.0), search locally.
-            if (depth_val >= 0.999f) {
-                float best_d = 1.0f;
-                int search_r = cap.width / 8;
-                for (int dy = -search_r; dy <= search_r; ++dy) {
-                    for (int dx = -search_r; dx <= search_r; ++dx) {
-                        int sx = std::clamp(px + dx, 0, cap.width  - 1);
-                        int sy = std::clamp(py + dy, 0, cap.height - 1);
-                        float d = cap.depth[sy * cap.width + sx];
-                        if (d < best_d) {
-                            best_d = d;
-                            // Also update NDC x/y to this valid pixel.
-                            ndc_x = (sx + 0.5f) / cap.width  * 2.0f - 1.0f;
-                            ndc_y = (sy + 0.5f) / cap.height * 2.0f - 1.0f;
-                        }
-                    }
-                }
-                depth_val = best_d;
-            }
-
-            // NDC depth: [0,1] mapped to [-1,1] for back-projection.
-            float ndc_z = depth_val * 2.0f - 1.0f;
-
-            glm::vec4 clip_pos = inv_vp * glm::vec4(ndc_x, ndc_y, ndc_z, 1.0f);
-            glm::vec3 world_pos = glm::vec3(clip_pos) / clip_pos.w;
-
-            float w = jh.confidence;
-            accum[j].pos_sum    += world_pos * w;
-            accum[j].weight_sum += w;
+            const auto& jh = vp.joints[j];
+            if (jh.confidence < kConfMin) continue;
+            obs[j].push_back(TriObs{
+                cap.view_proj,
+                glm::vec2(jh.peak_uv.x * 2.0f - 1.0f, jh.peak_uv.y * 2.0f - 1.0f),
+                jh.confidence, vp.view_idx });
         }
     }
+
+    int n_tri = 0, n_depth = 0, n_none = 0;
+    for (int j = 0; j < J; ++j) {
+        glm::vec3 X;
+        // 1) Multi-view triangulation when >=2 confident views agree.
+        if (obs[j].size() >= 2 && triangulateRansac(obs[j], kInlierNdcTol, X)) {
+            accum[j].pos_sum    = X;
+            accum[j].weight_sum = 1.0f;
+            ++n_tri;
+            continue;
+        }
+        // 2) Fallback: depth-buffer unprojection, confidence-averaged.
+        glm::vec3 psum(0.0f); float wsum = 0.0f;
+        for (auto& vp : view_predictions_) {
+            if (vp.view_idx < 0 || vp.view_idx >= (int)captures_.size()) continue;
+            if (j >= (int)vp.joints.size()) continue;
+            const auto& cap = captures_[vp.view_idx];
+            const auto& jh  = vp.joints[j];
+            if (jh.confidence < kConfMin) continue;
+            glm::vec3 wp;
+            if (depthUnproject(cap, jh, wp)) { psum += wp * jh.confidence; wsum += jh.confidence; }
+        }
+        if (wsum > 1e-6f) { accum[j].pos_sum = psum; accum[j].weight_sum = wsum; ++n_depth; }
+        else ++n_none;   // 3) no data -> mesh-adaptive default fills this in below
+    }
+    fprintf(stderr, "[AutoRig] joint 3D recon: %d triangulated (multi-view DLT), "
+            "%d depth-fallback, %d defaulted\n", n_tri, n_depth, n_none);
 
     // Build skeleton.
     skeleton_ = Skeleton{};
@@ -1014,9 +1268,27 @@ bool AutoRigPlugin::fuseAndBuildSkeleton() {
     glm::vec3 center = (bmin + bmax) * 0.5f;
     glm::vec3 extent = bmax - bmin;
 
-    constexpr int up_ax    = 1;   // Y = up   (glTF standard)
-    constexpr int right_ax = 0;   // X = right
-    constexpr int fwd_ax   = 2;   // Z = forward
+    constexpr int up_ax = 1;      // Y = up (mesh is Y-up after node transforms)
+    // Auto-detect the LEFT/RIGHT (arm-span) axis.  Of the two horizontal axes,
+    // the one with the larger extent across the UPPER body (shoulders/torso,
+    // above the flared skirt) is left/right; the narrower is front/back depth.
+    // The old code hard-coded right=X, but exported assets vary -- this rig's
+    // arm-span is along Z, and placing limbs on the wrong axis throws the arms
+    // and legs front/back through the body instead of out to the sides (the
+    // "tangle" of crossing bones).
+    int right_ax = 0, fwd_ax = 2;
+    {
+        float ylo = mesh_.bbox_min.y + 0.55f * (mesh_.bbox_max.y - mesh_.bbox_min.y);
+        float xmn = 1e30f, xmx = -1e30f, zmn = 1e30f, zmx = -1e30f;
+        for (const auto& p : mesh_.positions) {
+            if (p.y < ylo) continue;
+            xmn = std::min(xmn, p.x); xmx = std::max(xmx, p.x);
+            zmn = std::min(zmn, p.z); zmx = std::max(zmx, p.z);
+        }
+        if ((zmx - zmn) > (xmx - xmn)) { right_ax = 2; fwd_ax = 0; }
+        fprintf(stderr, "[AutoRig] arm-span axis = %s (upper-body extent X=%.3f Z=%.3f)\n",
+            right_ax == 2 ? "Z" : "X", xmx - xmn, zmx - zmn);
+    }
 
     float height = extent[up_ax];
     if (height < 1e-4f) height = 1.7f;
@@ -1122,28 +1394,22 @@ bool AutoRigPlugin::fuseAndBuildSkeleton() {
         return p;
     };
 
-    // Arm joints: interpolate from shoulder centre to the mesh edge.
-    // shoulder (30%), upper_arm (55%), lower_arm (80%), hand (100% of hw).
+    // Arm joints, arms-DOWN aware.  Each joint is placed at a DESCENDING
+    // height (shoulder -> upper_arm -> lower_arm -> hand walk down the body)
+    // and pushed toward the silhouette edge along the left/right axis by
+    // spread_frac.  For an arms-at-side pose the silhouette at hand height
+    // already includes the hand at its outer edge, so sampling the LOCAL
+    // extent at each height naturally tracks the arm down the side instead of
+    // assuming a horizontal T-pose (which left every arm joint at shoulder
+    // height, sticking the arms straight out).
     auto armPos = [&](float norm_h, float spread_frac, bool is_left) -> glm::vec3 {
-        // For non-T-pose: arm joints below shoulder can droop.  Sample the
-        // actual mesh extent at that height and blend with the shoulder extent.
         int si = hSlice(norm_h);
-        float local_left  = sliceRightMin(si);
-        float local_right = sliceRightMax(si);
-        float local_mid   = (local_left + local_right) * 0.5f;
-        float local_hw    = (local_right - local_left) * 0.5f;
-
-        // Blend: mainly use shoulder extent for upper joints, local extent
-        // for lower joints (hand).  This handles A-pose gracefully.
-        float blend = spread_frac;  // 0.3→mostly shoulder, 1.0→mostly local
-        float eff_hw  = shoulder_hw * (1.0f - blend * 0.3f) + local_hw * (blend * 0.3f);
-        float eff_mid = shoulder_mid * (1.0f - blend * 0.3f) + local_mid * (blend * 0.3f);
-        float eff_fwd = shoulder_cx_f;
-
-        float pos_r = is_left
-            ? eff_mid - eff_hw * spread_frac
-            : eff_mid + eff_hw * spread_frac;
-        return makePos(up_base + height * norm_h, pos_r, eff_fwd);
+        float lo = sliceRightMin(si), hi = sliceRightMax(si);
+        float mid = (lo + hi) * 0.5f, hw = (hi - lo) * 0.5f;
+        hw = std::max(hw, shoulder_hw * 0.5f);   // guard against a pinched slice
+        float pos_r = is_left ? mid - spread_frac * hw
+                              : mid + spread_frac * hw;
+        return makePos(up_base + height * norm_h, pos_r, sliceCenter(si, fwd_ax));
     };
 
     // Leg heights (normalised) — sample mesh at each height for fwd centering.
@@ -1167,14 +1433,14 @@ bool AutoRigPlugin::fuseAndBuildSkeleton() {
         /* 2  chest           */ spinePos(h_chest),
         /* 3  neck            */ spinePos(h_neck),
         /* 4  head            */ spinePos(h_head),
-        /* 5  left_shoulder   */ armPos(h_shoulder, 0.30f, true),
-        /* 6  left_upper_arm  */ armPos(h_shoulder, 0.55f, true),
-        /* 7  left_lower_arm  */ armPos(h_shoulder * 0.97f, 0.80f, true),
-        /* 8  left_hand       */ armPos(h_shoulder * 0.94f, 1.00f, true),
-        /* 9  right_shoulder  */ armPos(h_shoulder, 0.30f, false),
-        /* 10 right_upper_arm */ armPos(h_shoulder, 0.55f, false),
-        /* 11 right_lower_arm */ armPos(h_shoulder * 0.97f, 0.80f, false),
-        /* 12 right_hand      */ armPos(h_shoulder * 0.94f, 1.00f, false),
+        /* 5  left_shoulder   */ armPos(0.80f, 0.45f, true),
+        /* 6  left_upper_arm  */ armPos(0.70f, 0.75f, true),
+        /* 7  left_lower_arm  */ armPos(0.60f, 0.90f, true),
+        /* 8  left_hand       */ armPos(0.50f, 0.98f, true),
+        /* 9  right_shoulder  */ armPos(0.80f, 0.45f, false),
+        /* 10 right_upper_arm */ armPos(0.70f, 0.75f, false),
+        /* 11 right_lower_arm */ armPos(0.60f, 0.90f, false),
+        /* 12 right_hand      */ armPos(0.50f, 0.98f, false),
         /* 13 left_upper_leg  */ legPos(0.50f, true),
         /* 14 left_lower_leg  */ legPos(0.26f, true),
         /* 15 left_foot       */ legPos(0.03f, true),
@@ -1183,20 +1449,105 @@ bool AutoRigPlugin::fuseAndBuildSkeleton() {
         /* 18 right_foot      */ legPos(0.03f, false),
     };
 
+    // Anchor EVERY joint to the silhouette-based geometric placement, which is
+    // derived directly from the mesh and cannot be left/right-swapped.  The
+    // multi-view 3D estimate is accepted only when it AGREES with the geometry
+    // (the model's 2D limb detections are the unreliable part; even centerline
+    // detections can drift).  This is what keeps the skeleton from tangling.
+    std::string dump;
+    {
+        char hdr[160];
+        snprintf(hdr, sizeof(hdr),
+            "[autorig skeleton] arm_span_axis=%s  height=%.3f  up_base=%.3f\n",
+            right_ax == 2 ? "Z" : "X", height, up_base);
+        dump += hdr;
+    }
     for (int j = 0; j < J; ++j) {
         Joint& jt = skeleton_.joints[j];
         jt.name   = (j < (int)names.size()) ? names[j] : ("joint_" + std::to_string(j));
         jt.parent = (j < (int)parents.size()) ? parents[j] : -1;
 
-        if (accum[j].weight_sum > 1e-6f) {
-            jt.position = accum[j].pos_sum / accum[j].weight_sum;
+        const glm::vec3 geom = (j < 19) ? default_pos[j] : center;
+        glm::vec3 mlp(0.0f);
+        const float w = accum[j].weight_sum;
+        bool used_ml = false;
+        if (w > 1e-6f) {
+            glm::vec3 p = accum[j].pos_sum / w;
+            mlp = p;
+            const glm::vec3 lo = mesh_.bbox_min - 0.15f * extent;
+            const glm::vec3 hi = mesh_.bbox_max + 0.15f * extent;
+            const bool inside =
+                p.x >= lo.x && p.y >= lo.y && p.z >= lo.z &&
+                p.x <= hi.x && p.y <= hi.y && p.z <= hi.z &&
+                std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z);
+            // LEFT/RIGHT SIDE CONSTRAINT (the actual fix for the tangle):
+            // the model's 2D detections confuse left vs right in side/back
+            // views, so a "left_*" joint sometimes triangulates onto the
+            // body's RIGHT, crossing a bone through the chest.  Each joint's
+            // anatomical side is encoded in its geometric placement, so we
+            // reject any 3D estimate that lands on the opposite side of the
+            // sagittal plane (centerline along the arm-span axis) and fall
+            // back to geometry.  Centerline joints (<=4) have no side.
+            const float c = default_pos[0][right_ax];   // hips = centerline ref
+            const bool same_side = (j <= 4) ||
+                ((p[right_ax] - c) * (geom[right_ax] - c) >= 0.0f);
+            const float tol = (j <= 4 ? 0.18f : 0.30f) * height;
+            const bool agrees = (j < 19) && glm::length(p - geom) < tol;
+            if (inside && same_side && agrees) { jt.position = p; used_ml = true; }
+            else                               { jt.position = geom; }
         } else {
-            // No ML data for this joint — place at mesh center.
-            jt.position = center;
+            jt.position = geom;
         }
-        fprintf(stderr, "[AutoRig]   joint %2d %-18s: pos=(%.3f,%.3f,%.3f) weight=%.4f\n",
+
+        char line[256];
+        snprintf(line, sizeof(line),
+            "  %2d %-16s pos=(%.3f,%.3f,%.3f) src=%-4s w=%.3f "
+            "geom=(%.3f,%.3f,%.3f) ml=(%.3f,%.3f,%.3f)\n",
             j, jt.name.c_str(), jt.position.x, jt.position.y, jt.position.z,
-            accum[j].weight_sum);
+            used_ml ? "ML" : "geom", w,
+            geom.x, geom.y, geom.z, mlp.x, mlp.y, mlp.z);
+        dump += line;
+        fprintf(stderr, "[AutoRig] %s", line);
+    }
+    // ── Enforce left/right symmetry on the limb pairs ────────────────
+    // The model's per-side noise leaves the arms/legs slightly mismatched
+    // (one upper-arm lower than the other, a foot pulled toward centre).
+    // For an upright character the limbs should mirror, so we average the
+    // up/depth components of each pair and mirror the left/right offset
+    // about the body centerline.  This removes the residual "slightly off"
+    // asymmetry without disturbing the (centerline) spine.
+    {
+        static const int pr[7][2] = {
+            {5,9},{6,10},{7,11},{8,12},{13,16},{14,17},{15,18} };
+        const float cref = default_pos[0][right_ax];
+        for (const auto& q : pr) {
+            if (q[0] >= J || q[1] >= J) continue;
+            glm::vec3& L = skeleton_.joints[q[0]].position;
+            glm::vec3& R = skeleton_.joints[q[1]].position;
+            const glm::vec3 avg = (L + R) * 0.5f;
+            const float mag = 0.5f * (std::fabs(L[right_ax] - cref) +
+                                      std::fabs(R[right_ax] - cref));
+            L = avg; R = avg;
+            L[right_ax] = cref - mag;   // left  = negative side
+            R[right_ax] = cref + mag;   // right = positive side
+        }
+    }
+
+    // Write a ground-truth dump I can inspect outside the engine (final
+    // positions, after symmetry).  Path is relative to the working
+    // directory (the engine runs from realworld/).
+    {
+        std::ofstream sf("assets/debug_autorig_skeleton.txt");
+        if (sf) {
+            sf << dump << "--- after symmetry ---\n";
+            for (int j = 0; j < (int)skeleton_.joints.size(); ++j) {
+                const auto& p = skeleton_.joints[j].position;
+                char l2[160];
+                snprintf(l2, sizeof(l2), "  %2d %-16s (%.3f,%.3f,%.3f)\n",
+                    j, skeleton_.joints[j].name.c_str(), p.x, p.y, p.z);
+                sf << l2;
+            }
+        }
     }
 
     // Compute inverse bind matrices incorporating the mesh node's world
@@ -1276,7 +1627,7 @@ bool AutoRigPlugin::computeSkinWeights() {
             dists.push_back({bone.joint_idx, dist});
         }
 
-        // Sort by distance, take top 4.
+        // Sort by distance, take up to the 4 closest.
         std::sort(dists.begin(), dists.end(),
             [](const BoneDist& a, const BoneDist& b) { return a.dist < b.dist; });
 
@@ -1284,12 +1635,32 @@ bool AutoRigPlugin::computeSkinWeights() {
         float total_w = 0.0f;
         int count = std::min(4, (int)dists.size());
 
+        // Relative-distance cutoff: only bind to bones that are reasonably
+        // close to the NEAREST bone.  Without this, a torso vertex whose
+        // nearest bone is the spine still grabs three more "top 4" bones —
+        // often an arm AND a leg, or a left AND a right limb — which makes the
+        // skin tear when those opposite limbs move apart (e.g. the head split
+        // and the left hand following the right arm).  A bone 3x farther than
+        // the closest contributes negligibly to a real deformation, so we drop
+        // it.  Vertices near a single bone now bind almost entirely to it;
+        // vertices in a genuine blend region (near two joints) still share.
+        const float nearest = dists.empty() ? 0.0f : dists[0].dist;
+        constexpr float kRelCut = 3.0f;   // keep bones within 3x the nearest
+
+        int kept = 0;
         for (int i = 0; i < count; ++i) {
-            vsd.joint_indices[i] = dists[i].joint;
+            if (i > 0 && dists[i].dist > (nearest + 0.001f) * kRelCut) break;
+            vsd.joint_indices[kept] = dists[i].joint;
             // Inverse-distance weighting with a small epsilon.
             float w = 1.0f / (dists[i].dist + 0.001f);
-            vsd.weights[i] = w;
+            vsd.weights[kept] = w;
             total_w += w;
+            ++kept;
+        }
+        // Zero any unused influence slots so stale data can't leak in.
+        for (int i = kept; i < 4; ++i) {
+            vsd.joint_indices[i] = 0;
+            vsd.weights[i] = 0.0f;
         }
 
         // Normalise.
@@ -1906,10 +2277,49 @@ void AutoRigPlugin::refreshMeshFileList() {
 //  Helper: draw 3D model preview on an ImDrawList canvas with drag-rotation.
 //  Returns true if the canvas was hovered.
 // ---------------------------------------------------------------------------
+// Per-weight-slot colors (mode 1) and a per-bone palette (mode 2).
+static ImU32 boneColor(int j) {
+    // Distinct hue per joint via HSV->RGB (s=0.65, v=1.0).
+    float h = (j * (360.0f / 19.0f)) / 60.0f;
+    float s = 0.65f, v = 1.0f;
+    int   i = (int)std::floor(h) % 6;
+    float f = h - std::floor(h);
+    float p = v * (1 - s), q = v * (1 - s * f), t = v * (1 - s * (1 - f));
+    float r = 0, g = 0, b = 0;
+    switch (i) {
+        case 0: r=v; g=t; b=p; break;  case 1: r=q; g=v; b=p; break;
+        case 2: r=p; g=v; b=t; break;  case 3: r=p; g=q; b=v; break;
+        case 4: r=t; g=p; b=v; break;  default: r=v; g=p; b=q; break;
+    }
+    return IM_COL32((int)(r*255), (int)(g*255), (int)(b*255), 255);
+}
+
+// Color for one vertex from its 4 skin weights, in the chosen mode.
+static void weightVertexColor(const VertexSkinData& vsd, int mode,
+                              float& r, float& g, float& b) {
+    r = g = b = 0.0f;
+    // Mode 1: four fixed slot colors (R, G, B, yellow).
+    static const float kSlot[4][3] = {
+        {1,0.2f,0.2f}, {0.2f,1,0.2f}, {0.3f,0.5f,1}, {1,0.85f,0.15f} };
+    for (int k = 0; k < 4; ++k) {
+        float w = vsd.weights[k];
+        if (w <= 0.0f) continue;
+        if (mode == 1) {
+            r += w * kSlot[k][0]; g += w * kSlot[k][1]; b += w * kSlot[k][2];
+        } else {  // mode 2: per-bone palette
+            ImU32 c = boneColor(vsd.joint_indices[k]);
+            r += w * ((c >> IM_COL32_R_SHIFT) & 0xFF) / 255.0f;
+            g += w * ((c >> IM_COL32_G_SHIFT) & 0xFF) / 255.0f;
+            b += w * ((c >> IM_COL32_B_SHIFT) & 0xFF) / 255.0f;
+        }
+    }
+}
+
 static bool drawModel3DPreview(
     const TriangleMesh& mesh, const Skeleton& skeleton,
     float canvas_size, ImVec2 canvas_pos, ImDrawList* dl,
-    float& yaw, float& pitch, bool& dragging, ImVec2& drag_start)
+    float& yaw, float& pitch, bool& dragging, ImVec2& drag_start,
+    const SkinWeights* weights = nullptr, int weight_mode = 0)
 {
     // Dark background.
     dl->AddRectFilled(canvas_pos,
@@ -1950,12 +2360,31 @@ static bool drawModel3DPreview(
     if (!mesh.empty()) {
         size_t tri_count = mesh.indices.size() / 3;
         size_t step = std::max<size_t>(1, tri_count / 800);
+        const bool show_w = (weight_mode > 0 && weights &&
+                             weights->per_vertex.size() == mesh.positions.size());
         for (size_t t = 0; t < tri_count; t += step) {
-            ImVec2 v0 = project(mesh.positions[mesh.indices[t * 3 + 0]]);
-            ImVec2 v1 = project(mesh.positions[mesh.indices[t * 3 + 1]]);
-            ImVec2 v2 = project(mesh.positions[mesh.indices[t * 3 + 2]]);
-            dl->AddTriangleFilled(v0, v1, v2, IM_COL32(80, 130, 180, 76));
-            dl->AddTriangle(v0, v1, v2, IM_COL32(100, 160, 220, 50), 1.0f);
+            uint32_t i0 = mesh.indices[t * 3 + 0];
+            uint32_t i1 = mesh.indices[t * 3 + 1];
+            uint32_t i2 = mesh.indices[t * 3 + 2];
+            ImVec2 v0 = project(mesh.positions[i0]);
+            ImVec2 v1 = project(mesh.positions[i1]);
+            ImVec2 v2 = project(mesh.positions[i2]);
+            if (show_w) {
+                // Average the 3 vertices' weight-colors for a flat-shaded tri.
+                float r = 0, g = 0, b = 0, rr, gg, bb;
+                for (uint32_t idx : { i0, i1, i2 }) {
+                    weightVertexColor(weights->per_vertex[idx], weight_mode, rr, gg, bb);
+                    r += rr; g += gg; b += bb;
+                }
+                ImU32 col = IM_COL32(
+                    (int)std::min(255.0f, r / 3.0f * 255.0f),
+                    (int)std::min(255.0f, g / 3.0f * 255.0f),
+                    (int)std::min(255.0f, b / 3.0f * 255.0f), 235);
+                dl->AddTriangleFilled(v0, v1, v2, col);
+            } else {
+                dl->AddTriangleFilled(v0, v1, v2, IM_COL32(80, 130, 180, 76));
+                dl->AddTriangle(v0, v1, v2, IM_COL32(100, 160, 220, 50), 1.0f);
+            }
         }
     }
 
@@ -2604,6 +3033,19 @@ void AutoRigPlugin::drawImGui() {
                 }
                 if (!skin_weights_.empty()) ImGui::Text("Skin: %d verts", (int)skin_weights_.per_vertex.size());
                 if (!mesh_.empty()) ImGui::Text("Mesh: %zuk tris", mesh_.indices.size() / 3000);
+
+                // Skin-weight overlay controls.
+                if (!skin_weights_.empty()) {
+                    ImGui::Separator();
+                    ImGui::TextColored(ImVec4(0.7f,0.7f,0.7f,1), "Skin weights:");
+                    const char* modes[] = { "Off", "Per-slot (RGBA)", "Per-bone palette" };
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::Combo("##wmode", &weight_view_mode_, modes, IM_ARRAYSIZE(modes));
+                    if (weight_view_mode_ == 1)
+                        ImGui::TextWrapped("R/G/B/Yellow = weight slots 0-3 (concentration).");
+                    else if (weight_view_mode_ == 2)
+                        ImGui::TextWrapped("Each bone a distinct hue; blended by weight.");
+                }
                 ImGui::EndChild();
                 ImGui::SameLine();
 
@@ -2612,7 +3054,8 @@ void AutoRigPlugin::drawImGui() {
                 ImGui::InvisibleButton("##ar_preview", ImVec2(kCanvasSize, kCanvasSize));
                 drawModel3DPreview(mesh_, skeleton_, kCanvasSize, canvas_pos,
                     ImGui::GetWindowDrawList(),
-                    preview_yaw_, preview_pitch_, preview_dragging_, preview_drag_start_);
+                    preview_yaw_, preview_pitch_, preview_dragging_, preview_drag_start_,
+                    &skin_weights_, weight_view_mode_);
             }
 
             // ---- Debug controls ----

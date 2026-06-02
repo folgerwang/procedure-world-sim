@@ -150,6 +150,10 @@ private:
     // Auto-rig debug multi-view toggle (off by default).
     bool   show_debug_views_ = false;
 
+    // Skin-weight debug overlay on the 3D preview.
+    //   0 = off (flat shaded), 1 = per-slot RGBA, 2 = per-bone palette.
+    int    weight_view_mode_ = 0;
+
     // Live rasterized preview for Rig Editor (cached, re-rendered on angle change).
     ViewCapture preview_render_;
     float       preview_render_yaw_   = -999.0f;
