@@ -599,11 +599,16 @@ void RealWorldApplication::writeHiZBuildDescriptors(
     const std::shared_ptr<er::ImageView>& scene_depth_view) {
     if (!hiz_build_desc_set_layout_ || hiz_pyramid_mips_ == 0) return;
 
-    // Allocate one descriptor set per destination mip, freed implicitly
-    // when the pool is destroyed.  Recreated on resize.
-    hiz_build_desc_sets_.clear();
-    hiz_build_desc_sets_.reserve(hiz_pyramid_mips_);
-    for (uint32_t m = 0; m < hiz_pyramid_mips_; ++m) {
+    // Persistent pool: the per-mip sets survive a resize, so we GROW the
+    // vector to cover the current mip count and never reallocate existing
+    // entries (and never free here — the pool is torn down only at
+    // shutdown).  The mip count is bounded by log2(max swap-chain
+    // dimension), so the vector reaches a small steady-state size; if a
+    // later resize needs fewer mips we simply reuse the first
+    // hiz_pyramid_mips_ entries and rewrite their bindings below.  The
+    // bindings DO change every resize because hiz_mip_views_ are rebuilt,
+    // which is exactly what the rewrite loop that follows handles.
+    while (hiz_build_desc_sets_.size() < hiz_pyramid_mips_) {
         hiz_build_desc_sets_.push_back(
             device_->createDescriptorSets(
                 descriptor_pool_, hiz_build_desc_set_layout_, 1)[0]);
@@ -1253,8 +1258,13 @@ void RealWorldApplication::initVulkan() {
     createTextureSampler();
     descriptor_pool_ = device_->createDescriptorPool();
     // Persistent pool for drawable material/skin sets — survives swapchain
-    // recreation (see member comment in application.h).
-    drawable_descriptor_pool_ = device_->createDescriptorPool();
+    // recreation (see member comment in application.h).  Sized 4× the
+    // default factory: streaming async loads (heavy GLTFs like Bistro)
+    // pile up dozens of materials in a single phase-3 burst; the default
+    // 2048 COMBINED_IMAGE_SAMPLER budget is not enough.  The retry path
+    // in VulkanDevice::createDescriptorSets will spawn overflow pools if
+    // even this is exhausted, but starting big avoids the runtime spew.
+    drawable_descriptor_pool_ = device_->createDescriptorPool(/*size_multiplier*/4);
     createCommandBuffers();
     createSyncObjects();
 
@@ -2128,6 +2138,16 @@ void RealWorldApplication::recreateSwapChain() {
     // in-flight load finalizing after this recreate still allocates from a
     // valid pool.  Only descriptor_pool_ (engine/swapchain sets) is torn down
     // below, and the loads no longer touch it.
+    //
+    // We DO finalize any loads that are already ready before calling
+    // waitIdle().  Without this, waitIdle() forces every loader-queue fence
+    // to signal at once — the next per-frame poll() then either has to drain
+    // them under the throttle (slowing the asset pop-in) or allocates a
+    // burst of descriptor sets in one frame.  Pulling already-ready
+    // finalizations forward keeps the natural temporal spread.
+    if (mesh_load_task_manager_) {
+        mesh_load_task_manager_->poll(/*max_finalize_per_call*/0);
+    }
     device_->waitIdle();
 
     menu_->destroy();
@@ -2184,65 +2204,30 @@ void RealWorldApplication::recreateSwapChain() {
         graphic_pipeline_info_,
         desc_set_layouts,
         swap_chain_info_.extent);
-    // ── Descriptor pool MUST be created BEFORE recreateRenderBuffer ──
-    // recreateRenderBuffer → createGBuffer → createHiZPyramid issues
-    // BOTH vkUpdateDescriptorSets (cluster_renderer_->setHiZTexture,
-    // writeDeferredResolveDescriptors) AND vkAllocateDescriptorSets
-    // (writeHiZBuildDescriptors allocates hiz_build_desc_sets_ one per
-    // mip).  Both operations require a live pool.  We used to create
-    // the new pool AFTER recreateRenderBuffer, which left the allocate
-    // call dispatching against the just-destroyed pool — NVIDIA crashes
-    // inside the driver dispatch with an nvoglv64.dll callstack.
-    // The pre-pool nullouts in cleanupSwapChain (deferred_resolve_desc_
-    // set_ = nullptr + cluster_renderer_->onDescriptorPoolDestroyed)
-    // are now belt-and-braces: those handles are still dead between
-    // cleanupSwapChain and this createDescriptorPool, but createGBuffer
-    // can also legitimately need to ALLOCATE — the early-return
-    // guards don't help there.  Moving the pool earlier is the right
-    // fix; the nullouts are still useful in case any other code path
-    // we don't see is touching a stale handle in this window.
-    descriptor_pool_ = device_->createDescriptorPool();
-
-    // Re-allocate the deferred-resolve descriptor set from the fresh
-    // pool.  The set itself was destroyed alongside the previous pool
-    // in cleanupSwapChain (and the field nulled there); the pipeline
-    // layout it binds to is size-independent and survives.  Re-write
-    // happens later in this function via writeDeferredResolveDescriptors
-    // once object_scene_view_ has its new G-buffer / depth views.
-    if (deferred_resolve_desc_set_layout_) {
-        deferred_resolve_desc_set_ = device_->createDescriptorSets(
-            descriptor_pool_, deferred_resolve_desc_set_layout_, 1)[0];
-    }
-
-    // Same treatment for AmbientProbeSystem: its probe_desc_set_ and
-    // project_desc_set_ were nulled in cleanupSwapChain alongside the
-    // pool destruction; reallocate them from the fresh pool here so
-    // drawScene's per-frame writeProjectDescriptorsForCube call has a
-    // live handle to write through.  The probe_buffer_ binding is
-    // re-issued inside recreateDescriptorSets; the cube source/depth
-    // bindings are refreshed every frame by writeProjectDescriptorsForCube.
-    if (ambient_probe_system_) {
-        ambient_probe_system_->recreateDescriptorSets(
-            device_, descriptor_pool_);
-    }
-
-    // And same for VirtualTextureManager — its compact_desc_set_ was
-    // nulled in cleanupSwapChain; reallocate from the fresh pool and
-    // re-write the (stable) feedback-buffer bindings before the next
-    // tick / compactFeedback call fires this frame.
-    if (vt_manager_) {
-        vt_manager_->recreateDescriptorSets(descriptor_pool_);
-    }
-
-    // And DynamicCubemap — reallocate all three descriptor-set
-    // families (face_view, depth_to_linear, reproject) from the
-    // fresh pool.  AmbientProbeSystem::update binds these every
-    // frame; without this reallocation the release build crashes
-    // on the first post-resize frame.
-    if (dynamic_cubemap_) {
-        dynamic_cubemap_->recreateDescriptorSets(
-            device_, descriptor_pool_);
-    }
+    // ── Descriptor pool is PERSISTENT across swap-chain recreation ──
+    // descriptor_pool_ is created once in initVulkan and lives for the
+    // whole application.  It is intentionally NOT destroyed in
+    // cleanupSwapChain nor recreated here.
+    //
+    // Rationale: the pool's capacity (pool sizes / maxSets) is entirely
+    // size-INDEPENDENT — nothing about it scales with the window.  The
+    // old design tore it down and rebuilt it on every resize, which
+    // invalidated every descriptor set allocated from it and forced
+    // each subsystem to re-allocate.  Any subsystem that missed that
+    // re-allocation kept a dangling set handle; writing/binding it
+    // scribbled the driver's pool bookkeeping and detonated later
+    // inside vkDestroyDescriptorPool (the nvoglv64.dll resize crash).
+    //
+    // Keeping the pool (and therefore every set allocated from it)
+    // alive removes that entire bug class by construction: no set is
+    // ever invalidated by a resize.  Sets that bind swap-chain-sized
+    // images (deferred-resolve G-buffer/depth, Hi-Z, scene-view
+    // attachments, etc.) are RE-WRITTEN in place below once the new
+    // image views exist — see writeDeferredResolveDescriptors and
+    // writeHiZBuildDescriptors later in this function.  Sets that bind
+    // size-independent resources (ambient-probe / cube-map / virtual-
+    // texture SSBOs, IBL, materials, cameras …) need nothing at all,
+    // so their former reallocate-on-resize calls have been removed.
 
     recreateRenderBuffer(swap_chain_info_.extent);
     createCommandBuffers();
@@ -2341,13 +2326,20 @@ void RealWorldApplication::recreateSwapChain() {
         *ego::DrawableObject::getGameObjectsBuffer());
 
     // ---- Ray tracing ----
-    ray_tracing_test_->recreate(
-        device_,
-        descriptor_pool_,
-        main_camera_object_->getViewCameraBuffer(),
-        rt_pipeline_properties_,
-        as_features_,
-        glm::uvec2(1024, 768));
+    // Intentionally NOT rebuilt on resize.  The ray-tracing test renders
+    // to a FIXED 1024x768 target (see the extent passed at init in
+    // initVulkan) that is independent of the swap-chain size, and all of
+    // its inputs (camera buffer, acceleration structure) survive a resize.
+    // Its consumers (the menu's ImGui texture and drawScene) query
+    // getFinalImage() at use-time, so the persistent final-image view stays
+    // valid without a rebuild.  Re-running recreate() here was redundant
+    // work and — now that descriptor_pool_ is persistent — would leak the
+    // ray-tracing descriptor set on every resize (the base recreate() is
+    // destroy()+init(); destroying the set's layout does NOT free the set).
+    // ray_tracing_test_->recreate(
+    //     device_, descriptor_pool_,
+    //     main_camera_object_->getViewCameraBuffer(),
+    //     rt_pipeline_properties_, as_features_, glm::uvec2(1024, 768));
 
     // ---- LBM test ----
     lbm_test_->recreate(
@@ -2356,10 +2348,17 @@ void RealWorldApplication::recreateSwapChain() {
         texture_sampler_,
         lbm_patch_->getLbmPatchTexture());
 
-    // ---- CSM debug descriptor set (re-alloc from new pool) ----
+    // ---- CSM debug descriptor set ----
+    // Persistent pool: the set survives the resize, so allocate it only
+    // once (lazily) and just re-write the binding.  csm_shadow_tex_ is a
+    // fixed CSM-sized target that does not change on a window resize, so
+    // the re-write is effectively a no-op but is kept for robustness in
+    // case the shadow target is ever rebuilt.
     if (csm_debug_desc_set_layout_) {
-        csm_debug_desc_set_ = device_->createDescriptorSets(
-            descriptor_pool_, csm_debug_desc_set_layout_, 1)[0];
+        if (!csm_debug_desc_set_) {
+            csm_debug_desc_set_ = device_->createDescriptorSets(
+                descriptor_pool_, csm_debug_desc_set_layout_, 1)[0];
+        }
         er::WriteDescriptorList writes;
         er::Helper::addOneTexture(
             writes,
@@ -5613,8 +5612,16 @@ void RealWorldApplication::drawFrame() {
     // thread. Cheap when nothing is ready. Must run before we touch
     // drawable_objects_ for draw so that objects finalized this frame
     // pop in immediately instead of waiting one extra frame.
+    //
+    // Cap at 4 finalizations per frame.  Right after a window resize
+    // (recreateSwapChain calls waitIdle) every loader-queue fence
+    // becomes signaled simultaneously; un-throttled poll would drain
+    // the entire backlog in one tick, allocating hundreds of descriptor
+    // sets and clipping the drawable_descriptor_pool_ ceiling.
+    // Spreading the burst across a few frames keeps allocation pressure
+    // even and avoids the OUT_OF_POOL_MEMORY retry path in steady state.
     if (mesh_load_task_manager_) {
-        mesh_load_task_manager_->poll();
+        mesh_load_task_manager_->poll(/*max_finalize_per_call*/4);
     }
     gpu_profiler_.endCpuScope(_cpu_mesh_poll);
 
@@ -8642,7 +8649,12 @@ void RealWorldApplication::cleanupSwapChain() {
     if (hiz_pyramid_.image) hiz_pyramid_.destroy(device_);
     hiz_pyramid_size_ = glm::uvec2(0);
     hiz_pyramid_mips_ = 0;
-    hiz_build_desc_sets_.clear();
+    // NOTE: hiz_build_desc_sets_ is intentionally NOT cleared.  With the
+    // persistent descriptor pool the per-mip sets survive the resize and
+    // are reused (and their bindings re-written against the rebuilt
+    // hiz_mip_views_) by writeHiZBuildDescriptors.  Clearing here would
+    // drop the wrappers and force a fresh allocation every resize, leaking
+    // sets into the now-persistent pool.
     device_->destroyFramebuffer(hdr_frame_buffer_);
     device_->destroyFramebuffer(hdr_water_frame_buffer_);
 
@@ -8661,72 +8673,27 @@ void RealWorldApplication::cleanupSwapChain() {
 
     device_->destroySwapchain(swap_chain_info_.swap_chain);
 
-    device_->destroyDescriptorPool(descriptor_pool_);
-
-    // The deferred-resolve descriptor set was allocated FROM
-    // descriptor_pool_ in initDeferredResolve.  Destroying the pool
-    // implicitly destroys every set allocated from it, leaving
-    // deferred_resolve_desc_set_ as a dangling Vulkan handle.  Null
-    // it out so writeDeferredResolveDescriptors (called from inside
-    // recreateRenderBuffer → createGBuffer below) hits its early-out
-    // guard instead of issuing vkUpdateDescriptorSets against the
-    // dead handle (which crashes inside the NVIDIA driver — the
-    // validation layer surfaces this as an UpdateDescriptorSets
-    // failure with a deep nvoglv64.dll callstack).  recreateSwapChain
-    // re-allocates the set from the fresh descriptor_pool_ before the
-    // canonical writeDeferredResolveDescriptors() call later in the
-    // recreate sequence.
-    deferred_resolve_desc_set_ = nullptr;
-
-    // Same hazard exists for ClusterRenderer's pool-owned sets — most
-    // notably cull_desc_set_, which createHiZPyramid (also called
-    // from inside recreateRenderBuffer → createGBuffer) tries to
-    // patch via cluster_renderer_->setHiZTexture before the new pool
-    // exists.  ClusterRenderer::onDescriptorPoolDestroyed nulls all
-    // the relevant handles (bindless / cull / per-cascade shadow /
-    // mesh-shader cluster data / OIT composite) so the existing
-    // "set is null" guards inside its consumers short-circuit until
-    // recreate() and the next finalizeUploads / setHiZTexture re-
-    // populate them.
-    if (cluster_renderer_) {
-        cluster_renderer_->onDescriptorPoolDestroyed();
-    }
-
-    // Same dangling-handle hazard for AmbientProbeSystem.  Its
-    // probe_desc_set_ and project_desc_set_ were allocated from
-    // descriptor_pool_ in AmbientProbeSystem::create; the per-frame
-    // writeProjectDescriptorsForCube call (drawScene's "Ambient
-    // Probes" block) would otherwise write through dead handles
-    // after this point — surfaces as the same NVIDIA / validation
-    // crash in vkUpdateDescriptorSets.  recreateSwapChain reallocates
-    // both sets right after the new pool is created (see
-    // ambient_probe_system_->recreateDescriptorSets call below).
-    if (ambient_probe_system_) {
-        ambient_probe_system_->onDescriptorPoolDestroyed();
-    }
-
-    // Same hazard for VirtualTextureManager — owns compact_desc_set_
-    // allocated from descriptor_pool_, used every frame by
-    // compactFeedback / tick.  Without this nullout the very first
-    // frame after a window resize hits the NVIDIA driver crash with
-    // an EXCEPTION_ACCESS_VIOLATION_READ at a tiny offset (~0x38)
-    // while binding the dangling set.  Re-allocated below in
-    // recreateSwapChain right after the new pool is built.
-    if (vt_manager_) {
-        vt_manager_->onDescriptorPoolDestroyed();
-    }
-
-    // And DynamicCubemap — owns 3 families of pool-allocated sets
-    // (face_view, depth_to_linear, reproject).  AmbientProbeSystem
-    // calls into it every frame to capture a cube face, binding
-    // these sets.  Skipping this nullout is the most likely cause
-    // of the release-only resize crash that survived all earlier
-    // descriptor-set hooks — debug builds escape because validation
-    // detects the bad bind, release builds dispatch the dangling
-    // handle into the NVIDIA driver and crash.
-    if (dynamic_cubemap_) {
-        dynamic_cubemap_->onDescriptorPoolDestroyed();
-    }
+    // NOTE: descriptor_pool_ is deliberately NOT destroyed here.  It is
+    // persistent across swap-chain recreation (see the long comment in
+    // recreateSwapChain).  Because the pool — and therefore every
+    // descriptor set allocated from it — stays alive across a resize,
+    // none of the former per-subsystem invalidation hooks are needed
+    // any more:
+    //   * deferred_resolve_desc_set_ = nullptr
+    //   * cluster_renderer_->onDescriptorPoolDestroyed()
+    //   * ambient_probe_system_->onDescriptorPoolDestroyed()
+    //   * vt_manager_->onDescriptorPoolDestroyed()
+    //   * dynamic_cubemap_->onDescriptorPoolDestroyed()
+    // These existed solely to null out handles that the old destroy-the-
+    // pool design left dangling.  Removing the destruction removes the
+    // dangling handles — and with them the nvoglv64.dll crash that fired
+    // inside vkDestroyDescriptorPool when a missed subsystem (e.g. the
+    // PRT/conemap and hair sets, which were never reallocated) corrupted
+    // the pool's bookkeeping.  Sets that point at swap-chain-sized images
+    // are re-written in place in recreateSwapChain after the new image
+    // views exist; size-independent sets need nothing.
+    //
+    // The pool itself is destroyed once, at shutdown, in cleanup().
 }
 
 void RealWorldApplication::cleanup() {
@@ -8759,6 +8726,13 @@ void RealWorldApplication::cleanup() {
     menu_->destroyResources();
     menu_->destroy();
     cleanupSwapChain();
+
+    // descriptor_pool_ is persistent across resize, so cleanupSwapChain
+    // no longer owns its destruction — it is torn down here at shutdown
+    // instead (device is already idle from the waitIdle above).  The
+    // drawable streaming pool is likewise long-lived and freed here.
+    device_->destroyDescriptorPool(descriptor_pool_);
+    device_->destroyDescriptorPool(drawable_descriptor_pool_);
 
     skydome_->destroy(device_);
     device_->destroyRenderPass(cubemap_render_pass_);

@@ -191,8 +191,10 @@ private:
     int   drag_joint_ = -1;
 
     void initEditableJointsForView(ViewEditState& state, const ViewCapture& cap);
+    void initEditableJointsFromModel(ViewEditState& state, const ViewCapture& cap);
     void initEditableJoints();  // for multi-view (auto-rig debug)
     bool exportTrainingData(const std::string& output_dir);
+    bool saveViewForTraining();  // one-click: save current edited view as a training sample
 
     // Multi-view edits for debug panel.
     std::vector<ViewEditState> view_edits_;

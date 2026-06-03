@@ -99,7 +99,10 @@ bool AutoRigPlugin::init(
     {
         std::string exe_dir = std::filesystem::current_path().string();
         for (const auto& candidate : {
-            std::string("assets/models"),
+            std::string("assets/ml_models"),
+            exe_dir + "/assets/ml_models",
+            exe_dir + "/../realworld/assets/ml_models",
+            std::string("assets/models"),                 // legacy fallback
             exe_dir + "/assets/models",
             exe_dir + "/../realworld/assets/models",
         }) {
@@ -109,7 +112,7 @@ bool AutoRigPlugin::init(
             }
         }
         if (model_dir_.empty()) {
-            model_dir_ = exe_dir + "/assets/models";
+            model_dir_ = exe_dir + "/assets/ml_models";
             std::filesystem::create_directories(model_dir_);
         }
         fprintf(stderr, "[AutoRig] Model directory: %s\n", model_dir_.c_str());
@@ -962,6 +965,106 @@ void AutoRigPlugin::initEditableJointsForView(
             glm::vec2(0.0f), glm::vec2(1.0f));
         state.joints[j].edited = false;
     }
+}
+
+// ============================================================================
+//  initEditableJointsFromModel – pre-fill joints with the trained 2D model's
+//  prediction so editing starts from the ML guess (heuristic fallback).
+// ============================================================================
+
+void AutoRigPlugin::initEditableJointsFromModel(
+    ViewEditState& state, const ViewCapture& cap)
+{
+    // Heuristic first: sets metadata + a fallback for low-confidence joints.
+    initEditableJointsForView(state, cap);
+
+    if (!diffusion_model_ || !diffusion_model_->isLoaded()) return;
+
+    std::vector<ViewCapture> one{cap};
+    std::vector<ViewJointPrediction> preds = diffusion_model_->predictBatch(one);
+    if (preds.empty()) return;
+
+    const ViewJointPrediction& vp = preds[0];
+    for (int j = 0; j < kNumEditJoints && j < (int)vp.joints.size()
+                 && j < (int)state.joints.size(); ++j) {
+        if (vp.joints[j].confidence >= 0.05f) {
+            state.joints[j].uv = glm::clamp(vp.joints[j].peak_uv,
+                                            glm::vec2(0.0f), glm::vec2(1.0f));
+            state.joints[j].edited = false;   // model guess — user tweaks from here
+        }
+    }
+}
+
+// ============================================================================
+//  saveViewForTraining – write the current edited view as one training sample
+//  (color + grayscale + depth + silhouette + view_proj + confirmed joints) to
+//  assets/rigs_training/<mesh>/, ready for build_3d_labels.py / train_rig3d.py.
+// ============================================================================
+
+bool AutoRigPlugin::saveViewForTraining() {
+    if (!edit_capture_valid_) { ui_status_ = "Capture a view first"; return false; }
+    const ViewCapture& cap = edit_capture_;
+    const int W = cap.width, H = cap.height;
+
+    std::string stem = selected_mesh_path_.empty() ? "untitled"
+        : std::filesystem::path(selected_mesh_path_).stem().string();
+    std::string dir = "assets/rigs_training/" + stem;   // engine runs from realworld/
+    std::error_code ec; std::filesystem::create_directories(dir, ec);
+
+    int idx = 0;                                        // append after existing views
+    if (std::filesystem::exists(dir))
+        for (auto& e : std::filesystem::directory_iterator(dir))
+            if (e.path().filename().string().find("_meta.json") != std::string::npos) ++idx;
+
+    char path[1024];
+    auto fn = [&](const char* suf) {
+        std::snprintf(path, sizeof(path), "%s/%s_view%d_%s", dir.c_str(), stem.c_str(), idx, suf);
+        return path;
+    };
+
+    if (!cap.color.empty())      stbi_write_png(fn("color.png"), W, H, 3, cap.color.data(), W * 3);
+    if (!cap.silhouette.empty()) stbi_write_png(fn("silhouette.png"), W, H, 1, cap.silhouette.data(), W);
+    if (!cap.depth.empty()) {
+        std::vector<uint8_t> d8(cap.depth.size());
+        for (size_t i = 0; i < cap.depth.size(); ++i)
+            d8[i] = (uint8_t)std::clamp(cap.depth[i] * 255.0f, 0.0f, 255.0f);
+        stbi_write_png(fn("depth.png"), W, H, 1, d8.data(), W);
+    }
+    if (!cap.color.empty()) {
+        std::vector<uint8_t> g8(W * H);
+        for (int i = 0; i < W * H; ++i) {
+            const uint8_t* p = &cap.color[i * 3];
+            g8[i] = (uint8_t)std::clamp(0.2126f * p[0] + 0.7152f * p[1] + 0.0722f * p[2], 0.0f, 255.0f);
+        }
+        stbi_write_png(fn("gray.png"), W, H, 1, g8.data(), W);
+    }
+
+    FILE* mf = std::fopen(fn("meta.json"), "w");
+    if (!mf) { ui_status_ = "Save failed (meta)"; return false; }
+    const auto& names   = getStandardJointNames();
+    const auto& parents = getStandardJointParents();
+    const float* vp = glm::value_ptr(cap.view_proj);
+    fprintf(mf, "{\n  \"view_index\": %d,\n", idx);
+    fprintf(mf, "  \"azimuth_deg\": %.4f,\n  \"elevation_deg\": %.4f,\n",
+            cap.azimuth_deg, cap.elevation_deg);
+    fprintf(mf, "  \"width\": %d,\n  \"height\": %d,\n", W, H);
+    fprintf(mf, "  \"view_proj\": [");
+    for (int k = 0; k < 16; ++k) fprintf(mf, "%s%.8f", k ? ", " : "", vp[k]);
+    fprintf(mf, "],\n  \"joints\": [\n");
+    for (int j = 0; j < kNumEditJoints; ++j) {
+        glm::vec2 uv = (j < (int)edit_view_.joints.size()) ? edit_view_.joints[j].uv : glm::vec2(0.0f);
+        fprintf(mf, "    { \"name\": \"%s\", \"uv\": [%.6f, %.6f], \"edited\": true }%s\n",
+                names[j].c_str(), uv.x, uv.y, (j < kNumEditJoints - 1) ? "," : "");
+    }
+    fprintf(mf, "  ],\n  \"parents\": [");
+    for (size_t j = 0; j < parents.size(); ++j) fprintf(mf, "%s%d", j ? ", " : "", parents[j]);
+    fprintf(mf, "]\n}\n");
+    std::fclose(mf);
+
+    char msg[256];
+    std::snprintf(msg, sizeof(msg), "Saved training view %d -> %s", idx, dir.c_str());
+    ui_status_ = msg; fprintf(stderr, "[AutoRig] %s\n", msg);
+    return true;
 }
 
 // ============================================================================
@@ -3318,7 +3421,7 @@ void AutoRigPlugin::drawImGui() {
                 edit_capture_ = rasterizer_->renderOIT(
                     mesh_, capture_resolution_, capture_resolution_,
                     view_mat, proj, mesh_opacity_, az, el);
-                initEditableJointsForView(edit_view_, edit_capture_);
+                initEditableJointsFromModel(edit_view_, edit_capture_);  // ML pre-fill
                 edit_capture_valid_ = true;
 
                 fprintf(stderr, "[AutoRig] Edit capture: radius=%.4f (ext=%.4f * cam_dist=%.4f) res=%d\n",
@@ -3491,6 +3594,12 @@ void AutoRigPlugin::drawImGui() {
 
                 ImGui::SameLine();
                 ImGui::Text("Saved: %d views", (int)saved_edits_.size());
+
+                if (ImGui::Button("  Save for Training  ")) saveViewForTraining();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Write this view (color+gray+depth+silhouette + view_proj + "
+                                      "joints) to assets/rigs_training/<mesh> as one training sample.");
+                ImGui::SameLine(); ImGui::TextDisabled("%s", ui_status_.c_str());
             }
 
             ImGui::EndChild();  // ##re_2d
