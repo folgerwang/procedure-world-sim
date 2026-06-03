@@ -70,6 +70,21 @@ static bool parseClusterDebugFlag(int argc, char** argv) {
     return false;
 }
 
+// --editor : launch the UE-style docked editor (Outliner / Details / Content
+// Browser + framed viewport).  Without it the app runs in pure in-game mode:
+// no panels, the 3D scene fills the whole window.
+static bool parseEditorFlag(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        const char* a = argv[i];
+        if (a == nullptr) continue;
+        if (std::strcmp(a, "--editor") == 0 ||
+            std::strcmp(a,  "-editor") == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // ── Line-routing stream buffer: splits physics/IK/collision log lines into
 // a separate file ──────────────────────────────────────────────────────
 // std::cout carries everything; this buffer inspects each completed LINE and,
@@ -274,6 +289,12 @@ int main(int argc, char** argv) {
 #endif
 
     auto app = std::make_shared<work::app::RealWorldApplication>();
+
+    const bool editor_mode = parseEditorFlag(argc, argv);
+    app->setEditorMode(editor_mode);
+    std::cout << (editor_mode
+        ? "[EDITOR] launching in editor mode (--editor)\n"
+        : "[EDITOR] in-game mode (pass --editor for the editor UI)\n");
 
     try {
         app->run();

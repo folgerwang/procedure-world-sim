@@ -58,6 +58,9 @@ const int kDifuseCubemapSize = 256;
 class RealWorldApplication {
 public:
     void run();
+    // --editor CLI flag: when true the Menu shows the UE-style docked editor;
+    // otherwise the app runs in-game (no panels, full-window viewport).
+    void setEditorMode(bool e) { editor_mode_ = e; }
     void setFrameBufferResized(bool resized) { framebuffer_resized_ = resized; }
 
     // Screen-space velocity buffer (RG16F, NDC delta).  Populated by
@@ -355,6 +358,7 @@ private:
     // would have done to the player without the same opt-in.
     std::shared_ptr<ego::DrawableObject> npc_scifi_girl_;
     bool npc_placed_ = false;
+    bool editor_mode_ = false;   // set from the --editor CLI flag
 
     // ── Bone-link sticks ──────────────────────────────────────────────
     // One stretched debug-cube per non-root joint, drawn between its

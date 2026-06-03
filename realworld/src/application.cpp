@@ -377,14 +377,19 @@ void RealWorldApplication::createGBuffer(const glm::uvec2& display_size) {
         er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         std::source_location::current());
 
+    // Hi-Z pyramid scales with the swap-chain too.  Recreate it BEFORE
+    // writing the resolve descriptors: binding 6 references
+    // hiz_pyramid_full_view_, and on a resize cleanupSwapChain destroyed the
+    // old pyramid image — writing that stale view into the descriptor set
+    // faults the driver in vkUpdateDescriptorSets.  Rebuilding the pyramid
+    // first means the write picks up the fresh, valid view.
+    createHiZPyramid(display_size);
+
     // Re-bind the freshly-allocated image views to the resolve descriptor
     // set.  No-op until initDeferredResolve has run.
     if (deferred_resolve_desc_set_) {
         writeDeferredResolveDescriptors();
     }
-
-    // Hi-Z pyramid scales with the swap-chain too.
-    createHiZPyramid(display_size);
 }
 
 void RealWorldApplication::createHiZPyramid(const glm::uvec2& display_size) {
@@ -2068,6 +2073,9 @@ void RealWorldApplication::initVulkan() {
         ray_tracing_test_->getFinalImage().view,
         nullptr);
 
+    // Apply the --editor CLI flag: docked editor UI vs pure in-game viewport.
+    menu_->setEditorEnabled(editor_mode_);
+
     // Register CSM debug colour targets as ImGui textures (ImGui must be
     // initialised by the Menu constructor before this can be called).
     registerCsmDebugImTextureIds();
@@ -3212,6 +3220,12 @@ void RealWorldApplication::drawScene(
             s_dbuf_idx,
             delta_t,
             menu_->isAirfowOn());
+
+        // Editor: frame the 3D for the Viewport panel's aspect, not the full
+        // window, so the scene shown in the central dock hole isn't stretched.
+        if (menu_ && menu_->isViewportValid()) {
+            main_camera_object_->setAspect(menu_->getViewportAspect());
+        }
 
         main_camera_object_->updateCamera(
             cmd_buf,
@@ -5035,6 +5049,23 @@ void RealWorldApplication::drawScene(
     {
         engine::helper::GpuProfiler::Scope _scope_blit(
             gpu_profiler_, cmd_buf, "Final Blit");
+        // Editor: scale the scene into the Viewport panel's rect of the
+        // swapchain (camera aspect already matches it, so no distortion);
+        // the docked panels cover the rest.  Full-image blit otherwise.
+        glm::ivec3 vp_off(0, 0, 0), vp_region(0, 0, 0);
+        if (menu_ && menu_->isViewportValid()) {
+            const glm::vec2 vpos = menu_->getViewportPos();
+            const glm::vec2 vsz  = menu_->getViewportSize();
+            // Clamp into the swapchain so a stale rect can never blit OOB.
+            auto cl = [](float v, float lo, float hi) {
+                return v < lo ? lo : (v > hi ? hi : v); };
+            const float px = cl(vpos.x, 0.0f, float(screen_size.x));
+            const float py = cl(vpos.y, 0.0f, float(screen_size.y));
+            const float pw = cl(vsz.x, 1.0f, float(screen_size.x) - px);
+            const float ph = cl(vsz.y, 1.0f, float(screen_size.y) - py);
+            vp_off    = glm::ivec3(int(px), int(py), 0);
+            vp_region = glm::ivec3(int(pw), int(ph), 1);
+        }
         er::Helper::blitImage(
             cmd_buf,
             object_scene_view_->getColorBuffer()->image,
@@ -5046,7 +5077,9 @@ void RealWorldApplication::drawScene(
             SET_FLAG_BIT(ImageAspect, COLOR_BIT),
             SET_FLAG_BIT(ImageAspect, COLOR_BIT),
             object_scene_view_->getColorBuffer()->size,
-            glm::ivec3(screen_size.x, screen_size.y, 1));
+            glm::ivec3(screen_size.x, screen_size.y, 1),
+            vp_off,
+            vp_region);
         // _scope_blit auto-closes via RAII.
     }
 
@@ -8426,6 +8459,25 @@ void RealWorldApplication::drawFrame() {
         if (menu_) menu_->setHoverObjectName(hover_name);
     }
 
+    // Feed the editor Outliner/Details panels with the live scene objects.
+    if (menu_) {
+        std::vector<engine::ui::EditorSceneObject> eobjs;
+        auto add = [&](const char* nm,
+                       const std::shared_ptr<ego::DrawableObject>& o) {
+            if (o) eobjs.push_back(engine::ui::EditorSceneObject{ nm, o.get() });
+        };
+        add("Player", player_object_);
+        add("NPC (scifi_girl)", npc_scifi_girl_);
+        add("Bistro Exterior", bistro_exterior_scene_);
+        add("Bistro Interior", bistro_interior_scene_);
+        for (size_t i = 0; i < drawable_objects_.size(); ++i) {
+            if (drawable_objects_[i])
+                eobjs.push_back(engine::ui::EditorSceneObject{
+                    "Drawable " + std::to_string(i), drawable_objects_[i].get() });
+        }
+        menu_->setSceneObjects(std::move(eobjs));
+    }
+
     s_camera_paused = menu_->draw(
         command_buffer,
         final_render_pass_,
@@ -8553,6 +8605,10 @@ void RealWorldApplication::cleanupSwapChain() {
     gbuf_velocity_.destroy(device_);
     // Hi-Z pyramid + per-mip views are sized to the swap chain too.
     hiz_mip_views_.clear();
+    // Null the full-pyramid view too: destroying the image below leaves this
+    // shared_ptr as a dangling VkImageView, and any descriptor write that
+    // references it before createHiZPyramid rebuilds it crashes the driver.
+    hiz_pyramid_full_view_.reset();
     if (hiz_pyramid_.image) hiz_pyramid_.destroy(device_);
     hiz_pyramid_size_ = glm::uvec2(0);
     hiz_pyramid_mips_ = 0;
