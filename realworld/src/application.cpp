@@ -3221,9 +3221,12 @@ void RealWorldApplication::drawScene(
             delta_t,
             menu_->isAirfowOn());
 
-        // Editor: frame the 3D for the Viewport panel's aspect, not the full
-        // window, so the scene shown in the central dock hole isn't stretched.
-        if (menu_ && menu_->isViewportValid()) {
+        // Frame the 3D for the ACTIVE viewport in both modes: the editor
+        // Viewport panel when --editor, else the full window.  Driving this
+        // every frame (not just at construction) also keeps the aspect correct
+        // across window resizes, so in-game scale/offset matches the editor
+        // viewport instead of stretching.
+        if (menu_) {
             main_camera_object_->setAspect(menu_->getViewportAspect());
         }
 

@@ -15,6 +15,7 @@
 
 #include "application.h"
 #include "helper/cluster_mesh.h"  // engine::helper::clusterRenderingEnabled()
+#include "ui/editor_log.h"        // editor Output Log capture
 
 extern glm::vec4 getMainImage(const glm::vec2& frag_coord, const glm::ivec2& screen_size);
 
@@ -127,6 +128,8 @@ private:
         if (!dst) dst = main_ ? main_ : phys_;
         if (dst) dst->sputn(line_.data(),
                             static_cast<std::streamsize>(line_.size()));
+        // Mirror every line into the editor Output Log panel.
+        engine::ui::EditorLog::get().push(line_);
     }
     bool routeIsPhysics(const std::string& s) {
         std::size_t i = 0;
@@ -148,6 +151,36 @@ private:
     std::streambuf* phys_ = nullptr;
     std::string     line_;
     bool            last_phys_ = false;
+    std::mutex      mtx_;
+};
+
+// Tee for std::cerr: passes everything through to the real console/error
+// stream AND mirrors completed lines into the editor Output Log.
+class CerrCaptureBuf : public std::streambuf {
+public:
+    explicit CerrCaptureBuf(std::streambuf* under) : under_(under) {}
+protected:
+    std::streamsize xsputn(const char* s, std::streamsize n) override {
+        if (under_) under_->sputn(s, n);
+        std::lock_guard<std::mutex> lk(mtx_);
+        for (std::streamsize i = 0; i < n; ++i) putLocked(s[i]);
+        return n;
+    }
+    int overflow(int ch) override {
+        if (ch == traits_type::eof()) return ch;
+        if (under_) under_->sputc(static_cast<char>(ch));
+        std::lock_guard<std::mutex> lk(mtx_);
+        putLocked(static_cast<char>(ch));
+        return ch;
+    }
+    int sync() override { if (under_) under_->pubsync(); return 0; }
+private:
+    void putLocked(char c) {
+        line_ += c;
+        if (c == '\n') { engine::ui::EditorLog::get().push(line_); line_.clear(); }
+    }
+    std::streambuf* under_ = nullptr;
+    std::string     line_;
     std::mutex      mtx_;
 };
 } // namespace
@@ -194,6 +227,10 @@ int main(int argc, char** argv) {
                 static PhysicsRouteBuf s_route(s_stdout_log.rdbuf(),
                                                s_physics_log.rdbuf());
                 std::cout.rdbuf(&s_route);
+                // Mirror std::cerr into the editor Output Log while keeping it
+                // on the console for genuine errors.
+                static CerrCaptureBuf s_cerr_cap(std::cerr.rdbuf());
+                std::cerr.rdbuf(&s_cerr_cap);
                 std::cerr << "[log] stdout -> " << fname
                           << "\n[log] physics/IK/collision -> " << pname
                           << "  (set ENGINE_LOG_CONSOLE=1 to keep both on "
