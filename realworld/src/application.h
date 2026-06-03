@@ -183,6 +183,14 @@ private:
     std::shared_ptr<er::Surface> surface_;
     er::SwapChainInfo swap_chain_info_;
     std::shared_ptr<er::DescriptorPool> descriptor_pool_;
+    // Persistent pool for mesh-loaded drawable material/skin descriptor sets.
+    // Unlike descriptor_pool_ (destroyed + recreated by cleanupSwapChain on
+    // every swapchain resize), this one is created ONCE and never torn down, so
+    // drawables — which are loaded asynchronously and do NOT participate in the
+    // onDescriptorPoolDestroyed reallocation pattern — never end up holding (or
+    // allocating from) a freed pool across a resize.  Fixes the "Invalid
+    // VkDescriptorPool" crash when resizing the window during/after a load.
+    std::shared_ptr<er::DescriptorPool> drawable_descriptor_pool_;
     std::shared_ptr<er::DescriptorSetLayout> pbr_lighting_desc_set_layout_;
     std::shared_ptr<er::DescriptorSetLayout> runtime_lights_desc_set_layout_;
     std::shared_ptr<er::DescriptorSet> pbr_lighting_desc_set_;

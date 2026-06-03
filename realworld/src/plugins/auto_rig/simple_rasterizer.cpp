@@ -1,8 +1,16 @@
 #include "simple_rasterizer.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdint>
+#include <functional>
 #include <limits>
+#include <unordered_map>
+#include <vector>
 #include <glm/gtc/matrix_transform.hpp>
+
+#include "tiny_gltf.h"                 // glTF / GLB geometry (decls; impl elsewhere)
+#include "third_parties/fbx/ufbx.h"   // FBX geometry (decls; impl in ufbx.c)
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -544,6 +552,173 @@ void TriangleMesh::recomputeNormals() {
         float len = glm::length(n);
         if (len > 1e-8f) n /= len;
     }
+}
+
+// ── Geometry-only loaders for thumbnail rendering ───────────────────────────
+namespace {
+
+// Local transform of a glTF node (matrix, or T*R*S).
+glm::mat4 gltfNodeLocal(const tinygltf::Node& n) {
+    if (!n.matrix.empty()) {
+        glm::mat4 m(1.0f);
+        for (int i = 0; i < 16; ++i) (&m[0][0])[i] = (float)n.matrix[i];
+        return m;
+    }
+    glm::mat4 T(1.0f), R(1.0f), S(1.0f);
+    if (!n.translation.empty())
+        T = glm::translate(glm::mat4(1.0f),
+            glm::vec3((float)n.translation[0], (float)n.translation[1],
+                      (float)n.translation[2]));
+    if (!n.rotation.empty()) {
+        glm::quat q((float)n.rotation[3], (float)n.rotation[0],
+                    (float)n.rotation[1], (float)n.rotation[2]);
+        R = glm::mat4_cast(q);
+    }
+    if (!n.scale.empty())
+        S = glm::scale(glm::mat4(1.0f),
+            glm::vec3((float)n.scale[0], (float)n.scale[1], (float)n.scale[2]));
+    return T * R * S;
+}
+
+bool loadGltfGeometry(const std::string& path, TriangleMesh& out) {
+    tinygltf::Model model;
+    tinygltf::TinyGLTF loader;
+    std::string err, warn;
+    bool ok = (path.size() >= 4 && path.substr(path.size() - 4) == ".glb")
+        ? loader.LoadBinaryFromFile(&model, &err, &warn, path)
+        : loader.LoadASCIIFromFile(&model, &err, &warn, path);
+    if (!ok) {
+        std::fprintf(stderr, "[Thumb] glTF load failed (%s): %s\n",
+                     path.c_str(), err.c_str());
+        return false;
+    }
+
+    // World transform per node.
+    std::vector<glm::mat4> node_world(model.nodes.size(), glm::mat4(1.0f));
+    {
+        std::function<void(int, const glm::mat4&)> walk =
+            [&](int idx, const glm::mat4& parent) {
+                node_world[idx] = parent * gltfNodeLocal(model.nodes[idx]);
+                for (int c : model.nodes[idx].children) walk(c, node_world[idx]);
+            };
+        std::vector<bool> is_child(model.nodes.size(), false);
+        for (auto& n : model.nodes)
+            for (int c : n.children) is_child[c] = true;
+        for (int i = 0; i < (int)model.nodes.size(); ++i)
+            if (!is_child[i]) walk(i, glm::mat4(1.0f));
+    }
+    std::unordered_map<int, glm::mat4> mesh_to_world;
+    for (int i = 0; i < (int)model.nodes.size(); ++i)
+        if (model.nodes[i].mesh >= 0) mesh_to_world[model.nodes[i].mesh] = node_world[i];
+
+    for (int mi = 0; mi < (int)model.meshes.size(); ++mi) {
+        glm::mat4 world(1.0f);
+        auto it = mesh_to_world.find(mi);
+        if (it != mesh_to_world.end()) world = it->second;
+
+        for (auto& prim : model.meshes[mi].primitives) {
+            if (prim.mode != TINYGLTF_MODE_TRIANGLES && prim.mode != -1) continue;
+            auto pit = prim.attributes.find("POSITION");
+            if (pit == prim.attributes.end()) continue;
+
+            const uint32_t base = (uint32_t)out.positions.size();
+            const auto& acc = model.accessors[pit->second];
+            const auto& bv  = model.bufferViews[acc.bufferView];
+            const auto& buf = model.buffers[bv.buffer];
+            const float* p  = reinterpret_cast<const float*>(
+                buf.data.data() + bv.byteOffset + acc.byteOffset);
+            const size_t stride = bv.byteStride ? bv.byteStride / sizeof(float) : 3;
+            for (size_t i = 0; i < acc.count; ++i) {
+                glm::vec4 wp = world * glm::vec4(p[i * stride + 0],
+                                                 p[i * stride + 1],
+                                                 p[i * stride + 2], 1.0f);
+                out.positions.push_back(glm::vec3(wp));
+            }
+
+            if (prim.indices >= 0) {
+                const auto& ia = model.accessors[prim.indices];
+                const auto& ib = model.bufferViews[ia.bufferView];
+                const auto& ibf = model.buffers[ib.buffer];
+                const uint8_t* raw = ibf.data.data() + ib.byteOffset + ia.byteOffset;
+                for (size_t i = 0; i < ia.count; ++i) {
+                    uint32_t idx = 0;
+                    switch (ia.componentType) {
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                            idx = reinterpret_cast<const uint16_t*>(raw)[i]; break;
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                            idx = reinterpret_cast<const uint32_t*>(raw)[i]; break;
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                            idx = raw[i]; break;
+                        default: break;
+                    }
+                    out.indices.push_back(base + idx);
+                }
+            } else {
+                for (uint32_t i = 0; i < (uint32_t)acc.count; ++i)
+                    out.indices.push_back(base + i);
+            }
+        }
+    }
+    return !out.positions.empty() && !out.indices.empty();
+}
+
+bool loadFbxGeometry(const std::string& path, TriangleMesh& out) {
+    ufbx_load_opts opts{};
+    opts.target_axes      = ufbx_axes_right_handed_y_up;
+    opts.target_unit_meters = 1.0f;
+    ufbx_error err{};
+    ufbx_scene* scene = ufbx_load_file(path.c_str(), &opts, &err);
+    if (!scene) {
+        std::fprintf(stderr, "[Thumb] FBX load failed (%s): %s\n",
+                     path.c_str(), err.description.data);
+        return false;
+    }
+    for (size_t mi = 0; mi < scene->meshes.count; ++mi) {
+        const ufbx_mesh* m = scene->meshes.data[mi];
+        const uint32_t base = (uint32_t)out.positions.size();
+        // Positions in the mesh's vertex array (geometry space).
+        for (size_t v = 0; v < m->vertices.count; ++v) {
+            const ufbx_vec3& p = m->vertices.data[v];
+            out.positions.push_back(glm::vec3((float)p.x, (float)p.y, (float)p.z));
+        }
+        // Triangulate each face into the index buffer.
+        std::vector<uint32_t> tri(64 * 3);
+        for (size_t fi = 0; fi < m->faces.count; ++fi) {
+            const ufbx_face face = m->faces.data[fi];
+            const size_t need = (size_t)(face.num_indices >= 3 ? face.num_indices - 2 : 0) * 3;
+            if (need == 0) continue;
+            if (tri.size() < need) tri.resize(need);
+            uint32_t ntri = ufbx_triangulate_face(tri.data(), tri.size(), m, face);
+            for (uint32_t t = 0; t < ntri * 3; ++t) {
+                // tri[] holds *index-buffer* offsets; map to vertex indices.
+                uint32_t vidx = m->vertex_indices.data[tri[t]];
+                out.indices.push_back(base + vidx);
+            }
+        }
+    }
+    ufbx_free_scene(scene);
+    return !out.positions.empty() && !out.indices.empty();
+}
+
+}  // anonymous namespace
+
+bool loadMeshForThumbnail(const std::string& path, TriangleMesh& out) {
+    out = TriangleMesh{};
+    std::string ext;
+    {
+        const size_t dot = path.find_last_of('.');
+        if (dot != std::string::npos) ext = path.substr(dot);
+        for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+    }
+
+    bool ok = false;
+    if (ext == ".gltf" || ext == ".glb") ok = loadGltfGeometry(path, out);
+    else if (ext == ".fbx")              ok = loadFbxGeometry(path, out);
+    if (!ok || out.empty()) return false;
+
+    out.recomputeBounds();
+    out.recomputeNormals();
+    return true;
 }
 
 }  // namespace auto_rig

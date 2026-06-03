@@ -76,5 +76,15 @@ private:
         std::vector<Fragment>& out_frags) const;
 };
 
+// ---------------------------------------------------------------------------
+//  Geometry-only mesh loader for thumbnail rendering.
+//
+//  Loads positions + indices (normals recomputed) from a glTF / GLB (tinygltf)
+//  or FBX (ufbx) file into a TriangleMesh.  Unlike AutoRigPlugin::loadMesh this
+//  does NOT reject already-skinned meshes and ignores skeletons/materials — it
+//  just wants triangles to rasterise into an icon.  Returns false if the file
+//  can't be read or yields no triangles.
+bool loadMeshForThumbnail(const std::string& path, TriangleMesh& out);
+
 }  // namespace auto_rig
 }  // namespace plugins

@@ -1252,6 +1252,9 @@ void RealWorldApplication::initVulkan() {
     eh::createTextureImage(device_, "assets/T_Mat2Mountains_ORH.jpg", default_color_format, false, prt_orh_tex_, std::source_location::current());
     createTextureSampler();
     descriptor_pool_ = device_->createDescriptorPool();
+    // Persistent pool for drawable material/skin sets — survives swapchain
+    // recreation (see member comment in application.h).
+    drawable_descriptor_pool_ = device_->createDescriptorPool();
     createCommandBuffers();
     createSyncObjects();
 
@@ -1547,7 +1550,7 @@ void RealWorldApplication::initVulkan() {
     terrain_scene_view_ =
         std::make_shared<es::TerrainSceneView>(
             device_,
-            descriptor_pool_,
+            drawable_descriptor_pool_,
             renderbuffer_formats_,
             main_camera_object_,
             desc_set_layouts,
@@ -1893,7 +1896,7 @@ void RealWorldApplication::initVulkan() {
         ego::DrawableObject::createAsync(
             *mesh_load_task_manager_,
             device_,
-            descriptor_pool_,
+            drawable_descriptor_pool_,
             renderbuffer_formats_,
             graphic_pipeline_info_,
             repeat_texture_sampler_,
@@ -1905,7 +1908,7 @@ void RealWorldApplication::initVulkan() {
         ego::DrawableObject::createAsync(
             *mesh_load_task_manager_,
             device_,
-            descriptor_pool_,
+            drawable_descriptor_pool_,
             renderbuffer_formats_,
             graphic_pipeline_info_,
             repeat_texture_sampler_,
@@ -1921,7 +1924,7 @@ void RealWorldApplication::initVulkan() {
         ego::DrawableObject::createAsync(
             *mesh_load_task_manager_,
             device_,
-            descriptor_pool_,
+            drawable_descriptor_pool_,
             renderbuffer_formats_,
             graphic_pipeline_info_,
             repeat_texture_sampler_,
@@ -1939,7 +1942,7 @@ void RealWorldApplication::initVulkan() {
         ego::DrawableObject::createAsync(
             *mesh_load_task_manager_,
             device_,
-            descriptor_pool_,
+            drawable_descriptor_pool_,
             renderbuffer_formats_,
             graphic_pipeline_info_,
             repeat_texture_sampler_,
@@ -1961,7 +1964,7 @@ void RealWorldApplication::initVulkan() {
     bone_markers_.resize(kNumBoneMarkers);
     for (size_t i = 0; i < kNumBoneMarkers; ++i) {
         bone_markers_[i] = ego::DrawableObject::createAsync(
-            *mesh_load_task_manager_, device_, descriptor_pool_,
+            *mesh_load_task_manager_, device_, drawable_descriptor_pool_,
             renderbuffer_formats_, graphic_pipeline_info_,
             repeat_texture_sampler_, thin_film_lut_tex_,
             "assets/debug_cube.gltf", glm::inverse(view_params_.view));
@@ -1976,7 +1979,7 @@ void RealWorldApplication::initVulkan() {
     bone_links_.resize(kNumBoneMarkers);
     for (size_t i = 0; i < kNumBoneMarkers; ++i) {
         bone_links_[i] = ego::DrawableObject::createAsync(
-            *mesh_load_task_manager_, device_, descriptor_pool_,
+            *mesh_load_task_manager_, device_, drawable_descriptor_pool_,
             renderbuffer_formats_, graphic_pipeline_info_,
             repeat_texture_sampler_, thin_film_lut_tex_,
             "assets/debug_cube.gltf", glm::inverse(view_params_.view));
@@ -2117,6 +2120,14 @@ void RealWorldApplication::recreateSwapChain() {
         glfwWaitEvents();
     }
 
+    // NOTE: we deliberately do NOT drain in-flight async mesh loads here.
+    // Draining blocked the resize until every queued mesh finished loading,
+    // which froze the window for seconds when resizing during startup load.
+    // It's unnecessary now: drawable material/skin sets are allocated from the
+    // PERSISTENT drawable_descriptor_pool_ (not descriptor_pool_), so an
+    // in-flight load finalizing after this recreate still allocates from a
+    // valid pool.  Only descriptor_pool_ (engine/swapchain sets) is torn down
+    // below, and the loads no longer touch it.
     device_->waitIdle();
 
     menu_->destroy();
@@ -6778,21 +6789,37 @@ void RealWorldApplication::drawFrame() {
         // look target -- the pitch of the camera (driven by mouse)
         // then determines how high above the ground it ends up; a
         // small downward pitch keeps the feet centred.
-        const float kLookHeight     = -1.1f;   // below root, at feet
+        // Look UP at her back: aim the look target at her upper back
+        // (above the pelvis root) and tilt the view UP by a fixed bias on
+        // top of the mouse pitch.  We keep the mouse-driven YAW (so the
+        // camera still orbits when you look around) but derive a pitched-up
+        // facing, place the eye behind+below the target along that facing,
+        // and FORCE the camera to look along it (facing override) so the
+        // up-angle sticks regardless of where mouse pitch sits.
+        const float kLookHeight     =  0.3f;   // upper back (above pelvis root)
         const float kFollowDistance =  4.0f;   // distance behind
-        const float kFollowHeightUp =  0.0f;   // no extra lift -- pitch handles it
+        const float kPitchUpBias    = 18.0f;   // degrees: tilt view UP at her back
+
+        const float cur_pitch = glm::degrees(
+            std::asin(glm::clamp(cam_fwd.y, -1.0f, 1.0f)));
+        const float follow_pitch =
+            glm::clamp(cur_pitch + kPitchUpBias, -89.0f, 89.0f);
+        glm::vec3 look_dir = ego::getDirectionByYawAndPitch(cam.yaw, follow_pitch);
+        if (!std::isfinite(look_dir.x) || glm::length(look_dir) < 1e-3f)
+            look_dir = cam_fwd;
+
         const glm::vec3 look_target =
             player_pos + glm::vec3(0.0f, kLookHeight, 0.0f);
         const glm::vec3 follow_cam_pos =
-            look_target
-            - cam_fwd * kFollowDistance
-            + glm::vec3(0.0f, kFollowHeightUp, 0.0f);
+            look_target - look_dir * kFollowDistance;
 
         // Note: this branch lives in drawFrame() (not drawScene()), so
         // the local command-buffer name is `command_buffer`, not the
         // `cmd_buf` alias drawScene declares -- DO NOT rename without
-        // confirming the enclosing function.
-        main_camera_object_->updateCamera(command_buffer, follow_cam_pos);
+        // confirming the enclosing function.  Pass look_dir so the camera
+        // aims up the back instead of along the raw mouse facing.
+        main_camera_object_->updateCamera(
+            command_buffer, follow_cam_pos, look_dir);
 
         // ── Yaw hand-off ─────────────────────────────────────────────
         // The player's facing yaw used to come from the camera via the
@@ -7573,7 +7600,7 @@ void RealWorldApplication::drawFrame() {
         auto drawable_obj = ego::DrawableObject::createAsync(
             *mesh_load_task_manager_,
             device_,
-            descriptor_pool_,
+            drawable_descriptor_pool_,
             renderbuffer_formats_,
             graphic_pipeline_info_,
             texture_sampler_,
