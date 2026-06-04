@@ -1957,7 +1957,7 @@ void RealWorldApplication::initVulkan() {
             graphic_pipeline_info_,
             repeat_texture_sampler_,
             thin_film_lut_tex_,
-            "assets/Characters/scifi_girl_v.01.glb",
+            "assets/Characters/actress.glb",
             glm::inverse(view_params_.view));
 
     // ── Per-bone debug markers (one tiny red cube per joint) ────────
@@ -5328,7 +5328,15 @@ void RealWorldApplication::drawFrame() {
     {
         auto _cpu_wait_fence = gpu_profiler_.beginCpuScope("Wait Frame Fence");
         device_->waitForFences({ in_flight_fences_[current_frame_] });
-        device_->resetFences({ in_flight_fences_[current_frame_] });
+        // NOTE: resetFences moved DOWN to just before submit (after the
+        // acquire + per-image wait).  Resetting here was a deadlock:
+        //   (a) if acquire returns out-of-date we early-return without
+        //       submitting, leaving this fence reset-but-unsignaled, so
+        //       next frame's wait above hangs (freeze on resize); and
+        //   (b) the per-image wait below can wait on this very fence
+        //       (when images_in_flight_[image_index] == this slot's
+        //       fence) — waiting on a just-reset, unsignaled fence hangs.
+        // Keeping it signaled until we're committed to a submit fixes both.
         gpu_profiler_.endCpuScope(_cpu_wait_fence);
     }
 
@@ -5427,11 +5435,30 @@ void RealWorldApplication::drawFrame() {
     // Together those three give complete swapchain-image safety.
     // The per-image fence wait was redundant safety belt.
     //
-    // (Kept the images_in_flight_ vector itself + the assignment
-    // below for now in case we want to bring back a DIAGNOSTIC
-    // version that times the wait but doesn't actually wait — easier
-    // to spot regressions if FIF or swapchain count changes.  The
-    // assignment is essentially free.)
+    // ── Per-image in-flight fence wait — RESTORED ──────────────────
+    // The removal note above only reasons about SWAP-CHAIN image safety
+    // (covered by the image_available / render_finished semaphores).  It
+    // overlooks that every OFFSCREEN render target is SINGLE-buffered:
+    // there is exactly one object_scene_view_ m_color_buffer_, one
+    // deferred G-buffer, one Hi-Z pyramid, etc. — NOT one per frame-in-
+    // flight.  With FIF=2 and no per-image throttle the CPU runs two
+    // frames ahead, so frame N+1 begins rendering INTO those shared
+    // targets while frame N's GPU is still reading them (deferred
+    // resolve + final blit).  No semaphore guards those offscreen
+    // images across frames, so the whole picture strobes / "flash
+    // jumps" every frame.  Waiting on the fence of whichever frame last
+    // used THIS swap-chain image gates us so that frame's GPU work — and
+    // thus its use of the shared offscreen targets — has finished before
+    // we touch them again.  Costs some FIF-2 pipelining; the proper
+    // long-term fix is to double-buffer each offscreen target per FIF.
+    if (images_in_flight_[image_index]) {
+        device_->waitForFences({ images_in_flight_[image_index] });
+    }
+    // Reset the per-FIF fence HERE — past the out-of-date early-return and
+    // past the per-image wait above — so it is only ever cleared when we
+    // are about to submit work that will re-signal it.  (See the matching
+    // note at the top-of-frame wait.)
+    device_->resetFences({ in_flight_fences_[current_frame_] });
     images_in_flight_[image_index] = in_flight_fences_[current_frame_];
     gpu_profiler_.endCpuScope(_cpu_wait);
 
