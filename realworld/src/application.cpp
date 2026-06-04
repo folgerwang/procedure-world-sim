@@ -6823,29 +6823,39 @@ void RealWorldApplication::drawFrame() {
         // look target -- the pitch of the camera (driven by mouse)
         // then determines how high above the ground it ends up; a
         // small downward pitch keeps the feet centred.
-        // Look UP at her back: aim the look target at her upper back
-        // (above the pelvis root) and tilt the view UP by a fixed bias on
-        // top of the mouse pitch.  We keep the mouse-driven YAW (so the
-        // camera still orbits when you look around) but derive a pitched-up
-        // facing, place the eye behind+below the target along that facing,
-        // and FORCE the camera to look along it (facing override) so the
-        // up-angle sticks regardless of where mouse pitch sits.
-        const float kLookHeight     =  0.3f;   // upper back (above pelvis root)
-        const float kFollowDistance =  4.0f;   // distance behind
-        const float kPitchUpBias    = 18.0f;   // degrees: tilt view UP at her back
+        // Fixed low-angle "look up her back" framing.
+        //
+        // player_pos (PlayerController::getPosition) sits at ~her feet, so the
+        // offsets below are heights ABOVE the ground:
+        //   kLookHeight  — what the camera centres on (≈ upper back/shoulders).
+        //   kEyeHeight   — the camera's own height; BELOW kLookHeight so the
+        //                  view tilts UP along her back.
+        //   kFollowDist  — horizontal distance behind her.
+        // We derive the facing geometrically (look_target - eye) and force it
+        // via the facing override, so the up-angle is STABLE and independent of
+        // the mouse pitch (whose default sits looking slightly down — that was
+        // why the previous "pitch + bias" approach still framed her lower body
+        // and the ground).  Mouse YAW still orbits the camera around her.
+        const float kLookHeight  = 1.35f;   // aim at upper back / shoulders
+        const float kEyeHeight   = 0.65f;   // camera height (hip-ish) -> looks UP
+        const float kFollowDist  = 3.5f;    // distance behind
 
-        const float cur_pitch = glm::degrees(
-            std::asin(glm::clamp(cam_fwd.y, -1.0f, 1.0f)));
-        const float follow_pitch =
-            glm::clamp(cur_pitch + kPitchUpBias, -89.0f, 89.0f);
-        glm::vec3 look_dir = ego::getDirectionByYawAndPitch(cam.yaw, follow_pitch);
-        if (!std::isfinite(look_dir.x) || glm::length(look_dir) < 1e-3f)
-            look_dir = cam_fwd;
+        // Horizontal "behind" direction from the mouse yaw only (pitch 0).
+        glm::vec3 behind = ego::getDirectionByYawAndPitch(cam.yaw, 0.0f);
+        behind.y = 0.0f;
+        if (glm::length(behind) < 1e-4f) behind = glm::vec3(0.0f, 0.0f, 1.0f);
+        behind = glm::normalize(behind);
 
         const glm::vec3 look_target =
             player_pos + glm::vec3(0.0f, kLookHeight, 0.0f);
         const glm::vec3 follow_cam_pos =
-            look_target - look_dir * kFollowDistance;
+            glm::vec3(player_pos.x, player_pos.y + kEyeHeight, player_pos.z)
+            - behind * kFollowDist;
+        glm::vec3 look_dir = look_target - follow_cam_pos;
+        if (!std::isfinite(look_dir.x) || glm::length(look_dir) < 1e-3f)
+            look_dir = cam_fwd;
+        else
+            look_dir = glm::normalize(look_dir);
 
         // Note: this branch lives in drawFrame() (not drawScene()), so
         // the local command-buffer name is `command_buffer`, not the
