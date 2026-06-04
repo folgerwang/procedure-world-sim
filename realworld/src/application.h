@@ -368,6 +368,13 @@ private:
     bool npc_placed_ = false;
     bool editor_mode_ = false;   // set from the --editor CLI flag
 
+    // Editor "teleport to object" (Outliner double-click) camera focus.  When
+    // active, the camera frames editor_cam_focus_center_ from a distance scaled
+    // to the object's size instead of following the player; pressing WASD exits.
+    bool      editor_cam_focus_active_ = false;
+    glm::vec3 editor_cam_focus_center_ = glm::vec3(0.0f);
+    float     editor_cam_focus_dist_   = 3.0f;
+
     // ── Bone-link sticks ──────────────────────────────────────────────
     // One stretched debug-cube per non-root joint, drawn between its
     // parent joint and itself so the skeleton reads as connected sticks

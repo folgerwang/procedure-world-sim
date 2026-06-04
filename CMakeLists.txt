@@ -482,6 +482,32 @@ elseif(EXISTS "${MODEL_PT}")
     message(STATUS "ML model found: ${MODEL_PT}")
 endif()
 
+# ── FLUX.2 (FP8) text-to-image generator setup ────────────────────────────────
+# Heavy one-time setup (deps + ~tens-of-GB gated weights), so it is NOT a build
+# dependency of RealWorld.  The PRIMARY path is `Setup.bat -flux`; this target
+# is an equivalent convenience for CMake/VS users.  In Visual Studio, right-
+# click the `flux_setup` project → Build to install diffusers + optimum-quanto
+# into the same interpreter and download the FLUX.2-dev weights.  Needs a ~32GB
+# NVIDIA GPU and a Hugging Face login (huggingface-cli login / HF_TOKEN) with
+# the FLUX.2-dev licence accepted.
+set(FLUX_DIR          "${CMAKE_SOURCE_DIR}/realworld/tools/flux")
+set(FLUX_SETUP_SCRIPT "${FLUX_DIR}/setup_flux.py")
+if(EXISTS "${FLUX_SETUP_SCRIPT}")
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_FOUND)
+        add_custom_target(flux_setup
+            COMMAND "${Python3_EXECUTABLE}" "${FLUX_SETUP_SCRIPT}"
+            WORKING_DIRECTORY "${FLUX_DIR}"
+            COMMENT "FLUX.2 setup: deps + weights (one-time; ~32GB GPU + HF login)"
+            USES_TERMINAL
+        )
+        set_target_properties(flux_setup PROPERTIES EXCLUDE_FROM_ALL TRUE FOLDER "tools")
+        message(STATUS "FLUX.2 image generator: run `Setup.bat -flux` or build the 'flux_setup' target.")
+    else()
+        message(STATUS "Python3 not found — 'flux_setup' target unavailable.")
+    endif()
+endif()
+
 # ── Set RealWorld as the startup project in Visual Studio ─────────────────────
 set_property(DIRECTORY ${CMAKE_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT RealWorld)
 

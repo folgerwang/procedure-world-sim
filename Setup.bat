@@ -11,6 +11,7 @@ echo    * Python dependencies (ml_training\requirements.txt)
 echo    * Auto-rig ML model export
 echo    * LibTorch download (if not already present)
 echo    * Ollama install + qwen3.5:2b pull (Mesh Category classifier)
+echo    * FLUX.2 (FP8) image generator install + weight download (Content Browser)
 echo.
 echo  Run GenerateProjectFiles.bat afterwards to produce the VS
 echo  solution. GenerateProjectFiles.bat also invokes this script
@@ -28,6 +29,11 @@ rem   -ollama-model=<tag> Ollama model tag to pull (default: qwen3.5:2b).
 rem                         Must match OLLAMA_MODEL at runtime; the
 rem                         classifier reads that env var.
 rem   -skip-cuda          Skip CUDA torch install (use CPU wheel from requirements.txt)
+rem   -skip-flux          Skip the FLUX.2 (FP8) image generator install + weight
+rem                         download (diffusers + optimum-quanto + the gated
+rem                         FLUX.2-dev weights). ON by default; reuses the CUDA
+rem                         torch installed above. Needs a ~32GB GPU, a large
+rem                         weight download, and a Hugging Face login.
 rem   -cuda=<wheel>       CUDA wheel tag (default: cu128). Examples:
 rem                         cu128  -- works with all current NVIDIA GPUs incl.
 rem                                   Blackwell/RTX 50-series (sm_120). DEFAULT.
@@ -46,6 +52,7 @@ set "SKIP_OLLAMA=0"
 set "OLLAMA_MODEL_ARG="
 set "SKIP_CUDA=0"
 set "CUDA_WHEEL=cu128"
+set "SKIP_FLUX=0"
 
 :arg_loop
 if "%~1"=="" goto :arg_done
@@ -59,6 +66,7 @@ if /i "!_a!"=="-skip-ollama" set "SKIP_OLLAMA=1"
 if /i "!_a:~0,14!"=="-ollama-model=" set "OLLAMA_MODEL_ARG=!_a:~14!"
 if /i "!_a!"=="-skip-cuda" set "SKIP_CUDA=1"
 if /i "!_a:~0,6!"=="-cuda=" set "CUDA_WHEEL=!_a:~6!"
+if /i "!_a!"=="-skip-flux" set "SKIP_FLUX=1"
 shift
 goto :arg_loop
 :arg_done
@@ -517,6 +525,43 @@ echo -----------------------------------------------------------
 echo.
 
 :ollama_done
+
+rem ── FLUX.2 (FP8) text-to-image generator ─────────────────────────────────────
+rem   Installs diffusers + optimum-quanto (reusing the CUDA torch installed
+rem   above) and downloads the gated FLUX.2-dev weights, so the editor's Content
+rem   Browser can generate images (right-click a folder -> Generate).
+rem   ON by default -- it needs a ~32GB NVIDIA GPU, a large (tens-of-GB) weight
+rem   download, and a Hugging Face login.  Skip with:  Setup.bat -skip-flux
+if "!SKIP_FLUX!"=="1" (
+    echo [INFO]  Skipping FLUX.2 image generator ^(-skip-flux^) -- the Content
+    echo         Browser's right-click Generate will not work until you run:
+    echo         python realworld\tools\flux\setup_flux.py
+    goto :flux_done
+)
+
+where python >nul 2>&1
+if errorlevel 1 (
+    echo [WARN]  Python not found -- cannot set up the FLUX.2 generator.
+    goto :flux_done
+)
+
+echo.
+echo -- FLUX.2 image generator ---------------------------------
+echo [INFO]  Installing deps + downloading FLUX.2-dev weights ^(gated^).
+echo [INFO]  Accept the licence and log in FIRST, otherwise the download fails:
+echo            https://huggingface.co/black-forest-labs/FLUX.2-dev
+echo            huggingface-cli login        ^(or set the HF_TOKEN env var^)
+python realworld\tools\flux\setup_flux.py
+if errorlevel 1 (
+    echo [WARN]  FLUX.2 setup failed -- see messages above.  Re-run after
+    echo         accepting the licence / logging in:  python realworld\tools\flux\setup_flux.py
+) else (
+    echo [INFO]  FLUX.2 generator ready.
+)
+echo -----------------------------------------------------------
+echo.
+
+:flux_done
 
 echo.
 echo ============================================================

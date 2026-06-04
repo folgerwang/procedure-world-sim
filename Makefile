@@ -415,7 +415,7 @@ else
 endif
 
 # ── Phony targets ─────────────────────────────────────────────────────────────
-.PHONY: all clean shaders submodules model libtorch help
+.PHONY: all clean shaders submodules model libtorch help flux-setup
 
 # ── Default target ────────────────────────────────────────────────────────────
 all: libtorch model $(TARGET)
@@ -488,6 +488,18 @@ model:
 	else \
 	    echo "[model] $(MODEL_PT) found — OK"; \
 	fi
+
+# ── FLUX.2 (FP8) text-to-image generator setup ────────────────────────────────
+# One-time: create tools/flux/.venv, install deps, download the gated
+# FLUX.2-dev weights.  The editor's Content Browser (right-click → Generate)
+# then launches tools/flux/.venv/python flux_generate.py per image.
+# Needs a ~32GB NVIDIA GPU and a Hugging Face login (huggingface-cli login or
+# HF_TOKEN) with the FLUX.2-dev licence accepted.
+flux-setup:
+	@if command -v python3 >/dev/null 2>&1; then PY=python3; \
+	elif command -v python >/dev/null 2>&1; then PY=python; \
+	else echo "[flux] Python not found — install Python 3.10+ first."; exit 1; fi; \
+	$$PY realworld/tools/flux/setup_flux.py
 
 # ── Final executable ──────────────────────────────────────────────────────────
 $(TARGET): $(APP_OBJS) $(ENGINE_LIB) $(IMGUI_LIB) $(GLFW3_LIB) $(OPENMESH_LIB)
@@ -586,6 +598,7 @@ help:
 	@echo "  model       Export ML auto-rig model (if missing)"
 	@echo "  shaders     Compile all GLSL shaders → SPIR-V (.spv)"
 	@echo "  submodules  Run: git submodule update --init --recursive"
+	@echo "  flux-setup  Install the FLUX.2 (FP8) image generator (venv + weights)"
 	@echo "  clean       Remove build/ and realworld/src/lib/"
 	@echo "  help        Show this help"
 	@echo ""

@@ -6794,7 +6794,45 @@ void RealWorldApplication::drawFrame() {
     //     we work the leg/step animation; we'll add a ground clamp
     //     for the camera once the player's own ground-snap is wired
     //     through the step path.
-    if (player_object_ && player_object_->isReady() &&
+    // ── Editor "teleport to object" focus camera ─────────────────────────
+    // The Outliner sets a focus request on double-click; consume it here and
+    // frame the object.  While focused we OVERRIDE the follow camera (below)
+    // and look at the object's centre from a distance scaled to its size;
+    // pressing any movement key exits focus and resumes normal follow.
+    if (menu_) {
+        glm::vec3 fcenter; float fradius;
+        if (menu_->takeEditorFocus(fcenter, fradius)) {
+            editor_cam_focus_active_ = true;
+            editor_cam_focus_center_ = fcenter;
+            editor_cam_focus_dist_   = glm::max(fradius * 2.5f + 0.5f, 1.5f);
+        }
+    }
+    if (editor_cam_focus_active_) {
+        if (glfwGetKey(window_, GLFW_KEY_W) == GLFW_PRESS ||
+            glfwGetKey(window_, GLFW_KEY_A) == GLFW_PRESS ||
+            glfwGetKey(window_, GLFW_KEY_S) == GLFW_PRESS ||
+            glfwGetKey(window_, GLFW_KEY_D) == GLFW_PRESS) {
+            editor_cam_focus_active_ = false;
+        }
+    }
+    if (editor_cam_focus_active_) {
+        // Look DOWN-forward at the object centre; eye sits above + behind it
+        // along the current mouse yaw, so mouse-look still orbits the target.
+        const auto& cam = main_camera_object_->getCameraViewInfo();
+        glm::vec3 dir = ego::getDirectionByYawAndPitch(cam.yaw, -25.0f);
+        if (!std::isfinite(dir.x) || glm::length(dir) < 1e-3f)
+            dir = glm::vec3(0.0f, -0.4f, 1.0f);
+        dir = glm::normalize(dir);
+        const glm::vec3 eye =
+            editor_cam_focus_center_ - dir * editor_cam_focus_dist_;
+        main_camera_object_->updateCamera(command_buffer, eye, dir);
+    }
+
+    // Follow camera only in PLAY mode.  In edit mode the follow override is
+    // skipped so the free camera (updateCamera's WASD/mouse) flies the level.
+    if (!editor_cam_focus_active_ &&
+        (!menu_ || menu_->isPlayMode()) &&
+        player_object_ && player_object_->isReady() &&
         player_controller_ && player_controller_->isSpawned()) {
         const glm::vec3 player_pos = player_controller_->getPosition();
         const auto& cam = main_camera_object_->getCameraViewInfo();
@@ -7689,6 +7727,9 @@ void RealWorldApplication::drawFrame() {
             player_controller_->setPelvisDropMax(ik.pelvis_drop_max);
             menu_->setFootIkPelvisDrop(player_controller_->pelvisDrop());
         }
+        // Edit mode freezes character movement (free camera gets the keys);
+        // play mode lets WASD drive the character.
+        player_controller_->setMovementEnabled(!menu_ || menu_->isPlayMode());
         player_controller_->update(
             window_,
             delta_t_,
@@ -8351,6 +8392,10 @@ void RealWorldApplication::drawFrame() {
     // Trumbore).  A per-frame triangle budget caps the work.
     {
         std::string hover_name;
+        // Also capture the picked drawable + node so a double-click can select
+        // it in the Outliner (request 2).
+        ego::DrawableObject* best_obj = nullptr;
+        int                  best_node_idx = -1;
         const glm::uvec2 ss = swap_chain_info_.extent;
         if (main_camera_object_ && ss.x > 0 && ss.y > 0) {
             // Mouse pixel -> NDC.  Our projection already flips Y (see the
@@ -8519,6 +8564,9 @@ void RealWorldApplication::drawFrame() {
                                         hover_name = node.name_;
                                         if (!mat.empty())
                                             hover_name += "\n" + mat;
+                                        best_obj = obj.get();
+                                        best_node_idx =
+                                            (int)(&node - data.nodes_.data());
                                     }
                                 }
                             }
@@ -8531,6 +8579,64 @@ void RealWorldApplication::drawFrame() {
             }
         }
         if (menu_) menu_->setHoverObjectName(hover_name);
+
+        // Scene-view double-click → auto-select the picked object in the
+        // Outliner (request 2).  GLFW-based double-click detection (the pick
+        // runs outside ImGui's frame); ignored when the cursor is over an
+        // editor panel (WantCaptureMouse from the previous frame).
+        {
+            static double    s_last_lclick_t   = -10.0;
+            static glm::vec2  s_last_lclick_pos = glm::vec2(0.0f);
+            static bool       s_prev_lmb        = false;
+            const bool lmb =
+                glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+            bool dbl = false;
+            if (lmb && !s_prev_lmb) {               // left-button down edge
+                const double tnow = glfwGetTime();
+                if (tnow - s_last_lclick_t < 0.35 &&
+                    glm::length(s_last_mouse_pos - s_last_lclick_pos) < 8.0f)
+                    dbl = true;
+                s_last_lclick_t   = tnow;
+                s_last_lclick_pos = s_last_mouse_pos;
+            }
+            s_prev_lmb = lmb;
+            if (dbl && best_obj && menu_ &&
+                !ImGui::GetIO().WantCaptureMouse)
+                menu_->selectByPick(best_obj, best_node_idx);
+        }
+    }
+
+    // Keep the characters HIDDEN until their placement/scale has been applied.
+    // During the post-load material-categorise / floor-simplify window the
+    // player & NPC are already isReady() (so they would draw) but the spawn
+    // block hasn't run yet, so they render at authored (~10x) scale.  Hide them
+    // until spawned / placed, then reveal ONCE — so the editor's Visible toggle
+    // still works afterwards.
+    {
+        static bool s_player_revealed = false;
+        static bool s_npc_revealed    = false;
+        if (player_object_) {
+            const bool spawned =
+                player_controller_ && player_controller_->isSpawned();
+            if (spawned) {
+                if (!s_player_revealed) {
+                    player_object_->setVisible(true);
+                    s_player_revealed = true;
+                }
+            } else {
+                player_object_->setVisible(false);
+            }
+        }
+        if (npc_scifi_girl_) {
+            if (npc_placed_) {
+                if (!s_npc_revealed) {
+                    npc_scifi_girl_->setVisible(true);
+                    s_npc_revealed = true;
+                }
+            } else {
+                npc_scifi_girl_->setVisible(false);
+            }
+        }
     }
 
     // Feed the editor Outliner/Details panels with the live scene objects.
@@ -8550,6 +8656,23 @@ void RealWorldApplication::drawFrame() {
                     "Drawable " + std::to_string(i), drawable_objects_[i].get() });
         }
         menu_->setSceneObjects(std::move(eobjs));
+
+        // Drive the rendered amber highlight layer (request 1) from the
+        // Outliner selection: clear it on every drawable, then set it on the
+        // selected object/sub-object.  Takes effect on the next frame's draw.
+        auto clearHl = [](const std::shared_ptr<ego::DrawableObject>& o) {
+            if (o) o->setHighlightNode(-1);
+        };
+        clearHl(player_object_);
+        clearHl(npc_scifi_girl_);
+        clearHl(bistro_exterior_scene_);
+        clearHl(bistro_interior_scene_);
+        for (auto& d : drawable_objects_) clearHl(d);
+
+        ego::DrawableObject* hobj = nullptr;
+        int                  hnode = -1;
+        if (menu_->getSelectedHighlight(hobj, hnode) && hobj)
+            hobj->setHighlightNode(hnode);
     }
 
     s_camera_paused = menu_->draw(
