@@ -526,11 +526,12 @@ echo.
 
 :ollama_done
 
-rem ── FLUX.2 (FP8) text-to-image generator ─────────────────────────────────────
-rem   Installs diffusers + optimum-quanto (reusing the CUDA torch installed
-rem   above) and downloads the gated FLUX.2-dev weights, so the editor's Content
-rem   Browser can generate images (right-click a folder -> Generate).
-rem   ON by default -- it needs a ~32GB NVIDIA GPU, a large (tens-of-GB) weight
+rem ── FLUX.2 text-to-image generator (4-bit NF4) ───────────────────────────────
+rem   Installs diffusers + bitsandbytes (reusing the CUDA torch installed above)
+rem   and downloads the gated FLUX.2-dev weights, so the editor's Content Browser
+rem   can generate images (right-click a folder -> Generate).  Runs in 4-bit NF4
+rem   so it fits a 24GB GPU (RTX 3090 / 4090).
+rem   ON by default -- needs a 24GB+ NVIDIA GPU, a large (tens-of-GB) weight
 rem   download, and a Hugging Face login.  Skip with:  Setup.bat -skip-flux
 if "!SKIP_FLUX!"=="1" (
     echo [INFO]  Skipping FLUX.2 image generator ^(-skip-flux^) -- the Content
