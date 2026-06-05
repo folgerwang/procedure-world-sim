@@ -44,6 +44,20 @@ def install_deps(py: str) -> None:
         sys.exit(1)
 
 
+def verify_import(py: str, module: str) -> None:
+    """Fail fast (with a clear message) if a key package didn't install into
+    the SAME interpreter the editor will use."""
+    rc = subprocess.call([py, "-c", "import " + module])
+    if rc != 0:
+        print("[flux-setup] '" + module + "' did NOT install into " + py +
+              "\n  This is the interpreter the editor launches as `python`."
+              "\n  If it's a git-install failure, you do NOT need git now -- "
+              "requirements.txt uses the GitHub zipball. Re-run this script.",
+              file=sys.stderr)
+        sys.exit(1)
+    print("[flux-setup] verified: " + module + " importable", flush=True)
+
+
 def _existing_token():
     for var in TOKEN_ENV_VARS:
         tok = os.environ.get(var)
@@ -125,6 +139,7 @@ def main() -> None:
     print(f"[flux-setup] using interpreter: {py}", flush=True)
 
     install_deps(py)
+    verify_import(py, "diffusers")
     ensure_authenticated()
     download_weights()
 

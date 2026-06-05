@@ -2527,6 +2527,14 @@ void RealWorldApplication::recreateSwapChain() {
 
     // Re-wire profiler after menu re-init.
     menu_->setGpuProfiler(&gpu_profiler_);
+
+    // Rebuild the per-frame sync primitives for the NEW swapchain.  Reusing
+    // the old acquire/present semaphores across a swapchain recreate is the
+    // textbook cause of the "whole scene flashes on resize" + intermittent
+    // torn geometry: a present semaphore can be stuck signalled, and the
+    // images_in_flight_ throttle holds stale fences.  Safe here — waitIdle()
+    // ran at the top of this function, so nothing is using them.
+    recreateSyncObjects();
 }
 
 void RealWorldApplication::createImageViews() {
@@ -2604,10 +2612,23 @@ void RealWorldApplication::createCommandBuffers() {
 }
 
 void RealWorldApplication::createSyncObjects() {
+    const uint64_t image_count = swap_chain_info_.images.size();
     image_available_semaphores_.resize(kMaxFramesInFlight);
-    render_finished_semaphores_.resize(kMaxFramesInFlight);
+    // render_finished_semaphores_ is signalled on submit and waited on by
+    // PRESENT, whose completion is NOT tracked by any fence.  Sizing it
+    // per-FIF (2) while the swapchain holds more images (3) let the same
+    // present semaphore be reused while a prior present still held it →
+    // undefined GPU ordering → random garbage / whole-scene flashing, worst
+    // right after a resize.  One semaphore PER SWAPCHAIN IMAGE, indexed by
+    // image_index, makes a present semaphore reusable only once that image is
+    // re-acquired (which acquireNextImage already gates) — hazard removed.
+    render_finished_semaphores_.resize(image_count);
     in_flight_fences_.resize(kMaxFramesInFlight);
-    images_in_flight_.resize(swap_chain_info_.images.size(), VK_NULL_HANDLE);
+    // assign() (not resize()) so RE-creation on a swapchain rebuild clears
+    // EVERY slot back to null, not just newly-grown ones — otherwise stale
+    // fences from before the resize would defeat the per-image throttle for
+    // the first few frames and let the shared offscreen targets be stomped.
+    images_in_flight_.assign(image_count, VK_NULL_HANDLE);
     init_semaphore_ =
         device_->createSemaphore(
             std::source_location::current());
@@ -2617,14 +2638,40 @@ void RealWorldApplication::createSyncObjects() {
         image_available_semaphores_[i] =
             device_->createSemaphore(
                 std::source_location::current());
-        render_finished_semaphores_[i] =
-            device_->createSemaphore(
-                std::source_location::current());
         in_flight_fences_[i] =
             device_->createFence(
                 std::source_location::current(),
                 true);
     }
+    for (uint64_t i = 0; i < image_count; i++) {
+        render_finished_semaphores_[i] =
+            device_->createSemaphore(
+                std::source_location::current());
+    }
+}
+
+// Tear down and rebuild all per-frame sync primitives.  Called on every
+// swapchain rebuild.  Across a recreate, an acquire/present binary semaphore
+// can be left signalled-but-unwaited (a frame discarded as out-of-date) and
+// images_in_flight_ retains stale fences — both leave the first frames after a
+// resize mis-synchronised (the whole scene flashes, intermittently producing
+// torn cluster geometry).  recreateSwapChain has already issued
+// device_->waitIdle(), so nothing is in flight and it is safe to destroy and
+// rebuild these.  createSyncObjects() also resets images_in_flight_ and we
+// reset current_frame_, so the per-frame throttle re-establishes immediately.
+void RealWorldApplication::recreateSyncObjects() {
+    device_->destroySemaphore(init_semaphore_);
+    for (uint64_t i = 0; i < render_finished_semaphores_.size(); i++) {
+        device_->destroySemaphore(render_finished_semaphores_[i]);
+    }
+    for (uint64_t i = 0; i < image_available_semaphores_.size(); i++) {
+        device_->destroySemaphore(image_available_semaphores_[i]);
+    }
+    for (uint64_t i = 0; i < in_flight_fences_.size(); i++) {
+        device_->destroyFence(in_flight_fences_[i]);
+    }
+    createSyncObjects();
+    current_frame_ = 0;
 }
 
 er::WriteDescriptorList RealWorldApplication::addGlobalTextures(
@@ -3217,6 +3264,11 @@ void RealWorldApplication::drawScene(
         auto cur_time = std::chrono::steady_clock::now();
         std::chrono::duration<double> elapsed_seconds = cur_time - s_last_time;
         auto delta_t = static_cast<float>(elapsed_seconds.count());
+        // Same hitch guard as the main-loop delta_t_ (see drawFrame): keep a
+        // resize / alt-tab stall from injecting a multi-second step into the
+        // camera smoothing or the air/water-flow accumulation below.
+        if (delta_t > 0.1f) delta_t = 0.1f;
+        if (delta_t < 0.0f) delta_t = 0.0f;
         s_last_time = cur_time;
 
         ego::DrawableObject::updateGameObjectsBuffer(
@@ -5311,6 +5363,30 @@ void RealWorldApplication::drawFrame() {
     gpu_profiler_.beginCpuFrame(cpu_frame_idx);
     auto _cpu_frame = gpu_profiler_.beginCpuScope("drawFrame");
 
+    // ── Proactive resize handling — kills the one-frame "enlarge-then-
+    //    shrink" / ghosted flash during a drag-resize ────────────────────
+    // The GLFW framebuffer-size callback sets framebuffer_resized_ during
+    // glfwPollEvents, i.e. BEFORE we render this frame.  If we don't act on
+    // it up-front, this frame renders the scene with the camera aspect taken
+    // LIVE from the new viewport (menu_->getViewportAspect(), read fresh
+    // every frame at the setAspect() call) into the OLD swap_chain_info_
+    // .extent offscreen targets + swapchain, then PRESENTS that mismatched
+    // image — and only afterwards does the reactive acquire/present
+    // "out-of-date" path rebuild.  That single presented frame, scaled to a
+    // size its projection wasn't built for, is exactly the stretched/ghosted
+    // flash.  Rebuilding the swapchain (targets sized to the NEW framebuffer)
+    // here and skipping this frame guarantees we only ever present frames
+    // whose camera aspect, offscreen targets and swapchain all agree.  The
+    // view holds on the last good frame for the duration of an active drag
+    // and snaps to the correct size the instant dragging settles.
+    if (framebuffer_resized_) {
+        framebuffer_resized_ = false;
+        gpu_profiler_.endCpuScope(_cpu_frame);
+        gpu_profiler_.endCpuFrame(cpu_frame_idx);
+        recreateSwapChain();
+        return;
+    }
+
     // Outer "Fence Wait + Acquire" scope kept for at-a-glance timing
     // of all the frame-start blocking calls.  Three inner sub-scopes
     // pinpoint WHICH call is blocking when this region grows large
@@ -5428,7 +5504,7 @@ void RealWorldApplication::drawFrame() {
     //     bound as a wait on submit, with TRANSFER_BIT dst stage —
     //     guarantees the GPU won't blit-write to the image before
     //     the compositor releases it.
-    //   * The render_finished_semaphores_[current_frame_] signal
+    //   * The render_finished_semaphores_[image_index] signal
     //     bound on submit and waited on by present — guarantees
     //     present doesn't read the image before our blit completes.
     //
@@ -5623,6 +5699,26 @@ void RealWorldApplication::drawFrame() {
     auto current_time_point = std::chrono::high_resolution_clock::now();
     delta_t_ = std::chrono::duration<float, std::chrono::seconds::period>(
                     current_time_point - last_frame_time_point_).count();
+
+    // ── Frame-timestep hitch guard ──────────────────────────────────────
+    // A window resize (device waitIdle + full swapchain rebuild, plus the
+    // glfwWaitEvents() spin while the OS is dragging the frame), an alt-tab,
+    // or a debugger breakpoint stalls this loop for hundreds of ms to several
+    // seconds.  delta_t_ feeds PlayerController::update (procedural pose +
+    // the STATEFUL foot-IK / body-Y planter that lerps toward its targets)
+    // and, via current_time_, the animation clock.  One giant step makes the
+    // rig overshoot into a broken, wrong-scale pose that only re-settles once
+    // normal-dt frames with input arrive — i.e. "the character is mangled
+    // after a resize and snaps back when I move the camera."  Capping dt to a
+    // sane per-frame maximum stops any single hitch from injecting that spike.
+    // (Real-time advance is unaffected; only pathological frames are clamped.)
+    constexpr float kMaxFrameDeltaT = 0.1f;  // 100 ms == 10 FPS sim floor
+    if (delta_t_ > kMaxFrameDeltaT) {
+        delta_t_ = kMaxFrameDeltaT;
+    }
+    if (delta_t_ < 0.0f) {  // guard against any non-monotonic clock blip
+        delta_t_ = 0.0f;
+    }
 
     current_time_ += delta_t_;
     last_frame_time_point_ = current_time_point;
@@ -8707,7 +8803,7 @@ void RealWorldApplication::drawFrame() {
             in_flight_fences_[current_frame_],
             { image_available_semaphores_[current_frame_] },
             { command_buffer },
-            { render_finished_semaphores_[current_frame_] },
+            { render_finished_semaphores_[image_index] },
             { });
         gpu_profiler_.endCpuScope(_cpu_submit);
     }
@@ -8717,7 +8813,7 @@ void RealWorldApplication::drawFrame() {
         need_recreate_swap_chain = er::Helper::presentQueue(
             present_queue_,
             { swap_chain_info_.swap_chain },
-            { render_finished_semaphores_[current_frame_] },
+            { render_finished_semaphores_[image_index] },
             image_index,
             framebuffer_resized_);
         gpu_profiler_.endCpuScope(_cpu_present);
@@ -9015,9 +9111,16 @@ void RealWorldApplication::cleanup() {
 
     device_->destroySemaphore(init_semaphore_);
 
-    for (uint64_t i = 0; i < kMaxFramesInFlight; i++) {
+    // render_finished_semaphores_ is sized to the swapchain image count;
+    // image_available_/in_flight_fences_ are per-FIF.  Destroy each over its
+    // own size rather than assuming they match kMaxFramesInFlight.
+    for (uint64_t i = 0; i < render_finished_semaphores_.size(); i++) {
         device_->destroySemaphore(render_finished_semaphores_[i]);
+    }
+    for (uint64_t i = 0; i < image_available_semaphores_.size(); i++) {
         device_->destroySemaphore(image_available_semaphores_[i]);
+    }
+    for (uint64_t i = 0; i < in_flight_fences_.size(); i++) {
         device_->destroyFence(in_flight_fences_[i]);
     }
 

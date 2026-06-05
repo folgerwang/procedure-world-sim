@@ -142,6 +142,7 @@ private:
     void registerVtPoolImTextureIds();
     void createCommandBuffers();
     void createSyncObjects();
+    void recreateSyncObjects();
     er::WriteDescriptorList addGlobalTextures(
         const std::shared_ptr<er::DescriptorSet>& description_set,
         const std::shared_ptr<er::TextureInfo>& direct_shadow_tex);

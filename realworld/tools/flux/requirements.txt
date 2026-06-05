@@ -5,9 +5,12 @@
 # if you run setup_flux.py standalone, install a CUDA torch first from
 # https://pytorch.org/get-started/locally/
 #
-# klein-4B needs diffusers from source (>=0.37.0.dev0) for Flux2KleinPipeline +
+# klein-4B needs diffusers main (Flux2KleinPipeline isn't in a release yet).
+# Installed from the GitHub *zipball* (not git+...) so pip does NOT need git
+# on PATH -- the git+ form silently fails on machines without git.
+# klein-4B needs diffusers from source for Flux2KleinPipeline +
 # the Qwen3 text-encoder path, and a Qwen3-capable transformers.
-diffusers @ git+https://github.com/huggingface/diffusers.git
+diffusers @ https://github.com/huggingface/diffusers/archive/refs/heads/main.zip
 transformers>=4.51.0        # Qwen3ForCausalLM / Qwen2TokenizerFast
 accelerate>=1.0.0
 safetensors>=0.4.0
