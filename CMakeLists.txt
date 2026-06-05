@@ -290,6 +290,8 @@ add_library(engine STATIC
     "${ENGINE_DIR}/game_object/sphere.cpp"
     "${ENGINE_DIR}/game_object/terrain.cpp"
     "${ENGINE_DIR}/game_object/view_object.cpp"
+    "${ENGINE_DIR}/scene/scene_io.cpp"
+    "${ENGINE_DIR}/scene/native_file_dialog.cpp"
     "${ENGINE_DIR}/helper/bvh.cpp"
     "${ENGINE_DIR}/helper/cluster_mesh.cpp"
     "${ENGINE_DIR}/helper/collision_debug_draw.cpp"

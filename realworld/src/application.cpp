@@ -1902,6 +1902,10 @@ void RealWorldApplication::initVulkan() {
     // HUD menu spinner (see Menu::drawMeshLoadProgress) reads
     // MeshLoadTaskManager::inFlightFilenames() to tell the user
     // what's still loading.
+    // Empty-scene default: the editor now starts with NO level auto-loaded.
+    // Bistro is just another importable asset.  Set load_bistro_at_startup_ =
+    // true (application.h) to restore the old auto-load for A/B testing.
+    if (load_bistro_at_startup_) {
     bistro_exterior_scene_ =
         ego::DrawableObject::createAsync(
             *mesh_load_task_manager_,
@@ -1925,6 +1929,7 @@ void RealWorldApplication::initVulkan() {
             thin_film_lut_tex_,
             "assets/Bistro_v5_2/BistroInterior.fbx",
             glm::inverse(view_params_.view));
+    }
 
     // Spawn the rigged auto-rig character (19 bones, no embedded
     // animation channels — PlayerController drives the rig procedurally
@@ -2672,6 +2677,156 @@ void RealWorldApplication::recreateSyncObjects() {
     }
     createSyncObjects();
     current_frame_ = 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scene authoring: import / transform-sync / save / load.
+// Imported models use the editable DrawableObject path (NOT the baked cluster
+// path) so each can be moved every frame via its per-instance world override.
+// scene_ is the serializable description; imported_objects_ is the parallel
+// list of live drawables (1:1 with scene_.objects).
+// ─────────────────────────────────────────────────────────────────────────────
+void RealWorldApplication::importModelFromFile(const std::string& path) {
+    if (path.empty() || !mesh_load_task_manager_) {
+        return;
+    }
+
+    // Place the new object ~3 m in front of the camera so it is visible.
+    glm::vec3 place_pos(0.0f);
+    if (main_camera_object_) {
+        const auto& cam = main_camera_object_->getCameraViewInfo();
+        glm::vec3 cam_pos = main_camera_object_->getCameraPosition();
+        glm::vec3 fwd(cam.facing_dir.x, cam.facing_dir.y, cam.facing_dir.z);
+        float len = glm::length(fwd);
+        fwd = (len > 1e-4f) ? (fwd / len) : glm::vec3(0.0f, 0.0f, 1.0f);
+        place_pos = cam_pos + fwd * 3.0f;
+    }
+
+    auto obj = ego::DrawableObject::createAsync(
+        *mesh_load_task_manager_,
+        device_,
+        drawable_descriptor_pool_,
+        renderbuffer_formats_,
+        graphic_pipeline_info_,
+        repeat_texture_sampler_,
+        thin_film_lut_tex_,
+        path,
+        glm::mat4(1.0f));
+    if (!obj) {
+        return;
+    }
+
+    obj->setInstanceRootTransform(
+        place_pos, glm::quat(1.0f, 0.0f, 0.0f, 0.0f), glm::vec3(1.0f));
+
+    if (object_scene_view_) {
+        object_scene_view_->addDrawableObject(obj);
+    }
+    if (shadow_object_scene_view_) {
+        shadow_object_scene_view_->addDrawableObject(obj);
+    }
+
+    engine::scene::Object so;
+    std::string base = path;
+    size_t slash = base.find_last_of("/\\");
+    if (slash != std::string::npos) {
+        base = base.substr(slash + 1);
+    }
+    size_t dot = base.find_last_of('.');
+    so.name = (dot == std::string::npos) ? base : base.substr(0, dot);
+    so.asset_path = path;
+    so.parent_index = -1;
+    so.source_node_index = -1;
+    so.is_group = true;
+    so.visible = true;
+    so.transform.translation = place_pos;
+    so.transform.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+    so.transform.scale = glm::vec3(1.0f);
+
+    scene_.objects.push_back(so);
+    imported_objects_.push_back(obj);
+
+    std::cout << "[scene] imported '" << path << "'  ("
+              << scene_.objects.size() << " object(s))" << std::endl;
+}
+
+void RealWorldApplication::syncSceneFromDrawables() {
+    size_t n = scene_.objects.size();
+    if (imported_objects_.size() < n) {
+        n = imported_objects_.size();
+    }
+    for (size_t i = 0; i < n; ++i) {
+        const auto& obj = imported_objects_[i];
+        if (obj && obj->hasInstanceRoot()) {
+            scene_.objects[i].transform.translation = obj->getInstanceRootTranslation();
+            scene_.objects[i].transform.rotation    = obj->getInstanceRootRotation();
+            scene_.objects[i].transform.scale        = obj->getInstanceRootScale();
+            scene_.objects[i].visible                = obj->isVisible();
+        }
+    }
+}
+
+void RealWorldApplication::rebuildImportedObjectsFromScene() {
+    imported_objects_.clear();
+    for (const auto& so : scene_.objects) {
+        std::shared_ptr<ego::DrawableObject> obj;
+        if (!so.asset_path.empty() && mesh_load_task_manager_) {
+            obj = ego::DrawableObject::createAsync(
+                *mesh_load_task_manager_,
+                device_,
+                drawable_descriptor_pool_,
+                renderbuffer_formats_,
+                graphic_pipeline_info_,
+                repeat_texture_sampler_,
+                thin_film_lut_tex_,
+                so.asset_path,
+                glm::mat4(1.0f));
+            if (obj) {
+                obj->setInstanceRootTransform(
+                    so.transform.translation, so.transform.rotation, so.transform.scale);
+                obj->setVisible(so.visible);
+                if (object_scene_view_) {
+                    object_scene_view_->addDrawableObject(obj);
+                }
+                if (shadow_object_scene_view_) {
+                    shadow_object_scene_view_->addDrawableObject(obj);
+                }
+            }
+        }
+        imported_objects_.push_back(obj);
+    }
+}
+
+bool RealWorldApplication::saveSceneToFile(const std::string& path) {
+    syncSceneFromDrawables();
+    const bool ok = engine::scene::saveSceneBinary(path, scene_);
+    std::cout << "[scene] save '" << path << "' -> "
+              << (ok ? "OK" : "FAILED") << std::endl;
+    return ok;
+}
+
+bool RealWorldApplication::loadSceneFromFile(const std::string& path) {
+    engine::scene::Scene loaded;
+    if (!engine::scene::loadSceneBinary(path, loaded)) {
+        std::cout << "[scene] load '" << path << "' FAILED" << std::endl;
+        return false;
+    }
+
+    // The GPU may still reference the current imports; drain before destroy.
+    device_->waitIdle();
+    for (auto& obj : imported_objects_) {
+        if (!obj) continue;
+        if (object_scene_view_)        object_scene_view_->removeDrawableObject(obj);
+        if (shadow_object_scene_view_) shadow_object_scene_view_->removeDrawableObject(obj);
+        obj->destroy(device_);
+    }
+    imported_objects_.clear();
+
+    scene_ = std::move(loaded);
+    rebuildImportedObjectsFromScene();
+    std::cout << "[scene] loaded '" << path << "'  ("
+              << scene_.objects.size() << " object(s))" << std::endl;
+    return true;
 }
 
 er::WriteDescriptorList RealWorldApplication::addGlobalTextures(
@@ -8746,6 +8901,14 @@ void RealWorldApplication::drawFrame() {
         add("NPC (scifi_girl)", npc_scifi_girl_);
         add("Bistro Exterior", bistro_exterior_scene_);
         add("Bistro Interior", bistro_interior_scene_);
+        for (size_t i = 0; i < imported_objects_.size(); ++i) {
+            if (imported_objects_[i]) {
+                eobjs.push_back(engine::ui::EditorSceneObject{
+                    (i < scene_.objects.size() ? scene_.objects[i].name
+                                               : std::string("Object")),
+                    imported_objects_[i].get() });
+            }
+        }
         for (size_t i = 0; i < drawable_objects_.size(); ++i) {
             if (drawable_objects_[i])
                 eobjs.push_back(engine::ui::EditorSceneObject{
@@ -8763,12 +8926,34 @@ void RealWorldApplication::drawFrame() {
         clearHl(npc_scifi_girl_);
         clearHl(bistro_exterior_scene_);
         clearHl(bistro_interior_scene_);
+        for (auto& d : imported_objects_) clearHl(d);
         for (auto& d : drawable_objects_) clearHl(d);
 
         ego::DrawableObject* hobj = nullptr;
         int                  hnode = -1;
         if (menu_->getSelectedHighlight(hobj, hnode) && hobj)
             hobj->setHighlightNode(hnode);
+    }
+
+    // ── Service scene-authoring requests raised by the Scene menu ────────
+    if (menu_) {
+        if (menu_->consumeImportRequest()) {
+            const std::string chosen = engine::scene::openModelFileDialog(nullptr);
+            if (!chosen.empty()) importModelFromFile(chosen);
+        }
+        std::string save_name;
+        if (menu_->consumeSaveSceneRequest(save_name)) {
+            if (!save_name.empty()) scene_.name = save_name;
+            std::error_code ec;
+            std::filesystem::create_directories("scenes", ec);
+            saveSceneToFile("scenes/" + scene_.name + ".scene");
+        }
+        if (menu_->consumeLoadSceneRequest()) {
+            const std::string chosen = engine::scene::openSceneFileDialog(nullptr);
+            if (!chosen.empty() && loadSceneFromFile(chosen)) {
+                menu_->setSceneName(scene_.name);
+            }
+        }
     }
 
     s_camera_paused = menu_->draw(

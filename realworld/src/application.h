@@ -34,6 +34,8 @@
 #include "scene_rendering/prt_shadow.h"
 #include "scene_rendering/terrain_scene_view.h"
 #include "scene_rendering/object_scene_view.h"
+#include "scene/scene_io.h"
+#include "scene/native_file_dialog.h"
 #include "ray_tracing/raytracing_base.h"
 #include "helper/engine_helper.h"
 #include "helper/gpu_profiler.h"
@@ -392,6 +394,26 @@ private:
     bool collision_world_built_ = false;
     std::shared_ptr<ego::DrawableObject> bistro_exterior_scene_;
     std::shared_ptr<ego::DrawableObject> bistro_interior_scene_;
+
+    // ── Authored scene (import / transform / save-load) ──────────────────
+    // The editor starts with an EMPTY scene (no bistro auto-load).  Models are
+    // imported from disk and placed as movable DrawableObjects.  scene_ is the
+    // serializable description; imported_objects_ holds the live drawables,
+    // index-matched 1:1 with scene_.objects.
+    engine::scene::Scene scene_;
+    std::vector<std::shared_ptr<ego::DrawableObject>> imported_objects_;
+    bool load_bistro_at_startup_ = false;  // empty-scene default
+
+    // Import a model file (gltf/glb/fbx/obj) as a new movable scene object,
+    // placed in front of the camera, registered with the scene views + Outliner.
+    void importModelFromFile(const std::string& path);
+    // Write the live drawables' current instance transforms back into scene_
+    // (called before saving so on-disk state matches what's on screen).
+    void syncSceneFromDrawables();
+    // Tear down all imported drawables and rebuild them from scene_ (after Load).
+    void rebuildImportedObjectsFromScene();
+    bool saveSceneToFile(const std::string& path);
+    bool loadSceneFromFile(const std::string& path);
 
     // Ground probe used by PlayerController's foot IK.  Given a world XZ
     // column and an expected foot level (y_hint), returns the ground
