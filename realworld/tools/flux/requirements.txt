@@ -1,0 +1,19 @@
+# FLUX.2-klein-4B image generator dependencies.
+#
+# Installed into the system Python (the one the editor launches and that
+# Setup.bat gave the CUDA torch wheel). torch is intentionally NOT listed here;
+# if you run setup_flux.py standalone, install a CUDA torch first from
+# https://pytorch.org/get-started/locally/
+#
+# klein-4B needs diffusers from source (>=0.37.0.dev0) for Flux2KleinPipeline +
+# the Qwen3 text-encoder path, and a Qwen3-capable transformers.
+diffusers @ git+https://github.com/huggingface/diffusers.git
+transformers>=4.51.0        # Qwen3ForCausalLM / Qwen2TokenizerFast
+accelerate>=1.0.0
+safetensors>=0.4.0
+optimum-quanto>=0.2.4       # fp8 (qfloat8) GPU transformer quantization (default)
+bitsandbytes>=0.45.0        # int8/4bit GPU transformer quantization (alt)
+huggingface_hub>=0.27.0
+pillow>=10.0.0
+sentencepiece
+protobuf

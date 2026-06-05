@@ -298,6 +298,7 @@ add_library(engine STATIC
     "${ENGINE_DIR}/helper/gpu_profiler.cpp"
     "${ENGINE_DIR}/helper/material_classifier.cpp"
     "${ENGINE_DIR}/helper/mesh_tool.cpp"
+    "${ENGINE_DIR}/helper/vram_cuda.cpp"
     "${ENGINE_DIR}/ray_tracing/raytracing_callable.cpp"
     "${ENGINE_DIR}/ray_tracing/raytracing_shadow.cpp"
     "${ENGINE_DIR}/renderer/renderer.cpp"

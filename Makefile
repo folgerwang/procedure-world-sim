@@ -317,6 +317,7 @@ ENGINE_CPP_SRCS := \
     $(ENGINE_DIR)/helper/collision_mesh.cpp         \
     $(ENGINE_DIR)/helper/engine_helper.cpp          \
     $(ENGINE_DIR)/helper/mesh_tool.cpp              \
+    $(ENGINE_DIR)/helper/vram_cuda.cpp              \
     $(ENGINE_DIR)/ray_tracing/raytracing_callable.cpp       \
     $(ENGINE_DIR)/ray_tracing/raytracing_shadow.cpp         \
     $(ENGINE_DIR)/renderer/renderer.cpp                     \

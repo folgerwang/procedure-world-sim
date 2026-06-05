@@ -11,7 +11,7 @@ echo    * Python dependencies (ml_training\requirements.txt)
 echo    * Auto-rig ML model export
 echo    * LibTorch download (if not already present)
 echo    * Ollama install + qwen3.5:2b pull (Mesh Category classifier)
-echo    * FLUX.2 (FP8) image generator install + weight download (Content Browser)
+echo    * FLUX.2-klein-4B image generator install + weight download (Content Browser)
 echo.
 echo  Run GenerateProjectFiles.bat afterwards to produce the VS
 echo  solution. GenerateProjectFiles.bat also invokes this script
@@ -29,11 +29,12 @@ rem   -ollama-model=<tag> Ollama model tag to pull (default: qwen3.5:2b).
 rem                         Must match OLLAMA_MODEL at runtime; the
 rem                         classifier reads that env var.
 rem   -skip-cuda          Skip CUDA torch install (use CPU wheel from requirements.txt)
-rem   -skip-flux          Skip the FLUX.2 (FP8) image generator install + weight
-rem                         download (diffusers + optimum-quanto + the gated
-rem                         FLUX.2-dev weights). ON by default; reuses the CUDA
-rem                         torch installed above. Needs a ~32GB GPU, a large
-rem                         weight download, and a Hugging Face login.
+rem   -skip-flux          Skip the FLUX.2-klein-4B image generator install +
+rem                         weight download (diffusers-from-source + bitsandbytes
+rem                         + the gated FLUX.2-klein-4B weights, ~16GB). ON by
+rem                         default; reuses the CUDA torch installed above. Runs
+rem                         the Qwen3 encoder on CPU + an fp8 transformer on the
+rem                         GPU (~5-6GB VRAM). Needs a Hugging Face login.
 rem   -cuda=<wheel>       CUDA wheel tag (default: cu128). Examples:
 rem                         cu128  -- works with all current NVIDIA GPUs incl.
 rem                                   Blackwell/RTX 50-series (sm_120). DEFAULT.
@@ -526,13 +527,14 @@ echo.
 
 :ollama_done
 
-rem ── FLUX.2 text-to-image generator (4-bit NF4) ───────────────────────────────
-rem   Installs diffusers + bitsandbytes (reusing the CUDA torch installed above)
-rem   and downloads the gated FLUX.2-dev weights, so the editor's Content Browser
-rem   can generate images (right-click a folder -> Generate).  Runs in 4-bit NF4
-rem   so it fits a 24GB GPU (RTX 3090 / 4090).
-rem   ON by default -- needs a 24GB+ NVIDIA GPU, a large (tens-of-GB) weight
-rem   download, and a Hugging Face login.  Skip with:  Setup.bat -skip-flux
+rem ── FLUX.2-klein-4B text-to-image generator ──────────────────────────────────
+rem   Installs diffusers-from-source + bitsandbytes (reusing the CUDA torch
+rem   installed above) and downloads the gated FLUX.2-klein-4B weights (~16GB),
+rem   so the editor's Content Browser can generate images (right-click a folder
+rem   -> Generate).  Runs the Qwen3 text encoder on CPU and an fp8 diffusion
+rem   transformer on the GPU (~5-6GB VRAM, sharing the card with the engine).
+rem   ON by default -- needs an NVIDIA GPU and a Hugging Face login.
+rem   Skip with:  Setup.bat -skip-flux
 if "!SKIP_FLUX!"=="1" (
     echo [INFO]  Skipping FLUX.2 image generator ^(-skip-flux^) -- the Content
     echo         Browser's right-click Generate will not work until you run:
@@ -547,10 +549,10 @@ if errorlevel 1 (
 )
 
 echo.
-echo -- FLUX.2 image generator ---------------------------------
-echo [INFO]  Installing deps + downloading FLUX.2-dev weights ^(gated^).
+echo -- FLUX.2-klein-4B image generator ------------------------
+echo [INFO]  Installing deps + downloading FLUX.2-klein-4B weights ^(gated, ~16GB^).
 echo [INFO]  Accept the licence and log in FIRST, otherwise the download fails:
-echo            https://huggingface.co/black-forest-labs/FLUX.2-dev
+echo            https://huggingface.co/black-forest-labs/FLUX.2-klein-4B
 echo            huggingface-cli login        ^(or set the HF_TOKEN env var^)
 python realworld\tools\flux\setup_flux.py
 if errorlevel 1 (
