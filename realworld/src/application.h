@@ -1,7 +1,9 @@
 #pragma once
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <memory>
+#include <thread>
 #include <vector>
 #include "renderer/renderer.h"
 #include "renderer/renderer_structs.h"
@@ -40,6 +42,8 @@
 #include "helper/engine_helper.h"
 #include "helper/gpu_profiler.h"
 #include "helper/collision_mesh.h"
+#include "helper/scene_grid.h"
+#include "helper/mesh_preview.h"
 #include "ui/menu.h"
 #include "plugins/plugin_manager.h"
 #include "plugins/auto_rig/auto_rig_plugin.h"
@@ -402,14 +406,75 @@ private:
     // index-matched 1:1 with scene_.objects.
     engine::scene::Scene scene_;
     std::vector<std::shared_ptr<ego::DrawableObject>> imported_objects_;
-    bool load_bistro_at_startup_ = false;  // empty-scene default
 
-    // Import a model file (gltf/glb/fbx/obj) as a new movable scene object,
-    // placed in front of the camera, registered with the scene views + Outliner.
-    void importModelFromFile(const std::string& path);
+    // ── Placed objects → cluster pipeline auto-hookup ─────────────────────
+    // Once a placed object's async load completes (and again whenever the
+    // placed set or a transform changes and then settles), the placed-
+    // object "tail" is re-staged into the ClusterRenderer on top of the
+    // immutable base scene and re-finalized, so editor placements render
+    // through the same GPU-culled bindless path as the level itself.
+    //
+    // placed_sig_*: FNV signature over the READY placed set (drawable
+    // identity, sub-object filter, TRS, visibility).  A change hands the
+    // set back to the live forward path (clusters hidden + skip marks
+    // cleared) and arms the debounce; kPlacedClusterDebounceFrames of
+    // stability triggers the rebuild.
+    uint64_t placed_sig_last_synced_ = 0;   // signature at last cluster rebuild
+    uint64_t placed_sig_prev_frame_  = 0;   // signature seen last frame
+    uint32_t placed_sig_stable_frames_ = 0; // consecutive unchanged frames
+    bool     placed_clusters_resident_ = false; // placed set lives in cluster path
+    static constexpr uint32_t kPlacedClusterDebounceFrames = 30;
+    // Per imported wrapper: the global cluster-mesh ids it uploaded last
+    // rebuild (usually one; whole-file placements may own several).
+    std::vector<std::vector<int32_t>> imported_cluster_mesh_ids_;
+    // VT warm-up progress denominator: peak pending-texture count of the
+    // current warm-up burst (0 = no burst in progress) — drives the
+    // "Preparing textures N/M" bar.
+    uint32_t vt_warm_total_ = 0;
+    // Re-stage the placed tail / hand it back to the forward path.
+    // Called once per frame from drawFrame, before drawScene records.
+    void syncPlacedObjectsToClusters();
+    // Cluster pipeline init block (bindless + G-buffer + shadow +
+    // silhouette variants) — shared by the New Game flow and the editor
+    // flow (where the first placed object arms the cluster path without
+    // any "New Game").
+    void initClusterPipelines();
+    bool load_bistro_at_startup_ = false;  // empty-scene default
+    // Characters (player rig + NPC + the per-bone debug cubes) follow the
+    // same empty-scene default: not loaded at startup.  Set to true to
+    // restore the old behaviour (auto-loaded player driven by WASD).
+    bool load_characters_at_startup_ = false;
+
+    // ── Streaming content import ──────────────────────────────────────────
+    // Content Browser "Import…" copies the chosen file (+ same-stem
+    // companions) into content/ on a background thread in 1 MB chunks, so a
+    // multi-GB FBX doesn't stall the frame loop.  The atomics feed the
+    // Content Browser's progress bar (Menu::setContentImportStatus) each
+    // frame; the worker flips content_import_running_ false when done and
+    // the main thread reaps the joinable thread on the next frame.
+    std::thread           content_import_thread_;
+    std::atomic<bool>     content_import_running_{false};
+    std::atomic<uint64_t> content_import_done_bytes_{0};
+    std::atomic<uint64_t> content_import_total_bytes_{0};
+    // Written on the main thread BEFORE the worker starts, read afterwards —
+    // no concurrent access.
+    std::string           content_import_label_;
+
+    // Import a model file (gltf/glb/fbx/obj) or .rwobj object reference as a
+    // new movable scene object, placed in front of the camera (single .rwobj
+    // placements cancel their source-file offset so they land AT the drop
+    // point), registered with the scene views + Outliner.
+    // translation_override (group placement) forces a shared instance
+    // translation so a whole group keeps its authored layout.
+    void importModelFromFile(const std::string& path,
+                             const glm::vec3* translation_override = nullptr);
     // Write the live drawables' current instance transforms back into scene_
     // (called before saving so on-disk state matches what's on screen).
+    // Parented children are stored LOCAL-to-parent.
     void syncSceneFromDrawables();
+    // Re-compose parent * local into every parented child's drawable
+    // instance — run after a group node's transform is edited.
+    void applySceneHierarchyTransforms();
     // Tear down all imported drawables and rebuild them from scene_ (after Load).
     void rebuildImportedObjectsFromScene();
     bool saveSceneToFile(const std::string& path);

@@ -10,7 +10,12 @@
 #include <cstring>
 #include <future>
 #include <string>
+#include <algorithm>
 #include <filesystem>
+#include <random>
+#include <cctype>
+#include <cstdio>
+#include <unordered_set>
 #include "Windows.h"
 
 // glm/gtc helpers used by the player pivot-offset compensation in the
@@ -27,6 +32,7 @@
 #include "helper/engine_helper.h"
 #include "helper/cluster_mesh.h"
 #include "helper/material_classifier.h"
+#include "helper/model_inspect.h"
 #include "application.h"
 
 namespace er = engine::renderer;
@@ -1348,6 +1354,32 @@ void RealWorldApplication::initVulkan() {
         graphic_pipeline_info_,
         renderbuffer_formats_[int(er::RenderPasses::kForward)]);
 
+    // Editor reference grid / ruler + origin XYZ gizmo for "Create Scene"
+    // mode — same global descriptor-set layouts + forward framebuffer format
+    // as the collision overlay it renders alongside.  The grid quad uses the
+    // no-depth-write pipeline info (its transparent gaps must not occlude
+    // geometry); the solid gizmo arrows use the normal depth-write pipeline
+    // info so they read as real geometry.
+    eh::SceneGrid::initStaticMembers(
+        device_,
+        desc_set_layouts,
+        graphic_no_depth_write_pipeline_info_,
+        graphic_pipeline_info_,
+        renderbuffer_formats_[int(er::RenderPasses::kForward)]);
+
+    // Debug Display GPU preview pass: offscreen 512² target + dedicated
+    // PBR pipeline (three spot lights).  Rendered on demand (selection /
+    // content tile click) just before the ImGui pass each frame.  Uses the
+    // PERSISTENT drawable pool for its material-texture descriptor ring.
+    // NOTE: the REPEAT sampler — material UVs commonly tile outside [0,1];
+    // a clamp sampler would smear the texture's edge pixels into streaks.
+    eh::MeshPreview::initStaticMembers(
+        device_,
+        graphic_pipeline_info_,
+        graphic_no_depth_write_pipeline_info_,   // reference-grid pipeline
+        drawable_descriptor_pool_,
+        repeat_texture_sampler_);
+
     prt_shadow_gen_ =
         std::make_shared<es::PrtShadow>(
             device_,
@@ -1935,6 +1967,11 @@ void RealWorldApplication::initVulkan() {
     // animation channels — PlayerController drives the rig procedurally
     // each frame). spawnAt() is called once the level finishes loading
     // so the character appears in front of the camera.
+    // Empty-scene default: characters are NOT loaded at startup (matches the
+    // bistro flag above).  Everything downstream (spawn block, foot IK,
+    // skeleton debug, Outliner feed) already null-checks player_object_ /
+    // npc_scifi_girl_ and iterates the (then-empty) marker vectors safely.
+    if (load_characters_at_startup_) {
     player_object_ =
         ego::DrawableObject::createAsync(
             *mesh_load_task_manager_,
@@ -1999,6 +2036,7 @@ void RealWorldApplication::initVulkan() {
             repeat_texture_sampler_, thin_film_lut_tex_,
             "assets/debug_cube.gltf", glm::inverse(view_params_.view));
     }
+    }  // load_characters_at_startup_
 
     // The player is PlayerController-driven (procedural pose + spawnAt
     // -driven world placement).  Opt it into "identity instance + skip
@@ -2045,6 +2083,7 @@ void RealWorldApplication::initVulkan() {
     // object_scene_view_->addDrawableObject(bistro_interior_scene_);
     // shadow_object_scene_view_->addDrawableObject(bistro_exterior_scene_);
 
+    if (load_characters_at_startup_) {
     object_scene_view_->addDrawableObject(
         player_object_);
 
@@ -2077,6 +2116,7 @@ void RealWorldApplication::initVulkan() {
         object_scene_view_->addDrawableObject(m);
         shadow_object_scene_view_->addDrawableObject(m);
     }
+    }  // load_characters_at_startup_
 
     menu_ = std::make_shared<engine::ui::Menu>(
         window_,
@@ -2686,9 +2726,86 @@ void RealWorldApplication::recreateSyncObjects() {
 // scene_ is the serializable description; imported_objects_ is the parallel
 // list of live drawables (1:1 with scene_.objects).
 // ─────────────────────────────────────────────────────────────────────────────
-void RealWorldApplication::importModelFromFile(const std::string& path) {
+static void decomposeTrs(const glm::mat4& m, glm::vec3& t, glm::quat& r,
+                         glm::vec3& s);   // defined below
+
+void RealWorldApplication::importModelFromFile(
+    const std::string& path,
+    const glm::vec3* translation_override) {
     if (path.empty() || !mesh_load_task_manager_) {
         return;
+    }
+
+    // .rwobj object references (exploded sub-objects of an imported
+    // multi-object model) load NATIVELY from their baked .rwgeo/.rwtex —
+    // small per-object streams with individual pop-in.  The legacy
+    // source-FBX path (whole-file load + per-node render filter) remains
+    // only as a fallback for refs baked before render-ready data existed.
+    std::string load_path   = path;
+    int         sub_ordinal = -1;     // ordinal metadata (Outliner / save)
+    bool        native_baked = false; // wrapper renders the baked object
+    std::string ref_name;
+    {
+        std::string ext;
+        const size_t dot2 = path.find_last_of('.');
+        if (dot2 != std::string::npos) ext = path.substr(dot2);
+        for (auto& c : ext) c = (char)std::tolower((unsigned char)c);
+        if (ext == ".rwobj") {
+            std::string src_path, geo_path;
+            if (!eh::readRwObjRef(path, src_path, sub_ordinal, ref_name,
+                                  geo_path)) {
+                std::cout << "[scene] bad .rwobj reference: " << path
+                          << std::endl;
+                return;
+            }
+            if (!geo_path.empty()) {
+                // Native: the engine loads the .rwobj itself.
+                native_baked = true;
+                load_path = path;
+            } else if (!src_path.empty()) {
+                // Legacy fallback: whole-source load + node filter.
+                load_path = src_path;
+            } else {
+                std::cout << "[scene] cannot place '" << path
+                          << "': no baked geometry and source model not "
+                             "reachable" << std::endl;
+                return;
+            }
+        }
+    }
+
+    // ── Source-group node ─────────────────────────────────────────────
+    // Placed .rwobj objects nest under a scene-level GROUP named after
+    // their group folder ("Building/Wall", "Building/Roof", …) so the
+    // Outliner mirrors the content structure.  The group is an
+    // organizational node (no drawable of its own), created on first use.
+    int parent_scene_idx = -1;
+    if (sub_ordinal >= 0) {
+        namespace fs = std::filesystem;
+        const std::string group_path =
+            fs::path(path).parent_path().lexically_normal()
+                .generic_string();
+        for (size_t gi = 0; gi < scene_.objects.size(); ++gi) {
+            const auto& g = scene_.objects[gi];
+            if (g.is_group && g.source_node_index < 0 &&
+                fs::path(g.asset_path).lexically_normal()
+                        .generic_string() == group_path) {
+                parent_scene_idx = (int)gi;
+                break;
+            }
+        }
+        if (parent_scene_idx < 0) {
+            engine::scene::Object gobj;
+            gobj.name = fs::path(group_path).filename().string();
+            gobj.asset_path = group_path;   // DIRECTORY → organizational
+            gobj.parent_index = -1;
+            gobj.source_node_index = -1;
+            gobj.is_group = true;
+            gobj.visible = true;
+            parent_scene_idx = (int)scene_.objects.size();
+            scene_.objects.push_back(gobj);
+            imported_objects_.push_back(nullptr);   // no drawable
+        }
     }
 
     // Place the new object ~3 m in front of the camera so it is visible.
@@ -2702,6 +2819,23 @@ void RealWorldApplication::importModelFromFile(const std::string& path) {
         place_pos = cam_pos + fwd * 3.0f;
     }
 
+    // The instance translation.  A baked object's geometry keeps its
+    // SOURCE-FILE coordinates (Bistro pieces sit far from the file origin),
+    // so a plain camera offset can land it way off-screen — exactly the
+    // "placed but nothing visible" symptom.  Cancel that offset using the
+    // bounds recorded at bake time: bbox centre lands at the placement
+    // point, base resting at its height.
+    glm::vec3 translation = place_pos;
+    if (translation_override) {
+        translation = *translation_override;
+    } else if (sub_ordinal >= 0) {
+        glm::vec3 bmn, bmx;
+        if (eh::readRwObjBounds(path, bmn, bmx)) {
+            const glm::vec3 c = (bmn + bmx) * 0.5f;
+            translation = place_pos - glm::vec3(c.x, bmn.y, c.z);
+        }
+    }
+
     auto obj = ego::DrawableObject::createAsync(
         *mesh_load_task_manager_,
         device_,
@@ -2710,14 +2844,21 @@ void RealWorldApplication::importModelFromFile(const std::string& path) {
         graphic_pipeline_info_,
         repeat_texture_sampler_,
         thin_film_lut_tex_,
-        path,
+        load_path,
         glm::mat4(1.0f));
     if (!obj) {
         return;
     }
 
+    if (sub_ordinal >= 0 && !native_baked) {
+        // Legacy source-FBX fallback only: native baked loads already
+        // contain EXACTLY the referenced object — a node filter would
+        // try to select sub-node `ordinal` of a 1-node drawable and
+        // render nothing.
+        obj->setOnlyRenderSubObject(sub_ordinal);
+    }
     obj->setInstanceRootTransform(
-        place_pos, glm::quat(1.0f, 0.0f, 0.0f, 0.0f), glm::vec3(1.0f));
+        translation, glm::quat(1.0f, 0.0f, 0.0f, 0.0f), glm::vec3(1.0f));
 
     if (object_scene_view_) {
         object_scene_view_->addDrawableObject(obj);
@@ -2733,21 +2874,395 @@ void RealWorldApplication::importModelFromFile(const std::string& path) {
         base = base.substr(slash + 1);
     }
     size_t dot = base.find_last_of('.');
-    so.name = (dot == std::string::npos) ? base : base.substr(0, dot);
-    so.asset_path = path;
-    so.parent_index = -1;
-    so.source_node_index = -1;
-    so.is_group = true;
+    so.name = !ref_name.empty()
+        ? ref_name
+        : ((dot == std::string::npos) ? base : base.substr(0, dot));
+    so.asset_path = path;                  // .rwobj path round-trips on save
+    so.parent_index = parent_scene_idx;    // nests under the group node
+    so.source_node_index = sub_ordinal;    // -1 = whole file
+    so.is_group = (sub_ordinal < 0);
     so.visible = true;
-    so.transform.translation = place_pos;
-    so.transform.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-    so.transform.scale = glm::vec3(1.0f);
+    if (parent_scene_idx >= 0) {
+        // Children store LOCAL-to-parent transforms (the group may already
+        // have been moved/rotated when more objects are placed into it).
+        const glm::mat4 local =
+            glm::inverse(
+                scene_.objects[parent_scene_idx].transform.toMatrix()) *
+            glm::translate(glm::mat4(1.0f), translation);
+        decomposeTrs(local, so.transform.translation,
+                     so.transform.rotation, so.transform.scale);
+    } else {
+        so.transform.translation = translation;
+        so.transform.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        so.transform.scale = glm::vec3(1.0f);
+    }
 
     scene_.objects.push_back(so);
     imported_objects_.push_back(obj);
 
     std::cout << "[scene] imported '" << path << "'  ("
               << scene_.objects.size() << " object(s))" << std::endl;
+}
+
+// TRS decompose (translation / rotation / scale) of an affine matrix.
+// Good for the editor's T*R*S transforms; shear is not represented.
+static void decomposeTrs(const glm::mat4& m, glm::vec3& t, glm::quat& r,
+                         glm::vec3& s) {
+    t = glm::vec3(m[3]);
+    s = glm::vec3(glm::length(glm::vec3(m[0])),
+                  glm::length(glm::vec3(m[1])),
+                  glm::length(glm::vec3(m[2])));
+    const glm::mat3 rot(
+        s.x > 1e-8f ? glm::vec3(m[0]) / s.x : glm::vec3(1, 0, 0),
+        s.y > 1e-8f ? glm::vec3(m[1]) / s.y : glm::vec3(0, 1, 0),
+        s.z > 1e-8f ? glm::vec3(m[2]) / s.z : glm::vec3(0, 0, 1));
+    r = glm::normalize(glm::quat_cast(rot));
+}
+
+// Re-compose every parented child's drawable instance transform from
+// parent.toMatrix() * child_local.toMatrix() — called after a group node's
+// transform is edited so moving/rotating the group moves all its objects.
+void RealWorldApplication::applySceneHierarchyTransforms() {
+    for (size_t i = 0; i < scene_.objects.size() &&
+                       i < imported_objects_.size(); ++i) {
+        const auto& so = scene_.objects[i];
+        auto& obj = imported_objects_[i];
+        if (!obj || so.parent_index < 0 ||
+            so.parent_index >= (int)scene_.objects.size()) continue;
+        const glm::mat4 world =
+            scene_.objects[so.parent_index].transform.toMatrix() *
+            so.transform.toMatrix();
+        glm::vec3 t, s;
+        glm::quat r;
+        decomposeTrs(world, t, r, s);
+        obj->setInstanceRootTransform(t, r, s);
+    }
+}
+
+// ─── Cluster pipeline init (shared New Game / editor flow) ─────────────────
+// Builds the bindless graphics pipelines once the cluster renderer holds
+// finalized geometry.  Factored out of the Loading→InGame transition so
+// the editor's placed-object flow (no "New Game") can arm the cluster
+// path the first time a placement finishes loading.
+void RealWorldApplication::initClusterPipelines() {
+    if (!cluster_renderer_) return;
+
+    // Provide all sets 0..RUNTIME_LIGHTS so the cluster pipeline can read
+    // the same sun light + shadow data as the standard forward pass.
+    er::DescriptorSetLayoutList global_layouts(
+        RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
+    global_layouts[PBR_GLOBAL_PARAMS_SET] =
+        pbr_lighting_desc_set_layout_;
+    global_layouts[VIEW_PARAMS_SET] =
+        ego::CameraObject::getViewCameraDescriptorSetLayout();
+    // Set 2 (PBR_MATERIAL_PARAMS_SET) is replaced by the cluster bindless
+    // set inside initBindlessPipeline.  Set 3 (SKIN_PARAMS_SET) stays
+    // nullptr.
+    global_layouts[RUNTIME_LIGHTS_PARAMS_SET] =
+        runtime_lights_desc_set_layout_;
+    cluster_renderer_->initBindlessPipeline(
+        global_layouts,
+        graphic_pipeline_info_,
+        renderbuffer_formats_[int(er::RenderPasses::kForward)]);
+
+    // Deferred G-buffer variant — paired with the forward pipeline above;
+    // reuses its bindless layout, swaps the fragment SPV for
+    // cluster_bindless_gbuf_frag.spv, and targets the 3-RT G-buffer
+    // format.
+    cluster_renderer_->initBindlessGBufferPipeline(
+        graphic_pipeline_info_,
+        gbuffer_renderbuffer_format_);
+
+    // Depth-only CSM shadow variant.  Single drawIndirectCount broadcasts
+    // every cluster triangle to all CSM_CASCADE_COUNT cascades via a
+    // geometry shader, replacing the ~2400 individual per-mesh shadow
+    // draws that were costing ~17 ms of CPU recording time per frame.
+    // Slim pipeline layout — only VIEW_PARAMS_SET (layout-compat) and
+    // RUNTIME_LIGHTS_PARAMS_SET (GS reads cascade VP matrices).
+    er::DescriptorSetLayoutList shadow_layouts(
+        RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
+    shadow_layouts[VIEW_PARAMS_SET] =
+        ego::CameraObject::getViewCameraDescriptorSetLayout();
+    shadow_layouts[RUNTIME_LIGHTS_PARAMS_SET] =
+        runtime_lights_desc_set_layout_;
+    cluster_renderer_->initBindlessShadowPipeline(
+        shadow_layouts,
+        graphic_pipeline_info_,
+        renderbuffer_formats_[int(er::RenderPasses::kShadow)].depth_format);
+
+    // Silhouette prepass pipeline — small mesh-shader pass that pre-fills
+    // each cascade's in-camera-frustum interior with depth=1 so out-of-
+    // frustum texels (cleared 0) reject every shadow caster via
+    // LESS_OR_EQUAL.  Only needs RUNTIME_LIGHTS for cascade VPs + slab
+    // corners.
+    cluster_renderer_->initCsmSilhouettePrepassPipeline(
+        runtime_lights_desc_set_layout_,
+        graphic_pipeline_info_,
+        renderbuffer_formats_[int(er::RenderPasses::kShadow)].depth_format);
+}
+
+// ─── Placed objects → cluster pipeline auto-hookup ─────────────────────────
+// Called once per frame from drawFrame BEFORE drawScene records any cluster
+// work, so a rebuild's buffer replacement never races the current command
+// buffer.  Three states:
+//   in-sync   — signature matches the last rebuild: nothing to do.
+//   diverged  — the placed set / a transform just changed: hand the placed
+//               set back to the live forward path (clear the per-mesh
+//               cluster skip marks, hide the stale cluster instances) and
+//               arm the debounce.
+//   settled   — kPlacedClusterDebounceFrames of stability: re-stage the
+//               placed tail on top of the base snapshot, re-finalize, and
+//               (first time in the editor flow) build the pipelines.
+void RealWorldApplication::syncPlacedObjectsToClusters() {
+    if (!cluster_renderer_ || !cluster_renderer_->isEnabled()) return;
+    // Don't interleave with the New Game base-upload frame.
+    if (menu_ && menu_->getGameState() == engine::ui::GameState::Loading)
+        return;
+
+    // ── VT warm-up progress ("Preparing textures N/M") ────────────────
+    // Count how many placed-object textures still await VT registration
+    // (dedup'd by shared DrawableData and texture identity) and feed the
+    // loader-HUD progress bar.  The denominator latches at the burst's
+    // peak so the bar fills monotonically; it resets when warm-up ends.
+    {
+        uint32_t vt_pending = 0;
+        std::unordered_set<const void*> seen_data;
+        for (const auto& w : imported_objects_) {
+            if (!w || !w->isReady()) continue;
+            const void* dp = &w->getDrawableData();
+            if (!seen_data.insert(dp).second) continue;
+            vt_pending += static_cast<uint32_t>(
+                cluster_renderer_->countPendingVtMaterials(
+                    w->getDrawableData()));
+        }
+        if (menu_) {
+            if (vt_pending == 0) {
+                vt_warm_total_ = 0;
+                menu_->setVtWarmupStatus(false, 0.0f, "");
+            } else {
+                vt_warm_total_ = std::max(vt_warm_total_, vt_pending);
+                const uint32_t done = vt_warm_total_ - vt_pending;
+                char label[64];
+                std::snprintf(label, sizeof(label),
+                              "Preparing textures  %u / %u",
+                              done, vt_warm_total_);
+                menu_->setVtWarmupStatus(
+                    true,
+                    vt_warm_total_
+                        ? float(done) / float(vt_warm_total_) : 0.0f,
+                    label);
+            }
+        }
+    }
+
+    // ── Signature over the READY placed set ──────────────────────────
+    uint64_t sig = 1469598103934665603ull;  // FNV-1a offset basis
+    auto mix = [&sig](const void* p, size_t n) {
+        const uint8_t* b = reinterpret_cast<const uint8_t*>(p);
+        for (size_t i = 0; i < n; ++i) {
+            sig ^= b[i];
+            sig *= 1099511628211ull;
+        }
+    };
+    size_t ready_count = 0;
+    for (const auto& w : imported_objects_) {
+        if (!w || !w->isReady()) continue;
+        ++ready_count;
+        const void* dp = &w->getDrawableData();   // shared-data identity
+        mix(&dp, sizeof(dp));
+        const int32_t ord = w->onlyRenderSubObject();
+        mix(&ord, sizeof(ord));
+        const bool vis = w->isVisible();
+        mix(&vis, sizeof(vis));
+        if (w->hasInstanceRoot()) {
+            const glm::vec3 t = w->getInstanceRootTranslation();
+            const glm::quat r = w->getInstanceRootRotation();
+            const glm::vec3 s = w->getInstanceRootScale();
+            mix(&t, sizeof(t));
+            mix(&r, sizeof(r));
+            mix(&s, sizeof(s));
+        }
+    }
+    mix(&ready_count, sizeof(ready_count));
+
+    if (sig == placed_sig_last_synced_) {
+        placed_sig_prev_frame_ = sig;
+        return;  // in sync with the cluster tail
+    }
+
+    if (sig != placed_sig_prev_frame_) {
+        // ── Diverged this frame ───────────────────────────────────────
+        placed_sig_prev_frame_   = sig;
+        placed_sig_stable_frames_ = 0;
+        // Forward path takes over instantly: clear the "owned by
+        // cluster renderer" mark on every imported drawable's meshes and
+        // hide any stale cluster instances.  Done UNCONDITIONALLY (not
+        // just when placed_clusters_resident_): the shared DrawableData
+        // survives scene resets via the loader's dedup cache, so a
+        // freshly placed object can inherit marks from an earlier
+        // placement of the same source — which made it invisible (the
+        // forward draw skipped, no cluster instance yet) until the
+        // debounced rebuild finally re-uploaded it.
+        for (const auto& w : imported_objects_) {
+            if (!w || !w->isReady()) continue;
+            for (auto& m : w->getMutableMeshes()) {
+                m.cluster_global_mesh_idx_ = -1;
+            }
+        }
+        if (placed_clusters_resident_) {
+            for (const auto& ids : imported_cluster_mesh_ids_) {
+                for (int32_t gid : ids) {
+                    if (gid >= 0) {
+                        cluster_renderer_->setMeshClustersHidden(
+                            static_cast<uint32_t>(gid), true);
+                    }
+                }
+            }
+            placed_clusters_resident_ = false;
+        }
+        return;
+    }
+
+    // ── Stable — warm VT, debounce, then rebuild the cluster tail ────
+    // VT cache warm-up FIRST, budgeted to one texture per frame: the
+    // rebuild's registerMaterial calls BC7-encode every tile of every
+    // mip on the CPU, and doing dozens of textures inside one finalize
+    // froze the editor for seconds ("streaming done but nothing shows
+    // up").  Spreading the encodes keeps the app responsive (placed
+    // objects render flat via the forward path meanwhile) and turns the
+    // eventual rebuild into pure cache hits.
+    {
+        int budget = 1;
+        int newly = 0;
+        for (const auto& w : imported_objects_) {
+            if (budget <= 0) break;
+            if (!w || !w->isReady()) continue;
+            const int n = cluster_renderer_->preRegisterVtMaterials(
+                w->getDrawableData(), budget);
+            newly  += n;
+            budget -= n;
+        }
+        if (newly > 0) {
+            // Still warming — hold the rebuild (don't advance debounce
+            // past the threshold semantics; encoding IS the wait).
+            return;
+        }
+    }
+
+    if (++placed_sig_stable_frames_ < kPlacedClusterDebounceFrames) return;
+
+    // Defer the (expensive: waitIdle + full buffer re-merge) rebuild
+    // while any placed object's async load is still streaming — the
+    // signature only covers READY wrappers, so a straggling load >½ s
+    // behind its siblings would otherwise trigger an extra rebuild.
+    // Everything renders live through the forward path meanwhile.
+    for (const auto& w : imported_objects_) {
+        if (w && !w->isReady()) return;
+    }
+    placed_sig_stable_frames_ = 0;
+
+    if (!cluster_renderer_->baseUploadsMarked()) {
+        // Editor flow without a New Game: the base scene is empty.
+        cluster_renderer_->markBaseUploads();
+    }
+    cluster_renderer_->resetToBaseUploads();
+
+    // Clear stale marks before re-staging (membership may have shrunk).
+    for (const auto& w : imported_objects_) {
+        if (!w || !w->isReady()) continue;
+        for (auto& m : w->getMutableMeshes()) {
+            m.cluster_global_mesh_idx_ = -1;
+        }
+    }
+
+    imported_cluster_mesh_ids_.assign(imported_objects_.size(), {});
+    size_t uploads = 0;
+    for (size_t i = 0; i < imported_objects_.size(); ++i) {
+        const auto& w = imported_objects_[i];
+        if (!w || !w->isReady() || !w->isVisible()) continue;
+        const auto& data = w->getDrawableData();
+        auto& meshes     = w->getMutableMeshes();
+
+        // Per-wrapper world transform.  Geometry in DrawableData is baked
+        // in SOURCE-file world space (the FBX loader bakes node
+        // transforms into vertex positions — same convention the New
+        // Game bistro uploads rely on), so the cluster model transform
+        // is just the wrapper's instance world.
+        glm::mat4 world(1.0f);
+        if (w->hasInstanceRoot()) {
+            world =
+                glm::translate(glm::mat4(1.0f),
+                               w->getInstanceRootTranslation()) *
+                glm::mat4_cast(w->getInstanceRootRotation()) *
+                glm::scale(glm::mat4(1.0f), w->getInstanceRootScale());
+        }
+
+        // Which meshes does this wrapper render?  A placed .rwobj is
+        // filtered to one sub-object (ordinal = k-th node with a mesh,
+        // the Outliner / Content Browser order); a whole-file placement
+        // renders everything.  The forward path composes
+        // instance_world * node.cached_matrix_ — mirror that here (for
+        // FBX sources cached_matrix_ is identity because the loader
+        // bakes node transforms into vertices; glTF-style nodes may
+        // carry a real matrix, same as the New Game bistro uploads).
+        const int32_t ord = w->onlyRenderSubObject();
+        std::vector<std::pair<uint32_t, glm::mat4>> mesh_uploads;
+        if (ord >= 0) {
+            int k = 0;
+            for (const auto& nd : data.nodes_) {
+                if (nd.mesh_idx_ < 0) continue;
+                if (k == ord) {
+                    mesh_uploads.emplace_back(
+                        static_cast<uint32_t>(nd.mesh_idx_),
+                        world * nd.cached_matrix_);
+                    break;
+                }
+                ++k;
+            }
+        } else {
+            // Whole-file placement: first owning node's transform per
+            // mesh (same "first node wins" rule the New Game flow uses).
+            std::vector<glm::mat4> mesh_xf(meshes.size(), glm::mat4(1.0f));
+            std::vector<bool> seen(meshes.size(), false);
+            for (const auto& nd : data.nodes_) {
+                if (nd.mesh_idx_ < 0 ||
+                    static_cast<size_t>(nd.mesh_idx_) >= meshes.size())
+                    continue;
+                if (!seen[nd.mesh_idx_]) {
+                    seen[nd.mesh_idx_] = true;
+                    mesh_xf[nd.mesh_idx_] = nd.cached_matrix_;
+                }
+            }
+            for (uint32_t mi = 0; mi < meshes.size(); ++mi) {
+                mesh_uploads.emplace_back(mi, world * mesh_xf[mi]);
+            }
+        }
+
+        for (const auto& [mi, xf] : mesh_uploads) {
+            if (mi >= meshes.size()) continue;
+            const auto& cm = meshes[mi].cluster_mesh_;
+            if (cm.empty()) continue;
+            const int32_t gid =
+                static_cast<int32_t>(cluster_renderer_->getMeshCount());
+            meshes[mi].cluster_global_mesh_idx_ = gid;
+            imported_cluster_mesh_ids_[i].push_back(gid);
+            cluster_renderer_->uploadMeshClusters(
+                cm, data, mi, meshes[mi].cluster_prim_map_, xf);
+            ++uploads;
+        }
+    }
+
+    cluster_renderer_->finalizeUploads();
+    if (uploads > 0 && !cluster_renderer_->bindlessReady()) {
+        initClusterPipelines();
+    }
+    placed_clusters_resident_ = uploads > 0;
+    placed_sig_last_synced_   = sig;
+    if (uploads > 0) {
+        std::cout << "[scene] cluster tail rebuilt: " << uploads
+                  << " placed mesh(es) now render through the cluster "
+                     "pipeline." << std::endl;
+    }
 }
 
 void RealWorldApplication::syncSceneFromDrawables() {
@@ -2758,10 +3273,26 @@ void RealWorldApplication::syncSceneFromDrawables() {
     for (size_t i = 0; i < n; ++i) {
         const auto& obj = imported_objects_[i];
         if (obj && obj->hasInstanceRoot()) {
-            scene_.objects[i].transform.translation = obj->getInstanceRootTranslation();
-            scene_.objects[i].transform.rotation    = obj->getInstanceRootRotation();
-            scene_.objects[i].transform.scale        = obj->getInstanceRootScale();
-            scene_.objects[i].visible                = obj->isVisible();
+            auto& so = scene_.objects[i];
+            const glm::mat4 world =
+                glm::translate(glm::mat4(1.0f),
+                               obj->getInstanceRootTranslation()) *
+                glm::mat4_cast(obj->getInstanceRootRotation()) *
+                glm::scale(glm::mat4(1.0f), obj->getInstanceRootScale());
+            if (so.parent_index >= 0 &&
+                so.parent_index < (int)scene_.objects.size()) {
+                // Children store LOCAL-to-parent transforms.
+                const glm::mat4 local =
+                    glm::inverse(scene_.objects[so.parent_index]
+                                     .transform.toMatrix()) * world;
+                decomposeTrs(local, so.transform.translation,
+                             so.transform.rotation, so.transform.scale);
+            } else {
+                so.transform.translation = obj->getInstanceRootTranslation();
+                so.transform.rotation    = obj->getInstanceRootRotation();
+                so.transform.scale       = obj->getInstanceRootScale();
+            }
+            so.visible = obj->isVisible();
         }
     }
 }
@@ -2770,7 +3301,52 @@ void RealWorldApplication::rebuildImportedObjectsFromScene() {
     imported_objects_.clear();
     for (const auto& so : scene_.objects) {
         std::shared_ptr<ego::DrawableObject> obj;
+        // Source-group nodes are purely organizational (asset_path is the
+        // group DIRECTORY) — no drawable to load.
+        {
+            std::error_code gec;
+            if (so.is_group && so.source_node_index < 0 &&
+                std::filesystem::is_directory(so.asset_path, gec)) {
+                imported_objects_.push_back(nullptr);
+                continue;
+            }
+        }
         if (!so.asset_path.empty() && mesh_load_task_manager_) {
+            // .rwobj object references load NATIVELY from their baked
+            // .rwgeo (per-object streaming); legacy refs without baked
+            // data fall back to the source model + node filter.
+            std::string load_path = so.asset_path;
+            bool native_baked = false;
+            {
+                std::string ext;
+                const size_t dot = load_path.find_last_of('.');
+                if (dot != std::string::npos) ext = load_path.substr(dot);
+                for (auto& c : ext)
+                    c = (char)std::tolower((unsigned char)c);
+                if (ext == ".rwobj") {
+                    std::string src_path, ref_name, geo_path;
+                    int ordinal = -1;
+                    if (!eh::readRwObjRef(so.asset_path, src_path,
+                                          ordinal, ref_name, geo_path)) {
+                        std::cout << "[scene] bad .rwobj reference: "
+                                  << so.asset_path << std::endl;
+                        imported_objects_.push_back(obj);
+                        continue;
+                    }
+                    if (!geo_path.empty()) {
+                        native_baked = true;          // load the .rwobj itself
+                    } else if (!src_path.empty()) {
+                        load_path = src_path;         // legacy fallback
+                    } else {
+                        std::cout << "[scene] cannot load '"
+                                  << so.asset_path << "': no baked geometry "
+                                     "and source model not reachable"
+                                  << std::endl;
+                        imported_objects_.push_back(obj);
+                        continue;
+                    }
+                }
+            }
             obj = ego::DrawableObject::createAsync(
                 *mesh_load_task_manager_,
                 device_,
@@ -2779,11 +3355,31 @@ void RealWorldApplication::rebuildImportedObjectsFromScene() {
                 graphic_pipeline_info_,
                 repeat_texture_sampler_,
                 thin_film_lut_tex_,
-                so.asset_path,
+                load_path,
                 glm::mat4(1.0f));
             if (obj) {
-                obj->setInstanceRootTransform(
-                    so.transform.translation, so.transform.rotation, so.transform.scale);
+                if (so.source_node_index >= 0 && !native_baked) {
+                    // Legacy source-FBX fallback only — a native baked
+                    // drawable IS the referenced object already.
+                    obj->setOnlyRenderSubObject(so.source_node_index);
+                }
+                // Children store LOCAL-to-parent transforms — compose with
+                // the parent (group) transform for the drawable instance.
+                if (so.parent_index >= 0 &&
+                    so.parent_index < (int)scene_.objects.size()) {
+                    const glm::mat4 world =
+                        scene_.objects[so.parent_index]
+                            .transform.toMatrix() *
+                        so.transform.toMatrix();
+                    glm::vec3 t, s;
+                    glm::quat r;
+                    decomposeTrs(world, t, r, s);
+                    obj->setInstanceRootTransform(t, r, s);
+                } else {
+                    obj->setInstanceRootTransform(
+                        so.transform.translation, so.transform.rotation,
+                        so.transform.scale);
+                }
                 obj->setVisible(so.visible);
                 if (object_scene_view_) {
                     object_scene_view_->addDrawableObject(obj);
@@ -2814,6 +3410,27 @@ bool RealWorldApplication::loadSceneFromFile(const std::string& path) {
 
     // The GPU may still reference the current imports; drain before destroy.
     device_->waitIdle();
+    // Drop the placed cluster tail FIRST — the drawables (and their
+    // textures) are about to be destroyed and the cluster buffers /
+    // bindless set must not keep referencing them.  The per-frame
+    // syncPlacedObjectsToClusters() re-stages the loaded scene's objects
+    // once their async loads complete.
+    if (cluster_renderer_ && placed_clusters_resident_) {
+        cluster_renderer_->resetToBaseUploads();
+        cluster_renderer_->finalizeUploads();
+        placed_clusters_resident_ = false;
+        placed_sig_last_synced_   = 0;
+        imported_cluster_mesh_ids_.clear();
+    }
+    // Clear cluster-ownership marks: the shared DrawableData survives
+    // via the loader's dedup cache and stale marks would hide the next
+    // placement of the same source from the forward path.
+    for (auto& obj : imported_objects_) {
+        if (!obj || !obj->isReady()) continue;
+        for (auto& m : obj->getMutableMeshes()) {
+            m.cluster_global_mesh_idx_ = -1;
+        }
+    }
     for (auto& obj : imported_objects_) {
         if (!obj) continue;
         if (object_scene_view_)        object_scene_view_->removeDrawableObject(obj);
@@ -5065,6 +5682,65 @@ void RealWorldApplication::drawScene(
             cmd_buf->endDynamicRendering();
         }
 
+        // ── Editor reference grid / ruler ("Create Scene" mode) ──────────
+        // Drawn over the rendered scene in object_scene_view_, occluded by it
+        // (depth LOADed), exactly like the collision overlay above.  Gated by
+        // the Scene menu's "Show Grid" toggle / "Create Scene" action.
+        if (menu_ && menu_->sceneGridEnabled() && eh::SceneGrid::ready()) {
+            engine::helper::GpuProfiler::Scope _scope_scene_grid(
+                gpu_profiler_, cmd_buf, "Scene grid");
+
+            auto color_buf = object_scene_view_->getColorBuffer();
+            auto depth_buf = object_scene_view_->getDepthBuffer();
+
+            er::RenderingAttachmentInfo color_attach;
+            color_attach.image_view   = color_buf->view;
+            color_attach.image_layout = er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+            color_attach.load_op      = er::AttachmentLoadOp::LOAD;
+            color_attach.store_op     = er::AttachmentStoreOp::STORE;
+
+            er::RenderingAttachmentInfo depth_attach;
+            depth_attach.image_view   = depth_buf->view;
+            depth_attach.image_layout = er::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            depth_attach.load_op      = er::AttachmentLoadOp::LOAD;
+            depth_attach.store_op     = er::AttachmentStoreOp::STORE;
+
+            er::RenderingInfo ri = {};
+            ri.render_area_offset  = { 0, 0 };
+            ri.render_area_extent  = screen_size;
+            ri.layer_count         = 1;
+            ri.view_mask           = 0;
+            ri.color_attachments   = { color_attach };
+            ri.depth_attachments   = { depth_attach };
+            ri.stencil_attachments = {};
+            cmd_buf->beginDynamicRendering(ri);
+
+            er::Viewport vp;
+            vp.x = 0.0f; vp.y = 0.0f;
+            vp.width  = static_cast<float>(screen_size.x);
+            vp.height = static_cast<float>(screen_size.y);
+            vp.min_depth = 0.0f; vp.max_depth = 1.0f;
+            er::Scissor sc;
+            sc.offset = glm::ivec2(0);
+            sc.extent = screen_size;
+            std::vector<er::Viewport> grid_viewports = { vp };
+            std::vector<er::Scissor>  grid_scissors  = { sc };
+
+            // Same descriptor-set pair the collision overlay uses: set 0
+            // PBR-global (part of the layout, unsampled by the grid shaders)
+            // and set 1 the camera view-proj SSBO read by scene_grid.vert.
+            er::DescriptorSetList grid_desc_sets = {
+                pbr_lighting_desc_set_,
+                main_camera_object_->getViewCameraDescriptorSet(),
+            };
+
+            eh::SceneGrid::draw(
+                device_, cmd_buf, grid_desc_sets,
+                grid_viewports, grid_scissors);
+
+            cmd_buf->endDynamicRendering();
+        }
+
         // Transition ALL cascade layers back to depth-attachment for next frame.
         cmd_buf->addImageBarrier(
             shadow_object_scene_view_->getDepthBuffer()->image,
@@ -5974,84 +6650,41 @@ void RealWorldApplication::drawFrame() {
                             mesh_transforms[mi]);
                     }
                 };
+                // If editor placements were cluster-staged before this New
+                // Game, drop that tail first — the per-frame placed-object
+                // sync re-stages it on top of the new base afterwards.
+                cluster_renderer_->resetToBaseUploads();
+
                 uploadClusters(bistro_exterior_scene_);
                 uploadClusters(bistro_interior_scene_);
                 for (auto& d : drawable_objects_) {
                     uploadClusters(d);
                 }
 
+                // The uploads above are the immutable BASE scene —
+                // snapshot them so syncPlacedObjectsToClusters() can
+                // re-stage the editor's placed-object tail on top.
+                cluster_renderer_->markBaseUploads();
+                placed_sig_last_synced_ = 0;  // force a placed-tail resync
+
                 // Merge all staged cluster data into single flat GPU SSBOs.
                 cluster_renderer_->finalizeUploads();
 
-                // Initialize the bindless graphics pipeline for cluster
-                // rendering. Needs the global descriptor set layouts
-                // (PBR_GLOBAL at set 0, VIEW_PARAMS at set 1) so the
-                // pipeline layout matches the forward pass.
-                {
-                    // Provide all sets 0..RUNTIME_LIGHTS so the cluster
-                    // pipeline can read the same sun light + shadow data
-                    // as the standard forward pass.
-                    er::DescriptorSetLayoutList global_layouts(
-                        RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
-                    global_layouts[PBR_GLOBAL_PARAMS_SET] =
-                        pbr_lighting_desc_set_layout_;
-                    global_layouts[VIEW_PARAMS_SET] =
-                        ego::CameraObject::getViewCameraDescriptorSetLayout();
-                    // Set 2 (PBR_MATERIAL_PARAMS_SET) is replaced by the
-                    // cluster bindless set inside initBindlessPipeline.
-                    // Set 3 (SKIN_PARAMS_SET) stays nullptr.
-                    global_layouts[RUNTIME_LIGHTS_PARAMS_SET] =
-                        runtime_lights_desc_set_layout_;
-                    cluster_renderer_->initBindlessPipeline(
-                        global_layouts,
-                        graphic_pipeline_info_,
-                        renderbuffer_formats_[
-                            int(er::RenderPasses::kForward)]);
-                    // Deferred G-buffer variant — paired with the forward
-                    // pipeline above; reuses its bindless layout, swaps
-                    // the fragment SPV for cluster_bindless_gbuf_frag.spv,
-                    // and targets the application's 3-RT G-buffer format.
-                    cluster_renderer_->initBindlessGBufferPipeline(
-                        graphic_pipeline_info_,
-                        gbuffer_renderbuffer_format_);
-
-                    // Depth-only CSM shadow variant.  Single drawIndirect-
-                    // Count broadcasts every cluster triangle to all
-                    // CSM_CASCADE_COUNT cascades via a geometry shader,
-                    // replacing the ~2400 individual per-mesh shadow draws
-                    // that were costing ~17 ms of CPU recording time per
-                    // frame.  Slim pipeline layout — only VIEW_PARAMS_SET
-                    // (for layout-compat) and RUNTIME_LIGHTS_PARAMS_SET
-                    // (GS reads cascade VP matrices).  Render target is
-                    // the kShadow pass's depth-array format.
-                    er::DescriptorSetLayoutList shadow_layouts(
-                        RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
-                    shadow_layouts[VIEW_PARAMS_SET] =
-                        ego::CameraObject::getViewCameraDescriptorSetLayout();
-                    shadow_layouts[RUNTIME_LIGHTS_PARAMS_SET] =
-                        runtime_lights_desc_set_layout_;
-                    cluster_renderer_->initBindlessShadowPipeline(
-                        shadow_layouts,
-                        graphic_pipeline_info_,
-                        renderbuffer_formats_[
-                            int(er::RenderPasses::kShadow)].depth_format);
-
-                    // Silhouette prepass pipeline — small mesh-shader
-                    // pass that pre-fills each cascade's in-camera-
-                    // frustum interior with depth=1 so out-of-frustum
-                    // texels (cleared 0) reject every shadow caster via
-                    // LESS_OR_EQUAL.  Independent of the cluster pipe-
-                    // line; only needs RUNTIME_LIGHTS for cascade VPs
-                    // and slab corners.
-                    cluster_renderer_->initCsmSilhouettePrepassPipeline(
-                        runtime_lights_desc_set_layout_,
-                        graphic_pipeline_info_,
-                        renderbuffer_formats_[
-                            int(er::RenderPasses::kShadow)].depth_format);
+                // Initialize the bindless graphics pipelines (forward,
+                // G-buffer, CSM shadow, silhouette prepass).  Shared
+                // with the editor flow — see initClusterPipelines().
+                if (!cluster_renderer_->bindlessReady()) {
+                    initClusterPipelines();
                 }
             }
         }
     }
+
+    // ── Placed objects → cluster pipeline (editor auto-hookup) ──────
+    // Runs BEFORE drawScene records cluster work this frame, so a
+    // rebuild's buffer replacement (waitIdle inside finalizeUploads)
+    // never races the command buffer being recorded below.
+    syncPlacedObjectsToClusters();
 
     // ── Player spawn (deferred-friendly retry) ──────────────────────
     // Originally this was nested inside the Loading→InGame transition
@@ -8059,8 +8692,20 @@ void RealWorldApplication::drawFrame() {
         for (auto& m : bone_markers_) configure_marker(m);
         for (auto& m : bone_links_)   configure_marker(m);
 
-        if (player_object_ && player_object_->isReady() &&
-            player_controller_ && player_controller_->isSpawned()) {
+        // The bone cubes sit at the world origin until the player spawns and
+        // the placement loop below moves them onto the joints.  Until then
+        // (e.g. an empty "Create Scene") they pile up as a small red box at
+        // the origin — hide them while unspawned so the scene stays clean.
+        // When spawned, the skeleton-debug-mode block re-drives visibility.
+        const bool player_spawned =
+            player_object_ && player_object_->isReady() &&
+            player_controller_ && player_controller_->isSpawned();
+        if (!player_spawned) {
+            for (auto& m : bone_markers_) { if (m) m->setVisible(false); }
+            for (auto& m : bone_links_)   { if (m) m->setVisible(false); }
+        }
+
+        if (player_spawned) {
             const glm::quat identity_q(1.0f, 0.0f, 0.0f, 0.0f);
 
             // ── Place every bone marker at its joint's world position ──
@@ -8901,13 +9546,25 @@ void RealWorldApplication::drawFrame() {
         add("NPC (scifi_girl)", npc_scifi_girl_);
         add("Bistro Exterior", bistro_exterior_scene_);
         add("Bistro Interior", bistro_interior_scene_);
+        // Scene objects — 1:1 with scene_.objects (group rows have a null
+        // drawable) so parent_index maps directly onto the Outliner rows.
+        const int scene_base = (int)eobjs.size();
         for (size_t i = 0; i < imported_objects_.size(); ++i) {
-            if (imported_objects_[i]) {
-                eobjs.push_back(engine::ui::EditorSceneObject{
-                    (i < scene_.objects.size() ? scene_.objects[i].name
-                                               : std::string("Object")),
-                    imported_objects_[i].get() });
-            }
+            const std::string nm =
+                (i < scene_.objects.size() ? scene_.objects[i].name
+                                           : std::string("Object"));
+            const int par =
+                (i < scene_.objects.size() &&
+                 scene_.objects[i].parent_index >= 0)
+                    ? scene_base + scene_.objects[i].parent_index
+                    : -1;
+            eobjs.push_back(engine::ui::EditorSceneObject{
+                nm,
+                imported_objects_[i] ? imported_objects_[i].get() : nullptr,
+                /*in_scene=*/true,
+                par,
+                (i < scene_.objects.size()
+                     ? &scene_.objects[i].transform : nullptr) });
         }
         for (size_t i = 0; i < drawable_objects_.size(); ++i) {
             if (drawable_objects_[i])
@@ -8937,6 +9594,45 @@ void RealWorldApplication::drawFrame() {
 
     // ── Service scene-authoring requests raised by the Scene menu ────────
     if (menu_) {
+        // "Create Scene": tear down all imported objects and reset to an empty
+        // scene the user builds from scratch on the reference grid.  The GPU
+        // may still reference the current imports, so drain before destroy
+        // (mirrors loadSceneFromFile's teardown).
+        if (menu_->consumeCreateSceneRequest()) {
+            device_->waitIdle();
+            // Drop the placed cluster tail FIRST — the drawables (and
+            // their textures) are about to be destroyed and the cluster
+            // buffers / bindless set must not keep referencing them.
+            if (cluster_renderer_ && placed_clusters_resident_) {
+                cluster_renderer_->resetToBaseUploads();
+                cluster_renderer_->finalizeUploads();
+                placed_clusters_resident_ = false;
+                placed_sig_last_synced_   = 0;
+                imported_cluster_mesh_ids_.clear();
+            }
+            // Clear the cluster-ownership marks too: the shared
+            // DrawableData survives this teardown via the loader's
+            // dedup cache, and stale marks would make the next
+            // placement of the same source invisible to the forward
+            // path until its cluster rebuild.
+            for (auto& obj : imported_objects_) {
+                if (!obj || !obj->isReady()) continue;
+                for (auto& m : obj->getMutableMeshes()) {
+                    m.cluster_global_mesh_idx_ = -1;
+                }
+            }
+            for (auto& obj : imported_objects_) {
+                if (!obj) continue;
+                if (object_scene_view_)        object_scene_view_->removeDrawableObject(obj);
+                if (shadow_object_scene_view_) shadow_object_scene_view_->removeDrawableObject(obj);
+                obj->destroy(device_);
+            }
+            imported_objects_.clear();
+            scene_ = engine::scene::Scene{};
+            scene_.name = "Untitled";
+            menu_->setSceneName(scene_.name);
+            std::cout << "[scene] created new empty scene" << std::endl;
+        }
         if (menu_->consumeImportRequest()) {
             const std::string chosen = engine::scene::openModelFileDialog(nullptr);
             if (!chosen.empty()) importModelFromFile(chosen);
@@ -8954,6 +9650,413 @@ void RealWorldApplication::drawFrame() {
                 menu_->setSceneName(scene_.name);
             }
         }
+
+        // ── Content Browser: import an external file into content/ ───────
+        // v1 import = STREAM-copy the source into the project's content
+        // folder (1 MB chunks on a background thread, progress bar in the
+        // Content Browser) plus a .rwmeta sidecar (GUID + provenance).  The
+        // sidecar is the hook the engine-format (.rwmesh) bake keys off
+        // later.
+        std::string import_dir;
+        if (menu_->consumeContentImportRequest(import_dir)) {
+            if (content_import_running_) {
+                std::cout << "[content] import already in progress — "
+                             "ignoring request" << std::endl;
+            } else {
+                const std::string chosen =
+                    engine::scene::openModelFileDialog(nullptr);
+                if (!chosen.empty()) {
+                    // Reap any previous (finished) worker before reusing.
+                    if (content_import_thread_.joinable()) {
+                        content_import_thread_.join();
+                    }
+                    content_import_done_bytes_  = 0;
+                    content_import_total_bytes_ = 0;
+                    content_import_label_ =
+                        std::filesystem::path(chosen).filename().string();
+                    content_import_running_ = true;
+
+                    content_import_thread_ = std::thread(
+                        [this, chosen, import_dir]() {
+                        namespace fs = std::filesystem;
+                        std::error_code ec;
+                        fs::create_directories(import_dir, ec);
+                        const fs::path src(chosen);
+                        std::string ext = src.extension().string();
+                        for (auto& c : ext)
+                            c = (char)std::tolower((unsigned char)c);
+                        const bool bakeable =
+                            (ext == ".fbx" || ext == ".gltf" ||
+                             ext == ".glb");
+
+                        if (bakeable) {
+                            // ── Bake-only import ─────────────────────────
+                            // The source is parsed ONCE and converted into
+                            // render-ready assets under content/<stem>/ —
+                            // the unit a future streaming system loads
+                            // in/out.  NO source copy, NO raw texture
+                            // copies; everything the engine needs lives in:
+                            //   <stem>/objects/NNN_name.rwgeo
+                            //   <stem>/textures/<name>.rwtex
+                            //   <stem>/import.rwmeta  (provenance)
+                            // Progress = baked objects.
+                            const fs::path group_dir =
+                                fs::path(import_dir) / src.stem();
+                            std::vector<eh::BakedObject> baked;
+                            content_import_total_bytes_ = 1;
+                            content_import_done_bytes_  = 0;
+                            const bool ok = eh::bakeModelToRenderReady(
+                                chosen, group_dir.string(), baked,
+                                [this](size_t done, size_t total) {
+                                    content_import_total_bytes_ =
+                                        total ? total : 1;
+                                    content_import_done_bytes_ = done;
+                                });
+                            if (ok) {
+                                // Canonical group path (relative to the
+                                // content root) — the basis for the
+                                // deterministic asset IDs and the index.
+                                std::error_code rrec;
+                                fs::path group_rel_p = fs::relative(
+                                    group_dir, fs::path("content"), rrec);
+                                if (rrec || group_rel_p.empty())
+                                    group_rel_p = group_dir;
+                                const std::string group_rel =
+                                    group_rel_p.generic_string();
+                                const std::string group_id =
+                                    eh::makeAssetId("group", group_rel,
+                                                    src.stem().string());
+
+                                std::mt19937_64 rng{
+                                    std::random_device{}() };
+                                char guid[33];
+                                std::snprintf(guid, sizeof(guid),
+                                    "%016llx%016llx",
+                                    (unsigned long long)rng(),
+                                    (unsigned long long)rng());
+                                const auto now_t =
+                                    std::chrono::system_clock::to_time_t(
+                                        std::chrono::system_clock::now());
+                                std::ofstream meta(
+                                    (group_dir / "import.rwmeta").string(),
+                                    std::ios::trunc);
+                                meta << "id=" << group_id << "\n"
+                                     << "guid=" << guid << "\n"
+                                     << "source=" << chosen << "\n"
+                                     << "imported_unix=" << (long long)now_t
+                                     << "\n"
+                                     << "type=model_group\n"
+                                     << "subobjects_baked=1\n";
+                                for (const auto& b : baked)
+                                    meta << "subobject=" << b.name << "\n";
+                                meta.close();
+
+                                // One placeable .rwobj per object.  source=
+                                // records the ORIGINAL file (absolute) —
+                                // used only for scene placement until the
+                                // engine loads .rwgeo natively; previews
+                                // run from the baked data.
+                                auto sanitize = [](std::string s) {
+                                    for (auto& ch : s) {
+                                        if (ch == '/'  || ch == '\\' ||
+                                            ch == ':'  || ch == '*'  ||
+                                            ch == '?'  || ch == '"'  ||
+                                            ch == '<'  || ch == '>'  ||
+                                            ch == '|') ch = '_';
+                                    }
+                                    if (s.empty()) s = "object";
+                                    return s;
+                                };
+                                // Index rows for this group: id/type/name/
+                                // path — the ML-search data source.
+                                std::vector<std::array<std::string, 4>>
+                                    index_rows;
+                                index_rows.push_back(
+                                    { group_id, "group",
+                                      src.stem().string(), group_rel });
+
+                                for (size_t k = 0; k < baked.size(); ++k) {
+                                    char pre[16];
+                                    std::snprintf(pre, sizeof(pre),
+                                                  "%03u_", (unsigned)k);
+                                    const std::string fname =
+                                        std::string(pre) +
+                                        sanitize(baked[k].name) + ".rwobj";
+                                    const fs::path op = group_dir / fname;
+                                    const std::string obj_rel =
+                                        group_rel + "/" + fname;
+                                    const std::string obj_id =
+                                        eh::makeAssetId("object", obj_rel,
+                                                        baked[k].name);
+                                    std::ofstream of(op, std::ios::trunc);
+                                    of << "rwobj=1\n"
+                                       << "id=" << obj_id << "\n"
+                                       << "source=" << chosen << "\n"
+                                       << "node=" << k << "\n"
+                                       << "name=" << baked[k].name << "\n";
+                                    if (!baked[k].rwgeo_rel.empty()) {
+                                        of << "geo=" << baked[k].rwgeo_rel
+                                           << "\n";
+                                        // Source-space bounds — placement
+                                        // cancels this offset so the object
+                                        // lands AT the drop point.
+                                        const auto& bn = baked[k].bbox_min;
+                                        const auto& bx = baked[k].bbox_max;
+                                        of << "bbox=" << bn.x << ',' << bn.y
+                                           << ',' << bn.z << ',' << bx.x
+                                           << ',' << bx.y << ',' << bx.z
+                                           << "\n";
+                                    }
+                                    index_rows.push_back(
+                                        { obj_id, "object",
+                                          baked[k].name, obj_rel });
+                                }
+
+                                // Texture assets baked into the group.
+                                {
+                                    std::error_code tec;
+                                    const fs::path tdir =
+                                        group_dir / "textures";
+                                    for (auto& e : fs::directory_iterator(
+                                             tdir, tec)) {
+                                        if (e.path().extension() !=
+                                            ".rwtex") continue;
+                                        const std::string trel =
+                                            group_rel + "/textures/" +
+                                            e.path().filename().string();
+                                        const std::string tname =
+                                            e.path().stem().string();
+                                        index_rows.push_back(
+                                            { eh::makeAssetId(
+                                                  "texture", trel, tname),
+                                              "texture", tname, trel });
+                                    }
+                                }
+
+                                // ── Update content/asset_index.tsv ──────
+                                // Drop this group's previous rows (stable
+                                // IDs make re-imports idempotent), append
+                                // the fresh ones.  Columns:
+                                //   id <TAB> type <TAB> name <TAB> path
+                                {
+                                    const fs::path index_path =
+                                        fs::path("content") /
+                                        "asset_index.tsv";
+                                    std::vector<std::string> kept;
+                                    {
+                                        std::ifstream in(index_path);
+                                        std::string line;
+                                        const std::string prefix =
+                                            group_rel + "/";
+                                        while (in && std::getline(in, line)) {
+                                            if (line.empty()) continue;
+                                            const size_t p3 =
+                                                line.rfind('\t');
+                                            const std::string lpath =
+                                                (p3 == std::string::npos)
+                                                    ? std::string()
+                                                    : line.substr(p3 + 1);
+                                            if (lpath == group_rel ||
+                                                lpath.rfind(prefix, 0) == 0)
+                                                continue;   // superseded
+                                            kept.push_back(line);
+                                        }
+                                    }
+                                    std::ofstream outf(index_path,
+                                                       std::ios::trunc);
+                                    for (const auto& l : kept)
+                                        outf << l << "\n";
+                                    for (const auto& r : index_rows)
+                                        outf << r[0] << '\t' << r[1] << '\t'
+                                             << r[2] << '\t' << r[3]
+                                             << "\n";
+                                }
+
+                                std::cout << "[content] imported '"
+                                          << chosen << "' -> "
+                                          << baked.size()
+                                          << " render-ready object(s) in '"
+                                          << group_dir.string()
+                                          << "'  (group id " << group_id
+                                          << ", " << index_rows.size()
+                                          << " index rows)" << std::endl;
+                            } else {
+                                std::cout << "[content] bake FAILED for '"
+                                          << chosen << "'" << std::endl;
+                            }
+                        } else {
+                            // Formats the baker doesn't handle (.obj, …):
+                            // plain streamed copy + companion so the file
+                            // is at least usable from content/.
+                            struct CopyItem { fs::path src, dst; };
+                            std::vector<CopyItem> items;
+                            items.push_back(
+                                { src,
+                                  fs::path(import_dir) / src.filename() });
+                            if (ext == ".obj") {
+                                fs::path p = src;
+                                p.replace_extension(".mtl");
+                                std::error_code cec;
+                                if (fs::exists(p, cec))
+                                    items.push_back(
+                                        { p, fs::path(import_dir) /
+                                             p.filename() });
+                            }
+                            uint64_t total = 0;
+                            for (const auto& it : items) {
+                                std::error_code sec;
+                                total +=
+                                    (uint64_t)fs::file_size(it.src, sec);
+                            }
+                            content_import_total_bytes_ = total ? total : 1;
+                            bool ok = true;
+                            for (const auto& it : items) {
+                                std::ifstream in(it.src, std::ios::binary);
+                                std::ofstream out(it.dst,
+                                    std::ios::binary | std::ios::trunc);
+                                if (!in || !out) { ok = false; break; }
+                                std::vector<char> buf(1u << 20);
+                                while (in) {
+                                    in.read(buf.data(),
+                                            (std::streamsize)buf.size());
+                                    const std::streamsize n = in.gcount();
+                                    if (n <= 0) break;
+                                    out.write(buf.data(), n);
+                                    if (!out) { ok = false; break; }
+                                    content_import_done_bytes_ +=
+                                        (uint64_t)n;
+                                }
+                                if (!ok) break;
+                            }
+                            std::cout << "[content] copied '" << chosen
+                                      << "' -> content ("
+                                      << (ok ? "OK" : "FAILED") << ")"
+                                      << std::endl;
+                        }
+                        content_import_running_ = false;
+                    });
+                }
+            }
+        }
+
+        // Feed the streaming-import progress bar; reap the worker once done.
+        if (!content_import_running_ &&
+            content_import_thread_.joinable()) {
+            content_import_thread_.join();
+        }
+        {
+            const uint64_t tot = content_import_total_bytes_.load();
+            const uint64_t don = content_import_done_bytes_.load();
+            menu_->setContentImportStatus(
+                content_import_running_.load(),
+                tot ? (float)((double)don / (double)tot) : 0.0f,
+                content_import_label_);
+        }
+
+        // ── Scene placement loading wheel ─────────────────────────────────
+        // Names of placed objects whose async source load is still in
+        // flight — the mesh-load rune ring HUD spins until they pop in,
+        // so drag & drop / "Add to Scene" gives immediate feedback.
+        {
+            std::vector<std::string> placing;
+            const size_t n = std::min(imported_objects_.size(),
+                                      scene_.objects.size());
+            for (size_t i = 0; i < n; ++i) {
+                const auto& obj = imported_objects_[i];
+                if (obj && !obj->isReady()) {
+                    placing.push_back(scene_.objects[i].name.empty()
+                                          ? std::string("object")
+                                          : scene_.objects[i].name);
+                }
+            }
+            menu_->setScenePlacementPending(std::move(placing));
+        }
+
+        // ── Group transform edited in the Details panel ───────────────────
+        // Children follow: re-compose parent * local into their drawables.
+        if (menu_->consumeSceneTransformsDirty()) {
+            applySceneHierarchyTransforms();
+        }
+
+        // ── Content Browser: place an imported asset into the scene ──────
+        std::string place_path;
+        if (menu_->consumePlaceAssetRequest(place_path)) {
+            namespace fs = std::filesystem;
+            std::error_code pec;
+            if (fs::is_directory(place_path, pec)) {
+                // Whole GROUP folder: place every .rwobj with identical
+                // transforms — baked geometry keeps source-relative
+                // coordinates, so the original assembly reconstructs
+                // exactly (and they all nest under one group node).
+                std::vector<std::string> objs;
+                for (auto& e : fs::directory_iterator(place_path, pec)) {
+                    if (e.path().extension() == ".rwobj")
+                        objs.push_back(e.path().string());
+                }
+                std::sort(objs.begin(), objs.end());
+
+                // ONE shared translation for the whole group: cancel the
+                // union-bounds offset so the assembly lands in front of
+                // the camera with its authored layout intact.
+                glm::vec3 gmin(1e30f), gmax(-1e30f);
+                bool have_bounds = false;
+                for (const auto& o : objs) {
+                    glm::vec3 bn, bx;
+                    if (eh::readRwObjBounds(o, bn, bx)) {
+                        gmin = glm::min(gmin, bn);
+                        gmax = glm::max(gmax, bx);
+                        have_bounds = true;
+                    }
+                }
+                glm::vec3 common(0.0f);
+                const glm::vec3* common_ptr = nullptr;
+                if (have_bounds && main_camera_object_) {
+                    const auto& cam =
+                        main_camera_object_->getCameraViewInfo();
+                    glm::vec3 cam_pos =
+                        main_camera_object_->getCameraPosition();
+                    glm::vec3 fwd(cam.facing_dir.x, cam.facing_dir.y,
+                                  cam.facing_dir.z);
+                    const float len = glm::length(fwd);
+                    fwd = (len > 1e-4f) ? (fwd / len)
+                                        : glm::vec3(0.0f, 0.0f, 1.0f);
+                    const glm::vec3 place_pos = cam_pos + fwd * 3.0f;
+                    const glm::vec3 c = (gmin + gmax) * 0.5f;
+                    common = place_pos -
+                             glm::vec3(c.x, gmin.y, c.z);
+                    common_ptr = &common;
+                }
+                for (const auto& o : objs) {
+                    importModelFromFile(o, common_ptr);
+                }
+                std::cout << "[scene] placed group '" << place_path
+                          << "' (" << objs.size() << " object(s))"
+                          << std::endl;
+            } else {
+                importModelFromFile(place_path);
+            }
+        }
+    }
+
+    // ── Debug Display GPU preview ─────────────────────────────────────
+    // If the menu staged a new preview mesh this frame (object clicked /
+    // content tile previewed), record the offscreen three-spot-light pass
+    // NOW — outside any render pass, before the ImGui pass samples the
+    // persistent target.  collectGarbage frees the previous preview's
+    // buffers once no in-flight frame can still reference them.
+    {
+        // NOTE: keyed on the MONOTONIC vt_frame_index_ — current_frame_
+        // wraps modulo kMaxFramesInFlight and would never release buffers.
+        eh::MeshPreviewPayload preview_payload;
+        if (menu_->takeDebugPreviewPayload(preview_payload)) {
+            eh::MeshPreview::render(
+                device_, command_buffer, preview_payload, vt_frame_index_);
+        } else {
+            // No new payload — but the orbit camera may have moved (mouse
+            // drag / wheel over the preview); re-record the pass if so.
+            eh::MeshPreview::rerenderIfNeeded(device_, command_buffer);
+        }
+        eh::MeshPreview::collectGarbage(device_, vt_frame_index_);
     }
 
     s_camera_paused = menu_->draw(
@@ -9138,6 +10241,12 @@ void RealWorldApplication::cleanupSwapChain() {
 }
 
 void RealWorldApplication::cleanup() {
+    // Wait for a streaming content import to finish before tearing anything
+    // down (it only touches the filesystem, but it captures `this`).
+    if (content_import_thread_.joinable()) {
+        content_import_thread_.join();
+    }
+
     // Tear down the async mesh loader first. Its dtor drains the
     // pending queue, joins the worker thread, and waitAll()'s any
     // in-flight GPU fences. Doing this before waitIdle/destroyXxx

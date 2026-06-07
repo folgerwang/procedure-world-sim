@@ -315,6 +315,9 @@ ENGINE_CPP_SRCS := \
     $(ENGINE_DIR)/helper/bvh.cpp                    \
     $(ENGINE_DIR)/helper/collision_debug_draw.cpp   \
     $(ENGINE_DIR)/helper/collision_mesh.cpp         \
+    $(ENGINE_DIR)/helper/mesh_preview.cpp           \
+    $(ENGINE_DIR)/helper/model_inspect.cpp          \
+    $(ENGINE_DIR)/helper/scene_grid.cpp             \
     $(ENGINE_DIR)/helper/engine_helper.cpp          \
     $(ENGINE_DIR)/helper/mesh_tool.cpp              \
     $(ENGINE_DIR)/helper/vram_cuda.cpp              \

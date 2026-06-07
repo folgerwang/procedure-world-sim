@@ -247,6 +247,21 @@ add_spirv(SPIRV_FILES "cluster_debug_frag.spv" "cluster_debug.frag" fragment)
 add_spirv(SPIRV_FILES "collision_debug_vert.spv" "collision_debug.vert" vertex)
 add_spirv(SPIRV_FILES "collision_debug_frag.spv" "collision_debug.frag" fragment)
 
+# Editor reference grid / ruler for "Create Scene" mode — consumed by
+# helper::SceneGrid.  scene_grid = analytic ground grid (quad); scene_axis =
+# solid XYZ origin gizmo (coloured arrows).
+add_spirv(SPIRV_FILES "scene_grid_vert.spv" "scene_grid.vert" vertex)
+add_spirv(SPIRV_FILES "scene_grid_frag.spv" "scene_grid.frag" fragment)
+add_spirv(SPIRV_FILES "scene_axis_vert.spv" "scene_axis.vert" vertex)
+add_spirv(SPIRV_FILES "scene_axis_frag.spv" "scene_axis.frag" fragment)
+
+# Debug Display GPU preview (offscreen, three-spot studio lighting) —
+# consumed by helper::MeshPreview.
+add_spirv(SPIRV_FILES "preview_mesh_vert.spv" "preview_mesh.vert" vertex)
+add_spirv(SPIRV_FILES "preview_mesh_frag.spv" "preview_mesh.frag" fragment)
+add_spirv(SPIRV_FILES "preview_grid_vert.spv" "preview_grid.vert" vertex)
+add_spirv(SPIRV_FILES "preview_grid_frag.spv" "preview_grid.frag" fragment)
+
 # ── Simple geometry passes ────────────────────────────────────────────────────
 add_spirv(SPIRV_FILES "base_shape_draw_vert.spv" "base_shape_draw.vert" vertex)
 add_spirv(SPIRV_FILES "base_shape_draw_frag.spv" "base_shape_draw.frag" fragment)
