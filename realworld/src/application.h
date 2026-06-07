@@ -449,6 +449,13 @@ private:
     // Per imported wrapper: the global cluster-mesh ids it uploaded last
     // rebuild (usually one; whole-file placements may own several).
     std::vector<std::vector<int32_t>> imported_cluster_mesh_ids_;
+    // Per imported wrapper: its state signature at the last rebuild
+    // (0 = not resident).  Divergence handling compares against the
+    // CURRENT per-wrapper signature and retires ONLY the changed
+    // wrappers from the cluster path — an unrelated change (e.g. a
+    // still-streaming skeleton-mesh swap) must not blank the whole
+    // resident scene for the duration of a load.
+    std::vector<uint64_t> placed_entry_sigs_;
     // VT warm-up progress denominator: peak pending-texture count of the
     // current warm-up burst (0 = no burst in progress) — drives the
     // "Preparing textures N/M" bar.

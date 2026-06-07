@@ -3090,19 +3090,17 @@ void RealWorldApplication::syncPlacedObjectsToClusters() {
         }
     }
 
-    // ── Signature over the READY placed set ──────────────────────────
-    uint64_t sig = 1469598103934665603ull;  // FNV-1a offset basis
-    auto mix = [&sig](const void* p, size_t n) {
-        const uint8_t* b = reinterpret_cast<const uint8_t*>(p);
-        for (size_t i = 0; i < n; ++i) {
-            sig ^= b[i];
-            sig *= 1099511628211ull;
-        }
-    };
-    size_t ready_count = 0;
-    for (const auto& w : imported_objects_) {
-        if (!w || !w->isReady()) continue;
-        ++ready_count;
+    // ── Per-wrapper + overall signatures over the READY placed set ───
+    auto wrapperSig =
+        [](const std::shared_ptr<ego::DrawableObject>& w) -> uint64_t {
+        uint64_t h = 1469598103934665603ull;  // FNV-1a offset basis
+        auto mix = [&h](const void* p, size_t n) {
+            const uint8_t* b = reinterpret_cast<const uint8_t*>(p);
+            for (size_t i = 0; i < n; ++i) {
+                h ^= b[i];
+                h *= 1099511628211ull;
+            }
+        };
         const void* dp = &w->getDrawableData();   // shared-data identity
         mix(&dp, sizeof(dp));
         const int32_t ord = w->onlyRenderSubObject();
@@ -3117,8 +3115,19 @@ void RealWorldApplication::syncPlacedObjectsToClusters() {
             mix(&r, sizeof(r));
             mix(&s, sizeof(s));
         }
+        return h ? h : 1ull;   // 0 is reserved for "not resident"
+    };
+    std::vector<uint64_t> cur_sigs(imported_objects_.size(), 0);
+    uint64_t sig = 1469598103934665603ull;
+    size_t ready_count = 0;
+    for (size_t i = 0; i < imported_objects_.size(); ++i) {
+        const auto& w = imported_objects_[i];
+        if (!w || !w->isReady()) continue;
+        ++ready_count;
+        cur_sigs[i] = wrapperSig(w);
+        sig ^= cur_sigs[i] + 0x9e3779b97f4a7c15ull + (sig << 6) + (sig >> 2);
     }
-    mix(&ready_count, sizeof(ready_count));
+    sig ^= (uint64_t)ready_count * 1099511628211ull;
 
     if (sig == placed_sig_last_synced_) {
         placed_sig_prev_frame_ = sig;
@@ -3126,34 +3135,40 @@ void RealWorldApplication::syncPlacedObjectsToClusters() {
     }
 
     if (sig != placed_sig_prev_frame_) {
-        // ── Diverged this frame ───────────────────────────────────────
+        // ── Diverged this frame — SELECTIVE live-edit handoff ─────────
+        // Only wrappers whose OWN state changed leave the cluster path
+        // (their instances hidden + forward-skip marks cleared); every
+        // untouched resident keeps rendering through the cluster
+        // pipeline.  Previously a global hide here blanked the whole
+        // scene whenever ANY placed object changed — including for the
+        // full duration of an unrelated skeleton-mesh load.
         placed_sig_prev_frame_   = sig;
         placed_sig_stable_frames_ = 0;
-        // Forward path takes over instantly: clear the "owned by
-        // cluster renderer" mark on every imported drawable's meshes and
-        // hide any stale cluster instances.  Done UNCONDITIONALLY (not
-        // just when placed_clusters_resident_): the shared DrawableData
-        // survives scene resets via the loader's dedup cache, so a
-        // freshly placed object can inherit marks from an earlier
-        // placement of the same source — which made it invisible (the
-        // forward draw skipped, no cluster instance yet) until the
-        // debounced rebuild finally re-uploaded it.
-        for (const auto& w : imported_objects_) {
-            if (!w || !w->isReady()) continue;
-            for (auto& m : w->getMutableMeshes()) {
-                m.cluster_global_mesh_idx_ = -1;
-            }
-        }
-        if (placed_clusters_resident_) {
-            for (const auto& ids : imported_cluster_mesh_ids_) {
-                for (int32_t gid : ids) {
+        for (size_t i = 0; i < imported_objects_.size(); ++i) {
+            const uint64_t prev =
+                (i < placed_entry_sigs_.size()) ? placed_entry_sigs_[i]
+                                                : 0;
+            if (cur_sigs[i] == prev) continue;   // unchanged wrapper
+            // Retire this wrapper's cluster instances + skip marks so
+            // the forward path renders it live.
+            if (i < imported_cluster_mesh_ids_.size()) {
+                for (int32_t gid : imported_cluster_mesh_ids_[i]) {
                     if (gid >= 0) {
                         cluster_renderer_->setMeshClustersHidden(
                             static_cast<uint32_t>(gid), true);
                     }
                 }
+                imported_cluster_mesh_ids_[i].clear();
             }
-            placed_clusters_resident_ = false;
+            const auto& w = imported_objects_[i];
+            if (w && w->isReady()) {
+                for (auto& m : w->getMutableMeshes()) {
+                    m.cluster_global_mesh_idx_ = -1;
+                }
+            }
+            if (i < placed_entry_sigs_.size()) {
+                placed_entry_sigs_[i] = 0;   // no longer resident
+            }
         }
         return;
     }
@@ -3297,6 +3312,9 @@ void RealWorldApplication::syncPlacedObjectsToClusters() {
     }
     placed_clusters_resident_ = uploads > 0;
     placed_sig_last_synced_   = sig;
+    // Snapshot per-wrapper signatures — the selective divergence handoff
+    // above compares against these to retire ONLY changed wrappers.
+    placed_entry_sigs_ = cur_sigs;
     if (uploads > 0) {
         std::cout << "[scene] cluster tail rebuilt: " << uploads
                   << " placed mesh(es) now render through the cluster "
@@ -3466,6 +3484,7 @@ bool RealWorldApplication::loadSceneFromFile(const std::string& path) {
         placed_clusters_resident_ = false;
         placed_sig_last_synced_   = 0;
         imported_cluster_mesh_ids_.clear();
+        placed_entry_sigs_.clear();
     }
     // Clear cluster-ownership marks: the shared DrawableData survives
     // via the loader's dedup cache and stale marks would hide the next
@@ -3480,7 +3499,9 @@ bool RealWorldApplication::loadSceneFromFile(const std::string& path) {
         if (!obj) continue;
         if (object_scene_view_)        object_scene_view_->removeDrawableObject(obj);
         if (shadow_object_scene_view_) shadow_object_scene_view_->removeDrawableObject(obj);
-        obj->destroy(device_);
+        // No obj->destroy(): the DrawableData is shared through the
+        // loader's dedup cache — the rebuild below re-attaches to the
+        // SAME cached data, which a destroy here would have corrupted.
     }
     imported_objects_.clear();
 
@@ -9757,6 +9778,7 @@ void RealWorldApplication::drawFrame() {
                 placed_clusters_resident_ = false;
                 placed_sig_last_synced_   = 0;
                 imported_cluster_mesh_ids_.clear();
+                placed_entry_sigs_.clear();
             }
             // Clear the cluster-ownership marks too: the shared
             // DrawableData survives this teardown via the loader's
@@ -9773,7 +9795,10 @@ void RealWorldApplication::drawFrame() {
                 if (!obj) continue;
                 if (object_scene_view_)        object_scene_view_->removeDrawableObject(obj);
                 if (shadow_object_scene_view_) shadow_object_scene_view_->removeDrawableObject(obj);
-                obj->destroy(device_);
+                // No obj->destroy(): the DrawableData is shared through
+                // the loader's dedup cache — destroying it would poison
+                // the cache (ready_ corpse) and crash re-placements of
+                // the same asset.  The cache owns the data.
             }
             imported_objects_.clear();
             scene_ = engine::scene::Scene{};
@@ -9913,7 +9938,12 @@ void RealWorldApplication::drawFrame() {
                         object_scene_view_->removeDrawableObject(obj);
                     if (shadow_object_scene_view_)
                         shadow_object_scene_view_->removeDrawableObject(obj);
-                    obj->destroy(device_);
+                    // Do NOT obj->destroy(): the DrawableData is SHARED
+                    // through the loader's dedup cache — destroying it
+                    // leaves a ready_-flagged corpse in the cache, and
+                    // re-selecting the same character then crashes in
+                    // bindVertexBuffers (null instance buffer).  The
+                    // cache owns the data for the app's lifetime.
                     obj.reset();
                 };
 
@@ -9926,6 +9956,13 @@ void RealWorldApplication::drawFrame() {
                             scene_.objects.begin() + child);
                         imported_objects_.erase(
                             imported_objects_.begin() + child);
+                        // Keep the cluster-sync parallel arrays aligned.
+                        if (child < (int)imported_cluster_mesh_ids_.size())
+                            imported_cluster_mesh_ids_.erase(
+                                imported_cluster_mesh_ids_.begin() + child);
+                        if (child < (int)placed_entry_sigs_.size())
+                            placed_entry_sigs_.erase(
+                                placed_entry_sigs_.begin() + child);
                         for (auto& o : scene_.objects) {
                             if (o.parent_index > child) --o.parent_index;
                             else if (o.parent_index == child)
@@ -9992,6 +10029,20 @@ void RealWorldApplication::drawFrame() {
                                   << std::endl;
                     }
                 }
+            }
+        }
+
+        // ── Scene-object rename (Details "Name" field) ───────────────────
+        {
+            int r_idx = -1;
+            std::string r_name;
+            if (menu_->consumeSceneObjectRename(r_idx, r_name) &&
+                r_idx >= 0 && r_idx < (int)scene_.objects.size() &&
+                !r_name.empty()) {
+                std::cout << "[scene] renamed '"
+                          << scene_.objects[r_idx].name << "' -> '"
+                          << r_name << "'" << std::endl;
+                scene_.objects[r_idx].name = r_name;
             }
         }
 
