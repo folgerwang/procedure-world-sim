@@ -2134,6 +2134,41 @@ void RealWorldApplication::initVulkan() {
     // Apply the --editor CLI flag: docked editor UI vs pure in-game viewport.
     menu_->setEditorEnabled(editor_mode_);
 
+    // Default content-browser folders.  "player" is the fixed home for
+    // character (skinned-model) imports — created up front so the folder
+    // is visible in the Content Browser before the first import.
+    {
+        std::error_code dec;
+        std::filesystem::create_directories("content/player", dec);
+    }
+
+    // ── Editor startup (default) ─────────────────────────────────────
+    //   --scene <path> → load that saved scene
+    //   otherwise      → fresh empty scene on the reference grid
+    // Either way the game-start title UI is skipped (it only shows with
+    // --game).
+    if (!startup_scene_path_.empty()) {
+        menu_->setGameState(engine::ui::GameState::InGame);
+        menu_->setBackgroundEnabled(false);
+        menu_->setSceneGridEnabled(true);
+        scene_.name = "Untitled";
+        menu_->setSceneName(scene_.name);
+        editor_startup_view_pending_ = true;
+        // The actual load runs on the FIRST frame through the same code
+        // path the Scene → Load menu uses (startup_scene_path_ is
+        // consumed in drawFrame) — everything the async loaders need is
+        // guaranteed live by then.
+    } else if (empty_scene_startup_) {
+        menu_->setGameState(engine::ui::GameState::InGame);
+        menu_->setBackgroundEnabled(false);
+        menu_->setSceneGridEnabled(true);
+        scene_ = engine::scene::Scene{};
+        scene_.name = "Untitled";
+        menu_->setSceneName(scene_.name);   // also surfaces the scene node
+        editor_startup_view_pending_ = true;
+        std::cout << "[scene] startup: empty scene ready" << std::endl;
+    }
+
     // Register CSM debug colour targets as ImGui textures (ImGui must be
     // initialised by the Menu constructor before this can be called).
     registerCsmDebugImTextureIds();
@@ -3181,6 +3216,10 @@ void RealWorldApplication::syncPlacedObjectsToClusters() {
         const auto& w = imported_objects_[i];
         if (!w || !w->isReady() || !w->isVisible()) continue;
         const auto& data = w->getDrawableData();
+        // Skinned characters stay on the animated forward path — the
+        // cluster pipeline is static (bind pose baked at upload) and the
+        // forward-skip mark would freeze the animation.
+        if (!data.skins_.empty() || !data.animations_.empty()) continue;
         auto& meshes     = w->getMutableMeshes();
 
         // Per-wrapper world transform.  Geometry in DrawableData is baked
@@ -3323,6 +3362,12 @@ void RealWorldApplication::rebuildImportedObjectsFromScene() {
                 if (dot != std::string::npos) ext = load_path.substr(dot);
                 for (auto& c : ext)
                     c = (char)std::tolower((unsigned char)c);
+                if (ext == ".rwcam" || ext == ".rwplayer") {
+                    // Camera / player node: data + transform, no drawable
+                    // of its own (a player's mesh lives in its child row).
+                    imported_objects_.push_back(nullptr);
+                    continue;
+                }
                 if (ext == ".rwobj") {
                     std::string src_path, ref_name, geo_path;
                     int ordinal = -1;
@@ -7687,17 +7732,82 @@ void RealWorldApplication::drawFrame() {
         glm::vec3 fcenter; float fradius;
         if (menu_->takeEditorFocus(fcenter, fradius)) {
             editor_cam_focus_active_ = true;
+            editor_campose_active_   = false;   // focus overrides camera view
             editor_cam_focus_center_ = fcenter;
             editor_cam_focus_dist_   = glm::max(fradius * 2.5f + 0.5f, 1.5f);
         }
+        // "View through scene camera" (double-click on a camera object):
+        // snap the view camera to the camera object's exact pose and hold
+        // it; WASD exits back to the free camera (same UX as focus mode).
+        glm::vec3 cpose_pos, cpose_dir;
+        int cpose_follow = -1;
+        if (menu_->takeEditorCameraPose(cpose_pos, cpose_dir,
+                                        cpose_follow)) {
+            editor_campose_active_   = true;
+            editor_cam_focus_active_ = false;
+            editor_campose_pos_      = cpose_pos;
+            editor_campose_dir_      = cpose_dir;
+            editor_campose_follow_   = cpose_follow;
+            // Linked camera: remember the authored offset from the player
+            // object so the view keeps it while the player moves.
+            if (cpose_follow >= 0 &&
+                cpose_follow < (int)scene_.objects.size()) {
+                editor_campose_offset_ =
+                    cpose_pos -
+                    scene_.objects[cpose_follow].transform.translation;
+            }
+            // Sync the mouse-look yaw/pitch to the camera's direction:
+            // the per-frame camera update derives facing FROM yaw/pitch,
+            // so without this the direction reverts to the previous
+            // mouse state next frame (position-only teleport symptom).
+            if (glm::length(cpose_dir) > 1e-4f) {
+                main_camera_object_->setViewDirection(cpose_dir);
+            }
+        }
     }
-    if (editor_cam_focus_active_) {
+    if (editor_cam_focus_active_ || editor_campose_active_) {
         if (glfwGetKey(window_, GLFW_KEY_W) == GLFW_PRESS ||
             glfwGetKey(window_, GLFW_KEY_A) == GLFW_PRESS ||
             glfwGetKey(window_, GLFW_KEY_S) == GLFW_PRESS ||
             glfwGetKey(window_, GLFW_KEY_D) == GLFW_PRESS) {
             editor_cam_focus_active_ = false;
+            editor_campose_active_   = false;
         }
+    }
+    // One-shot default editor view: frame the world origin so the
+    // coordinate gizmo starts CENTERED in the viewport instead of
+    // wherever the camera's init params left it.  Deferred a few frames
+    // so the camera's frame-0 init (which resets position from the init
+    // params) has already run and won't clobber it.
+    if (editor_startup_view_pending_ && vt_frame_index_ > 3 &&
+        main_camera_object_) {
+        editor_startup_view_pending_ = false;
+        const glm::vec3 eye(9.0f, 6.5f, 9.0f);
+        const glm::vec3 dir = glm::normalize(-eye);   // look at the origin
+        main_camera_object_->setViewDirection(dir);
+        main_camera_object_->updateCamera(command_buffer, eye, dir);
+    }
+    if (editor_campose_active_) {
+        glm::vec3 eye = editor_campose_pos_;
+        glm::vec3 dir = editor_campose_dir_;
+        // Camera→player link: keep the authored offset from the player
+        // object and aim at it (head height) — the view follows wherever
+        // the player goes.  No link (-1) → free, fixed pose.
+        if (editor_campose_follow_ >= 0 &&
+            editor_campose_follow_ < (int)scene_.objects.size()) {
+            const glm::vec3 player_pos =
+                scene_.objects[editor_campose_follow_]
+                    .transform.translation;
+            eye = player_pos + editor_campose_offset_;
+            const glm::vec3 look =
+                (player_pos + glm::vec3(0.0f, 1.5f, 0.0f)) - eye;
+            if (glm::length(look) > 1e-3f) dir = glm::normalize(look);
+            main_camera_object_->setViewDirection(dir);
+        }
+        if (!std::isfinite(dir.x) || glm::length(dir) < 1e-3f)
+            dir = glm::vec3(0.0f, 0.0f, 1.0f);
+        main_camera_object_->updateCamera(
+            command_buffer, eye, glm::normalize(dir));
     }
     if (editor_cam_focus_active_) {
         // Look DOWN-forward at the object centre; eye sits above + behind it
@@ -7714,7 +7824,7 @@ void RealWorldApplication::drawFrame() {
 
     // Follow camera only in PLAY mode.  In edit mode the follow override is
     // skipped so the free camera (updateCamera's WASD/mouse) flies the level.
-    if (!editor_cam_focus_active_ &&
+    if (!editor_cam_focus_active_ && !editor_campose_active_ &&
         (!menu_ || menu_->isPlayMode()) &&
         player_object_ && player_object_->isReady() &&
         player_controller_ && player_controller_->isSpawned()) {
@@ -9558,13 +9668,35 @@ void RealWorldApplication::drawFrame() {
                  scene_.objects[i].parent_index >= 0)
                     ? scene_base + scene_.objects[i].parent_index
                     : -1;
+            // Camera rows (.rwcam) get a viewport frustum gizmo + follow
+            // link; player rows (.rwplayer) are link targets.
+            bool is_cam = false, is_player = false;
+            int32_t* follow_link = nullptr;
+            if (i < scene_.objects.size()) {
+                const std::string& ap = scene_.objects[i].asset_path;
+                auto ends_with = [&ap](const char* suf, size_t n) {
+                    return ap.size() > n &&
+                           ap.compare(ap.size() - n, n, suf) == 0;
+                };
+                is_cam    = ends_with(".rwcam", 6);
+                is_player = ends_with(".rwplayer", 9);
+                if (is_cam) {
+                    // Camera "follow" link lives in source_node_index
+                    // (unused for cameras otherwise; serializes for free).
+                    follow_link = &scene_.objects[i].source_node_index;
+                }
+            }
             eobjs.push_back(engine::ui::EditorSceneObject{
                 nm,
                 imported_objects_[i] ? imported_objects_[i].get() : nullptr,
                 /*in_scene=*/true,
                 par,
                 (i < scene_.objects.size()
-                     ? &scene_.objects[i].transform : nullptr) });
+                     ? &scene_.objects[i].transform : nullptr),
+                /*is_camera=*/is_cam,
+                /*is_player=*/is_player,
+                /*scene_index=*/(int)i,
+                /*follow_link=*/follow_link });
         }
         for (size_t i = 0; i < drawable_objects_.size(); ++i) {
             if (drawable_objects_[i])
@@ -9594,6 +9726,22 @@ void RealWorldApplication::drawFrame() {
 
     // ── Service scene-authoring requests raised by the Scene menu ────────
     if (menu_) {
+        // --scene <path>: consume the pending startup scene on the first
+        // frame — same proven path as Scene → Load.
+        if (!startup_scene_path_.empty()) {
+            const std::string p = startup_scene_path_;
+            startup_scene_path_.clear();
+            if (loadSceneFromFile(p)) {
+                menu_->setSceneName(scene_.name);
+                std::cout << "[scene] startup scene '" << p << "' loaded ("
+                          << scene_.objects.size() << " object(s))"
+                          << std::endl;
+            } else {
+                std::cout << "[scene] startup scene '" << p
+                          << "' FAILED to load — starting empty"
+                          << std::endl;
+            }
+        }
         // "Create Scene": tear down all imported objects and reset to an empty
         // scene the user builds from scratch on the reference grid.  The GPU
         // may still reference the current imports, so drain before destroy
@@ -9633,6 +9781,257 @@ void RealWorldApplication::drawFrame() {
             menu_->setSceneName(scene_.name);
             std::cout << "[scene] created new empty scene" << std::endl;
         }
+        // ── "Create Camera Here": capture the current editor view ────────
+        // The camera is PART OF THE SCENE (not a standalone content
+        // asset): it lives purely as a scene object — name + transform —
+        // and round-trips through scene Save/Load.  asset_path carries a
+        // VIRTUAL ".rwcam" marker (no file on disk) so the Outliner /
+        // rebuild paths can identify camera rows without a scene-schema
+        // change.
+        if (menu_->consumeCreateCameraRequest() && main_camera_object_) {
+            // Unique name within the scene: Camera_1, Camera_2, …
+            int cam_count = 0;
+            for (const auto& o : scene_.objects) {
+                const std::string& ap = o.asset_path;
+                if (ap.size() > 6 &&
+                    ap.compare(ap.size() - 6, 6, ".rwcam") == 0) {
+                    ++cam_count;
+                }
+            }
+            const std::string cam_name =
+                "Camera_" + std::to_string(cam_count + 1);
+
+            // Current view pose.  Rotation = quaternion of the basis
+            // (right, up, -forward) — the camera looks down its local -Z,
+            // matching the standard view convention.
+            const glm::vec3 pos = main_camera_object_->getCameraPosition();
+            const auto& cam = main_camera_object_->getCameraViewInfo();
+            glm::vec3 fwd(cam.facing_dir.x, cam.facing_dir.y,
+                          cam.facing_dir.z);
+            const float flen = glm::length(fwd);
+            fwd = (flen > 1e-4f) ? (fwd / flen) : glm::vec3(0, 0, 1);
+            glm::vec3 up(0.0f, 1.0f, 0.0f);
+            if (std::abs(glm::dot(fwd, up)) > 0.99f) up = glm::vec3(0, 0, 1);
+            const glm::vec3 right = glm::normalize(glm::cross(fwd, up));
+            const glm::vec3 cup   = glm::cross(right, fwd);
+            const glm::quat rot   = glm::normalize(
+                glm::quat_cast(glm::mat3(right, cup, -fwd)));
+
+            // Scene object: no drawable — the camera is data + transform.
+            engine::scene::Object so;
+            so.name = cam_name;
+            so.asset_path = cam_name + ".rwcam";   // virtual type marker
+            so.parent_index = -1;
+            so.source_node_index = -1;
+            so.is_group = false;
+            so.visible = true;
+            so.transform.translation = pos;
+            so.transform.rotation = rot;
+            so.transform.scale = glm::vec3(1.0f);
+            scene_.objects.push_back(so);
+            imported_objects_.push_back(nullptr);
+
+            std::cout << "[scene] created camera '" << cam_name << "' at ("
+                      << pos.x << ", " << pos.y << ", " << pos.z << ")"
+                      << std::endl;
+        }
+
+        // ── "Add Player Object": player node + skeleton-mesh child ───────
+        // The player object is an organizational scene node (virtual
+        // ".rwplayer" marker, editable transform) whose CHILD row holds
+        // the skeleton-mesh drawable — the character imported into the
+        // Content Browser's player folder.  Cameras can link to it
+        // ("Follow") to track it.
+        if (menu_->consumeCreatePlayerRequest() && main_camera_object_) {
+            // Place 2.5 m in front of the camera.
+            glm::vec3 place_pos(0.0f);
+            {
+                const auto& cam = main_camera_object_->getCameraViewInfo();
+                glm::vec3 cam_pos =
+                    main_camera_object_->getCameraPosition();
+                glm::vec3 fwd(cam.facing_dir.x, cam.facing_dir.y,
+                              cam.facing_dir.z);
+                const float len = glm::length(fwd);
+                fwd = (len > 1e-4f) ? (fwd / len) : glm::vec3(0, 0, 1);
+                place_pos = cam_pos + fwd * 2.5f;
+            }
+
+            // Unique name.
+            int pcount = 0;
+            for (const auto& o : scene_.objects) {
+                const std::string& ap = o.asset_path;
+                if (ap.size() > 9 &&
+                    ap.compare(ap.size() - 9, 9, ".rwplayer") == 0)
+                    ++pcount;
+            }
+            const std::string player_name =
+                "Player_" + std::to_string(pcount + 1);
+
+            engine::scene::Object so;
+            so.name = player_name;
+            so.asset_path = player_name + ".rwplayer";  // virtual marker
+            so.parent_index = -1;
+            so.source_node_index = -1;
+            so.is_group = true;                          // holds the mesh child
+            so.visible = true;
+            so.transform.translation = place_pos;
+            scene_.objects.push_back(so);
+            imported_objects_.push_back(nullptr);
+
+            // Created EMPTY by design — assign a skeleton mesh from the
+            // Details panel's "Skeleton Mesh" combo (characters imported
+            // into content/player).
+            std::cout << "[scene] created player object '" << player_name
+                      << "' at (" << place_pos.x << ", " << place_pos.y
+                      << ", " << place_pos.z << ") — assign a skeleton "
+                         "mesh in the Details panel" << std::endl;
+        }
+
+        // ── Player "Skeleton Mesh" assignment (Details combo) ────────────
+        // Attach / replace / detach the mesh child of a player object.
+        {
+            int p_idx = -1;
+            std::string mesh_path;
+            if (menu_->consumePlayerMeshAssign(p_idx, mesh_path) &&
+                p_idx >= 0 && p_idx < (int)scene_.objects.size()) {
+                // Existing mesh child of this player (first child row).
+                int child = -1;
+                for (size_t j = 0; j < scene_.objects.size() &&
+                                   j < imported_objects_.size(); ++j) {
+                    if (scene_.objects[j].parent_index == p_idx &&
+                        !scene_.objects[j].is_group) {
+                        child = (int)j;
+                        break;
+                    }
+                }
+
+                auto teardownChildDrawable = [&](int ci) {
+                    auto& obj = imported_objects_[ci];
+                    if (!obj) return;
+                    device_->waitIdle();
+                    if (object_scene_view_)
+                        object_scene_view_->removeDrawableObject(obj);
+                    if (shadow_object_scene_view_)
+                        shadow_object_scene_view_->removeDrawableObject(obj);
+                    obj->destroy(device_);
+                    obj.reset();
+                };
+
+                if (mesh_path.empty()) {
+                    // Detach: drop the child row entirely (indices > child
+                    // shift down — fix parent links + camera follow links).
+                    if (child >= 0) {
+                        teardownChildDrawable(child);
+                        scene_.objects.erase(
+                            scene_.objects.begin() + child);
+                        imported_objects_.erase(
+                            imported_objects_.begin() + child);
+                        for (auto& o : scene_.objects) {
+                            if (o.parent_index > child) --o.parent_index;
+                            else if (o.parent_index == child)
+                                o.parent_index = -1;
+                            // Camera follow links store scene indices in
+                            // source_node_index — keep them pointing at
+                            // the same player rows.
+                            const std::string& ap = o.asset_path;
+                            if (ap.size() > 6 &&
+                                ap.compare(ap.size() - 6, 6, ".rwcam") == 0 &&
+                                o.source_node_index > child) {
+                                --o.source_node_index;
+                            }
+                        }
+                        std::cout << "[scene] detached skeleton mesh from '"
+                                  << scene_.objects[
+                                         p_idx > child ? p_idx - 1 : p_idx]
+                                         .name << "'" << std::endl;
+                    }
+                } else if (mesh_load_task_manager_) {
+                    auto obj = ego::DrawableObject::createAsync(
+                        *mesh_load_task_manager_,
+                        device_,
+                        drawable_descriptor_pool_,
+                        renderbuffer_formats_,
+                        graphic_pipeline_info_,
+                        repeat_texture_sampler_,
+                        thin_film_lut_tex_,
+                        mesh_path,
+                        glm::mat4(1.0f));
+                    if (obj) {
+                        const auto& pt = scene_.objects[p_idx].transform;
+                        obj->setInstanceRootTransform(
+                            pt.translation, pt.rotation, pt.scale);
+                        if (object_scene_view_)
+                            object_scene_view_->addDrawableObject(obj);
+                        if (shadow_object_scene_view_)
+                            shadow_object_scene_view_->addDrawableObject(obj);
+
+                        const std::string mesh_name =
+                            std::filesystem::path(mesh_path)
+                                .parent_path().filename().string();
+                        if (child >= 0) {
+                            // Replace in place — indices stay stable.
+                            teardownChildDrawable(child);
+                            scene_.objects[child].name =
+                                mesh_name + " (skeleton mesh)";
+                            scene_.objects[child].asset_path = mesh_path;
+                            imported_objects_[child] = obj;
+                        } else {
+                            engine::scene::Object ms;
+                            ms.name = mesh_name + " (skeleton mesh)";
+                            ms.asset_path = mesh_path;
+                            ms.parent_index = p_idx;
+                            ms.source_node_index = -1;
+                            ms.is_group = false;
+                            ms.visible = true;   // identity local
+                            scene_.objects.push_back(ms);
+                            imported_objects_.push_back(obj);
+                        }
+                        std::cout << "[scene] attached skeleton mesh '"
+                                  << mesh_path << "' to '"
+                                  << scene_.objects[p_idx].name << "'"
+                                  << std::endl;
+                    }
+                }
+            }
+        }
+
+        // ── Player skeleton-mesh render config (applies once ready) ──────
+        // Skinned characters need setUseNodeTransformOnly(true) to render
+        // at their instance transform: without it the GPU instance buffer
+        // reads the shared game-objects buffer's slot-0 position (camera-
+        // tracking + gravity drift) and double-transforms the rig clear
+        // off-screen — the historic "player invisible" bug.  The setters
+        // silently no-op on a not-yet-loaded shell, so re-apply each frame
+        // until the async load lands (then they're idempotent).
+        for (size_t i = 0; i < scene_.objects.size() &&
+                           i < imported_objects_.size(); ++i) {
+            const auto& so = scene_.objects[i];
+            auto& obj = imported_objects_[i];
+            if (!obj || so.parent_index < 0 ||
+                so.parent_index >= (int)scene_.objects.size()) continue;
+            const std::string& pap =
+                scene_.objects[so.parent_index].asset_path;
+            const bool parent_is_player =
+                pap.size() > 9 &&
+                pap.compare(pap.size() - 9, 9, ".rwplayer") == 0;
+            if (!parent_is_player) continue;
+            if (obj->isReady() && !obj->getUseNodeTransformOnly()) {
+                obj->setUseNodeTransformOnly(true);
+                // TEMP DIAGNOSTICS for "player not visible": render the
+                // mesh flat red (unmissable if any draw reaches the
+                // rasterizer) and tally its draw calls once per second
+                // in the log ([player.draw] lines).  Flip both to false
+                // once the player renders reliably.
+                obj->setDebugForceRed(true);
+                obj->setDebugLogDraws(true);
+                const glm::vec3 t = obj->getInstanceRootTranslation();
+                std::cout << "[scene] player mesh '" << so.name
+                          << "' render config applied (instance at "
+                          << t.x << ", " << t.y << ", " << t.z << ")"
+                          << std::endl;
+            }
+        }
+
         if (menu_->consumeImportRequest()) {
             const std::string chosen = engine::scene::openModelFileDialog(nullptr);
             if (!chosen.empty()) importModelFromFile(chosen);
@@ -9685,11 +10084,146 @@ void RealWorldApplication::drawFrame() {
                         std::string ext = src.extension().string();
                         for (auto& c : ext)
                             c = (char)std::tolower((unsigned char)c);
-                        const bool bakeable =
+                        const bool model_file =
                             (ext == ".fbx" || ext == ".gltf" ||
                              ext == ".glb");
+                        // Skinned models are CHARACTER assets (player /
+                        // NPC rigs): the static bake would freeze them,
+                        // so they import source-form instead.
+                        const bool is_character =
+                            model_file && eh::modelHasSkin(chosen);
+                        const bool bakeable = model_file && !is_character;
 
-                        if (bakeable) {
+                        if (is_character) {
+                            // ── Character import (BAKE-ONLY) ─────────────
+                            // Characters ALWAYS land in the content
+                            // browser's "player" folder:
+                            // content/player/<stem>/ with the same native
+                            // formats every import gets — NO source copy
+                            // (the .gltf/.bin/textures stay where they
+                            // are; meta's source= records the original
+                            // for the skinned runtime load):
+                            //   objects/NNN_name.rwgeo  (v4: bind pose +
+                            //                            joints/weights +
+                            //                            skin table)
+                            //   textures/<name>.rwtex   (BC7 VT tiles)
+                            //   hierarchy.rwhier        (skeleton tree)
+                            // Deliberately NO .rwobj placement refs:
+                            // placing the character resolves through
+                            // source= until the native skinned loader
+                            // lands.
+                            const fs::path group_dir =
+                                fs::path("content") / "player" / src.stem();
+                            std::error_code cic;
+                            fs::create_directories(group_dir, cic);
+
+                            std::vector<eh::BakedObject> baked;
+                            content_import_total_bytes_ = 1;
+                            content_import_done_bytes_  = 0;
+                            const bool ok = eh::bakeModelToRenderReady(
+                                chosen, group_dir.string(), baked,
+                                [this](size_t done, size_t total) {
+                                    content_import_total_bytes_ =
+                                        total ? total : 1;
+                                    content_import_done_bytes_ = done;
+                                });
+                            if (!ok) {
+                                std::cout << "[content] character bake "
+                                             "FAILED for '" << chosen
+                                          << "'" << std::endl;
+                            }
+
+                            if (ok) {
+                                std::error_code rrec;
+                                fs::path group_rel_p = fs::relative(
+                                    group_dir, fs::path("content"), rrec);
+                                if (rrec || group_rel_p.empty())
+                                    group_rel_p = group_dir;
+                                const std::string group_rel =
+                                    group_rel_p.generic_string();
+                                const std::string char_id =
+                                    eh::makeAssetId("character", group_rel,
+                                                    src.stem().string());
+                                std::mt19937_64 rng{
+                                    std::random_device{}() };
+                                char guid[33];
+                                std::snprintf(guid, sizeof(guid),
+                                    "%016llx%016llx",
+                                    (unsigned long long)rng(),
+                                    (unsigned long long)rng());
+                                const auto now_t =
+                                    std::chrono::system_clock::to_time_t(
+                                        std::chrono::system_clock::now());
+                                std::ofstream meta(
+                                    (group_dir / "import.rwmeta").string(),
+                                    std::ios::trunc);
+                                // NOTE: no main= — bake-only imports keep
+                                // no source copy; the skinned runtime
+                                // load resolves through source= (the
+                                // original file) until the native skinned
+                                // loader lands.
+                                meta << "id=" << char_id << "\n"
+                                     << "guid=" << guid << "\n"
+                                     << "source=" << chosen << "\n"
+                                     << "imported_unix="
+                                     << (long long)now_t << "\n"
+                                     << "type=character\n";
+                                if (!baked.empty()) {
+                                    meta << "subobjects_baked=1\n";
+                                    for (const auto& b : baked)
+                                        meta << "subobject=" << b.name
+                                             << "\n";
+                                }
+                                meta.close();
+
+                                // Index row (drop superseded rows for this
+                                // group first — re-imports stay idempotent).
+                                {
+                                    const fs::path index_path =
+                                        fs::path("content") /
+                                        "asset_index.tsv";
+                                    std::vector<std::string> kept;
+                                    {
+                                        std::ifstream in(index_path);
+                                        std::string line;
+                                        const std::string prefix =
+                                            group_rel + "/";
+                                        while (in &&
+                                               std::getline(in, line)) {
+                                            if (line.empty()) continue;
+                                            const size_t p3 =
+                                                line.rfind('\t');
+                                            const std::string lpath =
+                                                (p3 == std::string::npos)
+                                                    ? std::string()
+                                                    : line.substr(p3 + 1);
+                                            if (lpath == group_rel ||
+                                                lpath.rfind(prefix, 0) == 0)
+                                                continue;
+                                            kept.push_back(line);
+                                        }
+                                    }
+                                    std::ofstream outf(index_path,
+                                                       std::ios::trunc);
+                                    for (const auto& l : kept)
+                                        outf << l << "\n";
+                                    outf << char_id << "\tcharacter\t"
+                                         << src.stem().string() << '\t'
+                                         << group_rel << "\n";
+                                }
+                                std::cout << "[content] imported CHARACTER '"
+                                          << chosen << "' -> '"
+                                          << group_dir.string()
+                                          << "' (bake-only, "
+                                          << baked.size()
+                                          << " object(s), id "
+                                          << char_id << ")" << std::endl;
+                            } else {
+                                std::cout << "[content] character import "
+                                             "FAILED for '" << chosen
+                                          << "'" << std::endl;
+                            }
+                        } else if (bakeable) {
                             // ── Bake-only import ─────────────────────────
                             // The source is parsed ONCE and converted into
                             // render-ready assets under content/<stem>/ —
@@ -9994,6 +10528,39 @@ void RealWorldApplication::drawFrame() {
                         objs.push_back(e.path().string());
                 }
                 std::sort(objs.begin(), objs.end());
+
+                // No exploded .rwobj objects — a CHARACTER group (skinned
+                // model imported source-form).  Place its main model file
+                // directly: the engine loads it through the skinned
+                // forward path, animations included.
+                if (objs.empty()) {
+                    std::string model_path;
+                    {
+                        std::ifstream meta(
+                            (fs::path(place_path) / "import.rwmeta")
+                                .string());
+                        std::string line, main_file, source_file;
+                        while (meta && std::getline(meta, line)) {
+                            if (line.rfind("main=", 0) == 0)
+                                main_file = line.substr(5);
+                            else if (line.rfind("source=", 0) == 0)
+                                source_file = line.substr(7);
+                        }
+                        if (!main_file.empty())
+                            model_path = (fs::path(place_path) /
+                                          main_file).string();
+                        else if (!source_file.empty())
+                            model_path = source_file;   // bake-only import
+                    }
+                    if (!model_path.empty()) {
+                        importModelFromFile(model_path);
+                        std::cout << "[scene] placed character '"
+                                  << model_path << "'" << std::endl;
+                    } else {
+                        std::cout << "[scene] nothing placeable in '"
+                                  << place_path << "'" << std::endl;
+                    }
+                }
 
                 // ONE shared translation for the whole group: cancel the
                 // union-bounds offset so the assembly lands in front of

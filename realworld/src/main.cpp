@@ -86,6 +86,40 @@ static bool parseEditorFlag(int argc, char** argv) {
     return false;
 }
 
+// --scene <path>  (or --scene=<path>) : launch the editor with that saved
+// .scene file loaded.  Without it the editor starts with a fresh EMPTY
+// scene — the game-start title UI is only shown when --game is passed.
+static std::string parseSceneFlag(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        const char* a = argv[i];
+        if (a == nullptr) continue;
+        if (std::strcmp(a, "--scene") == 0 ||
+            std::strcmp(a,  "-scene") == 0) {
+            if (i + 1 < argc && argv[i + 1] != nullptr)
+                return std::string(argv[i + 1]);
+        } else if (std::strncmp(a, "--scene=", 8) == 0) {
+            return std::string(a + 8);
+        } else if (std::strncmp(a, "-scene=", 7) == 0) {
+            return std::string(a + 7);
+        }
+    }
+    return std::string();
+}
+
+// --game : opt back into the classic game-start title UI (New Game → bistro
+// streaming flow) instead of the editor scene view.
+static bool parseGameFlag(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        const char* a = argv[i];
+        if (a == nullptr) continue;
+        if (std::strcmp(a, "--game") == 0 ||
+            std::strcmp(a,  "-game") == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // ── Line-routing stream buffer: splits physics/IK/collision log lines into
 // a separate file ──────────────────────────────────────────────────────
 // std::cout carries everything; this buffer inspects each completed LINE and,
@@ -327,11 +361,30 @@ int main(int argc, char** argv) {
 
     auto app = std::make_shared<work::app::RealWorldApplication>();
 
-    const bool editor_mode = parseEditorFlag(argc, argv);
+    // Startup mode:
+    //   --scene <path>  → editor with that saved scene loaded
+    //   (default)       → editor with a fresh empty scene
+    //   --game          → classic game-start title UI
+    const std::string startup_scene = parseSceneFlag(argc, argv);
+    const bool game_mode =
+        parseGameFlag(argc, argv) && startup_scene.empty();
+    const bool editor_mode =
+        game_mode ? parseEditorFlag(argc, argv) : true;
     app->setEditorMode(editor_mode);
-    std::cout << (editor_mode
-        ? "[EDITOR] launching in editor mode (--editor)\n"
-        : "[EDITOR] in-game mode (pass --editor for the editor UI)\n");
+    app->setEmptySceneStartup(!game_mode && startup_scene.empty());
+    app->setStartupScene(startup_scene);
+    if (!startup_scene.empty()) {
+        std::cout << "[EDITOR] launching with scene '" << startup_scene
+                  << "' (--scene)\n";
+    } else if (game_mode) {
+        std::cout << (editor_mode
+            ? "[EDITOR] game-start UI + editor panels (--game --editor)\n"
+            : "[EDITOR] game-start UI (--game)\n");
+    } else {
+        std::cout << "[EDITOR] launching into an empty scene (default; "
+                     "pass --scene <file> to load one, --game for the "
+                     "title UI)\n";
+    }
 
     try {
         app->run();

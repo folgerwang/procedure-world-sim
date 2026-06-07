@@ -67,6 +67,11 @@ public:
     // --editor CLI flag: when true the Menu shows the UE-style docked editor;
     // otherwise the app runs in-game (no panels, full-window viewport).
     void setEditorMode(bool e) { editor_mode_ = e; }
+    // Default startup: boot straight into the editor with a fresh empty
+    // scene (grid shown) instead of the game-start title UI.
+    void setEmptySceneStartup(bool e) { empty_scene_startup_ = e; }
+    // --scene <path>: load this saved .scene at startup (editor mode).
+    void setStartupScene(const std::string& p) { startup_scene_path_ = p; }
     void setFrameBufferResized(bool resized) { framebuffer_resized_ = resized; }
 
     // Screen-space velocity buffer (RG16F, NDC delta).  Populated by
@@ -374,6 +379,11 @@ private:
     std::shared_ptr<ego::DrawableObject> npc_scifi_girl_;
     bool npc_placed_ = false;
     bool editor_mode_ = false;   // set from the --editor CLI flag
+    bool empty_scene_startup_ = false;   // default startup: skip title UI
+    std::string startup_scene_path_;     // --scene <path>: load at startup
+    // One-shot default editor view (frame the world origin so the
+    // coordinate gizmo starts centered in the viewport).
+    bool editor_startup_view_pending_ = false;
 
     // Editor "teleport to object" (Outliner double-click) camera focus.  When
     // active, the camera frames editor_cam_focus_center_ from a distance scaled
@@ -381,6 +391,18 @@ private:
     bool      editor_cam_focus_active_ = false;
     glm::vec3 editor_cam_focus_center_ = glm::vec3(0.0f);
     float     editor_cam_focus_dist_   = 3.0f;
+
+    // Editor "view through scene camera" (Outliner double-click on a camera
+    // object): the view camera snaps to the camera object's exact pose and
+    // holds it; pressing WASD exits back to the free camera.
+    bool      editor_campose_active_ = false;
+    glm::vec3 editor_campose_pos_    = glm::vec3(0.0f);
+    glm::vec3 editor_campose_dir_    = glm::vec3(0.0f, 0.0f, 1.0f);
+    // Camera→player follow link while looking through a linked camera:
+    // scene index of the player object (-1 = free) + the authored
+    // camera-to-player offset captured at snap time.
+    int       editor_campose_follow_ = -1;
+    glm::vec3 editor_campose_offset_ = glm::vec3(0.0f);
 
     // ── Bone-link sticks ──────────────────────────────────────────────
     // One stretched debug-cube per non-root joint, drawn between its
