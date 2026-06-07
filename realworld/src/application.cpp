@@ -256,7 +256,7 @@ void RealWorldApplication::initWindow() {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-    window_ = glfwCreateWindow(kWindowSizeX, kWindowSizeY, "Real World", nullptr, nullptr);
+    window_ = glfwCreateWindow(kWindowSizeX, kWindowSizeY, "AI Real World", nullptr, nullptr);
     glfwSetWindowUserPointer(window_, this);
     glfwSetFramebufferSizeCallback(window_, framebufferResizeCallback);
     glfwSetKeyCallback(window_, keyInputCallback);
