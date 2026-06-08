@@ -19,6 +19,13 @@ Usage:
     python flux_generate.py --prompt-file prompt.txt --out img.png \
         --width 1024 --height 1024 --steps 28 --guidance 4.0 --seed -1
 
+  Reference-image conditioning (FLUX.2's native ControlNet-style capability,
+  no extra weights):
+    python flux_generate.py --prompt-file p.txt --out img.png \
+        --ref-image character.png --ref-image pose.png
+  The prompt describes how to use the references (edit / restyle / keep the
+  same subject in a new pose / match a layout); up to 4 are accepted.
+
 Notes:
   * Needs diffusers >=0.37.0.dev0 (Flux2KleinPipeline / Qwen3) - install from
     source: pip install -U "git+https://github.com/huggingface/diffusers".
@@ -101,6 +108,13 @@ def main() -> None:
                     help="read the prompt from this UTF-8 file (avoids shell "
                          "escaping)")
     ap.add_argument("--out", required=True, help="output PNG path")
+    ap.add_argument("--ref-image", action="append", default=[],
+                    help="reference image path for FLUX.2's native image "
+                         "conditioning (repeatable, up to 4).  The prompt "
+                         "describes how to use the reference(s): edits, "
+                         "style transfer, layout guidance — klein's "
+                         "built-in ControlNet-style capability, no extra "
+                         "weights needed.")
     ap.add_argument("--width", type=int, default=1024)
     ap.add_argument("--height", type=int, default=1024)
     ap.add_argument("--steps", type=int, default=28)
@@ -198,15 +212,37 @@ def main() -> None:
         if args.seed >= 0:
             gen = torch.Generator(device="cuda").manual_seed(int(args.seed))
 
+        # ── Reference images (FLUX.2 native image conditioning) ─────────────
+        # Loaded as PIL and handed to the pipeline's `image` argument; the
+        # reference tokens join the denoise pass so the prompt can steer
+        # edits / style / structure relative to them.
+        ref_images = None
+        if args.ref_image:
+            from PIL import Image as PILImage
+            ref_images = []
+            for rp in args.ref_image[:4]:
+                if not os.path.exists(rp):
+                    _fail(out, f"reference image not found: {rp}")
+                img = PILImage.open(rp).convert("RGB")
+                # Keep references modest — they ride through the VAE and
+                # attention; gigantic inputs only cost VRAM/time.
+                img.thumbnail((1024, 1024), PILImage.LANCZOS)
+                ref_images.append(img)
+            print(f"[flux] conditioning on {len(ref_images)} reference "
+                  f"image(s)", flush=True)
+
         print(f"[flux] generating {w}x{h}, {args.steps} steps ...", flush=True)
-        image = pipe(
+        call_kwargs = dict(
             prompt=prompt,
             num_inference_steps=int(args.steps),
             guidance_scale=float(args.guidance),
             height=h,
             width=w,
             generator=gen,
-        ).images[0]
+        )
+        if ref_images is not None:
+            call_kwargs["image"] = ref_images
+        image = pipe(**call_kwargs).images[0]
 
         # Atomic write so the editor's folder watcher never sees a partial PNG.
         tmp = out + ".tmp.png"

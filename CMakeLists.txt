@@ -137,7 +137,7 @@ endif()
 # Offline TTS backend for engine/audio/tts_engine.cpp (Piper-style VITS
 # voices, CPU synthesis).  Pinned release; the shared-MD build matches the
 # project's /MD runtime.  If absent, tts_engine.cpp compiles to no-op stubs.
-# The voice MODEL is separate — Setup.bat downloads one to assets/models/tts.
+# The voice MODEL is separate — Setup.bat downloads one to assets/ml_models/tts.
 set(SHERPA_VER  "v1.12.36")
 set(SHERPA_DIR  "${TP_DIR}/sherpa-onnx")
 set(SHERPA_HDR  "${SHERPA_DIR}/include/sherpa-onnx/c-api/c-api.h")

@@ -13,7 +13,7 @@ echo    * LibTorch download (if not already present)
 echo    * Ollama install + qwen3.5:2b pull (Mesh Category classifier)
 echo    * FLUX.2-klein-4B image generator install + weight download (Content Browser)
 echo    * Stable Audio Open text-to-audio generator install + weights (Generate Audio)
-echo    * Text-to-voice Piper voice model download (in-game dialog speech)
+echo    * Text-to-voice voices download -- English Piper, lowest-RAM (-skip-tts to skip)
 echo.
 echo  Run GenerateProjectFiles.bat afterwards to produce the VS
 echo  solution. GenerateProjectFiles.bat also invokes this script
@@ -44,11 +44,17 @@ rem                         default; reuses the same CUDA torch + HF login as
 rem                         FLUX. fp8-quantized DiT at generation time.
 rem   -skip-tts           Skip the text-to-voice VOICE MODEL download
 rem                         (vits-piper-en_US-amy-medium, ~65MB, ungated) into
-rem                         realworld\assets\models\tts.  The sherpa-onnx SDK
+rem                         realworld\assets\ml_models\tts.  The sherpa-onnx SDK
 rem                         itself is fetched by CMake at configure time.
-rem   -tts-voice=<name>   sherpa-onnx tts-models release asset to download
-rem                         (default: vits-piper-en_US-amy-medium).  Any
-rem                         Piper/VITS voice from that release tag works.
+rem   -tts-voice=<list>   sherpa-onnx tts-models voices to download.
+rem                         DEFAULT: all:vits-piper-en_  (English Piper only,
+rem                         smallest int8 model per voice).  Alternatives:
+rem                           all           every voice/language (~several GB)
+rem                           all:<substr>  filtered subset
+rem                           <a>,<b>,...    explicit COMMA-SEPARATED list
+rem                         Pick one at runtime with the RW_TTS_VOICE env var
+rem                         (substring match); multiple installed = random
+rem                         per launch.  Skip the download with -skip-tts.
 rem   -cuda=<wheel>       CUDA wheel tag (default: cu128). Examples:
 rem                         cu128  -- works with all current NVIDIA GPUs incl.
 rem                                   Blackwell/RTX 50-series (sm_120). DEFAULT.
@@ -70,7 +76,10 @@ set "CUDA_WHEEL=cu128"
 set "SKIP_FLUX=0"
 set "SKIP_AUDIOGEN=0"
 set "SKIP_TTS=0"
-set "TTS_VOICE=vits-piper-en_US-amy-medium"
+rem Default downloads the ENGLISH Piper voices only, smallest (lowest-RAM,
+rem int8) model per voice.  Override: -tts-voice=all (every language),
+rem -tts-voice=all:<substr> (filtered), an explicit comma list, or -skip-tts.
+set "TTS_VOICE=all:vits-piper-en_"
 
 :arg_loop
 if "%~1"=="" goto :arg_done
@@ -687,15 +696,21 @@ echo.
 
 :audiogen_done
 
-rem ── Text-to-voice VOICE MODEL (sherpa-onnx Piper voice) ──────────────────────
+rem ── Text-to-voice VOICE MODEL(s) (sherpa-onnx Piper voice) ───────────────────
 rem   The in-game text-to-voice (dialog lines) runs sherpa-onnx on the CPU
 rem   with a Piper-style VITS voice.  The SDK (DLLs + import lib) is fetched
 rem   by CMake at configure time; THIS step downloads the ungated ~65MB voice
-rem   model into realworld\assets\models\tts\.  Swap voices with
-rem   -tts-voice=<asset> (any voice from the sherpa-onnx "tts-models" release
-rem   tag, e.g. vits-piper-en_US-lessac-medium).
-set "TTS_DIR=realworld\assets\models\tts"
-set "TTS_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/!TTS_VOICE!.tar.bz2"
+rem   model(s) into realworld\assets\ml_models\tts\.
+rem
+rem   -tts-voice accepts a COMMA-SEPARATED list, so you can install several
+rem   and switch at runtime with the RW_TTS_VOICE env var (substring match on
+rem   the folder name).  Examples (any asset from the sherpa-onnx "tts-models"
+rem   release tag):
+rem     female (default):  vits-piper-en_US-amy-medium
+rem     male:              vits-piper-en_US-ryan-medium
+rem     male (alt):        vits-piper-en_US-joe-medium
+rem     both at once:      -tts-voice=vits-piper-en_US-amy-medium,vits-piper-en_US-ryan-medium
+set "TTS_DIR=realworld\assets\ml_models\tts"
 
 if "!SKIP_TTS!"=="1" (
     echo [INFO]  Skipping TTS voice model ^(-skip-tts^) -- in-game text-to-voice
@@ -703,35 +718,64 @@ if "!SKIP_TTS!"=="1" (
     goto :tts_done
 )
 
-if exist "!TTS_DIR!\!TTS_VOICE!" (
-    echo [INFO]  TTS voice already present: !TTS_DIR!\!TTS_VOICE!
-    goto :tts_done
-)
-
-echo.
-echo -- Text-to-voice voice model -------------------------------
-echo [INFO]  Downloading !TTS_VOICE! ^(~65MB, ungated^)
-echo [INFO]  URL: !TTS_URL!
 if not exist "!TTS_DIR!" mkdir "!TTS_DIR!"
+echo.
+echo -- Text-to-voice voice model^(s^) ---------------------------
 
-set "TTS_TAR=%TEMP%\!TTS_VOICE!.tar.bz2"
-where curl >nul 2>&1
-if not errorlevel 1 (
-    curl -L --progress-bar -o "!TTS_TAR!" "!TTS_URL!"
-) else (
-    powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '!TTS_URL!' -OutFile '!TTS_TAR!'"
-)
-
-if not exist "!TTS_TAR!" (
-    echo [WARN]  Voice model download failed.  Text-to-voice stays disabled.
-    echo         Download manually from the sherpa-onnx "tts-models" release
-    echo         and extract into !TTS_DIR!
+rem Special value: -tts-voice=all downloads EVERY voice in the release
+rem (~130+, several GB) via the Python enumerator.  Also accepts
+rem -tts-voice=all:<substr> to bulk-download a filtered subset, e.g.
+rem   -tts-voice=all:vits-piper-en   (all English Piper voices)
+if /i "!TTS_VOICE:~0,3!"=="all" (
+    where python >nul 2>&1
+    if errorlevel 1 (
+        echo [WARN]  Python not found -- cannot bulk-download voices.
+        goto :tts_done
+    )
+    set "TTS_FILTER=!TTS_VOICE:~4!"
+    if "!TTS_VOICE!"=="all" set "TTS_FILTER="
+    if "!TTS_FILTER!"=="" (
+        echo [INFO]  Downloading ALL voices ^(~130+, several GB^)...
+        python realworld\tools\tts\download_voices.py --all
+    ) else (
+        echo [INFO]  Downloading voices matching '!TTS_FILTER!'...
+        python realworld\tools\tts\download_voices.py --filter "!TTS_FILTER!"
+    )
+    echo [INFO]  Default voice = first folder alphabetically; override at
+    echo         runtime with RW_TTS_VOICE ^(e.g. set RW_TTS_VOICE=ryan^).
     goto :tts_done
 )
 
-rem Windows 10+ ships bsdtar as tar.exe; it auto-detects bz2 compression.
-tar -xf "!TTS_TAR!" -C "!TTS_DIR!"
-del "!TTS_TAR!" 2>nul
+rem Loop over the comma/space-separated voice list.
+for %%V in (!TTS_VOICE!) do (
+    if exist "!TTS_DIR!\%%V" (
+        echo [INFO]  Voice already present: %%V
+    ) else (
+        echo [INFO]  Downloading %%V ^(~65MB, ungated^)
+        set "TTS_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/%%V.tar.bz2"
+        set "TTS_TAR=%TEMP%\%%V.tar.bz2"
+        where curl >nul 2>&1
+        if not errorlevel 1 (
+            curl -L --progress-bar -o "!TTS_TAR!" "!TTS_URL!"
+        ) else (
+            powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '!TTS_URL!' -OutFile '!TTS_TAR!'"
+        )
+        if exist "!TTS_TAR!" (
+            rem Windows 10+ ships bsdtar as tar.exe; auto-detects bz2.
+            tar -xf "!TTS_TAR!" -C "!TTS_DIR!"
+            del "!TTS_TAR!" 2>nul
+            if exist "!TTS_DIR!\%%V" (
+                echo [INFO]  Voice installed: %%V
+            ) else (
+                echo [WARN]  Extraction failed for %%V
+            )
+        ) else (
+            echo [WARN]  Download failed for %%V -- skipping.
+        )
+    )
+)
+echo [INFO]  Default voice = first folder alphabetically; override at runtime
+echo         with the RW_TTS_VOICE env var ^(e.g. set RW_TTS_VOICE=ryan^).
 
 if exist "!TTS_DIR!\!TTS_VOICE!" (
     echo [INFO]  TTS voice installed: !TTS_DIR!\!TTS_VOICE!

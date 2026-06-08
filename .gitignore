@@ -267,8 +267,10 @@ realworld/src/sim_engine/third_parties/libtorch/
 realworld/assets/models/*.pt
 realworld/assets/models/*.onnx
 
-# Text-to-voice Piper voice models (Setup.bat downloads, ~65 MB each)
-realworld/assets/models/tts/
+# Text-to-voice Piper voice models (Setup.bat downloads).
+# Keep the folder's README (voice list + custom-voice instructions) tracked.
+realworld/assets/ml_models/tts/*
+!realworld/assets/ml_models/tts/README.md
 
 # Generator scratch sidecars (prompt files / error tracebacks)
 **/.flux_tmp/

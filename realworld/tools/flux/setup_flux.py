@@ -27,19 +27,77 @@ MODEL = os.environ.get("FLUX_MODEL", "black-forest-labs/FLUX.2-klein-4B")
 TOKEN_ENV_VARS = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACEHUB_API_TOKEN")
 
 
-def run(cmd) -> int:
+def run(cmd, retries: int = 1) -> int:
+    """Run a command, optionally retrying with backoff.  Used to ride out the
+    intermittent GitHub/PyPI 504s that otherwise abort the whole setup."""
+    import time
     print("[flux-setup] $", " ".join(cmd), flush=True)
-    return subprocess.call(cmd)
+    rc = subprocess.call(cmd)
+    attempt = 1
+    while rc != 0 and attempt < retries:
+        wait = 2 ** attempt
+        print(f"[flux-setup] command failed (rc={rc}); retry "
+              f"{attempt}/{retries - 1} after {wait}s...", flush=True)
+        time.sleep(wait)
+        rc = subprocess.call(cmd)
+        attempt += 1
+    return rc
+
+
+# The single flaky line in requirements.txt: diffusers from the GitHub zipball.
+# Everything else is small, normal PyPI wheels.
+_DIFFUSERS_URL = (
+    "https://github.com/huggingface/diffusers/archive/refs/heads/main.zip")
+
+
+def _diffusers_ready(py: str) -> bool:
+    """True if a diffusers with the klein pipeline is already importable in
+    `py` — then we can skip re-downloading the big GitHub zipball entirely."""
+    return subprocess.call(
+        [py, "-c", "from diffusers import Flux2KleinPipeline"]) == 0
 
 
 def install_deps(py: str) -> None:
     # NOT torch -- Setup.bat installs the CUDA torch wheel already; if you run
     # this standalone, install torch first from pytorch.org.
+    #
+    # Install the normal PyPI deps from requirements.txt EXCEPT the diffusers
+    # zipball line (filtered out), so a flaky GitHub download can't block the
+    # cheap wheels.
+    req_lines = []
+    for ln in (HERE / "requirements.txt").read_text().splitlines():
+        # Strip inline comments — pip -r tolerates them, but we pass each
+        # requirement as a direct arg where a trailing "# ..." is a syntax
+        # error.  (URLs have no '#'-fragment here, so this is safe.)
+        s = ln.split("#", 1)[0].strip()
+        if not s:
+            continue
+        if "diffusers" in s and "github.com" in s:
+            continue   # handled separately below
+        req_lines.append(s)
+
     rc = run([py, "-m", "pip", "install", "--disable-pip-version-check",
-              "-r", str(HERE / "requirements.txt")])
+              *req_lines], retries=3)
     if rc != 0:
         print("[flux-setup] dependency install FAILED. If torch is missing, "
               "install the CUDA wheel from https://pytorch.org/get-started/locally/",
+              file=sys.stderr)
+        sys.exit(1)
+
+    # diffusers: only fetch the GitHub zipball if the klein pipeline isn't
+    # already importable (the audiogen setup also installs diffusers main, so
+    # on a combined setup it's usually already here).
+    if _diffusers_ready(py):
+        print("[flux-setup] diffusers (klein pipeline) already present -- "
+              "skipping the GitHub download.", flush=True)
+        return
+    print("[flux-setup] installing diffusers from source (GitHub zipball)...",
+          flush=True)
+    rc = run([py, "-m", "pip", "install", "--disable-pip-version-check",
+              _DIFFUSERS_URL], retries=4)
+    if rc != 0:
+        print("[flux-setup] diffusers install FAILED (GitHub 504s are "
+              "transient -- just re-run setup_flux.py to retry).",
               file=sys.stderr)
         sys.exit(1)
 
