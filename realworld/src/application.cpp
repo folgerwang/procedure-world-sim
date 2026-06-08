@@ -4329,6 +4329,23 @@ void RealWorldApplication::drawScene(
             if (m && m->isReady()) m->updateBuffers(cmd_buf);
         }
 
+        // ── Editor-placed skinned characters ──────────────────────────
+        // Imported wrappers were never in any updateBuffers loop, so
+        // their DEVICE_LOCAL instance_buffer_ kept its UNDEFINED
+        // creation contents — the vertex shader's in_loc_rot_mat_* /
+        // in_loc_pos_scale instance attributes read garbage and every
+        // vertex went nowhere ("player not visible" — draws issued,
+        // zero pixels).  Dispatch the per-frame compute for ready
+        // skinned wrappers: with use_node_transform_only set it writes
+        // a clean IDENTITY instance (placement rides in model_mat via
+        // the per-draw instance-world staging) and refreshes the
+        // indirect-draw commands.  Static placed meshes are untouched.
+        for (auto& w : imported_objects_) {
+            if (!w || !w->isReady()) continue;
+            if (!w->getUseNodeTransformOnly()) continue;
+            w->updateBuffers(cmd_buf);
+        }
+
         // Bistro scene buffer updates — enabled once game has started.
         if (bistro_exterior_scene_ && bistro_exterior_scene_->isReady()) {
             bistro_exterior_scene_->updateBuffers(cmd_buf);
@@ -8776,6 +8793,24 @@ void RealWorldApplication::drawFrame() {
             npc_scifi_girl_->update(device_, current_time_);
         }
 
+        // ── Editor-placed skinned characters ──────────────────────────
+        // Imported wrappers never went through this update loop, so
+        // DrawableData::updateJoints never ran for them: the skin
+        // joints_buffer_ stayed unfilled, the weighted skin matrix was
+        // garbage, and every skinned vertex degenerated — draws were
+        // issued but produced zero pixels ("player not visible").
+        // update() here rebuilds the node cached matrices and uploads
+        // bind-pose joint matrices; setUseNodeTransformOnly keeps the
+        // imported animation timeline suppressed.  Static placed meshes
+        // don't need it (no skins, node matrices baked at load) and are
+        // skipped.  Shared-DrawableData dedup inside update() keeps the
+        // cost one refresh per unique rig per frame.
+        for (auto& w : imported_objects_) {
+            if (!w || !w->isReady()) continue;
+            if (w->getDrawableData().skins_.empty()) continue;
+            w->update(device_, current_time_);
+        }
+
         // ── Foot debug markers ─────────────────────────────────────────
         // Pin the two red-cube markers to the player rig's left_foot /
         // right_foot bones.  Must run AFTER player_object_->update()
@@ -10023,10 +10058,12 @@ void RealWorldApplication::drawFrame() {
                             scene_.objects.push_back(ms);
                             imported_objects_.push_back(obj);
                         }
-                        std::cout << "[scene] attached skeleton mesh '"
-                                  << mesh_path << "' to '"
-                                  << scene_.objects[p_idx].name << "'"
-                                  << std::endl;
+                        std::printf(
+                            "[scene] attached skeleton mesh '%s' to "
+                            "'%s'\n",
+                            mesh_path.c_str(),
+                            scene_.objects[p_idx].name.c_str());
+                        std::fflush(stdout);
                     }
                 }
             }
@@ -10046,41 +10083,32 @@ void RealWorldApplication::drawFrame() {
             }
         }
 
-        // ── Player skeleton-mesh render config (applies once ready) ──────
-        // Skinned characters need setUseNodeTransformOnly(true) to render
-        // at their instance transform: without it the GPU instance buffer
-        // reads the shared game-objects buffer's slot-0 position (camera-
-        // tracking + gravity drift) and double-transforms the rig clear
-        // off-screen — the historic "player invisible" bug.  The setters
-        // silently no-op on a not-yet-loaded shell, so re-apply each frame
-        // until the async load lands (then they're idempotent).
-        for (size_t i = 0; i < scene_.objects.size() &&
-                           i < imported_objects_.size(); ++i) {
-            const auto& so = scene_.objects[i];
+        // ── Skinned drawable render config (applies once ready) ──────────
+        // ANY placed skinned character needs setUseNodeTransformOnly(true)
+        // to render at its instance transform: without it the GPU instance
+        // buffer reads the shared game-objects buffer's slot-0 position
+        // (camera-tracking + gravity drift) and double-transforms the rig
+        // clear off-screen — the historic "player invisible" bug.  Keyed
+        // on the DATA (has skins), not the scene parent, so player
+        // skeleton meshes and directly placed characters are covered
+        // alike.
+        for (size_t i = 0; i < imported_objects_.size(); ++i) {
             auto& obj = imported_objects_[i];
-            if (!obj || so.parent_index < 0 ||
-                so.parent_index >= (int)scene_.objects.size()) continue;
-            const std::string& pap =
-                scene_.objects[so.parent_index].asset_path;
-            const bool parent_is_player =
-                pap.size() > 9 &&
-                pap.compare(pap.size() - 9, 9, ".rwplayer") == 0;
-            if (!parent_is_player) continue;
-            if (obj->isReady() && !obj->getUseNodeTransformOnly()) {
-                obj->setUseNodeTransformOnly(true);
-                // TEMP DIAGNOSTICS for "player not visible": render the
-                // mesh flat red (unmissable if any draw reaches the
-                // rasterizer) and tally its draw calls once per second
-                // in the log ([player.draw] lines).  Flip both to false
-                // once the player renders reliably.
-                obj->setDebugForceRed(true);
-                obj->setDebugLogDraws(true);
-                const glm::vec3 t = obj->getInstanceRootTranslation();
-                std::cout << "[scene] player mesh '" << so.name
-                          << "' render config applied (instance at "
-                          << t.x << ", " << t.y << ", " << t.z << ")"
-                          << std::endl;
-            }
+            if (!obj || !obj->isReady()) continue;
+            if (obj->getUseNodeTransformOnly()) continue;
+            if (obj->getDrawableData().skins_.empty()) continue;
+            obj->setUseNodeTransformOnly(true);
+            const glm::vec3 t = obj->getInstanceRootTranslation();
+            const std::string nm =
+                (i < scene_.objects.size()) ? scene_.objects[i].name
+                                            : std::string("?");
+            // printf (not std::cout): the user's log capture only
+            // receives the stdio stream — std::cout lines never show.
+            std::printf(
+                "[scene] skinned mesh '%s' render config applied "
+                "(instance at %.2f, %.2f, %.2f)\n",
+                nm.c_str(), t.x, t.y, t.z);
+            std::fflush(stdout);
         }
 
         if (menu_->consumeImportRequest()) {
@@ -10090,12 +10118,23 @@ void RealWorldApplication::drawFrame() {
         std::string save_name;
         if (menu_->consumeSaveSceneRequest(save_name)) {
             if (!save_name.empty()) scene_.name = save_name;
+            // Scenes live with the rest of the project assets under
+            // content/scene/<name>.scene (Load points its dialog there).
             std::error_code ec;
-            std::filesystem::create_directories("scenes", ec);
-            saveSceneToFile("scenes/" + scene_.name + ".scene");
+            std::filesystem::create_directories("content/scene", ec);
+            saveSceneToFile("content/scene/" + scene_.name + ".scene");
         }
         if (menu_->consumeLoadSceneRequest()) {
-            const std::string chosen = engine::scene::openSceneFileDialog(nullptr);
+            // Open the dialog in content/scene — where Save Scene
+            // writes — so saved scenes are one click away.  Absolute
+            // path: lpstrInitialDir does not resolve relative paths
+            // reliably across Windows versions.
+            std::error_code ec;
+            std::filesystem::create_directories("content/scene", ec);
+            const std::string scene_dir =
+                std::filesystem::absolute("content/scene", ec).string();
+            const std::string chosen = engine::scene::openSceneFileDialog(
+                nullptr, scene_dir.c_str());
             if (!chosen.empty() && loadSceneFromFile(chosen)) {
                 menu_->setSceneName(scene_.name);
             }
