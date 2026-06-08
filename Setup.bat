@@ -12,6 +12,8 @@ echo    * Auto-rig ML model export
 echo    * LibTorch download (if not already present)
 echo    * Ollama install + qwen3.5:2b pull (Mesh Category classifier)
 echo    * FLUX.2-klein-4B image generator install + weight download (Content Browser)
+echo    * Stable Audio Open text-to-audio generator install + weights (Generate Audio)
+echo    * Text-to-voice Piper voice model download (in-game dialog speech)
 echo.
 echo  Run GenerateProjectFiles.bat afterwards to produce the VS
 echo  solution. GenerateProjectFiles.bat also invokes this script
@@ -35,6 +37,18 @@ rem                         + the gated FLUX.2-klein-4B weights, ~16GB). ON by
 rem                         default; reuses the CUDA torch installed above. Runs
 rem                         the Qwen3 encoder on CPU + an fp8 transformer on the
 rem                         GPU (~5-6GB VRAM). Needs a Hugging Face login.
+rem   -skip-audiogen      Skip the Stable Audio Open text-to-audio generator
+rem                         install + weight prefetch (gated, ~5GB; powers the
+rem                         Content Browser's "Generate Audio..."). ON by
+rem                         default; reuses the same CUDA torch + HF login as
+rem                         FLUX. fp8-quantized DiT at generation time.
+rem   -skip-tts           Skip the text-to-voice VOICE MODEL download
+rem                         (vits-piper-en_US-amy-medium, ~65MB, ungated) into
+rem                         realworld\assets\models\tts.  The sherpa-onnx SDK
+rem                         itself is fetched by CMake at configure time.
+rem   -tts-voice=<name>   sherpa-onnx tts-models release asset to download
+rem                         (default: vits-piper-en_US-amy-medium).  Any
+rem                         Piper/VITS voice from that release tag works.
 rem   -cuda=<wheel>       CUDA wheel tag (default: cu128). Examples:
 rem                         cu128  -- works with all current NVIDIA GPUs incl.
 rem                                   Blackwell/RTX 50-series (sm_120). DEFAULT.
@@ -54,6 +68,9 @@ set "OLLAMA_MODEL_ARG="
 set "SKIP_CUDA=0"
 set "CUDA_WHEEL=cu128"
 set "SKIP_FLUX=0"
+set "SKIP_AUDIOGEN=0"
+set "SKIP_TTS=0"
+set "TTS_VOICE=vits-piper-en_US-amy-medium"
 
 :arg_loop
 if "%~1"=="" goto :arg_done
@@ -68,6 +85,9 @@ if /i "!_a:~0,14!"=="-ollama-model=" set "OLLAMA_MODEL_ARG=!_a:~14!"
 if /i "!_a!"=="-skip-cuda" set "SKIP_CUDA=1"
 if /i "!_a:~0,6!"=="-cuda=" set "CUDA_WHEEL=!_a:~6!"
 if /i "!_a!"=="-skip-flux" set "SKIP_FLUX=1"
+if /i "!_a!"=="-skip-audiogen" set "SKIP_AUDIOGEN=1"
+if /i "!_a!"=="-skip-tts" set "SKIP_TTS=1"
+if /i "!_a:~0,11!"=="-tts-voice=" set "TTS_VOICE=!_a:~11!"
 shift
 goto :arg_loop
 :arg_done
@@ -527,6 +547,66 @@ echo.
 
 :ollama_done
 
+rem ── Hugging Face access (gated weights: FLUX.2 + Stable Audio Open) ──────────
+rem   Both generators download GATED weights, which needs (a) the licence
+rem   accepted on each model page while logged into your HF account, and
+rem   (b) a read token stored locally.  This section detects an existing
+rem   login; otherwise it opens the model pages + token page in the browser
+rem   and prompts for the token.  Leaving the prompt empty skips (the
+rem   generator setups below will then fail with instructions).
+if "!SKIP_FLUX!"=="1" if "!SKIP_AUDIOGEN!"=="1" goto :hf_done
+
+where python >nul 2>&1
+if errorlevel 1 goto :hf_done
+
+rem huggingface_hub may not be installed yet (it normally rides in with
+rem diffusers, which the generator setups below install) -- make sure the
+rem login/whoami calls in this section can import it.
+python -c "import huggingface_hub" >nul 2>&1
+if errorlevel 1 (
+    echo [INFO]  Installing huggingface_hub for the login step...
+    python -m pip install --disable-pip-version-check -q huggingface_hub
+)
+
+rem Existing login (env token or cached ~/.cache/huggingface/token)?
+python -c "from huggingface_hub import whoami; whoami()" >nul 2>&1
+if not errorlevel 1 (
+    echo [INFO]  Hugging Face: already logged in -- skipping token prompt.
+    echo [INFO]  If a weight download still reports 403/GatedRepoError, open
+    echo         the model page and click "Agree" with THIS account:
+    echo            https://huggingface.co/black-forest-labs/FLUX.2-klein-4B
+    echo            https://huggingface.co/stabilityai/stable-audio-open-1.0
+    goto :hf_done
+)
+
+echo.
+echo -- Hugging Face access ------------------------------------
+echo [INFO]  The image / audio generators use GATED model weights.
+echo [INFO]  Opening the model pages -- click "Agree and access repository"
+echo         on BOTH while logged into your Hugging Face account:
+start "" "https://huggingface.co/black-forest-labs/FLUX.2-klein-4B"
+start "" "https://huggingface.co/stabilityai/stable-audio-open-1.0"
+echo [INFO]  Then create a READ token (page also opened) and paste it below:
+start "" "https://huggingface.co/settings/tokens"
+echo.
+set "HF_TOKEN_IN="
+set /p "HF_TOKEN_IN=  Paste HF token (hf_...), or press Enter to skip: "
+if "!HF_TOKEN_IN!"=="" (
+    echo [WARN]  Skipped Hugging Face login -- gated weight downloads will
+    echo         fail until you run:  huggingface-cli login
+    goto :hf_done
+)
+python -c "from huggingface_hub import login; login(token=r'!HF_TOKEN_IN!')" 2>nul
+if errorlevel 1 (
+    echo [WARN]  Login failed -- check the token and run:  huggingface-cli login
+) else (
+    echo [INFO]  Hugging Face login stored.
+)
+echo -----------------------------------------------------------
+echo.
+
+:hf_done
+
 rem ── FLUX.2-klein-4B text-to-image generator ──────────────────────────────────
 rem   Installs diffusers-from-source + bitsandbytes (reusing the CUDA torch
 rem   installed above) and downloads the gated FLUX.2-klein-4B weights (~16GB),
@@ -565,6 +645,103 @@ echo -----------------------------------------------------------
 echo.
 
 :flux_done
+
+rem ── Stable Audio Open text-to-audio generator ────────────────────────────────
+rem   Installs diffusers/soundfile/optimum-quanto (reusing the CUDA torch from
+rem   above) and prefetches the gated Stable Audio Open 1.0 weights (~5GB), so
+rem   the editor's Content Browser can generate music / sound effects
+rem   (right-click a folder -> Generate Audio...).  The DiT is fp8-quantized
+rem   (quanto) at generation time and shares the GPU with the engine.
+rem   ON by default -- needs an NVIDIA GPU and the SAME Hugging Face login as
+rem   FLUX (accept the model licence first).
+rem   Skip with:  Setup.bat -skip-audiogen
+if "!SKIP_AUDIOGEN!"=="1" (
+    echo [INFO]  Skipping audio generator ^(-skip-audiogen^) -- the Content
+    echo         Browser's "Generate Audio..." will not work until you run:
+    echo         python realworld\tools\audiogen\setup_audiogen.py
+    goto :audiogen_done
+)
+
+where python >nul 2>&1
+if errorlevel 1 (
+    echo [WARN]  Python not found -- cannot set up the audio generator.
+    goto :audiogen_done
+)
+
+echo.
+echo -- Stable Audio Open text-to-audio generator --------------
+echo [INFO]  Installing deps + prefetching Stable Audio Open 1.0 weights ^(gated, ~5GB^).
+echo [INFO]  Accept the licence and log in FIRST, otherwise the download fails:
+echo            https://huggingface.co/stabilityai/stable-audio-open-1.0
+echo            huggingface-cli login        ^(or set the HF_TOKEN env var^)
+python realworld\tools\audiogen\setup_audiogen.py
+if errorlevel 1 (
+    echo [WARN]  Audio generator setup failed -- see messages above.  Re-run
+    echo         after accepting the licence / logging in:
+    echo            python realworld\tools\audiogen\setup_audiogen.py
+) else (
+    echo [INFO]  Audio generator ready.
+)
+echo -----------------------------------------------------------
+echo.
+
+:audiogen_done
+
+rem ── Text-to-voice VOICE MODEL (sherpa-onnx Piper voice) ──────────────────────
+rem   The in-game text-to-voice (dialog lines) runs sherpa-onnx on the CPU
+rem   with a Piper-style VITS voice.  The SDK (DLLs + import lib) is fetched
+rem   by CMake at configure time; THIS step downloads the ungated ~65MB voice
+rem   model into realworld\assets\models\tts\.  Swap voices with
+rem   -tts-voice=<asset> (any voice from the sherpa-onnx "tts-models" release
+rem   tag, e.g. vits-piper-en_US-lessac-medium).
+set "TTS_DIR=realworld\assets\models\tts"
+set "TTS_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/!TTS_VOICE!.tar.bz2"
+
+if "!SKIP_TTS!"=="1" (
+    echo [INFO]  Skipping TTS voice model ^(-skip-tts^) -- in-game text-to-voice
+    echo         stays disabled until a voice is placed in !TTS_DIR!
+    goto :tts_done
+)
+
+if exist "!TTS_DIR!\!TTS_VOICE!" (
+    echo [INFO]  TTS voice already present: !TTS_DIR!\!TTS_VOICE!
+    goto :tts_done
+)
+
+echo.
+echo -- Text-to-voice voice model -------------------------------
+echo [INFO]  Downloading !TTS_VOICE! ^(~65MB, ungated^)
+echo [INFO]  URL: !TTS_URL!
+if not exist "!TTS_DIR!" mkdir "!TTS_DIR!"
+
+set "TTS_TAR=%TEMP%\!TTS_VOICE!.tar.bz2"
+where curl >nul 2>&1
+if not errorlevel 1 (
+    curl -L --progress-bar -o "!TTS_TAR!" "!TTS_URL!"
+) else (
+    powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '!TTS_URL!' -OutFile '!TTS_TAR!'"
+)
+
+if not exist "!TTS_TAR!" (
+    echo [WARN]  Voice model download failed.  Text-to-voice stays disabled.
+    echo         Download manually from the sherpa-onnx "tts-models" release
+    echo         and extract into !TTS_DIR!
+    goto :tts_done
+)
+
+rem Windows 10+ ships bsdtar as tar.exe; it auto-detects bz2 compression.
+tar -xf "!TTS_TAR!" -C "!TTS_DIR!"
+del "!TTS_TAR!" 2>nul
+
+if exist "!TTS_DIR!\!TTS_VOICE!" (
+    echo [INFO]  TTS voice installed: !TTS_DIR!\!TTS_VOICE!
+) else (
+    echo [WARN]  Extraction failed -- text-to-voice stays disabled.
+)
+echo -----------------------------------------------------------
+echo.
+
+:tts_done
 
 echo.
 echo ============================================================

@@ -113,6 +113,62 @@ set(SRC_DIR     "${CMAKE_SOURCE_DIR}/realworld/src")
 set(GLFW_SRC    "${TP_DIR}/glfw/src")
 set(OM_SRC      "${TP_DIR}/OpenMesh/src")
 
+# ── miniaudio (single header, auto-downloaded) ────────────────────────────────
+# Audio playback backend for engine/audio/audio_engine.cpp.  Pinned release
+# tag; one ~1.5 MB header, fetched once at configure time.  If the download
+# fails the engine still builds — audio_engine.cpp compiles to no-op stubs
+# via __has_include and playback is simply disabled.
+set(MINIAUDIO_H "${TP_DIR}/miniaudio/miniaudio.h")
+if(NOT EXISTS "${MINIAUDIO_H}")
+    set(_ma_url "https://raw.githubusercontent.com/mackron/miniaudio/0.11.21/miniaudio.h")
+    message(STATUS "miniaudio not found — downloading 0.11.21...")
+    file(DOWNLOAD "${_ma_url}" "${MINIAUDIO_H}" STATUS _ma_status TLS_VERIFY ON)
+    list(GET _ma_status 0 _ma_code)
+    if(_ma_code EQUAL 0)
+        message(STATUS "miniaudio downloaded: ${MINIAUDIO_H}")
+    else()
+        list(GET _ma_status 1 _ma_msg)
+        file(REMOVE "${MINIAUDIO_H}")   # don't leave a partial header behind
+        message(WARNING "miniaudio download failed (${_ma_msg}) — audio playback disabled. Re-run CMake configure to retry, or drop miniaudio.h into ${TP_DIR}/miniaudio/.")
+    endif()
+endif()
+
+# ── sherpa-onnx (runtime text-to-voice, auto-downloaded; Windows only) ────────
+# Offline TTS backend for engine/audio/tts_engine.cpp (Piper-style VITS
+# voices, CPU synthesis).  Pinned release; the shared-MD build matches the
+# project's /MD runtime.  If absent, tts_engine.cpp compiles to no-op stubs.
+# The voice MODEL is separate — Setup.bat downloads one to assets/models/tts.
+set(SHERPA_VER  "v1.12.36")
+set(SHERPA_DIR  "${TP_DIR}/sherpa-onnx")
+set(SHERPA_HDR  "${SHERPA_DIR}/include/sherpa-onnx/c-api/c-api.h")
+if(WIN32 AND NOT EXISTS "${SHERPA_HDR}")
+    set(_sh_name "sherpa-onnx-${SHERPA_VER}-win-x64-shared-MD-Release")
+    set(_sh_url  "https://github.com/k2-fsa/sherpa-onnx/releases/download/${SHERPA_VER}/${_sh_name}.tar.bz2")
+    set(_sh_tar  "${CMAKE_BINARY_DIR}/sherpa-onnx-download.tar.bz2")
+    message(STATUS "sherpa-onnx not found — downloading ${SHERPA_VER} (~100 MB)...")
+    file(DOWNLOAD "${_sh_url}" "${_sh_tar}" STATUS _sh_status SHOW_PROGRESS TLS_VERIFY ON)
+    list(GET _sh_status 0 _sh_code)
+    if(_sh_code EQUAL 0)
+        file(ARCHIVE_EXTRACT INPUT "${_sh_tar}" DESTINATION "${TP_DIR}")
+        file(REMOVE "${_sh_tar}")
+        if(EXISTS "${TP_DIR}/${_sh_name}")
+            file(RENAME "${TP_DIR}/${_sh_name}" "${SHERPA_DIR}")
+        endif()
+        if(EXISTS "${SHERPA_HDR}")
+            message(STATUS "sherpa-onnx installed: ${SHERPA_DIR}")
+        else()
+            message(WARNING "sherpa-onnx extracted but c-api.h not found — text-to-voice disabled.")
+        endif()
+    else()
+        list(GET _sh_status 1 _sh_msg)
+        message(WARNING "sherpa-onnx download failed (${_sh_msg}) — text-to-voice disabled. Re-run CMake configure to retry.")
+    endif()
+endif()
+set(SHERPA_FOUND FALSE)
+if(EXISTS "${SHERPA_HDR}")
+    set(SHERPA_FOUND TRUE)
+endif()
+
 # ── Global compile definitions ────────────────────────────────────────────────
 add_compile_definitions(
     _USE_MATH_DEFINES
@@ -330,6 +386,8 @@ add_library(engine STATIC
     "${ENGINE_DIR}/scene_rendering/volume_noise.cpp"
     "${ENGINE_DIR}/scene_rendering/weather_system.cpp"
     "${ENGINE_DIR}/third_parties/fbx/ufbx.c"
+    "${ENGINE_DIR}/audio/audio_engine.cpp"
+    "${ENGINE_DIR}/audio/tts_engine.cpp"
     "${ENGINE_DIR}/ui/chat_box.cpp"
     "${ENGINE_DIR}/ui/menu.cpp"
     "${SRC_DIR}/plugins/plugin_manager.cpp"
@@ -343,6 +401,14 @@ target_include_directories(engine PUBLIC ${COMMON_INCLUDES})
 if(Torch_FOUND)
     target_link_libraries(engine PUBLIC ${TORCH_LIBRARIES})
     target_include_directories(engine PUBLIC ${TORCH_INCLUDE_DIRS})
+endif()
+
+# sherpa-onnx (text-to-voice): header + import lib when present.
+if(SHERPA_FOUND)
+    target_compile_definitions(engine PUBLIC HAS_SHERPA_ONNX=1)
+    target_include_directories(engine PUBLIC "${SHERPA_DIR}/include")
+    target_link_libraries(engine PUBLIC
+        "${SHERPA_DIR}/lib/sherpa-onnx-c-api.lib")
 endif()
 
 # =============================================================================
@@ -439,6 +505,21 @@ elseif(Torch_FOUND AND NOT WIN32)
     )
 endif()
 
+# ── Copy sherpa-onnx DLLs next to executable (Windows) ──────────────────────
+# The TTS C API lives in sherpa-onnx-c-api.dll, which in turn needs
+# onnxruntime.dll (both ship in the release's lib/ directory).
+if(SHERPA_FOUND AND WIN32)
+    file(GLOB _sherpa_dlls "${SHERPA_DIR}/lib/*.dll")
+    if(_sherpa_dlls)
+        add_custom_command(TARGET RealWorld POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${_sherpa_dlls}
+                "$<TARGET_FILE_DIR:RealWorld>"
+            COMMENT "Copying sherpa-onnx DLLs to output directory..."
+        )
+    endif()
+endif()
+
 # ── Auto-export ML model if missing ──────────────────────────────────────────
 # If the TorchScript model file doesn't exist, try to generate it via Python.
 # This runs once at build time; subsequent builds skip it.
@@ -511,6 +592,26 @@ if(EXISTS "${FLUX_SETUP_SCRIPT}")
         message(STATUS "FLUX.2 image generator: run `Setup.bat -flux` or build the 'flux_setup' target.")
     else()
         message(STATUS "Python3 not found — 'flux_setup' target unavailable.")
+    endif()
+endif()
+
+# ── Text-to-audio (Stable Audio Open) generator setup ────────────────────────
+# Mirror of flux_setup: optional one-time dependency install + gated weight
+# prefetch for the Content Browser's "Generate Audio..." tool.  Not a build
+# dependency — build the 'audiogen_setup' target (or run the script) once.
+set(AUDIOGEN_DIR          "${CMAKE_SOURCE_DIR}/realworld/tools/audiogen")
+set(AUDIOGEN_SETUP_SCRIPT "${AUDIOGEN_DIR}/setup_audiogen.py")
+if(EXISTS "${AUDIOGEN_SETUP_SCRIPT}")
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_FOUND)
+        add_custom_target(audiogen_setup
+            COMMAND "${Python3_EXECUTABLE}" "${AUDIOGEN_SETUP_SCRIPT}"
+            WORKING_DIRECTORY "${AUDIOGEN_DIR}"
+            COMMENT "Audio generator setup: deps + Stable Audio Open weights (one-time; HF login required)"
+            USES_TERMINAL
+        )
+        set_target_properties(audiogen_setup PROPERTIES EXCLUDE_FROM_ALL TRUE FOLDER "tools")
+        message(STATUS "Audio generator: build the 'audiogen_setup' target once to install deps/weights.")
     endif()
 endif()
 

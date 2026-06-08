@@ -33,10 +33,35 @@
 #include "helper/cluster_mesh.h"
 #include "helper/material_classifier.h"
 #include "helper/model_inspect.h"
+#include "audio/audio_engine.h"
+#include "audio/tts_engine.h"
 #include "application.h"
 
 namespace er = engine::renderer;
 namespace ego = engine::game_object;
+
+namespace {
+// ── Scene music ──────────────────────────────────────────────────────────────
+// One looping clip on the music bus, driven by Scene::music_path.  Re-applied
+// whenever the scene's music changes (Set as Scene Music / Clear / scene
+// load / Create Scene).  File-scope handle: there is exactly one scene.
+uint64_t s_scene_music_handle = 0;
+
+void applySceneMusic(const engine::scene::Scene& scene) {
+    if (s_scene_music_handle) {
+        engine::audio::AudioEngine::stop(s_scene_music_handle);
+        s_scene_music_handle = 0;
+    }
+    if (scene.music_path.empty()) return;
+    s_scene_music_handle = engine::audio::AudioEngine::playFile(
+        scene.music_path, engine::audio::AudioEngine::Bus::kMusic,
+        /*loop=*/true, scene.music_volume);
+    if (s_scene_music_handle == 0) {
+        std::printf("[audio] scene music failed to start: %s\n",
+                    scene.music_path.c_str());
+    }
+}
+} // namespace
 
 namespace {
 // 19 canonical joint names from the auto-rig (mirrors
@@ -6769,6 +6794,10 @@ void RealWorldApplication::drawFrame() {
     // never races the command buffer being recorded below.
     syncPlacedObjectsToClusters();
 
+    // Audio housekeeping: reap finished one-shot sounds (previews, TTS
+    // lines).  Lazy-init backend — a no-op until something plays.
+    engine::audio::AudioEngine::update();
+
     // ── Player spawn (deferred-friendly retry) ──────────────────────
     // Originally this was nested inside the Loading→InGame transition
     // block above, which ran ONCE.  If the user picked a player AFTER
@@ -9789,6 +9818,7 @@ void RealWorldApplication::drawFrame() {
             startup_scene_path_.clear();
             if (loadSceneFromFile(p)) {
                 menu_->setSceneName(scene_.name);
+                applySceneMusic(scene_);
                 std::cout << "[scene] startup scene '" << p << "' loaded ("
                           << scene_.objects.size() << " object(s))"
                           << std::endl;
@@ -9804,6 +9834,12 @@ void RealWorldApplication::drawFrame() {
         // (mirrors loadSceneFromFile's teardown).
         if (menu_->consumeCreateSceneRequest()) {
             device_->waitIdle();
+            // Fresh scene = no music (scene_ is reset below; stop the
+            // looping clip from the previous scene immediately).
+            {
+                engine::scene::Scene silent;
+                applySceneMusic(silent);
+            }
             // Drop the placed cluster tail FIRST — the drawables (and
             // their textures) are about to be destroyed and the cluster
             // buffers / bindless set must not keep referencing them.
@@ -10137,6 +10173,19 @@ void RealWorldApplication::drawFrame() {
                 nullptr, scene_dir.c_str());
             if (!chosen.empty() && loadSceneFromFile(chosen)) {
                 menu_->setSceneName(scene_.name);
+                applySceneMusic(scene_);
+            }
+        }
+
+        // ── Scene music (Set as Scene Music / Clear Scene Music) ─────────
+        {
+            std::string music;
+            if (menu_->consumeSceneMusicRequest(music)) {
+                scene_.music_path = music;   // persisted by Save Scene (v2)
+                applySceneMusic(scene_);
+                std::printf("[scene] music %s%s\n",
+                            music.empty() ? "cleared" : "set: ",
+                            music.c_str());
             }
         }
 
@@ -10898,6 +10947,12 @@ void RealWorldApplication::cleanupSwapChain() {
 }
 
 void RealWorldApplication::cleanup() {
+    // Audio first — it has no Vulkan dependencies and stopping it early
+    // guarantees no callback is mixing while the rest tears down.  TTS
+    // before the mixer (its worker plays into the voice bus).
+    engine::audio::TtsEngine::shutdown();
+    engine::audio::AudioEngine::shutdown();
+
     // Wait for a streaming content import to finish before tearing anything
     // down (it only touches the filesystem, but it captures `this`).
     if (content_import_thread_.joinable()) {

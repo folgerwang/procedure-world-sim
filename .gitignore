@@ -267,6 +267,35 @@ realworld/src/sim_engine/third_parties/libtorch/
 realworld/assets/models/*.pt
 realworld/assets/models/*.onnx
 
+# Text-to-voice Piper voice models (Setup.bat downloads, ~65 MB each)
+realworld/assets/models/tts/
+
+# Generator scratch sidecars (prompt files / error tracebacks)
+**/.flux_tmp/
+**/.audiogen_tmp/
+
+# Claude session data
+.claude/
+
+# Content Browser thumbnail caches
+**/.thumbnails/
+
+# Authored/baked project content: imports bake .rwgeo/.rwtex from source
+# assets that are themselves ignored (too large), and generated audio is
+# reproducible from prompts.  Version your scenes deliberately if wanted
+# (content/scene/*.scene are small text-sized binaries).
+realworld/content/
+realworld/scenes/
+
+# Engine debug dumps
+realworld/cluster_debug_dump.txt
+realworld/vt_readback_*.ppm
+realworld/assets/debug_autorig_skeleton.txt
+
+# Auto-rig scratch outputs / backups
+realworld/assets/Characters/scene-reskinned.bin
+realworld/assets/Characters/*.orig
+
 # CMake build directories
 build/
 build_vs/
