@@ -41,29 +41,51 @@ namespace er = engine::renderer;
 namespace ego = engine::game_object;
 
 namespace {
-// ── Scene music ──────────────────────────────────────────────────────────────
-// One looping clip on the music bus, driven by Scene::music_path.  Re-applied
-// whenever the scene's music changes (Set as Scene Music / Clear / scene
-// load / Create Scene).  File-scope handle: there is exactly one scene.
-uint64_t s_scene_music_handle = 0;
+// ── Background music (BGM scene objects) ──────────────────────────────────────
+// Drives one looping clip on the music bus from the scene's BGM objects (the
+// first ".rwbgm" object that has a clip wins).  Called every frame; restarts
+// only when the clip or repeat flag changes, updates volume live, and stops
+// when the clip is cleared / the object removed.
+struct BgmPlayback {
+    std::string clip;       // the clip currently playing ("" = none)
+    bool        loop = true;
+    uint64_t    handle = 0;
+};
+BgmPlayback s_bgm;
 
-void applySceneMusic(const engine::scene::Scene& scene) {
-    if (s_scene_music_handle) {
-        engine::audio::AudioEngine::stop(s_scene_music_handle);
-        s_scene_music_handle = 0;
+void syncBgmObjectsImpl(const engine::scene::Scene& scene) {
+    const engine::scene::Object* bgm = nullptr;
+    for (const auto& o : scene.objects) {
+        const std::string& ap = o.asset_path;
+        const bool is_bgm = ap.size() > 6 &&
+            ap.compare(ap.size() - 6, 6, ".rwbgm") == 0;
+        if (is_bgm && !o.audio_clip.empty()) { bgm = &o; break; }
     }
-    if (scene.music_path.empty()) return;
-    s_scene_music_handle = engine::audio::AudioEngine::playFile(
-        scene.music_path, engine::audio::AudioEngine::Bus::kMusic,
-        /*loop=*/true, scene.music_volume);
-    if (s_scene_music_handle == 0) {
-        std::printf("[audio] scene music failed to start: %s\n",
-                    scene.music_path.c_str());
+
+    const std::string want_clip = bgm ? bgm->audio_clip : std::string();
+    const bool  want_loop = bgm ? bgm->audio_loop   : true;
+    const float want_vol  = bgm ? bgm->audio_volume : 1.0f;
+
+    if (want_clip != s_bgm.clip || want_loop != s_bgm.loop) {
+        if (s_bgm.handle) {
+            engine::audio::AudioEngine::stop(s_bgm.handle);
+            s_bgm.handle = 0;
+        }
+        s_bgm.clip = want_clip;
+        s_bgm.loop = want_loop;
+        if (!want_clip.empty()) {
+            s_bgm.handle = engine::audio::AudioEngine::playFile(
+                want_clip, engine::audio::AudioEngine::Bus::kMusic,
+                want_loop, want_vol);
+            if (s_bgm.handle == 0)
+                std::printf("[audio] BGM failed to start: %s\n",
+                            want_clip.c_str());
+        }
+    } else if (s_bgm.handle) {
+        engine::audio::AudioEngine::setVolume(s_bgm.handle, want_vol);
     }
 }
-} // namespace
 
-namespace {
 // 19 canonical joint names from the auto-rig (mirrors
 // engine::plugins::auto_rig::getStandardJointNames in rig_types.h).
 // Index N here lines up with bone_markers_[N] so the per-frame loop
@@ -3405,9 +3427,11 @@ void RealWorldApplication::rebuildImportedObjectsFromScene() {
                 if (dot != std::string::npos) ext = load_path.substr(dot);
                 for (auto& c : ext)
                     c = (char)std::tolower((unsigned char)c);
-                if (ext == ".rwcam" || ext == ".rwplayer") {
-                    // Camera / player node: data + transform, no drawable
-                    // of its own (a player's mesh lives in its child row).
+                if (ext == ".rwcam" || ext == ".rwplayer" ||
+                    ext == ".rwbgm") {
+                    // Camera / player / BGM node: data + transform, no
+                    // drawable of its own (a player's mesh lives in its
+                    // child row; a BGM's clip is an audio attribute).
                     imported_objects_.push_back(nullptr);
                     continue;
                 }
@@ -3531,9 +3555,17 @@ bool RealWorldApplication::loadSceneFromFile(const std::string& path) {
     imported_objects_.clear();
 
     scene_ = std::move(loaded);
+    // Name the scene after the FILE it was loaded from (its basename), not
+    // the name field stored inside — so "Save Scene" round-trips back to the
+    // same file even if it was renamed on disk, and the Scene → Name field
+    // reflects the loaded scene.
+    {
+        const std::string stem = std::filesystem::path(path).stem().string();
+        if (!stem.empty()) scene_.name = stem;
+    }
     rebuildImportedObjectsFromScene();
-    std::cout << "[scene] loaded '" << path << "'  ("
-              << scene_.objects.size() << " object(s))" << std::endl;
+    std::cout << "[scene] loaded '" << path << "' as '" << scene_.name
+              << "'  (" << scene_.objects.size() << " object(s))" << std::endl;
     return true;
 }
 
@@ -6798,6 +6830,10 @@ void RealWorldApplication::drawFrame() {
     // lines).  Lazy-init backend — a no-op until something plays.
     engine::audio::AudioEngine::update();
 
+    // Background music is driven by BGM scene objects (drag a clip onto a
+    // BGM object; repeat/volume in its Details).  Synced from the scene.
+    syncBgmObjectsImpl(scene_);
+
     // ── Player spawn (deferred-friendly retry) ──────────────────────
     // Originally this was nested inside the Loading→InGame transition
     // block above, which ran ONCE.  If the user picked a player AFTER
@@ -9755,8 +9791,11 @@ void RealWorldApplication::drawFrame() {
                     : -1;
             // Camera rows (.rwcam) get a viewport frustum gizmo + follow
             // link; player rows (.rwplayer) are link targets.
-            bool is_cam = false, is_player = false;
+            bool is_cam = false, is_player = false, is_bgm = false;
             int32_t* follow_link = nullptr;
+            std::string* audio_clip = nullptr;
+            bool*  audio_loop = nullptr;
+            float* audio_volume = nullptr;
             if (i < scene_.objects.size()) {
                 const std::string& ap = scene_.objects[i].asset_path;
                 auto ends_with = [&ap](const char* suf, size_t n) {
@@ -9765,13 +9804,19 @@ void RealWorldApplication::drawFrame() {
                 };
                 is_cam    = ends_with(".rwcam", 6);
                 is_player = ends_with(".rwplayer", 9);
+                is_bgm    = ends_with(".rwbgm", 6);
                 if (is_cam) {
                     // Camera "follow" link lives in source_node_index
                     // (unused for cameras otherwise; serializes for free).
                     follow_link = &scene_.objects[i].source_node_index;
                 }
+                if (is_bgm) {
+                    audio_clip   = &scene_.objects[i].audio_clip;
+                    audio_loop   = &scene_.objects[i].audio_loop;
+                    audio_volume = &scene_.objects[i].audio_volume;
+                }
             }
-            eobjs.push_back(engine::ui::EditorSceneObject{
+            engine::ui::EditorSceneObject eso{
                 nm,
                 imported_objects_[i] ? imported_objects_[i].get() : nullptr,
                 /*in_scene=*/true,
@@ -9781,7 +9826,12 @@ void RealWorldApplication::drawFrame() {
                 /*is_camera=*/is_cam,
                 /*is_player=*/is_player,
                 /*scene_index=*/(int)i,
-                /*follow_link=*/follow_link });
+                /*follow_link=*/follow_link };
+            eso.is_bgm = is_bgm;
+            eso.audio_clip = audio_clip;
+            eso.audio_loop = audio_loop;
+            eso.audio_volume = audio_volume;
+            eobjs.push_back(std::move(eso));
         }
         for (size_t i = 0; i < drawable_objects_.size(); ++i) {
             if (drawable_objects_[i])
@@ -9818,7 +9868,7 @@ void RealWorldApplication::drawFrame() {
             startup_scene_path_.clear();
             if (loadSceneFromFile(p)) {
                 menu_->setSceneName(scene_.name);
-                applySceneMusic(scene_);
+                // BGM is synced from the loaded scene's BGM objects.
                 std::cout << "[scene] startup scene '" << p << "' loaded ("
                           << scene_.objects.size() << " object(s))"
                           << std::endl;
@@ -9834,12 +9884,8 @@ void RealWorldApplication::drawFrame() {
         // (mirrors loadSceneFromFile's teardown).
         if (menu_->consumeCreateSceneRequest()) {
             device_->waitIdle();
-            // Fresh scene = no music (scene_ is reset below; stop the
-            // looping clip from the previous scene immediately).
-            {
-                engine::scene::Scene silent;
-                applySceneMusic(silent);
-            }
+            // Fresh scene = no BGM objects, so syncBgmObjectsImpl stops the
+            // previous scene's music automatically next frame.
             // Drop the placed cluster tail FIRST — the drawables (and
             // their textures) are about to be destroyed and the cluster
             // buffers / bindless set must not keep referencing them.
@@ -9929,6 +9975,36 @@ void RealWorldApplication::drawFrame() {
 
             std::cout << "[scene] created camera '" << cam_name << "' at ("
                       << pos.x << ", " << pos.y << ", " << pos.z << ")"
+                      << std::endl;
+        }
+
+        // ── "Add BGM Object": background-music scene object ──────────────
+        // A virtual ".rwbgm" marker (no drawable).  The user drags a music
+        // clip onto it (Details) and sets repeat/volume; syncBgmObjects()
+        // loops it on the music bus.
+        if (menu_->consumeCreateBgmRequest()) {
+            int bgm_count = 0;
+            for (const auto& o : scene_.objects) {
+                const std::string& ap = o.asset_path;
+                if (ap.size() > 6 &&
+                    ap.compare(ap.size() - 6, 6, ".rwbgm") == 0)
+                    ++bgm_count;
+            }
+            const std::string bgm_name = "BGM_" + std::to_string(bgm_count + 1);
+            engine::scene::Object so;
+            so.name = bgm_name;
+            so.asset_path = bgm_name + ".rwbgm";   // virtual type marker
+            so.parent_index = -1;
+            so.source_node_index = -1;
+            so.is_group = false;
+            so.visible = true;
+            so.audio_clip.clear();
+            so.audio_loop = true;
+            so.audio_volume = 0.5f;
+            scene_.objects.push_back(so);
+            imported_objects_.push_back(nullptr);
+            std::cout << "[scene] created BGM object '" << bgm_name
+                      << "' (drag a music clip onto it in Details)"
                       << std::endl;
         }
 
@@ -10173,19 +10249,7 @@ void RealWorldApplication::drawFrame() {
                 nullptr, scene_dir.c_str());
             if (!chosen.empty() && loadSceneFromFile(chosen)) {
                 menu_->setSceneName(scene_.name);
-                applySceneMusic(scene_);
-            }
-        }
-
-        // ── Scene music (Set as Scene Music / Clear Scene Music) ─────────
-        {
-            std::string music;
-            if (menu_->consumeSceneMusicRequest(music)) {
-                scene_.music_path = music;   // persisted by Save Scene (v2)
-                applySceneMusic(scene_);
-                std::printf("[scene] music %s%s\n",
-                            music.empty() ? "cleared" : "set: ",
-                            music.c_str());
+                // BGM resumes from the loaded scene's BGM objects.
             }
         }
 
