@@ -169,6 +169,36 @@ if(EXISTS "${SHERPA_HDR}")
     set(SHERPA_FOUND TRUE)
 endif()
 
+# ── EnTT (ECS core, single header, auto-downloaded) ───────────────────────────
+# Header-only entity-component-system backing engine/ecs/*.  Pinned release tag;
+# one ~100 KB header fetched once at configure time, mirroring the miniaudio
+# convention above.  Re-downloaded if the file is missing OR truncated (a
+# zero/partial header from an interrupted fetch must not satisfy the guard).
+set(ENTT_VER "v3.13.2")
+set(ENTT_H   "${TP_DIR}/entt/entt/entt.hpp")
+set(_entt_ok FALSE)
+if(EXISTS "${ENTT_H}")
+    file(SIZE "${ENTT_H}" _entt_size)
+    if(_entt_size GREATER 50000)
+        set(_entt_ok TRUE)
+    endif()
+endif()
+if(NOT _entt_ok)
+    set(_entt_url "https://raw.githubusercontent.com/skypjack/entt/${ENTT_VER}/single_include/entt/entt.hpp")
+    message(STATUS "EnTT ${ENTT_VER} not found — downloading single header...")
+    file(MAKE_DIRECTORY "${TP_DIR}/entt/entt")
+    file(DOWNLOAD "${_entt_url}" "${ENTT_H}" STATUS _entt_status TLS_VERIFY ON)
+    list(GET _entt_status 0 _entt_code)
+    if(_entt_code EQUAL 0)
+        message(STATUS "EnTT downloaded: ${ENTT_H}")
+    else()
+        list(GET _entt_status 1 _entt_msg)
+        file(REMOVE "${ENTT_H}")
+        message(FATAL_ERROR "EnTT download failed (${_entt_msg}). The ECS module requires it. "
+                            "Re-run CMake, or drop a ${ENTT_VER} entt.hpp into ${TP_DIR}/entt/entt/.")
+    endif()
+endif()
+
 # ── Global compile definitions ────────────────────────────────────────────────
 add_compile_definitions(
     _USE_MATH_DEFINES
@@ -188,6 +218,7 @@ set(COMMON_INCLUDES
     "${TP_DIR}/glm"
     "${TP_DIR}/Vulkan-Headers/Include"
     "${TP_DIR}/tinygltf"
+    "${TP_DIR}/entt"
     "${ENGINE_DIR}/shaders"
     "${ENGINE_DIR}"
     "${SRC_DIR}"
@@ -394,6 +425,17 @@ add_library(engine STATIC
     "${SRC_DIR}/plugins/auto_rig/auto_rig_plugin.cpp"
     "${SRC_DIR}/plugins/auto_rig/simple_rasterizer.cpp"
     "${SRC_DIR}/plugins/auto_rig/rig_diffusion_model.cpp"
+    # ── ECS layer (entity-component-system over EnTT) ──
+    "${ENGINE_DIR}/ecs/transform_system.cpp"
+    "${ENGINE_DIR}/ecs/streaming_system.cpp"
+    "${ENGINE_DIR}/ecs/culling_system.cpp"
+    "${ENGINE_DIR}/ecs/animation_system.cpp"
+    "${ENGINE_DIR}/ecs/material_cache.cpp"
+    "${ENGINE_DIR}/ecs/lifetime_system.cpp"
+    "${ENGINE_DIR}/ecs/world.cpp"
+    "${ENGINE_DIR}/ecs/engine/drawable_asset_streamer.cpp"
+    "${ENGINE_DIR}/ecs/engine/render_system.cpp"
+    "${ENGINE_DIR}/ecs/engine/animation_bridge.cpp"
 )
 target_include_directories(engine PUBLIC ${COMMON_INCLUDES})
 

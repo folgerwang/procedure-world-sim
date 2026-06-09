@@ -36,6 +36,8 @@
 #include "audio/audio_engine.h"
 #include "audio/tts_engine.h"
 #include "application.h"
+#include "ecs/engine/render_components.h"
+#include "ecs/engine/animation_bridge.h"
 
 namespace er = engine::renderer;
 namespace ego = engine::game_object;
@@ -2942,12 +2944,8 @@ void RealWorldApplication::importModelFromFile(
     obj->setInstanceRootTransform(
         translation, glm::quat(1.0f, 0.0f, 0.0f, 0.0f), glm::vec3(1.0f));
 
-    if (object_scene_view_) {
-        object_scene_view_->addDrawableObject(obj);
-    }
-    if (shadow_object_scene_view_) {
-        shadow_object_scene_view_->addDrawableObject(obj);
-    }
+    // Scene-view membership is added by reconcileImportedSceneViewMembership()
+    // once this imported entity's drawable is ready (Renderable + Visible).
 
     engine::scene::Object so;
     std::string base = path;
@@ -2986,6 +2984,101 @@ void RealWorldApplication::importModelFromFile(
               << scene_.objects.size() << " object(s))" << std::endl;
 }
 
+// ===== ECS wiring (see sim_engine/ecs/ECS_DESIGN.md). =====
+
+void RealWorldApplication::ensureEcsReady() {
+    if (ecs_ready_) return;
+    if (!device_ || !drawable_descriptor_pool_ || !repeat_texture_sampler_ ||
+        !mesh_load_task_manager_) {
+        return;  // not all up yet - retry next frame
+    }
+
+    eecs::DrawableAssetStreamer::PipelineContext ctx;
+    ctx.device                = device_;
+    ctx.descriptor_pool       = drawable_descriptor_pool_;
+    ctx.renderbuffer_formats  = renderbuffer_formats_;   // array decays to ptr
+    ctx.graphic_pipeline_info = graphic_pipeline_info_;
+    ctx.texture_sampler       = repeat_texture_sampler_;
+    ctx.thin_film_lut_tex     = thin_film_lut_tex_;
+
+    ecs_streamer_ = std::make_unique<eecs::DrawableAssetStreamer>(
+        ecs_world_.registry(), *mesh_load_task_manager_, ecs_world_.deleter(),
+        std::move(ctx));
+
+    ecs_world_.setStreamer(ecs_streamer_.get());
+    // Scene-view membership for streamed objects is owned by the per-frame
+    // reconcileImportedSceneViewMembership(); the streamer only attaches the
+    // Renderable component on resident and removes it on unload.
+
+    ecs_world_.setCleanupHook(
+        [this](entt::registry& r, eecs::Entity e) {
+            if (auto* s = r.try_get<eecs::StreamingComponent>(e)) {
+                if (s->handle != eecs::kInvalidStream && ecs_streamer_) {
+                    ecs_streamer_->unload(s->handle);
+                    s->handle = eecs::kInvalidStream;
+                }
+            }
+        });
+
+    ecs_ready_ = true;
+    std::cout << "[ecs] world ready (frames_in_flight="
+              << kMaxFramesInFlight << ")" << std::endl;
+}
+
+void RealWorldApplication::tickEcs() {
+    ecs_world_.beginFrame();        // advance GC ring, flush aged GPU frees
+    updateImportedEntities();       // imported objects: topology rebuild + TRS sync
+    updateEcsAnimation(current_time_);  // ECS-driven skeletal animation
+
+    ensureEcsReady();               // lazily build the asset streamer
+
+    ecs_world_.updateTransforms();  // compute world for all dirty (imported+streamed)
+
+    if (ecs_ready_) {
+        glm::vec3 focus(0.0f);
+        if (main_camera_object_) focus = main_camera_object_->getCameraPosition();
+        ecs_world_.updateStreaming(focus);
+    }
+
+    ecs_world_.collectGarbage();    // destroy PendingDestroy entities
+
+    // Prune animation-clip cache entries for drawables no longer imported.
+    // collectGarbage() above already destroyed any removed entities and their
+    // AnimationPlayers, so no live player references a pruned entry.
+    for (auto it = ecs_anim_clips_.begin(); it != ecs_anim_clips_.end(); ) {
+        bool live = false;
+        for (const auto& o : imported_objects_)
+            if (o.get() == it->first) { live = true; break; }
+        if (live) ++it; else it = ecs_anim_clips_.erase(it);
+    }
+
+    // ECS owns imported + streamed scene-view membership: gather() pushes world
+    // transforms and returns the render set; reconcile diffs it against the view.
+    // Runs after streaming (attaches/detaches Renderable) and GC so it is current.
+    reconcileImportedSceneViewMembership();
+}
+
+eecs::Entity RealWorldApplication::ecsSpawnStreamed(
+        const std::string& asset_path,
+        const engine::scene::Transform& xform,
+        float load_radius,
+        float unload_radius) {
+    eecs::LocalTransform lt;
+    lt.translation = xform.translation;
+    lt.rotation    = xform.rotation;
+    lt.scale       = xform.scale;
+
+    eecs::Entity e = ecs_world_.createAt(lt);
+    ecs_world_.registry().emplace<eecs::Visible>(e);
+
+    eecs::StreamingComponent sc;
+    sc.asset_path    = asset_path;
+    sc.load_radius   = load_radius;
+    sc.unload_radius = unload_radius;
+    ecs_world_.registry().emplace<eecs::StreamingComponent>(e, sc);
+    return e;
+}
+
 // TRS decompose (translation / rotation / scale) of an affine matrix.
 // Good for the editor's T*R*S transforms; shear is not represented.
 static void decomposeTrs(const glm::mat4& m, glm::vec3& t, glm::quat& r,
@@ -3004,20 +3097,207 @@ static void decomposeTrs(const glm::mat4& m, glm::vec3& t, glm::quat& r,
 // Re-compose every parented child's drawable instance transform from
 // parent.toMatrix() * child_local.toMatrix() — called after a group node's
 // transform is edited so moving/rotating the group moves all its objects.
-void RealWorldApplication::applySceneHierarchyTransforms() {
-    for (size_t i = 0; i < scene_.objects.size() &&
-                       i < imported_objects_.size(); ++i) {
+// Rebuild the transform-only ECS entities that mirror scene_.objects. One
+// entity per scene object (index-matched), parented per parent_index, with the
+// authored local TRS. Cheap and called whenever the hierarchy is re-applied,
+// so it is inherently robust to add / delete / re-parent without touching those
+// code paths. Old entities are deferred-destroyed (GC'd next frame).
+void RealWorldApplication::rebuildImportedEntities() {
+    for (eecs::Entity e : imported_entities_) {
+        if (e != eecs::kNull) ecs_world_.destroy(e);
+    }
+    if (ecs_scene_root_ != eecs::kNull) ecs_world_.destroy(ecs_scene_root_);
+    ecs_scene_root_ = eecs::kNull;
+    imported_entities_.assign(scene_.objects.size(), eecs::kNull);
+
+    // Scene-root entity: carries the authored scene world transform
+    // (scene_.root) and parents every top-level object, so editing the Scene
+    // node's transform in the Outliner moves the whole scene via the ECS.
+    {
+        eecs::LocalTransform rt;
+        rt.translation = scene_.root.translation;
+        rt.rotation    = scene_.root.rotation;
+        rt.scale       = scene_.root.scale;
+        ecs_scene_root_ = ecs_world_.createAt(rt);
+    }
+    for (size_t i = 0; i < scene_.objects.size(); ++i) {
         const auto& so = scene_.objects[i];
+        eecs::LocalTransform lt;
+        lt.translation = so.transform.translation;
+        lt.rotation    = so.transform.rotation;
+        lt.scale       = so.transform.scale;
+        eecs::Entity parent = ecs_scene_root_;   // top-level -> under scene root
+        if (so.parent_index >= 0 && so.parent_index < (int)i) {
+            parent = imported_entities_[so.parent_index];
+        }
+        eecs::Entity e = ecs_world_.createAt(lt, parent);
+        imported_entities_[i] = e;
+        // Attach a render reference (+ a render-candidate Visible tag) so the
+        // ECS RenderSystem can drive this object's world transform. Actual
+        // draw visibility remains governed by DrawableObject::setVisible() and
+        // scene-view membership (owned by the import path) for now.
+        if (i < imported_objects_.size() && imported_objects_[i]) {
+            auto& r = ecs_world_.registry();
+            r.emplace<eecs::Renderable>(e, eecs::Renderable{imported_objects_[i]});
+            r.emplace<eecs::Visible>(e);
+        }
+    }
+}
+
+// Per-frame ECS sync for imported objects (called from tickEcs): rebuild the
+// transform entities iff scene topology changed, then mirror authored local TRS
+// into them, marking dirty only on change. World compose (updateTransforms) and
+// the transform push + scene-view membership (reconcile) run later in tickEcs.
+void RealWorldApplication::updateImportedEntities() {
+    uint64_t sig = scene_.objects.size();
+    for (size_t i = 0; i < scene_.objects.size(); ++i) {
+        sig = sig * 1099511628211ull ^
+              (uint64_t)(scene_.objects[i].parent_index + 1);
+        const void* p = (i < imported_objects_.size() && imported_objects_[i])
+                            ? (const void*)imported_objects_[i].get() : nullptr;
+        sig = sig * 1099511628211ull ^ (uint64_t)(uintptr_t)p;
+    }
+    if (sig != imported_topology_sig_) {
+        rebuildImportedEntities();
+        imported_topology_sig_ = sig;
+    }
+    auto& reg = ecs_world_.registry();
+
+    // Scene-root transform (Outliner "Scene" node). Editing it dirties the
+    // root entity, whose subtree (all top-level objects) recomposes.
+    if (ecs_scene_root_ != eecs::kNull && reg.valid(ecs_scene_root_)) {
+        auto& rt = reg.get<eecs::LocalTransform>(ecs_scene_root_);
+        const auto& sr = scene_.root;
+        if (rt.translation != sr.translation || rt.rotation != sr.rotation ||
+            rt.scale != sr.scale) {
+            rt.translation = sr.translation;
+            rt.rotation    = sr.rotation;
+            rt.scale       = sr.scale;
+            ecs_world_.markDirty(ecs_scene_root_);
+        }
+    }
+    for (size_t i = 0; i < scene_.objects.size() &&
+                       i < imported_entities_.size(); ++i) {
+        eecs::Entity e = imported_entities_[i];
+        if (e == eecs::kNull || !reg.valid(e)) continue;
+        const auto& tr = scene_.objects[i].transform;
+        auto& lt = reg.get<eecs::LocalTransform>(e);
+        if (lt.translation != tr.translation || lt.rotation != tr.rotation ||
+            lt.scale != tr.scale) {
+            lt.translation = tr.translation;
+            lt.rotation    = tr.rotation;
+            lt.scale       = tr.scale;
+            ecs_world_.markDirty(e);
+        }
+    }
+
+    // Lazily populate LocalBounds from the drawable's model-space AABB once it
+    // is ready, so the transform system derives WorldBounds (for CullingSystem
+    // and spatial queries). Skinned characters use the joint-derived AABB.
+    // Data only — no render behaviour changes here.
+    for (size_t i = 0; i < scene_.objects.size() &&
+                       i < imported_objects_.size() &&
+                       i < imported_entities_.size(); ++i) {
+        eecs::Entity e = imported_entities_[i];
         auto& obj = imported_objects_[i];
-        if (!obj || so.parent_index < 0 ||
-            so.parent_index >= (int)scene_.objects.size()) continue;
-        const glm::mat4 world =
-            scene_.objects[so.parent_index].transform.toMatrix() *
-            so.transform.toMatrix();
-        glm::vec3 t, s;
-        glm::quat r;
-        decomposeTrs(world, t, r, s);
-        obj->setInstanceRootTransform(t, r, s);
+        if (e == eecs::kNull || !reg.valid(e) || !obj || !obj->isReady()) continue;
+        if (reg.all_of<eecs::LocalBounds>(e)) continue;
+        glm::vec3 bmin, bmax;
+        if (!obj->getSkinnedModelAabb(bmin, bmax)) {
+            bmin = obj->getModelBboxMin();
+            bmax = obj->getModelBboxMax();
+        }
+        if (bmax.x < bmin.x || bmax.y < bmin.y || bmax.z < bmin.z)
+            continue;  // bbox not valid yet
+        eecs::LocalBounds lb;
+        lb.center  = (bmin + bmax) * 0.5f;
+        lb.extents = (bmax - bmin) * 0.5f;
+        reg.emplace<eecs::LocalBounds>(e, lb);
+        ecs_world_.markDirty(e);  // recompute WorldBounds next updateTransforms
+    }
+}
+
+// Reconcile the imported/streamed subset of the scene views with the ECS render
+// set. gather() returns every ready render-candidate drawable (Renderable +
+// Visible entities) and pushes its world transform into the drawable; we diff
+// that against the set WE previously added (ecs_view_members_) and add/remove
+// the delta. Entries the ECS never added (player, NPC, bistro) are untouched.
+void RealWorldApplication::reconcileImportedSceneViewMembership() {
+    auto desired = eecs::RenderSystem::gather(ecs_world_.registry());
+    for (auto& m : ecs_view_members_) {
+        if (std::find(desired.begin(), desired.end(), m) == desired.end()) {
+            if (object_scene_view_)        object_scene_view_->removeDrawableObject(m);
+            if (shadow_object_scene_view_) shadow_object_scene_view_->removeDrawableObject(m);
+        }
+    }
+    for (auto& d : desired) {
+        if (std::find(ecs_view_members_.begin(), ecs_view_members_.end(), d) ==
+            ecs_view_members_.end()) {
+            if (object_scene_view_)        object_scene_view_->addDrawableObject(d);
+            if (shadow_object_scene_view_) shadow_object_scene_view_->addDrawableObject(d);
+        }
+    }
+    ecs_view_members_ = std::move(desired);
+}
+
+// Editor calls this on a group-transform edit; do an immediate compose + push
+// so the change is visible the same frame (tickEcs would otherwise apply it on
+// the next frame).
+void RealWorldApplication::applySceneHierarchyTransforms() {
+    updateImportedEntities();
+    ecs_world_.updateTransforms();
+    (void)eecs::RenderSystem::gather(ecs_world_.registry());
+}
+
+// ECS-driven skeletal animation for imported animated drawables. Runs each
+// frame from tickEcs, BEFORE the per-frame DrawableObject::update loop that
+// rebuilds joint matrices. Player/NPC rigs (use_node_transform_only_) are
+// procedurally posed and intentionally skipped.
+void RealWorldApplication::updateEcsAnimation(float clock) {
+    auto& reg = ecs_world_.registry();
+
+    // (1) Lazily attach an AnimationPlayer to each ready, non-procedural
+    //     imported drawable that actually has imported animation clips.
+    for (size_t i = 0; i < imported_entities_.size() &&
+                       i < imported_objects_.size(); ++i) {
+        eecs::Entity e = imported_entities_[i];
+        auto& obj = imported_objects_[i];
+        if (e == eecs::kNull || !reg.valid(e) || !obj || !obj->isReady()) continue;
+        if (reg.all_of<eecs::AnimationPlayer>(e)) continue;
+        // NOTE: we intentionally do NOT skip use_node_transform_only drawables.
+        // Placed skinned characters (e.g. CesiumMan) set that flag for instance/
+        // placement handling, which also makes update() skip the imported
+        // channels — so without an external driver they sit frozen. The ECS is
+        // that driver. The actual procedurally-posed rigs (player / NPC) live in
+        // their own members, never in imported_objects_, so they are unaffected.
+        auto clips = eecs::AnimationBridge::extractClips(*obj);
+        if (clips.empty()) continue;
+        auto& cached = ecs_anim_clips_[obj.get()];
+        cached = std::move(clips);
+        eecs::AnimationPlayer pl;
+        pl.clip = &cached[0];          // first clip; address stable in the map
+        reg.emplace<eecs::AnimationPlayer>(e, pl);
+        obj->setExternalAnimation(true);  // ECS now owns this rig's node TRS
+    }
+
+    // (2) Drive every player from the shared absolute clock and sample. Setting
+    //     time = clock then updating with dt=0 wraps via fmod(clock, duration),
+    //     matching the engine's repeating timeline exactly.
+    for (auto [e, player] : reg.view<eecs::AnimationPlayer>().each()) {
+        if (player.clip) player.time = clock;
+    }
+    eecs::AnimationSystem::update(reg, 0.0f);
+
+    // (3) Apply each sampled pose onto its drawable's nodes. The subsequent
+    //     DrawableObject::update (skip_animations via external_animation_)
+    //     rebuilds joint matrices from these writes.
+    for (size_t i = 0; i < imported_entities_.size() &&
+                       i < imported_objects_.size(); ++i) {
+        eecs::Entity e = imported_entities_[i];
+        auto& obj = imported_objects_[i];
+        if (e == eecs::kNull || !reg.valid(e) || !obj || !obj->isReady()) continue;
+        if (!reg.all_of<eecs::AnimPose>(e)) continue;
+        eecs::AnimationBridge::applyPose(*obj, reg.get<eecs::AnimPose>(e));
     }
 }
 
@@ -3493,12 +3773,7 @@ void RealWorldApplication::rebuildImportedObjectsFromScene() {
                         so.transform.scale);
                 }
                 obj->setVisible(so.visible);
-                if (object_scene_view_) {
-                    object_scene_view_->addDrawableObject(obj);
-                }
-                if (shadow_object_scene_view_) {
-                    shadow_object_scene_view_->addDrawableObject(obj);
-                }
+                // Membership added later by reconcileImportedSceneViewMembership().
             }
         }
         imported_objects_.push_back(obj);
@@ -6719,6 +6994,11 @@ void RealWorldApplication::drawFrame() {
     }
     gpu_profiler_.endCpuScope(_cpu_mesh_poll);
 
+    // ECS tick: runs after the mesh-load poll so drawables finalised this
+    // frame are isReady() when streaming polls them. Advances the GC ring,
+    // recomputes dirty transforms, runs streaming, collects garbage.
+    tickEcs();
+
     // ---- "New Game" handler: add the bistro scenes (already created at
     // startup and streaming in the background) into the scene views so
     // they start rendering.  The XML mesh list is available for any
@@ -9839,6 +10119,7 @@ void RealWorldApplication::drawFrame() {
                     "Drawable " + std::to_string(i), drawable_objects_[i].get() });
         }
         menu_->setSceneObjects(std::move(eobjs));
+        menu_->setSceneRootXform(&scene_.root);
 
         // Drive the rendered amber highlight layer (request 1) from the
         // Outliner selection: clear it on every drawable, then set it on the
@@ -10144,10 +10425,9 @@ void RealWorldApplication::drawFrame() {
                         const auto& pt = scene_.objects[p_idx].transform;
                         obj->setInstanceRootTransform(
                             pt.translation, pt.rotation, pt.scale);
-                        if (object_scene_view_)
-                            object_scene_view_->addDrawableObject(obj);
-                        if (shadow_object_scene_view_)
-                            shadow_object_scene_view_->addDrawableObject(obj);
+                        // Membership added by reconcileImportedSceneViewMembership()
+                        // (the drawable-pointer change is picked up by the
+                        // topology signature, which rebuilds the entity).
 
                         const std::string mesh_name =
                             std::filesystem::path(mesh_path)
@@ -10192,6 +10472,14 @@ void RealWorldApplication::drawFrame() {
                           << scene_.objects[r_idx].name << "' -> '"
                           << r_name << "'" << std::endl;
                 scene_.objects[r_idx].name = r_name;
+            }
+        }
+        {
+            std::string sn;
+            if (menu_->consumeSceneRootRename(sn) && !sn.empty()) {
+                scene_.name = sn;
+                std::cout << "[scene] renamed scene -> '" << sn << "'"
+                          << std::endl;
             }
         }
 
@@ -11039,6 +11327,12 @@ void RealWorldApplication::cleanup() {
     if (device_) {
         device_->waitIdle();
     }
+
+    // GPU is idle: run pending ECS deferred GPU frees, then drop the streamer's
+    // refs (still-resident drawables are owned by the scene views and torn down
+    // by the normal path below, so this cannot double-free).
+    ecs_world_.deleter().shutdown();
+    ecs_streamer_.reset();
 
     plugin_manager_.shutdownAll();
 

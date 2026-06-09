@@ -4,6 +4,7 @@
 #include <chrono>
 #include <memory>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 #include "renderer/renderer.h"
 #include "renderer/renderer_structs.h"
@@ -47,11 +48,16 @@
 #include "ui/menu.h"
 #include "plugins/plugin_manager.h"
 #include "plugins/auto_rig/auto_rig_plugin.h"
+#include "ecs/world.h"
+#include "ecs/animation_system.h"
+#include "ecs/engine/drawable_asset_streamer.h"
+#include "ecs/engine/render_system.h"
 
 namespace er = engine::renderer;
 namespace ego = engine::game_object;
 namespace es = engine::scene_rendering;
 namespace eh = engine::helper;
+namespace eecs = engine::ecs;
 
 struct GLFWwindow;
 namespace work {
@@ -428,6 +434,38 @@ private:
     // index-matched 1:1 with scene_.objects.
     engine::scene::Scene scene_;
     std::vector<std::shared_ptr<ego::DrawableObject>> imported_objects_;
+    // ECS: one transform/hierarchy entity per imported object, kept in sync
+    // with scene_ by rebuildImportedEntities(). The ECS transform system is
+    // authoritative for imported-object world placement + parenting.
+    std::vector<eecs::Entity> imported_entities_;
+    eecs::Entity              ecs_scene_root_ = eecs::kNull;  // parent of top-level
+    void rebuildImportedEntities();
+    void updateImportedEntities();        // per-frame topology rebuild + TRS sync
+    uint64_t imported_topology_sig_ = 0;  // rebuild trigger (count + parenting)
+    // ECS owns scene-view membership for render-candidate entities (imported +
+    // streamed). reconcile diffs gather() against this tracked set each frame.
+    std::vector<std::shared_ptr<ego::DrawableObject>> ecs_view_members_;
+    void reconcileImportedSceneViewMembership();
+
+    // ECS-driven skeletal animation for imported animated drawables. Clips are
+    // extracted once per drawable and cached here (AnimationPlayer references
+    // them); the per-frame drive sets external_animation_ so the imported
+    // channel evaluation steps aside.
+    std::unordered_map<const ego::DrawableObject*,
+                       std::vector<eecs::AnimationClip>> ecs_anim_clips_;
+    void updateEcsAnimation(float clock);
+
+    // ECS layer (entity-component-system; see sim_engine/ecs).
+    eecs::World ecs_world_{kMaxFramesInFlight};
+    std::unique_ptr<eecs::DrawableAssetStreamer> ecs_streamer_;
+    bool ecs_ready_ = false;
+
+    void ensureEcsReady();
+    void tickEcs();
+    eecs::Entity ecsSpawnStreamed(const std::string& asset_path,
+                                  const engine::scene::Transform& xform,
+                                  float load_radius,
+                                  float unload_radius);
 
     // ── Placed objects → cluster pipeline auto-hookup ─────────────────────
     // Once a placed object's async load completes (and again whenever the
