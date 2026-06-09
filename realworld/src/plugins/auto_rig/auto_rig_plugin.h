@@ -80,6 +80,7 @@ private:
         int         version = 0;
         std::string arch;        // "unet", "hourglass", "resnet", or "" for legacy
         std::string path;        // full filesystem path
+        std::filesystem::file_time_type mtime{};  // file last-write time
         std::string label() const {
             if (arch.empty()) return "v" + std::to_string(version);
             char buf[80];
@@ -97,6 +98,9 @@ private:
     std::string modelPathForArchVersion(const std::string& arch, int v) const;
     int nextVersionForArch(const std::string& arch) const;
     bool loadModelByIndex(int idx);        // load by index into model_versions_ (-1 = latest)
+    // Index of the most-recently-TRAINED model (newest file mtime), independent
+    // of architecture name or per-arch version numbering.  -1 if none.
+    int latestModelIndex() const;
 
     // Input mesh data.
     std::string     source_mesh_path_;   // original file — reloaded at export time

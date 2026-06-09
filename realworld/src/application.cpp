@@ -3280,13 +3280,11 @@ void RealWorldApplication::updateEcsAnimation(float clock) {
         obj->setExternalAnimation(true);  // ECS now owns this rig's node TRS
     }
 
-    // (2) Drive every player from the shared absolute clock and sample. Setting
-    //     time = clock then updating with dt=0 wraps via fmod(clock, duration),
-    //     matching the engine's repeating timeline exactly.
-    for (auto [e, player] : reg.view<eecs::AnimationPlayer>().each()) {
-        if (player.clip) player.time = clock;
-    }
-    eecs::AnimationSystem::update(reg, 0.0f);
+    // (2) Advance + sample every player by real delta time, honoring each
+    //     player's playing/speed so the Details panel's play/pause/scrub
+    //     controls take effect.
+    (void)clock;
+    eecs::AnimationSystem::update(reg, delta_t_);
 
     // (3) Apply each sampled pose onto its drawable's nodes. The subsequent
     //     DrawableObject::update (skip_animations via external_animation_)
@@ -11115,6 +11113,39 @@ void RealWorldApplication::drawFrame() {
             eh::MeshPreview::rerenderIfNeeded(device_, command_buffer);
         }
         eh::MeshPreview::collectGarbage(device_, vt_frame_index_);
+    }
+
+    // ── Animation playback controls for the selected rig (Details panel) ──
+    {
+        ego::DrawableObject* asel = nullptr; int anode = -3;
+        eecs::Entity aent = eecs::kNull;
+        if (menu_->getSelectedHighlight(asel, anode) && asel) {
+            for (size_t i = 0; i < imported_objects_.size() &&
+                               i < imported_entities_.size(); ++i) {
+                if (imported_objects_[i].get() == asel) {
+                    aent = imported_entities_[i];
+                    break;
+                }
+            }
+        }
+        auto& areg = ecs_world_.registry();
+        const bool has_player = (aent != eecs::kNull && areg.valid(aent) &&
+                                 areg.all_of<eecs::AnimationPlayer>(aent));
+        if (has_player) {
+            const auto& pl = areg.get<eecs::AnimationPlayer>(aent);
+            menu_->setAnimState(pl.clip != nullptr, pl.playing, pl.time,
+                                pl.clip ? pl.clip->duration : 0.0f, pl.speed);
+        } else {
+            menu_->setAnimState(false, false, 0.0f, 0.0f, 1.0f);
+        }
+        bool c_playing; float c_speed, c_time; bool c_scrub;
+        if (menu_->consumeAnimControl(c_playing, c_speed, c_time, c_scrub) &&
+            has_player) {
+            auto& pl = areg.get<eecs::AnimationPlayer>(aent);
+            pl.playing = c_playing;
+            pl.speed   = c_speed;
+            if (c_scrub) pl.time = c_time;
+        }
     }
 
     s_camera_paused = menu_->draw(

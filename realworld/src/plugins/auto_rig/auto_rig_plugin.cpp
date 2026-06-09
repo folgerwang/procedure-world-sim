@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <unordered_map>
 #include <functional>
+#include <queue>          // geodesic skinning (Dijkstra over the mesh surface)
 #include <thread>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -197,6 +198,8 @@ void AutoRigPlugin::scanModelVersions() {
 
         ModelEntry me;
         me.path = entry.path().string();
+        std::error_code ec;
+        me.mtime = std::filesystem::last_write_time(entry.path(), ec);
 
         // Try new format: <arch>_v###
         auto vpos = rest.rfind("_v");
@@ -242,6 +245,8 @@ void AutoRigPlugin::scanModelVersions() {
             me.version = 1;
             me.arch = "unet";
             me.path = model_dir_ + "/rig_diffusion.pt";
+            std::error_code ec;
+            me.mtime = std::filesystem::last_write_time(me.path, ec);
             model_versions_.push_back(me);
         }
     }
@@ -258,6 +263,24 @@ void AutoRigPlugin::scanModelVersions() {
     fprintf(stderr, "\n");
 }
 
+int AutoRigPlugin::latestModelIndex() const {
+    // "Latest" = the most recently TRAINED model, i.e. the newest file on disk.
+    // We pick by file modification time rather than by name/version number so a
+    // freshly trained model of ANY architecture is chosen even if an older
+    // architecture happens to carry a higher version number.  Ties (identical
+    // mtime) fall back to the higher version.
+    int best = -1;
+    for (int i = 0; i < (int)model_versions_.size(); ++i) {
+        if (best < 0) { best = i; continue; }
+        const auto& a = model_versions_[i];
+        const auto& b = model_versions_[best];
+        if (a.mtime > b.mtime ||
+            (a.mtime == b.mtime && a.version > b.version))
+            best = i;
+    }
+    return best;
+}
+
 bool AutoRigPlugin::loadModelByIndex(int idx) {
     // NOTE: caller must call scanModelVersions() before this.
     // We don't re-scan here because that would invalidate the idx.
@@ -272,7 +295,7 @@ bool AutoRigPlugin::loadModelByIndex(int idx) {
             model_loaded_idx_ = -1;
             return true;
         }
-        target_idx = (int)model_versions_.size() - 1;  // latest
+        target_idx = latestModelIndex();  // most recently trained (by mtime)
     }
 
     if (target_idx < 0 || target_idx >= (int)model_versions_.size()) {
@@ -1689,91 +1712,417 @@ bool AutoRigPlugin::fuseAndBuildSkeleton() {
 bool AutoRigPlugin::computeSkinWeights() {
     if (skeleton_.empty() || mesh_.empty()) return false;
 
-    int nv = static_cast<int>(mesh_.positions.size());
-    int nj = static_cast<int>(skeleton_.joints.size());
+    const int nv = static_cast<int>(mesh_.positions.size());
+    const int nj = static_cast<int>(skeleton_.joints.size());
     skin_weights_ = SkinWeights{};
     skin_weights_.per_vertex.resize(nv);
 
-    // Pre-compute bone segments (parent -> child).
-    struct BoneSeg {
-        int joint_idx;
-        glm::vec3 a, b;   // a = parent pos, b = child pos
-    };
-    std::vector<BoneSeg> bones;
+    // EXACTLY ONE bone per joint — uniform, no special cases.  A bone is the
+    // segment parent→joint and binds weight to its joint; the ROOT has no
+    // parent so it is a degenerate point at the joint.  The segment is only the
+    // ray-cast origin line for seeding and the source of the tau falloff width;
+    // ALL distances used for weighting are GEODESIC (on-surface) — there is no
+    // euclidean / point-to-segment distance anywhere in this pass.
+    struct BoneSeg { int joint_idx; glm::vec3 a, b; };
+    std::vector<BoneSeg> bones(nj);
     for (int j = 0; j < nj; ++j) {
-        if (skeleton_.joints[j].parent >= 0) {
-            BoneSeg seg;
-            seg.joint_idx = j;
-            seg.a = skeleton_.joints[skeleton_.joints[j].parent].position;
-            seg.b = skeleton_.joints[j].position;
-            bones.push_back(seg);
+        const int p = skeleton_.joints[j].parent;
+        const glm::vec3 b = skeleton_.joints[j].position;
+        const glm::vec3 a = (p >= 0) ? skeleton_.joints[p].position : b;
+        bones[j] = { j, a, b };
+    }
+
+    const int nb = static_cast<int>(bones.size());
+    if (nb == 0) return false;
+
+    // ── Weld vertices by exact position → triangle-edge graph (the surface) ──
+    // Welding only EXACT duplicates connects shared/seam vertices and soup
+    // corners while keeping distinct layers (body vs clothing) apart, so the
+    // geodesic graph follows the real surface.
+    std::unordered_map<uint64_t, int> weld;
+    weld.reserve(static_cast<size_t>(nv) * 2);
+    std::vector<int>       wid(nv);
+    std::vector<glm::vec3> wpos;
+    auto keyOf = [](const glm::vec3& p) -> uint64_t {
+        uint32_t u[3];
+        std::memcpy(u, &p, sizeof(u));
+        for (int i = 0; i < 3; ++i) if (u[i] == 0x80000000u) u[i] = 0u;
+        uint64_t h = 1469598103934665603ull;
+        for (int i = 0; i < 3; ++i) { h ^= u[i]; h *= 1099511628211ull; }
+        return h;
+    };
+    for (int i = 0; i < nv; ++i) {
+        const uint64_t k = keyOf(mesh_.positions[i]);
+        auto it = weld.find(k);
+        if (it == weld.end()) {
+            const int id = static_cast<int>(wpos.size());
+            weld.emplace(k, id);
+            wpos.push_back(mesh_.positions[i]);
+            wid[i] = id;
+        } else wid[i] = it->second;
+    }
+    const int W = static_cast<int>(wpos.size());
+
+    // Welded triangle list (shared by the layer split, the skin ray test and
+    // the geodesic graph).
+    std::vector<glm::ivec3> tris;
+    tris.reserve(mesh_.indices.size() / 3);
+    for (size_t t = 0; t + 2 < mesh_.indices.size(); t += 3)
+        tris.push_back({ wid[mesh_.indices[t]], wid[mesh_.indices[t + 1]],
+                         wid[mesh_.indices[t + 2]] });
+
+    // ── LAYER SPLIT: connected components over the welded surface ──
+    // A character often arrives as several stacked layers — skin, clothing,
+    // hair — that we cannot tell apart from metadata.  Exact-position welding
+    // keeps them as SEPARATE connected components (different layers rarely share
+    // a vertex), so a union-find over the triangle edges recovers one component
+    // per layer-piece.
+    std::vector<int> comp(W);
+    for (int i = 0; i < W; ++i) comp[i] = i;
+    auto findc = [&](int x) {
+        while (comp[x] != x) { comp[x] = comp[comp[x]]; x = comp[x]; }
+        return x;
+    };
+    auto unite = [&](int a, int b) { comp[findc(a)] = findc(b); };
+    for (const auto& t : tris) { unite(t.x, t.y); unite(t.y, t.z); }
+    for (int i = 0; i < W; ++i) comp[i] = findc(i);
+
+    // Ray vs welded triangle (Möller–Trumbore); fills hit distance + barycentric
+    // (u,v) for the v1,v2 corners (v0 weight = 1-u-v).
+    auto rayTri = [&](const glm::vec3& o, const glm::vec3& d,
+                      const glm::ivec3& t, float& outT,
+                      float& bu, float& bv) -> bool {
+        const glm::vec3& v0 = wpos[t.x]; const glm::vec3& v1 = wpos[t.y];
+        const glm::vec3& v2 = wpos[t.z];
+        const glm::vec3 e1 = v1 - v0, e2 = v2 - v0;
+        const glm::vec3 pv = glm::cross(d, e2);
+        const float det = glm::dot(e1, pv);
+        if (std::fabs(det) < 1e-12f) return false;
+        const float inv = 1.0f / det;
+        const glm::vec3 tvec = o - v0;
+        const float u = glm::dot(tvec, pv) * inv;
+        if (u < -1e-5f || u > 1.0f + 1e-5f) return false;
+        const glm::vec3 qv = glm::cross(tvec, e1);
+        const float v = glm::dot(d, qv) * inv;
+        if (v < -1e-5f || u + v > 1.0f + 1e-5f) return false;
+        const float tt = glm::dot(e2, qv) * inv;
+        if (tt <= 1e-6f) return false;
+        outT = tt; bu = u; bv = v;
+        return true;
+    };
+
+    // ── SKIN CLASSIFICATION by joint ray casting ──
+    // Skin is the INNERMOST layer: a ray fired outward from a joint (which sits
+    // inside the body) pierces skin first, then any clothing, then hair.  So
+    // over a sphere of directions from every joint, the NEAREST triangle hit
+    // belongs to skin.  Tally per component how often it is that nearest hit
+    // versus merely crossed; a component whose hits are usually the closest
+    // (>50%) is skin.  Cloth/hair, always sitting behind skin, score low.  A
+    // single-component mesh (no separate layers) scores 100% → all skin, i.e.
+    // identical behaviour to before.
+    const int kDirs = 128;
+    std::vector<long> firstHits(W, 0), totalHits(W, 0);   // keyed by comp rep
+    for (int j = 0; j < nj; ++j) {
+        const glm::vec3 o = skeleton_.joints[j].position;
+        for (int s = 0; s < kDirs; ++s) {
+            const float k     = static_cast<float>(s) + 0.5f;
+            const float phi   = std::acos(1.0f - 2.0f * k / kDirs);
+            const float theta = 2.39996323f * static_cast<float>(s);  // golden
+            const glm::vec3 d(std::sin(phi) * std::cos(theta),
+                              std::sin(phi) * std::sin(theta),
+                              std::cos(phi));
+            float bestT = 1e30f; int bestComp = -1;
+            for (const auto& t : tris) {
+                float tt, bu, bv;
+                if (!rayTri(o, d, t, tt, bu, bv)) continue;
+                ++totalHits[comp[t.x]];
+                if (tt < bestT) { bestT = tt; bestComp = comp[t.x]; }
+            }
+            if (bestComp >= 0) ++firstHits[bestComp];
+        }
+    }
+    // Decide skin per component representative, then label every vertex (O(W)).
+    // Never-hit pockets default to skin so they are still rigged directly; only
+    // components actually struck by rays count as distinct layers in the log.
+    std::vector<char> compSkin(W, 0);
+    int n_layers = 0;
+    for (int i = 0; i < W; ++i) {
+        if (comp[i] != i) continue;                       // representatives
+        if (totalHits[i] > 0) ++n_layers;
+        compSkin[i] = (totalHits[i] == 0) ||
+                      (static_cast<float>(firstHits[i]) >=
+                       0.5f * static_cast<float>(totalHits[i])) ? 1 : 0;
+    }
+    std::vector<bool> isSkin(W, false);
+    int skin_verts = 0;
+    for (int w = 0; w < W; ++w)
+        if (compSkin[comp[w]]) { isSkin[w] = true; ++skin_verts; }
+    // Safety: if nothing classified as skin (degenerate ray test), treat the
+    // whole mesh as skin so weighting proceeds as the single-layer case.
+    if (skin_verts == 0) {
+        isSkin.assign(W, true); skin_verts = W;
+    }
+
+    // ── Geodesic graph from SKIN triangles only ──
+    // The surface distance must run on the skin manifold; clothing/hair edges
+    // would add shortcuts that corrupt it, so non-skin triangles are excluded.
+    std::vector<std::vector<std::pair<int, float>>> adj(W);
+    auto addEdge = [&](int a, int b) {
+        if (a == b) return;
+        const float w = glm::length(wpos[a] - wpos[b]);
+        adj[a].push_back({b, w});
+        adj[b].push_back({a, w});
+    };
+    for (const auto& t : tris) {
+        if (!isSkin[t.x]) continue;                       // skin triangles only
+        addEdge(t.x, t.y); addEdge(t.y, t.z); addEdge(t.z, t.x);
+    }
+
+    // Per-bone blend RADIUS (falloff width): a bone must reach into — and so
+    // COVER — its CONNECTED (skeleton-adjacent) bones, so vertices between two
+    // connected bones are shared.  Radius = max length of this bone and its
+    // neighbours at either joint.  Long limbs blend wide; short bones (neck /
+    // shoulder) blend narrow but still reach their longer neighbours.
+    std::vector<float> boneLen(nb);
+    for (int bi = 0; bi < nb; ++bi)
+        boneLen[bi] = glm::length(bones[bi].b - bones[bi].a);
+    std::vector<std::vector<int>> jointBones(nj);
+    for (int bi = 0; bi < nb; ++bi) {
+        const int cj = bones[bi].joint_idx;
+        const int pj = (cj >= 0 && cj < nj) ? skeleton_.joints[cj].parent : -1;
+        if (cj >= 0 && cj < nj) jointBones[cj].push_back(bi);
+        if (pj >= 0 && pj < nj) jointBones[pj].push_back(bi);
+    }
+    std::vector<float> tau(nb);
+    for (int bi = 0; bi < nb; ++bi) {
+        float r = boneLen[bi];
+        const int cj = bones[bi].joint_idx;
+        const int pj = (cj >= 0 && cj < nj) ? skeleton_.joints[cj].parent : -1;
+        auto consider = [&](int jt) {
+            if (jt < 0 || jt >= nj) return;
+            for (int n : jointBones[jt]) r = std::max(r, boneLen[n]);
+        };
+        consider(cj); consider(pj);
+        tau[bi] = std::max(r * 0.9f, 1e-4f);   // ~one neighbour-bone reach
+    }
+
+
+    // ── Seed each bone from the surface that ENCLOSES it (ray casting) ──
+    // Straight-line "nearest joint/bone" assignment LEAKS across gaps: with the
+    // arm down, the elbow joint is euclidean-near the waist, so the waist would
+    // wrongly seed the forearm and the geodesic would measure distance from the
+    // wrong place.  Instead we fire rays from points ALONG each bone segment
+    // over a sphere of directions; the NEAREST skin hit in each direction is the
+    // limb surface that wraps the bone (the bone sits inside its own limb), so
+    // seeds always land on the correct part.  Rays in ALL directions also seed
+    // BOTH faces of thick parts (pelvis/torso), and the leaf/root bones are
+    // handled by the same rule — no special cases.
+    std::vector<std::vector<int>> seeds(nb);
+    {
+        const int kBoneDirs = 64;     // directions per sample point
+        const int kSamples  = 4;      // segment samples (kSamples+1 points)
+        std::vector<std::pair<float, int>> hits;   // (hit distance, triangle)
+        for (int bi = 0; bi < nb; ++bi) {
+            hits.clear();
+            for (int sp = 0; sp <= kSamples; ++sp) {
+                const float u = static_cast<float>(sp) / kSamples;
+                const glm::vec3 o = bones[bi].a + (bones[bi].b - bones[bi].a) * u;
+                for (int s = 0; s < kBoneDirs; ++s) {
+                    const float k     = static_cast<float>(s) + 0.5f;
+                    const float phi   = std::acos(1.0f - 2.0f * k / kBoneDirs);
+                    const float theta = 2.39996323f * static_cast<float>(s);
+                    const glm::vec3 d(std::sin(phi) * std::cos(theta),
+                                      std::sin(phi) * std::sin(theta),
+                                      std::cos(phi));
+                    float bestT = 1e30f; int bestTri = -1;
+                    for (size_t ti = 0; ti < tris.size(); ++ti) {
+                        const glm::ivec3& tv = tris[ti];
+                        if (!isSkin[tv.x]) continue;         // skin surface only
+                        float tt, bu, bv;
+                        if (!rayTri(o, d, tv, tt, bu, bv)) continue;
+                        // Only the surface the bone EXITS through (its own
+                        // enclosing limb) is a valid seed.  A foreign part across
+                        // an air gap is ENTERED — its face normal points back at
+                        // the ray (dot<=0) — so reject it; otherwise a hand next
+                        // to the hip would seed the hip.
+                        const glm::vec3 fn = glm::cross(wpos[tv.y] - wpos[tv.x],
+                                                        wpos[tv.z] - wpos[tv.x]);
+                        if (glm::dot(fn, d) <= 0.0f) continue;
+                        if (tt < bestT) { bestT = tt; bestTri = static_cast<int>(ti); }
+                    }
+                    if (bestTri >= 0) hits.push_back({ bestT, bestTri });
+                }
+            }
+            if (hits.empty()) continue;
+            // Local limb radius = MEDIAN nearest-hit distance.  Reject far
+            // outliers — rays that escaped along the bone axis into a NEIGHBOUR
+            // (e.g. up from the shoulder into the head), which would otherwise
+            // seed the wrong part.  Keeps each bone's own cross-section.
+            std::vector<float> ds; ds.reserve(hits.size());
+            for (const auto& h : hits) ds.push_back(h.first);
+            std::nth_element(ds.begin(), ds.begin() + ds.size() / 2, ds.end());
+            const float cutoff = ds[ds.size() / 2] * 2.0f + 1e-4f;
+            for (const auto& h : hits) {
+                if (h.first > cutoff) continue;
+                const glm::ivec3& t = tris[h.second];
+                seeds[bi].push_back(t.x);
+                seeds[bi].push_back(t.y);
+                seeds[bi].push_back(t.z);
+            }
         }
     }
 
-    // For each vertex, find the 4 closest bones and compute weights.
+    // ── Per-bone GEODESIC distance from its core (multi-source Dijkstra) ──
+    // geo[w * nb + bi] = on-surface distance from welded vertex w to bone bi's
+    // core.  A hand by the thigh is euclidean-near but a whole arm away across
+    // the surface, so its bone never reaches the thigh's vertices.
+    std::vector<float> geo(static_cast<size_t>(W) * nb, 1e30f);
+    std::vector<float> dist(W);
+    for (int bi = 0; bi < nb; ++bi) {
+        std::fill(dist.begin(), dist.end(), 1e30f);
+        std::priority_queue<std::pair<float, int>,
+                            std::vector<std::pair<float, int>>,
+                            std::greater<std::pair<float, int>>> pq;
+        for (int s : seeds[bi])
+            if (dist[s] > 0.0f) { dist[s] = 0.0f; pq.push({0.0f, s}); }
+        while (!pq.empty()) {
+            const std::pair<float, int> top = pq.top(); pq.pop();
+            const float d = top.first; const int u = top.second;
+            if (d > dist[u]) continue;
+            for (const auto& e : adj[u]) {
+                const float nd = d + e.second;
+                if (nd < dist[e.first]) { dist[e.first] = nd; pq.push({nd, e.first}); }
+            }
+        }
+        for (int w = 0; w < W; ++w) geo[static_cast<size_t>(w) * nb + bi] = dist[w];
+    }
+
+    // ── Full per-welded-vertex weights from the GEODESIC falloff ──
+    // PURELY geodesic: each bone gets weight exp(-(geo-gmin)/tau[bi]) of its
+    // on-surface distance.  No euclidean distance, no point-to-segment distance,
+    // no hard cutoff — the falloff itself makes surface-far bones vanish.  gmin
+    // is the vertex's nearest geodesic bone; a bone's influence extends smoothly
+    // beyond its own region and fades on its own.  An unreachable vertex (a skin
+    // island no bone-ray reached) is simply left unweighted and counted; there
+    // is deliberately NO euclidean last-resort.
+    std::vector<std::vector<float>> Wf(W, std::vector<float>(nb, 0.0f));
+    size_t orphan_count = 0;   // geodesically unreachable from every bone
+    for (int w = 0; w < W; ++w) {
+        if (!isSkin[w]) continue;             // outer layers: projected below
+        const float* g = &geo[static_cast<size_t>(w) * nb];
+        float gmin = 1e30f; int bmin = -1;
+        for (int bi = 0; bi < nb; ++bi)
+            if (g[bi] < gmin) { gmin = g[bi]; bmin = bi; }
+
+        if (bmin < 0 || gmin >= 1e29f) { ++orphan_count; continue; }
+        // Falloff that ENDS at the "yellow" band of the jet heat ramp and is
+        // DISCARDED beyond it.  closeness = exp(-(geo-gmin)/tau) runs 1 (red, at
+        // the bone) → 0 (far).  Yellow sits at closeness kYellow, so we remap
+        // [kYellow,1] → [0,1] and drop everything below: a bone only influences
+        // vertices out to its yellow distance, fading smoothly to zero there.
+        const float kYellow = 0.625f;
+        float sum = 0.0f;
+        for (int bi = 0; bi < nb; ++bi) {
+            if (g[bi] >= 1e29f) continue;                 // not reachable
+            const float c = std::exp(-(g[bi] - gmin) / tau[bi]);
+            if (c < kYellow) continue;                    // beyond yellow → discard
+            const float wgt = (c - kYellow) / (1.0f - kYellow);
+            if (wgt <= 0.0f) continue;
+            Wf[w][bi] = wgt; sum += wgt;
+        }
+        if (sum <= 1e-8f) { Wf[w][bmin] = 1.0f; sum = 1.0f; }
+        for (int bi = 0; bi < nb; ++bi) Wf[w][bi] /= sum;
+    }
+
+    // ── Project OUTER layers (cloth/hair) back onto the SKIN ──
+    // Clothing/hair rides the body beneath it, so each outer vertex copies the
+    // skin's (geodesic) weights at the point directly UNDER it.  "Under" is
+    // along the reference-joint ray: from the vertex's reference joint we shoot
+    // a ray through the vertex and take the SKIN triangle hit nearest the vertex
+    // (the skin just inside the cloth), then barycentric-blend that triangle's
+    // skin weights.  No distance metric is used here — only ray intersection.
+    // If the ray misses skin entirely (e.g. a free-hanging skirt hem) the vertex
+    // is bound rigidly to its reference joint's bone.
+    size_t projected_count = 0, project_fallback = 0;
+    if (skin_verts > 0 && skin_verts < W) {
+        // Reference joint of each joint's nearest joint is needed; pick it once
+        // per outer vertex as the joint whose bone seed-ray the cloth sits over.
+        for (int w = 0; w < W; ++w) {
+            if (isSkin[w]) continue;
+            const glm::vec3 P = wpos[w];
+            // Reference joint = nearest joint (the body part this cloth covers).
+            int rj = -1; float rd = 1e30f;
+            for (int jj = 0; jj < nj; ++jj) {
+                const float d = glm::length(P - skeleton_.joints[jj].position);
+                if (d < rd) { rd = d; rj = jj; }
+            }
+            const glm::vec3 J = (rj >= 0) ? skeleton_.joints[rj].position : P;
+            glm::vec3 dir = P - J; const float Lp = glm::length(dir);
+            int hitTri = -1; float hitU = 0.0f, hitV = 0.0f, hitBest = -1.0f;
+            if (Lp > 1e-5f) {
+                dir /= Lp;
+                // Skin hit with the LARGEST t not past the vertex = the skin
+                // just under the cloth.  Allow a little past for thin gaps.
+                for (size_t ti = 0; ti < tris.size(); ++ti) {
+                    if (!isSkin[tris[ti].x]) continue;
+                    float tt, bu, bv;
+                    if (!rayTri(J, dir, tris[ti], tt, bu, bv)) continue;
+                    if (tt > Lp * 1.05f) continue;
+                    if (tt > hitBest) { hitBest = tt; hitTri = (int)ti; hitU = bu; hitV = bv; }
+                }
+            }
+            if (hitTri >= 0) {
+                const glm::ivec3& t = tris[hitTri];
+                const float w0 = 1.0f - hitU - hitV;
+                for (int bi = 0; bi < nb; ++bi)
+                    Wf[w][bi] = w0 * Wf[t.x][bi] + hitU * Wf[t.y][bi]
+                              + hitV * Wf[t.z][bi];
+                ++projected_count;
+            } else if (rj >= 0) {
+                // Ray missed skin → bind rigidly to the reference joint's bone
+                // (no distance metric; bone index == joint index).
+                Wf[w][rj] = 1.0f;
+                ++project_fallback;
+            }
+        }
+    }
+
+    // NOTE: skin weights are PURELY the per-bone surface-distance falloff above;
+    // outer layers (cloth/hair) inherit them by projection, so they share the
+    // body's bones rather than being skinned independently.
+
+    // ── Scatter the distance weights to each original vertex (top-4) ──
     for (int v = 0; v < nv; ++v) {
-        const glm::vec3& p = mesh_.positions[v];
-
-        struct BoneDist { int joint; float dist; };
-        std::vector<BoneDist> dists;
-        dists.reserve(bones.size());
-
-        for (auto& bone : bones) {
-            // Closest point on segment a-b to point p.
-            glm::vec3 ab = bone.b - bone.a;
-            float len2 = glm::dot(ab, ab);
-            float t = (len2 > 1e-8f)
-                ? std::clamp(glm::dot(p - bone.a, ab) / len2, 0.0f, 1.0f)
-                : 0.0f;
-            glm::vec3 closest = bone.a + t * ab;
-            float dist = glm::length(p - closest);
-            dists.push_back({bone.joint_idx, dist});
-        }
-
-        // Sort by distance, take up to the 4 closest.
-        std::sort(dists.begin(), dists.end(),
-            [](const BoneDist& a, const BoneDist& b) { return a.dist < b.dist; });
-
+        const std::vector<float>& wv = Wf[wid[v]];
         auto& vsd = skin_weights_.per_vertex[v];
-        float total_w = 0.0f;
-        int count = std::min(4, (int)dists.size());
-
-        // Relative-distance cutoff: only bind to bones that are reasonably
-        // close to the NEAREST bone.  Without this, a torso vertex whose
-        // nearest bone is the spine still grabs three more "top 4" bones —
-        // often an arm AND a leg, or a left AND a right limb — which makes the
-        // skin tear when those opposite limbs move apart (e.g. the head split
-        // and the left hand following the right arm).  A bone 3x farther than
-        // the closest contributes negligibly to a real deformation, so we drop
-        // it.  Vertices near a single bone now bind almost entirely to it;
-        // vertices in a genuine blend region (near two joints) still share.
-        const float nearest = dists.empty() ? 0.0f : dists[0].dist;
-        constexpr float kRelCut = 3.0f;   // keep bones within 3x the nearest
-
-        int kept = 0;
-        for (int i = 0; i < count; ++i) {
-            if (i > 0 && dists[i].dist > (nearest + 0.001f) * kRelCut) break;
-            vsd.joint_indices[kept] = dists[i].joint;
-            // Inverse-distance weighting with a small epsilon.
-            float w = 1.0f / (dists[i].dist + 0.001f);
-            vsd.weights[kept] = w;
-            total_w += w;
-            ++kept;
+        int   idx[4] = {-1, -1, -1, -1};
+        float val[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        for (int bi = 0; bi < nb; ++bi) {
+            const float wgt = wv[bi];
+            for (int s = 0; s < 4; ++s)
+                if (wgt > val[s]) {
+                    for (int t = 3; t > s; --t) { val[t] = val[t-1]; idx[t] = idx[t-1]; }
+                    val[s] = wgt; idx[s] = bi; break;
+                }
         }
-        // Zero any unused influence slots so stale data can't leak in.
-        for (int i = kept; i < 4; ++i) {
-            vsd.joint_indices[i] = 0;
-            vsd.weights[i] = 0.0f;
+        float total = 0.0f;
+        for (int i = 0; i < 4; ++i) {
+            if (idx[i] < 0 || val[i] <= 0.0f) {
+                vsd.joint_indices[i] = 0; vsd.weights[i] = 0.0f; continue;
+            }
+            vsd.joint_indices[i] = bones[idx[i]].joint_idx;
+            vsd.weights[i] = val[i];
+            total += val[i];
         }
-
-        // Normalise.
-        if (total_w > 1e-8f) {
-            for (int i = 0; i < 4; ++i) vsd.weights[i] /= total_w;
-        }
+        if (total > 1e-8f) for (int i = 0; i < 4; ++i) vsd.weights[i] /= total;
     }
 
-    fprintf(stderr, "[AutoRig] skinning: %d vertices weighted to %d bones\n",
-        nv, (int)bones.size());
+    fprintf(stderr,
+        "[AutoRig] geodesic skinning: %d verts (%d welded), %d bones | "
+        "%d layer(s), %d skin / %d outer welded | %zu projected (%zu fallback) | "
+        "%zu orphan(s) [left unweighted]\n",
+        nv, W, nb, n_layers, skin_verts, W - skin_verts,
+        projected_count, project_fallback, orphan_count);
     return true;
 }
 
@@ -2987,16 +3336,21 @@ void AutoRigPlugin::drawImGui() {
                 ImGui::SetNextItemWidth(200);
 
                 // Build combo items: "Latest (arch_vNNN)", individual entries...
+                // "Latest" = newest file on disk (latestModelIndex), so the
+                // label matches what loadModelByIndex(-1) actually loads.
+                const int latest_idx = latestModelIndex();
+                const std::string latest_label =
+                    (latest_idx >= 0) ? model_versions_[latest_idx].label() : "none";
                 std::string current_label;
                 if (model_selected_idx_ < 0)
-                    current_label = "Latest (" + model_versions_.back().label() + ")";
+                    current_label = "Latest (" + latest_label + ")";
                 else
                     current_label = model_versions_[model_selected_idx_].label();
 
                 if (ImGui::BeginCombo("##model_ver", current_label.c_str())) {
                     // "Latest" option
                     {
-                        std::string lbl = "Latest (" + model_versions_.back().label() + ")";
+                        std::string lbl = "Latest (" + latest_label + ")";
                         bool selected = (model_selected_idx_ < 0);
                         if (ImGui::Selectable(lbl.c_str(), selected)) {
                             model_selected_idx_ = -1;
