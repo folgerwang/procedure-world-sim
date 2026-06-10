@@ -3654,6 +3654,12 @@ void RealWorldApplication::syncSceneFromDrawables() {
     }
     for (size_t i = 0; i < n; ++i) {
         const auto& obj = imported_objects_[i];
+        // Controller-driven (adopted scene player): its instance root was
+        // cleared to identity and PlayerController owns world placement —
+        // writing identity back into the row would corrupt the authored
+        // transform.  The live position is mirrored into the .rwplayer
+        // PARENT row each frame by the controller block instead.
+        if (obj && obj->isControllerDriven()) continue;
         if (obj && obj->hasInstanceRoot()) {
             auto& so = scene_.objects[i];
             const glm::mat4 world =
@@ -3706,10 +3712,14 @@ void RealWorldApplication::rebuildImportedObjectsFromScene() {
                 for (auto& c : ext)
                     c = (char)std::tolower((unsigned char)c);
                 if (ext == ".rwcam" || ext == ".rwplayer" ||
-                    ext == ".rwbgm") {
-                    // Camera / player / BGM node: data + transform, no
-                    // drawable of its own (a player's mesh lives in its
-                    // child row; a BGM's clip is an audio attribute).
+                    ext == ".rwbgm" || ext == ".rwcol" ||
+                    ext == ".rwcmap") {
+                    // Camera / player / BGM / collision node: data +
+                    // transform, no drawable of its own (a player's mesh
+                    // lives in its child row; a BGM's clip is an audio
+                    // attribute; a collision object's asset_path is the
+                    // baked .rwcmap it holds — loaded separately by
+                    // loadSceneFromFile, not a renderable model).
                     imported_objects_.push_back(nullptr);
                     continue;
                 }
@@ -3780,6 +3790,23 @@ void RealWorldApplication::rebuildImportedObjectsFromScene() {
 
 bool RealWorldApplication::saveSceneToFile(const std::string& path) {
     syncSceneFromDrawables();
+    // The collision OBJECT row is authoritative; the legacy v4 trailer is
+    // derived from it at save time.  No row (user deleted the collision
+    // object) or an unassigned ".rwcol" marker → empty trailer, so the
+    // saved scene loads with no collision.  (Legacy trailer-only scenes
+    // are migrated to a row at load, so nothing is lost here.)
+    {
+        std::string row_map;
+        for (const auto& so : scene_.objects) {
+            const std::string& ap = so.asset_path;
+            if (ap.size() > 7 &&
+                ap.compare(ap.size() - 7, 7, ".rwcmap") == 0) {
+                row_map = ap;
+                break;
+            }
+        }
+        scene_.collision_map_path = row_map;
+    }
     const bool ok = engine::scene::saveSceneBinary(path, scene_);
     std::cout << "[scene] save '" << path << "' -> "
               << (ok ? "OK" : "FAILED") << std::endl;
@@ -3817,6 +3844,18 @@ bool RealWorldApplication::loadSceneFromFile(const std::string& path) {
             m.cluster_global_mesh_idx_ = -1;
         }
     }
+    // Release the adopted scene player (if any): the drawable it points
+    // at is about to be torn down with the rest of the imported set, and
+    // the controller's spawn latch must re-arm against the NEW scene's
+    // player object on the next Play.
+    if (scene_player_row_ >= 0) {
+        if (player_object_) player_object_->setControllerDriven(false);
+        player_object_            = nullptr;
+        scene_player_row_         = -1;
+        scene_player_spawn_valid_ = false;
+        if (player_controller_) player_controller_->despawn();
+    }
+
     for (auto& obj : imported_objects_) {
         if (!obj) continue;
         if (object_scene_view_)        object_scene_view_->removeDrawableObject(obj);
@@ -3839,6 +3878,161 @@ bool RealWorldApplication::loadSceneFromFile(const std::string& path) {
     rebuildImportedObjectsFromScene();
     std::cout << "[scene] loaded '" << path << "' as '" << scene_.name
               << "'  (" << scene_.objects.size() << " object(s))" << std::endl;
+
+    // Baked collision map: restore the collision world from the file so
+    // the player can spawn and walk (WASD) immediately.  The reference
+    // comes from the scene's COLLISION OBJECT row when one exists (an
+    // authored Outliner node whose asset_path is the .rwcmap — see "Add
+    // Collision Map"), falling back to the legacy v4 trailer field for
+    // scenes saved before collision objects.  Collision is BAKE-DRIVEN —
+    // if the scene has no (working) baked map, the previous scene's
+    // stale world is torn down next frame (collision_world_reset_pending_)
+    // and nothing is rebuilt until the user runs Tools > Bake Collision
+    // Map.
+    collision_world_reset_pending_ = true;
+    std::string cmap = scene_.collision_map_path;   // legacy trailer
+    for (const auto& so : scene_.objects) {
+        const std::string& ap = so.asset_path;
+        if (ap.size() > 7 &&
+            ap.compare(ap.size() - 7, 7, ".rwcmap") == 0) {
+            cmap = ap;                              // collision object wins
+            break;
+        }
+    }
+    if (!cmap.empty()) {
+        if (loadCollisionMapFromFile(cmap)) {
+            scene_.collision_map_path = cmap;       // keep trailer in sync
+            collision_world_reset_pending_ = false;
+            // Migration: scenes saved before collision objects existed
+            // only carry the trailer field.  Materialise the reference as
+            // an authored collision row so it shows in the Outliner and
+            // survives the row-driven save sync below.
+            bool has_row = false;
+            for (const auto& so : scene_.objects) {
+                const std::string& ap = so.asset_path;
+                if ((ap.size() > 6 &&
+                     ap.compare(ap.size() - 6, 6, ".rwcol") == 0) ||
+                    (ap.size() > 7 &&
+                     ap.compare(ap.size() - 7, 7, ".rwcmap") == 0)) {
+                    has_row = true;
+                    break;
+                }
+            }
+            if (!has_row) {
+                engine::scene::Object so;
+                so.name = "Collision Map";
+                so.asset_path = cmap;
+                so.parent_index = -1;
+                so.source_node_index = -1;
+                so.is_group = false;
+                so.visible = true;
+                scene_.objects.push_back(so);
+                imported_objects_.push_back(nullptr);
+                std::cout << "[scene] migrated legacy collision reference "
+                             "into a 'Collision Map' scene object"
+                          << std::endl;
+            }
+        } else {
+            std::cout << "[scene] baked collision map '" << cmap
+                      << "' failed to load — bake a new one via Tools > "
+                         "Bake Collision Map (Player Walk)" << std::endl;
+        }
+    }
+    return true;
+}
+
+// ── Baked collision map (.rwcmap) ───────────────────────────────────────
+// File layout (little-endian, native x64):
+//   char[8]  magic  = "RWCMAP\0\0"
+//   u32      version = 1
+//   u32      mesh count
+//   repeat:  CollisionMesh::serialize payload (names, category, source
+//            identity, vertex / index arrays — BVH excluded, rebuilt async
+//            on load).
+namespace {
+const char     kRwCmapMagic[8] = {'R','W','C','M','A','P','\0','\0'};
+const uint32_t kRwCmapVersion  = 1;
+}
+
+bool RealWorldApplication::bakeCollisionMapToFile(const std::string& path) {
+    if (!collision_world_built_ || collision_world_.empty()) {
+        std::cout << "[collision-bake] collision world not built yet — "
+                     "nothing to bake" << std::endl;
+        return false;
+    }
+    std::error_code ec;
+    const std::filesystem::path p(path);
+    if (p.has_parent_path())
+        std::filesystem::create_directories(p.parent_path(), ec);
+    std::ofstream os(path, std::ios::binary | std::ios::trunc);
+    if (!os) {
+        std::cout << "[collision-bake] cannot open '" << path
+                  << "' for writing" << std::endl;
+        return false;
+    }
+    os.write(kRwCmapMagic, 8);
+    os.write(reinterpret_cast<const char*>(&kRwCmapVersion), 4);
+    const uint32_t count = (uint32_t)collision_world_.meshCount();
+    os.write(reinterpret_cast<const char*>(&count), 4);
+    size_t tris = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        const auto* cm = collision_world_.meshAt(i);
+        cm->serialize(os);
+        tris += cm->triangleCount();
+    }
+    const bool ok = static_cast<bool>(os);
+    std::cout << "[collision-bake] '" << path << "' -> "
+              << (ok ? "OK" : "FAILED") << "  (" << count << " meshes, "
+              << tris << " tris)" << std::endl;
+    return ok;
+}
+
+bool RealWorldApplication::loadCollisionMapFromFile(const std::string& path) {
+    std::ifstream is(path, std::ios::binary);
+    if (!is) {
+        std::cout << "[collision-bake] cannot open '" << path << "'"
+                  << std::endl;
+        return false;
+    }
+    char magic[8] = {0};
+    uint32_t version = 0, count = 0;
+    if (!is.read(magic, 8) ||
+        std::memcmp(magic, kRwCmapMagic, 8) != 0 ||
+        !is.read(reinterpret_cast<char*>(&version), 4) ||
+        version < 1 || version > kRwCmapVersion ||
+        !is.read(reinterpret_cast<char*>(&count), 4) ||
+        count > (1u << 20)) {
+        std::cout << "[collision-bake] '" << path
+                  << "' is not a valid .rwcmap" << std::endl;
+        return false;
+    }
+    // Stage into a temporary list first so a corrupt file can't leave a
+    // half-replaced world behind.
+    std::vector<std::shared_ptr<engine::helper::CollisionMesh>> loaded;
+    loaded.reserve(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        auto m = std::make_shared<engine::helper::CollisionMesh>();
+        if (!m->deserialize(is)) {
+            std::cout << "[collision-bake] '" << path
+                      << "' corrupt at mesh " << i << "/" << count
+                      << std::endl;
+            return false;
+        }
+        loaded.push_back(std::move(m));
+    }
+    // Swap in: tear down the current world (debug buffers reference the
+    // device) and adopt the loaded meshes.  BVHs build asynchronously;
+    // raycasts brute-force per mesh until each tree is ready.
+    device_->waitIdle();
+    collision_world_.destroyDebugBuffers(device_);
+    collision_world_.clear();
+    for (auto& m : loaded) collision_world_.addMesh(std::move(m));
+    collision_world_.buildBVHsAsync();
+    collision_world_built_ = true;
+    if (menu_) menu_->setCollisionMeshCount(collision_world_.meshCount());
+    std::cout << "[collision-bake] loaded '" << path << "'  ("
+              << collision_world_.meshCount()
+              << " meshes) — player walk ready" << std::endl;
     return true;
 }
 
@@ -7131,6 +7325,51 @@ void RealWorldApplication::drawFrame() {
     // code path serves both first-time spawning and on-demand recovery.
     const bool reset_pos_req =
         menu_ ? menu_->consumeResetPlayerPosition() : false;
+
+    // ── Scene player adoption (editor play mode) ─────────────────────
+    // The empty-scene editor never loads the startup player, so
+    // player_object_ is null until the user presses Play (▶).  When play
+    // mode wants a controllable character, adopt the scene's authored
+    // player: the first ".rwplayer" row whose child holds a READY
+    // skinned drawable.  From then on the whole existing
+    // PlayerController path drives it — WASD walk, capsule-vs-collision
+    // resolve, foot IK, follow camera — exactly like the old startup
+    // player.  The ECS transform push is disabled for the adopted
+    // drawable (controller-driven), and its editor placement instance
+    // root is cleared because applyPose owns world placement through
+    // the rig's root node.
+    if (menu_ && menu_->isPlayMode() && !player_object_) {
+        for (size_t i = 0; i < scene_.objects.size(); ++i) {
+            const auto& so = scene_.objects[i];
+            const std::string& ap = so.asset_path;
+            if (ap.size() <= 9 ||
+                ap.compare(ap.size() - 9, 9, ".rwplayer") != 0)
+                continue;
+            for (size_t j = 0; j < scene_.objects.size() &&
+                               j < imported_objects_.size(); ++j) {
+                if (scene_.objects[j].parent_index != (int)i) continue;
+                auto& obj = imported_objects_[j];
+                if (!obj || !obj->isReady() ||
+                    obj->getDrawableData().skins_.empty())
+                    continue;
+                obj->setControllerDriven(true);
+                obj->setInstanceRootTransform(
+                    glm::vec3(0.0f),
+                    glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+                    glm::vec3(1.0f));
+                player_object_           = obj;
+                scene_player_row_        = (int)i;
+                scene_player_spawn_pos_  = so.transform.translation;
+                scene_player_spawn_valid_ = true;
+                std::cout << "[player] adopted scene player '" << so.name
+                          << "' (skeleton mesh '" << scene_.objects[j].name
+                          << "') — spawning at its authored position"
+                          << std::endl;
+                break;
+            }
+            if (player_object_) break;
+        }
+    }
     // First-time spawn waits until the level is fully loaded AND the
     // (simplified) collision mesh has finished building, so the very first
     // placement can land her on the ground (the per-frame follow block
@@ -7412,6 +7651,16 @@ void RealWorldApplication::drawFrame() {
         }
 
         glm::vec3 spawn_pos(spawn_xz.x, spawn_y, spawn_xz.y);
+        // Scene-authored player: the first spawn lands at the .rwplayer
+        // node's authored position (where the user placed the player in
+        // the editor), not at the camera.  "Reset player position" keeps
+        // the camera-relative behaviour — it exists to teleport the
+        // character to wherever you are looking.  PlayerController's
+        // per-step ground snap (and the foot-IK ground query) settle the
+        // exact Y against the collision world on the first step.
+        if (scene_player_spawn_valid_ && !reset_pos_req) {
+            spawn_pos = scene_player_spawn_pos_;
+        }
         player_controller_->spawnAt(spawn_pos, cam.yaw);
         std::cout << "[player] "
                   << (reset_pos_req ? "Reset to " : "Spawned at ")
@@ -8352,20 +8601,12 @@ void RealWorldApplication::drawFrame() {
             engine::ui::Menu::CollisionBuildStatus::Idle, 0, 0, 0);
     };
 
-    if (menu_->collisionWorldDirty()) {
-        device_->waitIdle();
-        collision_world_.destroyDebugBuffers(device_);
-        collision_world_.clear();
-        collision_world_built_ = false;
-        resetCollisionBuild();   // restart the incremental build clean
-        menu_->clearCollisionWorldDirty();
-    }
-
     // ── Async LLM material classifier — function-scope state ─────────
     // These statics live across the one-shot collision-world build
     // block AND the per-frame poll block below.  Declared here at
     // drawScene function scope so both blocks see the same storage
-    // (a `static` inside one `{}` wouldn't be visible to the other).
+    // (a `static` inside one `{}` wouldn't be visible to the other),
+    // and BEFORE the bake-request block so a re-bake can reset them.
     //
     //   s_mat_classifier         — owns the collected name set and the
     //                              eventual classified map.
@@ -8387,6 +8628,178 @@ void RealWorldApplication::drawFrame() {
     //                              Hoisted here (was poll-block-local) so
     //                              the build block above can read it too.
     static bool                               s_mat_classifier_applied = false;
+    // Wall-clock anchors for the poll block's progress heartbeat —
+    // hoisted from the poll block so a re-bake resets the elapsed time.
+    static std::chrono::steady_clock::time_point s_mat_classifier_started{};
+    static std::chrono::steady_clock::time_point s_mat_classifier_last_log{};
+    // True while a classifyAll() worker is still running — resetting the
+    // classifier under it would race the worker, so resets are skipped
+    // (and re-bakes refused) until the future resolves.
+    const bool classifier_in_flight =
+        s_mat_classifier_kicked && !s_mat_classifier_applied &&
+        s_mat_classifier_future.valid() &&
+        s_mat_classifier_future.wait_for(std::chrono::seconds(0)) !=
+            std::future_status::ready;
+    // Reset for a fresh collect → classify → build cycle (re-bake or
+    // scene load).  Callers must check classifier_in_flight first.
+    auto resetClassifier = [&]() {
+        s_mat_classifier.reset();
+        s_mat_classifier_kicked   = false;
+        s_mat_classifier_applied  = false;
+        s_mat_classifier_started  = {};
+        s_mat_classifier_last_log = {};
+    };
+
+    // Shape change (menu) or scene load (collision_world_reset_pending_):
+    // tear the stale world down.  Collision is BAKE-DRIVEN — nothing is
+    // rebuilt until the next Tools > Bake Collision Map request.
+    if (menu_->collisionWorldDirty() || collision_world_reset_pending_) {
+        device_->waitIdle();
+        collision_world_.destroyDebugBuffers(device_);
+        collision_world_.clear();
+        collision_world_built_ = false;
+        resetCollisionBuild();   // restart the incremental build clean
+        if (collision_world_reset_pending_ && !classifier_in_flight) {
+            resetClassifier();   // new scene → new names to classify
+        }
+        bake_collision_map_pending_ = false;  // scene/shape changed → cancel
+        collision_world_reset_pending_ = false;
+        menu_->clearCollisionWorldDirty();
+    }
+
+    // ── Tools > "Bake Collision Map (Player Walk)" ───────────────────
+    // BAKE-DRIVEN collision: the request restarts the classifier + the
+    // incremental collision build from the CURRENT scene (so re-bakes
+    // after edits pick up the changes); the .rwcmap is written the frame
+    // the build finishes.  Output goes to content/maps/<scene>.rwcmap and
+    // the scene records the path so Save Scene persists the reference —
+    // loading that scene restores collision instantly and the player can
+    // spawn + walk (WASD) without re-baking.
+    if (menu_->consumeBakeCollisionMapRequest()) {
+        if (bake_collision_map_pending_) {
+            std::cout << "[collision-bake] already in progress" << std::endl;
+        } else if (classifier_in_flight) {
+            std::cout << "[collision-bake] a previous classifier run is "
+                         "still in flight — try again in a moment"
+                      << std::endl;
+        } else {
+            device_->waitIdle();
+            collision_world_.destroyDebugBuffers(device_);
+            collision_world_.clear();
+            collision_world_built_ = false;
+            resetCollisionBuild();
+            resetClassifier();
+            bake_collision_map_pending_ = true;
+            std::cout << "[collision-bake] started — running classifier + "
+                         "collision build from the loaded scene"
+                      << std::endl;
+        }
+    }
+    if (bake_collision_map_pending_ && collision_world_built_) {
+        bake_collision_map_pending_ = false;
+        std::string stem = scene_.name.empty() ? "scene" : scene_.name;
+        for (auto& c : stem) {
+            if (c == '/' || c == '\\' || c == ':' || c == '*' ||
+                c == '?' || c == '"' || c == '<' || c == '>' || c == '|')
+                c = '_';
+        }
+        // Collision maps live in their own subfolder under maps/ so they
+        // don't mix with the per-asset .rwobj folders (e.g.
+        // maps/BistroExterior/).  bakeCollisionMapToFile creates the
+        // directory; loading goes through scene_.collision_map_path, so
+        // scenes saved with the old flat path keep working.
+        const std::string map_path =
+            "content/maps/collision/" + stem + ".rwcmap";
+        if (bakeCollisionMapToFile(map_path)) {
+            scene_.collision_map_path = map_path;   // legacy trailer
+            // Mirror the reference into the scene's COLLISION OBJECT so
+            // the map is a visible, authored Outliner row (like player /
+            // camera / BGM objects).  Re-bakes update the existing row;
+            // the first bake creates one.
+            int col_row = -1;
+            for (size_t i = 0; i < scene_.objects.size(); ++i) {
+                const std::string& ap = scene_.objects[i].asset_path;
+                const bool is_col =
+                    (ap.size() > 6 &&
+                     ap.compare(ap.size() - 6, 6, ".rwcol") == 0) ||
+                    (ap.size() > 7 &&
+                     ap.compare(ap.size() - 7, 7, ".rwcmap") == 0);
+                if (is_col) { col_row = (int)i; break; }
+            }
+            if (col_row >= 0) {
+                scene_.objects[col_row].asset_path = map_path;
+            } else {
+                engine::scene::Object so;
+                so.name = "Collision Map";
+                so.asset_path = map_path;
+                so.parent_index = -1;
+                so.source_node_index = -1;
+                so.is_group = false;
+                so.visible = true;
+                scene_.objects.push_back(so);
+                imported_objects_.push_back(nullptr);
+                std::cout << "[collision-bake] created scene collision "
+                             "object 'Collision Map'" << std::endl;
+            }
+            std::cout << "[collision-bake] scene references '" << map_path
+                      << "' — use Save Scene to persist it" << std::endl;
+        }
+    }
+
+    // ── Collision-build source drawables ─────────────────────────────
+    // The editor scene's imported objects (visible, non-player) plus the
+    // legacy bistro pair when auto-loaded.  Player objects (.rwplayer
+    // rows and their skeleton-mesh children) are EXCLUDED — the player
+    // must not be baked into the world it walks on.
+    std::vector<std::shared_ptr<ego::DrawableObject>> coll_sources;
+    bool coll_sources_ready = false;
+    bool scene_has_player   = false;
+    {
+        auto isPlayerRow = [&](int idx) {
+            int guard = 0;
+            while (idx >= 0 &&
+                   idx < static_cast<int>(scene_.objects.size()) &&
+                   guard++ < 64) {
+                const std::string& ap = scene_.objects[idx].asset_path;
+                if (ap.size() > 9 &&
+                    ap.compare(ap.size() - 9, 9, ".rwplayer") == 0)
+                    return true;
+                idx = scene_.objects[idx].parent_index;
+            }
+            return false;
+        };
+        const size_t n =
+            std::min(scene_.objects.size(), imported_objects_.size());
+        for (size_t i = 0; i < n; ++i) {
+            if (isPlayerRow(static_cast<int>(i))) {
+                scene_has_player = true;
+                continue;
+            }
+            const auto& obj = imported_objects_[i];
+            if (!obj || !obj->isVisible()) continue;
+            coll_sources.push_back(obj);
+        }
+        if (bistro_exterior_scene_)
+            coll_sources.push_back(bistro_exterior_scene_);
+        if (bistro_interior_scene_)
+            coll_sources.push_back(bistro_interior_scene_);
+        coll_sources_ready = !coll_sources.empty();
+        for (const auto& o : coll_sources) {
+            if (!o->isReady()) { coll_sources_ready = false; break; }
+        }
+    }
+
+    // "No collision map" prompt: the player can't spawn/walk until a
+    // collision world exists (baked .rwcmap loaded, or a bake has run).
+    // Shown while play mode is on and a player object is present; hidden
+    // while a bake is in progress (the progress bars cover that).
+    if (menu_) {
+        const bool player_present =
+            (player_object_ != nullptr) || scene_has_player;
+        menu_->setNoCollisionMapWarning(
+            menu_->isPlayMode() && player_present &&
+            !collision_world_built_ && !bake_collision_map_pending_);
+    }
 
     // ── CPU profile: "Collision world build" ────────────────────────
     // INCREMENTAL CPU work — once the classifier has landed this lane
@@ -8396,8 +8809,11 @@ void RealWorldApplication::drawFrame() {
     // collision_world_built_ latches.  If it keeps spiking forever the
     // finalise branch (build_done) isn't being reached — check that the
     // work list enumerated (drawables ready) and the cursor advances.
-    if (!collision_world_built_ &&
-        menu_->getGameState() == engine::ui::GameState::InGame) {
+    //
+    // BAKE-DRIVEN: gated on bake_collision_map_pending_ (Tools > Bake
+    // Collision Map), NOT on game/UI state — the editor has no title
+    // screen and the build must run whenever a bake was requested.
+    if (!collision_world_built_ && bake_collision_map_pending_) {
         auto _cpu_coll = gpu_profiler_.beginCpuScope("Collision world build");
 
         // Map the menu's user-facing CollisionDebugShape onto the
@@ -8478,18 +8894,27 @@ void RealWorldApplication::drawFrame() {
                     std::string(), std::string(), node.name_);
             }
         };
-        if (!s_mat_classifier_kicked) {
-            collectFromDrawable(bistro_exterior_scene_);
-            collectFromDrawable(bistro_interior_scene_);
+        if (coll_sources.empty()) {
+            // Nothing in the scene to bake — fail the request instead of
+            // waiting forever.
+            std::cout << "[collision-bake] no scene objects loaded — "
+                         "nothing to bake" << std::endl;
+            bake_collision_map_pending_ = false;
+        } else if (!s_mat_classifier_kicked && coll_sources_ready) {
+            // Kick the classifier only once EVERY source drawable has
+            // finished its async load, so the collected name set covers
+            // the whole scene (shells still streaming have no data yet).
+            for (const auto& o : coll_sources) collectFromDrawable(o);
             std::cout << "[collision] kicking off async LLM classifier "
                       << "(mats=" << s_mat_classifier.collectedMaterialCount()
                       << " objs=" << s_mat_classifier.collectedObjectCount()
-                      << "); collision build is DEFERRED until the "
-                         "classifier finishes (floor-only test)"
+                      << "); collision build starts when it finishes"
                       << std::endl;
+            const std::string scene_label =
+                scene_.name.empty() ? "Scene" : scene_.name;
             s_mat_classifier_future = std::async(
-                std::launch::async, []() {
-                    return s_mat_classifier.classifyAll("Bistro");
+                std::launch::async, [scene_label]() {
+                    return s_mat_classifier.classifyAll(scene_label);
                 });
             s_mat_classifier_kicked = true;
         }
@@ -8546,7 +8971,27 @@ void RealWorldApplication::drawFrame() {
                     [&](const std::shared_ptr<ego::DrawableObject>& obj) {
                         if (!obj || !obj->isReady()) return;
                         const auto& data = obj->getDrawableData();
+                        // Respect the editor's sub-object filter: a
+                        // single-piece .rwobj placement renders only the
+                        // ordinal-th mesh-node, so collision must only
+                        // cover that mesh too (NOT the whole source file).
+                        int32_t only_mesh = -1;
+                        const int32_t ord = obj->onlyRenderSubObject();
+                        if (ord >= 0) {
+                            int32_t k = 0;
+                            for (const auto& node : data.nodes_) {
+                                if (node.mesh_idx_ < 0) continue;
+                                if (k == ord) {
+                                    only_mesh = node.mesh_idx_;
+                                    break;
+                                }
+                                ++k;
+                            }
+                        }
                         for (size_t mi = 0; mi < data.meshes_.size(); ++mi) {
+                            if (only_mesh >= 0 &&
+                                static_cast<int32_t>(mi) != only_mesh)
+                                continue;
                             const auto& mesh = data.meshes_[mi];
                             for (size_t pi = 0;
                                  pi < mesh.primitives_.size(); ++pi) {
@@ -8554,8 +8999,7 @@ void RealWorldApplication::drawFrame() {
                             }
                         }
                     };
-                enumerateDrawable(bistro_exterior_scene_);
-                enumerateDrawable(bistro_interior_scene_);
+                for (const auto& o : coll_sources) enumerateDrawable(o);
                 if (!s_coll_work.empty()) {
                     s_coll_cursor = 0;
                     s_coll_cat_counts = {};
@@ -8679,6 +9123,21 @@ void RealWorldApplication::drawFrame() {
                 // geometry so the entry still EXISTS at the same position.
                 // Net: Simplified enumerates exactly the same floor pieces as
                 // Original -- only their triangle density differs.
+                // Editor placement: compose the drawable's per-instance
+                // root TRS (set by importModelFromFile / the transform
+                // panel) into the baked vertices so placed objects'
+                // collision lands in WORLD space.  Matches the T*R*S
+                // composition DrawableObject::draw() uses.
+                glm::mat4 root_xform(1.0f);
+                if (obj->hasInstanceRoot()) {
+                    root_xform =
+                        glm::translate(glm::mat4(1.0f),
+                                       obj->getInstanceRootTranslation()) *
+                        glm::mat4_cast(obj->getInstanceRootRotation()) *
+                        glm::scale(glm::mat4(1.0f),
+                                   obj->getInstanceRootScale());
+                }
+
                 auto m = std::make_shared<engine::helper::CollisionMesh>();
                 bool built = m->buildFromDrawablePrimitive(
                     *obj, it.mesh_idx, it.prim_idx,
@@ -8689,7 +9148,9 @@ void RealWorldApplication::drawFrame() {
                     // lock the true outer edge and simplify the interior
                     // without holes.  10cm deleted real triangles (holes); 0
                     // over-locked split-vertex floors so they never simplified.
-                    /*weld_eps=*/1.0e-3f);
+                    /*weld_eps=*/1.0e-3f,
+                    /*voxel_size=*/0.05f,
+                    root_xform);
                 if (!built &&
                     shape != engine::helper::CollisionShape::None) {
                     // Requested shape dropped it -- keep the raw welded mesh so
@@ -8699,7 +9160,9 @@ void RealWorldApplication::drawFrame() {
                         *obj, it.mesh_idx, it.prim_idx,
                         /*build_bvh=*/false,
                         engine::helper::CollisionShape::None,
-                        /*weld_eps=*/1.0e-3f);
+                        /*weld_eps=*/1.0e-3f,
+                        /*voxel_size=*/0.05f,
+                        root_xform);
                 }
                 if (built) {
                     s_coll_total_tris += m->triangleCount();
@@ -8797,15 +9260,10 @@ void RealWorldApplication::drawFrame() {
     // the block becomes a single byte-load for the rest of the
     // session.
     {
-        // s_mat_classifier_applied is now declared at drawScene function
-        // scope (above) so the collision-build block can gate on it.
-        // Wall-clock anchor for the progress heartbeat below.  Set on
-        // the first frame the worker is detected pending, then used
-        // to throttle status prints to one every 5 s — enough cadence
-        // for the user to confirm the daemon's still cranking,
-        // infrequent enough to not flood the console.
-        static std::chrono::steady_clock::time_point s_mat_classifier_started{};
-        static std::chrono::steady_clock::time_point s_mat_classifier_last_log{};
+        // s_mat_classifier_applied and the heartbeat wall-clock anchors
+        // (s_mat_classifier_started / _last_log) are declared at
+        // drawScene function scope (above) so the collision-build and
+        // bake blocks can gate on / reset them.
         // Push the always-on banner state every frame so the menu
         // doesn't have to walk the classifier itself.  Idle until
         // kicked; Pending while the worker runs; Ready / Failed
@@ -9112,6 +9570,19 @@ void RealWorldApplication::drawFrame() {
             player_object_,
             drawable_objects_,
             &collision_world_);
+
+        // Adopted scene player: mirror the controller's live position
+        // back into the .rwplayer scene row so linked cameras (Follow),
+        // the Outliner transform readout, and Save Scene all see where
+        // the character actually is.  The skeleton-mesh child row is
+        // controller-driven (ECS push skipped), so this can't loop back
+        // into a double transform.
+        if (scene_player_row_ >= 0 &&
+            scene_player_row_ < (int)scene_.objects.size() &&
+            player_controller_->isSpawned()) {
+            scene_.objects[scene_player_row_].transform.translation =
+                player_controller_->getPosition();
+        }
         gpu_profiler_.endCpuScope(_cpu_player_ctrl);
     }
 
@@ -10068,8 +10539,10 @@ void RealWorldApplication::drawFrame() {
                     ? scene_base + scene_.objects[i].parent_index
                     : -1;
             // Camera rows (.rwcam) get a viewport frustum gizmo + follow
-            // link; player rows (.rwplayer) are link targets.
+            // link; player rows (.rwplayer) are link targets; collision
+            // rows (.rwcol/.rwcmap) hold the scene's baked collision map.
             bool is_cam = false, is_player = false, is_bgm = false;
+            bool is_col = false;
             int32_t* follow_link = nullptr;
             std::string* audio_clip = nullptr;
             bool*  audio_loop = nullptr;
@@ -10083,6 +10556,8 @@ void RealWorldApplication::drawFrame() {
                 is_cam    = ends_with(".rwcam", 6);
                 is_player = ends_with(".rwplayer", 9);
                 is_bgm    = ends_with(".rwbgm", 6);
+                is_col    = ends_with(".rwcol", 6) ||
+                            ends_with(".rwcmap", 7);
                 if (is_cam) {
                     // Camera "follow" link lives in source_node_index
                     // (unused for cameras otherwise; serializes for free).
@@ -10109,6 +10584,10 @@ void RealWorldApplication::drawFrame() {
             eso.audio_clip = audio_clip;
             eso.audio_loop = audio_loop;
             eso.audio_volume = audio_volume;
+            eso.is_collision = is_col;
+            eso.collision_map =
+                (is_col && i < scene_.objects.size())
+                    ? &scene_.objects[i].asset_path : nullptr;
             eobjs.push_back(std::move(eso));
         }
         for (size_t i = 0; i < drawable_objects_.size(); ++i) {
@@ -10338,6 +10817,48 @@ void RealWorldApplication::drawFrame() {
                          "mesh in the Details panel" << std::endl;
         }
 
+        // ── "Add Collision Map": collision object node ────────────────────
+        // Organizational node (virtual ".rwcol" marker) that HOLDS the
+        // scene's baked collision-map reference — the .rwcmap path replaces
+        // the marker in asset_path once assigned (Details combo) or baked
+        // (Tools > Bake Collision Map updates/creates this row).  One per
+        // scene: if a collision row already exists, just select-log it.
+        if (menu_->consumeCreateCollisionRequest()) {
+            int existing = -1;
+            for (size_t i = 0; i < scene_.objects.size(); ++i) {
+                const std::string& ap = scene_.objects[i].asset_path;
+                const bool is_col =
+                    (ap.size() > 6 &&
+                     ap.compare(ap.size() - 6, 6, ".rwcol") == 0) ||
+                    (ap.size() > 7 &&
+                     ap.compare(ap.size() - 7, 7, ".rwcmap") == 0);
+                if (is_col) { existing = (int)i; break; }
+            }
+            if (existing >= 0) {
+                std::cout << "[scene] collision object already exists ('"
+                          << scene_.objects[existing].name
+                          << "') — one per scene" << std::endl;
+            } else {
+                engine::scene::Object so;
+                so.name = "Collision Map";
+                // Adopt the scene's current map (e.g. from an earlier
+                // bake) right away; otherwise stay an empty marker until
+                // one is assigned or baked.
+                so.asset_path = scene_.collision_map_path.empty()
+                    ? std::string("Collision Map.rwcol")
+                    : scene_.collision_map_path;
+                so.parent_index = -1;
+                so.source_node_index = -1;
+                so.is_group = false;
+                so.visible = true;
+                scene_.objects.push_back(so);
+                imported_objects_.push_back(nullptr);
+                std::cout << "[scene] created collision object — assign a "
+                             ".rwcmap in the Details panel or run Tools > "
+                             "Bake Collision Map" << std::endl;
+            }
+        }
+
         // ── Player "Skeleton Mesh" assignment (Details combo) ────────────
         // Attach / replace / detach the mesh child of a player object.
         {
@@ -10456,6 +10977,35 @@ void RealWorldApplication::drawFrame() {
                         std::fflush(stdout);
                     }
                 }
+            }
+        }
+
+        // ── Collision object "Collision Map" assignment (Details combo) ──
+        // Swap the held .rwcmap: load the picked map into the live
+        // collision world immediately (player walk works right away) and
+        // store the path in the row's asset_path so Save Scene persists
+        // it.  "None" clears the reference and tears the world down.
+        {
+            int c_idx = -1;
+            std::string cmap_path;
+            if (menu_->consumeCollisionMapAssign(c_idx, cmap_path) &&
+                c_idx >= 0 && c_idx < (int)scene_.objects.size()) {
+                auto& so = scene_.objects[c_idx];
+                if (cmap_path.empty()) {
+                    so.asset_path = so.name + ".rwcol";   // back to marker
+                    scene_.collision_map_path.clear();
+                    collision_world_reset_pending_ = true;  // tear down
+                    std::cout << "[scene] collision map cleared from '"
+                              << so.name << "'" << std::endl;
+                } else if (loadCollisionMapFromFile(cmap_path)) {
+                    so.asset_path = cmap_path;
+                    scene_.collision_map_path = cmap_path;  // legacy trailer
+                    std::cout << "[scene] collision object '" << so.name
+                              << "' now holds '" << cmap_path << "'"
+                              << std::endl;
+                }
+                // Load failure: loadCollisionMapFromFile already logged;
+                // keep the previous reference untouched.
             }
         }
 

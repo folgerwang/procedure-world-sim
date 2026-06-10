@@ -109,14 +109,19 @@ struct Skeleton {
 // ---------------------------------------------------------------------------
 //  Skinning weights.
 // ---------------------------------------------------------------------------
+// Max bone influences per vertex.  8 (two glTF skin sets: JOINTS_0/WEIGHTS_0
+// + JOINTS_1/WEIGHTS_1) for 8-bone skinning debugging; the engine's
+// HAS_SKIN_SET_1 shader permutations consume the second set.
+inline constexpr int kMaxVertexInfluences = 8;
+
 struct VertexSkinData {
-    int   joint_indices[4] = {0, 0, 0, 0};
-    float weights[4]       = {0.0f, 0.0f, 0.0f, 0.0f};
-    // Baked, distance-derived closeness for the SAME four joints, BEFORE
+    int   joint_indices[kMaxVertexInfluences] = {};
+    float weights[kMaxVertexInfluences]       = {};
+    // Baked, distance-derived closeness for the SAME joints, BEFORE
     // weight normalization (closeness of the nearest bone == 1).  Parallel to
     // weights[] / joint_indices[].  Exported so the debug display can render
     // the auto-rig's own distance field instead of recomputing it at runtime.
-    float closeness[4]     = {0.0f, 0.0f, 0.0f, 0.0f};
+    float closeness[kMaxVertexInfluences]     = {};
 };
 
 struct SkinWeights {

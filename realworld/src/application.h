@@ -424,6 +424,29 @@ private:
     // are isReady(); PlayerController consults it every frame.
     engine::helper::CollisionWorld collision_world_;
     bool collision_world_built_ = false;
+    // Tools > "Bake Collision Map (Player Walk)": latched by the menu
+    // request and serviced once collision_world_built_ is true (the bake
+    // needs the finished world).  See bakeCollisionMapToFile().
+    // The classifier + collision build are BAKE-DRIVEN: they only run
+    // while this flag is set (no more auto-build on game state).
+    bool bake_collision_map_pending_ = false;
+    // Set by loadSceneFromFile when the newly loaded scene did NOT
+    // restore a baked .rwcmap — drawScene's reset block tears down the
+    // previous scene's (now stale) collision world the next frame.
+    bool collision_world_reset_pending_ = false;
+
+    // ── Scene player adoption (editor play mode) ──────────────────────
+    // The editor scene's player is an authored ".rwplayer" node whose
+    // child row holds a skeleton-mesh drawable.  When play mode starts
+    // and no global player exists (empty-scene editor default), that
+    // drawable is ADOPTED as player_object_ so the whole PlayerController
+    // path (WASD walk, capsule collision, foot IK, follow camera) drives
+    // it.  scene_player_row_ is the .rwplayer row index (-1 = none);
+    // the spawn block uses the node's authored translation as the first
+    // spawn position instead of the camera-relative default.
+    int       scene_player_row_         = -1;
+    glm::vec3 scene_player_spawn_pos_   = glm::vec3(0.0f);
+    bool      scene_player_spawn_valid_ = false;
     std::shared_ptr<ego::DrawableObject> bistro_exterior_scene_;
     std::shared_ptr<ego::DrawableObject> bistro_interior_scene_;
 
@@ -546,6 +569,16 @@ private:
     void rebuildImportedObjectsFromScene();
     bool saveSceneToFile(const std::string& path);
     bool loadSceneFromFile(const std::string& path);
+
+    // ── Baked collision map (.rwcmap) ────────────────────────────────
+    // bakeCollisionMapToFile() serializes the BUILT collision world to
+    // `path` (creating parent folders).  loadCollisionMapFromFile()
+    // replaces the current collision world with the file's contents,
+    // latches collision_world_built_ and kicks the async BVH build — so
+    // the player can spawn and walk (WASD) immediately, skipping the
+    // runtime classifier-gated build.
+    bool bakeCollisionMapToFile(const std::string& path);
+    bool loadCollisionMapFromFile(const std::string& path);
 
     // Ground probe used by PlayerController's foot IK.  Given a world XZ
     // column and an expected foot level (y_hint), returns the ground

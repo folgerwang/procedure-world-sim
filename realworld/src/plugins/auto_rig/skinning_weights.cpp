@@ -234,7 +234,7 @@ bool cg(MatVec&& matvec, const std::vector<double>& diag, const std::vector<doub
 SkinWeights finalize(const std::vector<std::vector<double>>& W /*[nj][nv]*/,
                      int nv, int nj, int k,
                      const std::vector<int>& nearest /*fallback owner per vertex*/) {
-    k = glm::clamp(k, 1, 4);
+    k = glm::clamp(k, 1, kMaxVertexInfluences);
     SkinWeights out;
     out.per_vertex.resize(nv);
     for (int v = 0; v < nv; ++v) {
@@ -250,12 +250,12 @@ SkinWeights finalize(const std::vector<std::vector<double>>& W /*[nj][nv]*/,
         int n = std::min((int)col.size(), k);
         for (int i = 0; i < n; ++i) { vsd.joint_indices[i] = col[i].second; vsd.weights[i] = (float)col[i].first; sum += col[i].first; }
         if (sum > 1e-12) {
-            for (int i = 0; i < 4; ++i) vsd.weights[i] /= (float)sum;
+            for (int i = 0; i < kMaxVertexInfluences; ++i) vsd.weights[i] /= (float)sum;
         } else {
             // Degenerate: hard-bind to nearest joint.
             vsd.joint_indices[0] = (v < (int)nearest.size()) ? nearest[v] : 0;
             vsd.weights[0] = 1.0f;
-            for (int i = 1; i < 4; ++i) { vsd.joint_indices[i] = 0; vsd.weights[i] = 0.0f; }
+            for (int i = 1; i < kMaxVertexInfluences; ++i) { vsd.joint_indices[i] = 0; vsd.weights[i] = 0.0f; }
         }
     }
     return out;

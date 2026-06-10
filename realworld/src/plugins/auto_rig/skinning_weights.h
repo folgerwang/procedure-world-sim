@@ -30,11 +30,13 @@ namespace plugins {
 namespace auto_rig {
 
 // Compute per-vertex skin weights for `mesh` against `skeleton` using `algo`.
-// `max_influences` is clamped to [1,4] (the VertexSkinData capacity).
+// `max_influences` is clamped to [1,kMaxVertexInfluences] (the VertexSkinData
+// capacity — currently 8 for the 8-bone skinning debug path).
 SkinWeights computeSkinWeightsAlgo(const TriangleMesh& mesh,
                                    const Skeleton&     skeleton,
                                    SkinWeightAlgo      algo,
-                                   int                 max_influences = 4);
+                                   int                 max_influences =
+                                       kMaxVertexInfluences);
 
 }  // namespace auto_rig
 }  // namespace plugins
