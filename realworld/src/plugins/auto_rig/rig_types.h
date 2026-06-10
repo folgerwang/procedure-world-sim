@@ -112,6 +112,11 @@ struct Skeleton {
 struct VertexSkinData {
     int   joint_indices[4] = {0, 0, 0, 0};
     float weights[4]       = {0.0f, 0.0f, 0.0f, 0.0f};
+    // Baked, distance-derived closeness for the SAME four joints, BEFORE
+    // weight normalization (closeness of the nearest bone == 1).  Parallel to
+    // weights[] / joint_indices[].  Exported so the debug display can render
+    // the auto-rig's own distance field instead of recomputing it at runtime.
+    float closeness[4]     = {0.0f, 0.0f, 0.0f, 0.0f};
 };
 
 struct SkinWeights {

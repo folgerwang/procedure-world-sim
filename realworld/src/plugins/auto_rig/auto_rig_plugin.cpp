@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cmath>
+#include <iostream>      // std::cout → editor Output Log window (see main.cpp)
 #include <algorithm>
 #include <numeric>
 #include <fstream>
@@ -1743,12 +1744,20 @@ bool AutoRigPlugin::computeSkinWeights() {
     weld.reserve(static_cast<size_t>(nv) * 2);
     std::vector<int>       wid(nv);
     std::vector<glm::vec3> wpos;
-    auto keyOf = [](const glm::vec3& p) -> uint64_t {
-        uint32_t u[3];
-        std::memcpy(u, &p, sizeof(u));
-        for (int i = 0; i < 3; ++i) if (u[i] == 0x80000000u) u[i] = 0u;
+    // Weld with a TOLERANCE (snap to a grid), NOT exact float bits.  This asset
+    // is soup-like (465k verts / 326k tris, most positions float-unique), so
+    // exact welding leaves the surface in ~1553 disconnected islands and the
+    // geodesic can't traverse it — ~87% of verts end up unreachable/unweighted.
+    // Snapping coincident-but-noisy seam verts into the same cell reconnects the
+    // real surface.  eps is far below feature size, well above float noise.
+    const glm::vec3 _bext = mesh_.bbox_max - mesh_.bbox_min;
+    const double weld_eps = std::max((double)glm::length(_bext) * 1e-4, 1e-9);
+    auto keyOf = [weld_eps](const glm::vec3& p) -> uint64_t {
         uint64_t h = 1469598103934665603ull;
-        for (int i = 0; i < 3; ++i) { h ^= u[i]; h *= 1099511628211ull; }
+        for (int i = 0; i < 3; ++i) {
+            const int64_t qi = (int64_t)std::llround((double)p[i] / weld_eps);
+            h ^= (uint64_t)qi; h *= 1099511628211ull;
+        }
         return h;
     };
     for (int i = 0; i < nv; ++i) {
@@ -1857,11 +1866,13 @@ bool AutoRigPlugin::computeSkinWeights() {
     int skin_verts = 0;
     for (int w = 0; w < W; ++w)
         if (compSkin[comp[w]]) { isSkin[w] = true; ++skin_verts; }
-    // Safety: if nothing classified as skin (degenerate ray test), treat the
-    // whole mesh as skin so weighting proceeds as the single-layer case.
-    if (skin_verts == 0) {
-        isSkin.assign(W, true); skin_verts = W;
-    }
+    // EXPERIMENT (per request): IGNORE the layer split entirely — treat the whole
+    // mesh as one surface so the geodesic graph, the bone seeding and the
+    // weighting all run over every vertex.  This also makes skin_verts == W, so
+    // the cloth/hair projection block below is skipped.  Weights then come purely
+    // from the geodesic distance field (same as the distance debug draw).
+    isSkin.assign(W, true); skin_verts = W;
+    (void)skin_verts;
 
     // ── Geodesic graph from SKIN triangles only ──
     // The surface distance must run on the skin manifold; clothing/hair edges
@@ -1994,44 +2005,124 @@ bool AutoRigPlugin::computeSkinWeights() {
                 if (nd < dist[e.first]) { dist[e.first] = nd; pq.push({nd, e.first}); }
             }
         }
+        // ── Blur this bone's distance, propagating along CONNECTED EDGES ──
+        // Graph Dijkstra zig-zags along mesh edges, so the raw field is noisy
+        // (the mottled heat pattern) and that noise carries straight into the
+        // weights.  Each pass walks every vertex's edge-connected neighbours:
+        //   • a reached vertex (finite dist) is smoothed toward its neighbours;
+        //   • an unreached vertex (inf) that touches a reached one is FILLED via
+        //     the connecting edge (neighbour dist + edge length), so the field
+        //     EXPANDS outward one edge-ring per pass.
+        // Expansion only ever travels along real edges, so a disconnected island
+        // (a held bag, with no edge to the body) is never reached.
+        {
+            const int kBlurPasses = 3;
+            std::vector<float> blur(W);
+            for (int pass = 0; pass < kBlurPasses; ++pass) {
+                for (int w = 0; w < W; ++w) {
+                    const float gw = dist[w];
+                    double sm_acc = 0.0, sm_cnt = 0.0;   // smoothing: raw neighbour dists
+                    double ex_acc = 0.0, ex_cnt = 0.0;   // expansion: dist + edge length
+                    for (const auto& e : adj[w]) {
+                        const float gn = dist[e.first];
+                        if (gn >= 1e29f) continue;       // neighbour not reached yet
+                        sm_acc += gn;            sm_cnt += 1.0;
+                        ex_acc += gn + e.second; ex_cnt += 1.0;
+                    }
+                    if (gw < 1e29f) {                    // reached → smooth in place
+                        blur[w] = (sm_cnt > 0.0)
+                            ? static_cast<float>((gw + sm_acc) / (sm_cnt + 1.0))
+                            : gw;
+                    } else {                             // unreached → expand via edges
+                        blur[w] = (ex_cnt > 0.0)
+                            ? static_cast<float>(ex_acc / ex_cnt)
+                            : gw;                        // still isolated: stays inf
+                    }
+                }
+                dist.swap(blur);
+            }
+        }
         for (int w = 0; w < W; ++w) geo[static_cast<size_t>(w) * nb + bi] = dist[w];
     }
 
-    // ── Full per-welded-vertex weights from the GEODESIC falloff ──
-    // PURELY geodesic: each bone gets weight exp(-(geo-gmin)/tau[bi]) of its
-    // on-surface distance.  No euclidean distance, no point-to-segment distance,
-    // no hard cutoff — the falloff itself makes surface-far bones vanish.  gmin
-    // is the vertex's nearest geodesic bone; a bone's influence extends smoothly
-    // beyond its own region and fades on its own.  An unreachable vertex (a skin
-    // island no bone-ray reached) is simply left unweighted and counted; there
-    // is deliberately NO euclidean last-resort.
+    // ── DIAGNOSTIC: graph + per-bone distance stats, to compare against the
+    //    preview's distance computation (which logs the same numbers).  If W /
+    //    edges differ, the welded mesh itself differs; if seeds/reach differ for
+    //    a bone, the seeding diverges; if geo-max differs, the scale/tau differ.
+    {
+        size_t edges = 0;
+        for (const auto& a : adj) edges += a.size();
+        glm::vec3 dmn = mesh_.bbox_min, dmx = mesh_.bbox_max;
+        char b[256];
+        // std::cout is routed to the editor's on-screen Output Log window
+        // (main.cpp PhysicsRouteBuf → EditorLog); fprintf(stderr) is not.
+        std::snprintf(b, sizeof(b),
+            "[AutoRig][dist-diag] meshNv=%d weldedW=%d edges=%zu tris=%zu diag=%.4f",
+            nv, W, edges / 2, tris.size(), glm::length(dmx - dmn));
+        std::cout << b << std::endl;
+        for (int bi = 0; bi < nb; ++bi) {
+            int reach = 0; float gmax = 0.0f;
+            for (int w = 0; w < W; ++w) {
+                const float g = geo[static_cast<size_t>(w) * nb + bi];
+                if (g < 1e29f) { ++reach; if (g > gmax) gmax = g; }
+            }
+            const int jidx = bones[bi].joint_idx;
+            std::snprintf(b, sizeof(b),
+                "[AutoRig][dist-diag]   bone %2d %-16s seeds=%zu reach=%d geoMax=%.4f",
+                bi,
+                (jidx >= 0 && jidx < (int)skeleton_.joints.size())
+                    ? skeleton_.joints[jidx].name.c_str() : "?",
+                seeds[bi].size(), reach, gmax);
+            std::cout << b << std::endl;
+        }
+    }
+
+    // ── Weights from the geodesic DISTANCE — SMOOTH falloff ──
+    //    closeness = exp(-geo / tau), then eased to zero with a SMOOTHSTEP.
+    //    The old version did a HARD cut at kYellow=0.625 plus a linear remap,
+    //    which left a sharp edge (a corner where influence snapped to 0).  Here
+    //    smoothstep(kCut, 1, c) ramps with zero slope at both ends, so the
+    //    influence boundary is soft.  Lower kCut / wider tau = gentler, wider.
+    glm::vec3 bbmn( 1e30f), bbmx(-1e30f);
+    for (const auto& p : mesh_.positions) { bbmn = glm::min(bbmn, p); bbmx = glm::max(bbmx, p); }
+    const float model_scale = std::max(glm::length(bbmx - bbmn), 1e-4f);
+    const float tau_global = std::max(0.12f * model_scale, 1e-4f); // falloff width (cover radius)
+    const float kCut       = 0.35f;        // closeness where influence eases to 0
+    auto smoothstep = [](float e0, float e1, float x) -> float {
+        const float t = glm::clamp((x - e0) / (e1 - e0), 0.0f, 1.0f);
+        return t * t * (3.0f - 2.0f * t);
+    };
     std::vector<std::vector<float>> Wf(W, std::vector<float>(nb, 0.0f));
-    size_t orphan_count = 0;   // geodesically unreachable from every bone
+    for (int bi = 0; bi < nb; ++bi) {
+        for (int w = 0; w < W; ++w) {
+            const float g = geo[static_cast<size_t>(w) * nb + bi];
+            if (g >= 1e29f) continue;                      // unreachable from this bone
+            const float c   = std::exp(-g / tau_global);   // closeness, 1 at the bone
+            const float wgt = smoothstep(kCut, 1.0f, c);   // SOFT ease to 0 below kCut
+            if (wgt > 0.0f) Wf[w][bi] = wgt;
+        }
+    }
+
+    // ── GEODESIC last-resort: in-surface vertices past every bone's range ──
+    // A LEAF joint (foot/head/hand) has no child, so geometry extending past it
+    // — the forefoot/toes beyond the foot joint, the skull above the head — can
+    // fall outside the leaf bone's yellow range and get NO weight, then collapse
+    // to the object origin on the GPU (the forward foot "spikes").  If such a
+    // vertex is still GEODESICALLY reachable from some bone (connected to the
+    // skeleton along the surface), bind it fully to its surface-nearest bone.
+    // This is deliberately a GEODESIC fallback, not a euclidean one: a truly
+    // disconnected island (a held bag) has infinite geo to every bone, so it is
+    // NOT caught here — it stays unweighted and is reported as an error below.
     for (int w = 0; w < W; ++w) {
-        if (!isSkin[w]) continue;             // outer layers: projected below
+        if (!isSkin[w]) continue;
+        float s = 0.0f;
+        for (int bi = 0; bi < nb; ++bi) s += Wf[w][bi];
+        if (s > 0.0f) continue;                            // already in range of a bone
         const float* g = &geo[static_cast<size_t>(w) * nb];
-        float gmin = 1e30f; int bmin = -1;
+        float gmin = 1e29f; int bmin = -1;
         for (int bi = 0; bi < nb; ++bi)
             if (g[bi] < gmin) { gmin = g[bi]; bmin = bi; }
-
-        if (bmin < 0 || gmin >= 1e29f) { ++orphan_count; continue; }
-        // Falloff that ENDS at the "yellow" band of the jet heat ramp and is
-        // DISCARDED beyond it.  closeness = exp(-(geo-gmin)/tau) runs 1 (red, at
-        // the bone) → 0 (far).  Yellow sits at closeness kYellow, so we remap
-        // [kYellow,1] → [0,1] and drop everything below: a bone only influences
-        // vertices out to its yellow distance, fading smoothly to zero there.
-        const float kYellow = 0.625f;
-        float sum = 0.0f;
-        for (int bi = 0; bi < nb; ++bi) {
-            if (g[bi] >= 1e29f) continue;                 // not reachable
-            const float c = std::exp(-(g[bi] - gmin) / tau[bi]);
-            if (c < kYellow) continue;                    // beyond yellow → discard
-            const float wgt = (c - kYellow) / (1.0f - kYellow);
-            if (wgt <= 0.0f) continue;
-            Wf[w][bi] = wgt; sum += wgt;
-        }
-        if (sum <= 1e-8f) { Wf[w][bmin] = 1.0f; sum = 1.0f; }
-        for (int bi = 0; bi < nb; ++bi) Wf[w][bi] /= sum;
+        if (bmin >= 0 && gmin < 1e29f) Wf[w][bmin] = 1.0f; // surface-nearest bone
     }
 
     // ── Project OUTER layers (cloth/hair) back onto the SKIN ──
@@ -2087,11 +2178,105 @@ bool AutoRigPlugin::computeSkinWeights() {
         }
     }
 
-    // NOTE: skin weights are PURELY the per-bone surface-distance falloff above;
-    // outer layers (cloth/hair) inherit them by projection, so they share the
-    // body's bones rather than being skinned independently.
+    // ── Nearest-SKIN fallback for geodesically-unreachable verts ──
+    // A separate component (hair card, eye, eyelash, cloth piece) that no bone-ray
+    // reached has infinite geodesic distance to every bone.  Instead of binding it
+    // to the nearest BONE, attach it to the CLOSEST POINT on the already-weighted
+    // SKIN surface and INHERIT that point's bone weights — so hair follows the
+    // scalp it rests on, cloth follows the body beneath it.  A uniform spatial hash
+    // over the weighted welded verts makes the closest-point search fast.
+    size_t skin_fallback = 0;
+    {
+        std::vector<int> skinW;                          // welded verts that GOT weight
+        skinW.reserve(W);
+        for (int w = 0; w < W; ++w) {
+            float s = 0.0f;
+            for (int bi = 0; bi < nb; ++bi) s += Wf[w][bi];
+            if (s > 0.0f) skinW.push_back(w);
+        }
+        if (!skinW.empty() && (int)skinW.size() < W) {
+            const glm::vec3 ext = mesh_.bbox_max - mesh_.bbox_min;
+            const float diag = std::max(glm::length(ext), 1e-4f);
+            const float cell = std::max(diag / 64.0f, 1e-6f);
+            auto hashCell = [](int64_t x, int64_t y, int64_t z) -> int64_t {
+                return (x * 73856093LL) ^ (y * 19349663LL) ^ (z * 83492791LL);
+            };
+            auto cellOf = [cell](float v) -> int64_t {
+                return (int64_t)std::floor((double)v / cell);
+            };
+            std::unordered_map<int64_t, std::vector<int>> grid;
+            grid.reserve(skinW.size() * 2);
+            for (int sw : skinW) {
+                const glm::vec3& p = wpos[sw];
+                grid[hashCell(cellOf(p.x), cellOf(p.y), cellOf(p.z))].push_back(sw);
+            }
+            // Generate exactly the cells on the shell at chebyshev radius r (O(r^2)).
+            auto forShell = [](int64_t r, const std::function<void(int64_t,int64_t,int64_t)>& fn) {
+                if (r == 0) { fn(0, 0, 0); return; }
+                for (int64_t dx = -r; dx <= r; ++dx)
+                for (int64_t dy = -r; dy <= r; ++dy) {
+                    if (std::llabs(dx) == r || std::llabs(dy) == r)
+                        for (int64_t dz = -r; dz <= r; ++dz) fn(dx, dy, dz);
+                    else { fn(dx, dy, -r); fn(dx, dy, r); }
+                }
+            };
+            for (int w = 0; w < W; ++w) {
+                float s = 0.0f;
+                for (int bi = 0; bi < nb; ++bi) s += Wf[w][bi];
+                if (s > 0.0f) continue;                  // already weighted (skin)
+                const glm::vec3 P = wpos[w];
+                const int64_t cx = cellOf(P.x), cy = cellOf(P.y), cz = cellOf(P.z);
+                int best = -1; float bestd = 1e30f;
+                for (int64_t r = 0; r <= 1024; ++r) {
+                    forShell(r, [&](int64_t dx, int64_t dy, int64_t dz) {
+                        auto it = grid.find(hashCell(cx + dx, cy + dy, cz + dz));
+                        if (it == grid.end()) return;
+                        for (int sw : it->second) {
+                            const float d = glm::length(P - wpos[sw]);
+                            if (d < bestd) { bestd = d; best = sw; }
+                        }
+                    });
+                    // Any unsearched vert (shell > r) is >= r*cell away, so stop.
+                    if (best >= 0 && bestd <= (float)r * cell) break;
+                }
+                if (best >= 0) { Wf[w] = Wf[best]; ++skin_fallback; } // inherit skin weights
+            }
+        }
+    }
 
-    // ── Scatter the distance weights to each original vertex (top-4) ──
+    // ── Smooth the weight field over the surface (kill discontinuities) ──
+    // The geodesic falloff, the top-4 truncation and the nearest-skin copies each
+    // introduce per-vertex jumps; at a bending joint those jumps CREASE/distort
+    // the mesh.  A few uniform Laplacian passes over the welded edge graph diffuse
+    // the weights into a continuous field (renormalized per vertex in finalize).
+    // Smoothing runs along real edges, so distinct layers (body vs cloth) don't
+    // bleed into each other.
+    {
+        const int kSmoothPasses = 4;
+        std::vector<std::vector<float>> tmp(W, std::vector<float>(nb, 0.0f));
+        for (int pass = 0; pass < kSmoothPasses; ++pass) {
+            for (int w = 0; w < W; ++w) {
+                std::vector<float>& d = tmp[w];
+                const std::vector<float>& s = Wf[w];
+                for (int bi = 0; bi < nb; ++bi) d[bi] = s[bi];
+                float cnt = 1.0f;
+                for (const auto& e : adj[w]) {
+                    const std::vector<float>& nw = Wf[e.first];
+                    for (int bi = 0; bi < nb; ++bi) d[bi] += nw[bi];
+                    cnt += 1.0f;
+                }
+                const float inv = 1.0f / cnt;
+                for (int bi = 0; bi < nb; ++bi) d[bi] *= inv;
+            }
+            Wf.swap(tmp);
+        }
+    }
+
+    // ── Finalize per ORIGINAL vertex: keep top-4, normalize ──
+    // Wf holds the SMOOTHED per-bone weights (geodesic field + nearest-skin
+    // inheritance, then Laplacian-smoothed).  Per vertex we keep the 4 strongest
+    // bones and normalize.  Anything still empty (no skin at all) is counted.
+    size_t unweighted_count = 0;
     for (int v = 0; v < nv; ++v) {
         const std::vector<float>& wv = Wf[wid[v]];
         auto& vsd = skin_weights_.per_vertex[v];
@@ -2099,7 +2284,8 @@ bool AutoRigPlugin::computeSkinWeights() {
         float val[4] = {0.0f, 0.0f, 0.0f, 0.0f};
         for (int bi = 0; bi < nb; ++bi) {
             const float wgt = wv[bi];
-            for (int s = 0; s < 4; ++s)
+            if (wgt <= 0.0f) continue;                    // only bones that reached it
+            for (int s = 0; s < 4; ++s)                   // insertion into the top-4
                 if (wgt > val[s]) {
                     for (int t = 3; t > s; --t) { val[t] = val[t-1]; idx[t] = idx[t-1]; }
                     val[s] = wgt; idx[s] = bi; break;
@@ -2108,21 +2294,33 @@ bool AutoRigPlugin::computeSkinWeights() {
         float total = 0.0f;
         for (int i = 0; i < 4; ++i) {
             if (idx[i] < 0 || val[i] <= 0.0f) {
-                vsd.joint_indices[i] = 0; vsd.weights[i] = 0.0f; continue;
+                vsd.joint_indices[i] = 0; vsd.weights[i] = 0.0f;
+                vsd.closeness[i] = 0.0f; continue;
             }
             vsd.joint_indices[i] = bones[idx[i]].joint_idx;
             vsd.weights[i] = val[i];
+            vsd.closeness[i] = val[i];          // RAW closeness (kept, not normalized)
             total += val[i];
         }
-        if (total > 1e-8f) for (int i = 0; i < 4; ++i) vsd.weights[i] /= total;
+        if (total > 1e-8f) {
+            for (int i = 0; i < 4; ++i) vsd.weights[i] /= total;   // partition of unity
+        } else {
+            ++unweighted_count;   // no skin at all to inherit from (degenerate)
+        }
     }
-
-    fprintf(stderr,
+    char sb[320];
+    if (skin_fallback > 0) {
+        std::snprintf(sb, sizeof(sb),
+            "[AutoRig] %zu vertex(es) geodesically unreachable (separate "
+            "components: hair/eyes/cloth) -> inherited CLOSEST-SKIN weights.",
+            skin_fallback);
+        std::cout << sb << std::endl;   // → on-screen Output Log window
+    }
+    std::snprintf(sb, sizeof(sb),
         "[AutoRig] geodesic skinning: %d verts (%d welded), %d bones | "
-        "%d layer(s), %d skin / %d outer welded | %zu projected (%zu fallback) | "
-        "%zu orphan(s) [left unweighted]\n",
-        nv, W, nb, n_layers, skin_verts, W - skin_verts,
-        projected_count, project_fallback, orphan_count);
+        "%d layer(s), %d skin / %zu nearest-skin | %zu still-unweighted",
+        nv, W, nb, n_layers, skin_verts, skin_fallback, unweighted_count);
+    std::cout << sb << std::endl;
     return true;
 }
 
@@ -2458,6 +2656,19 @@ bool AutoRigPlugin::exportGltf(const std::string& output_path) {
         weight_data.data(), weight_data.size() * sizeof(float));
     size_t weights_size = weight_data.size() * sizeof(float);
 
+    // ---- Closeness (_CLOSENESS_0: vec4 float, custom attribute) ------------
+    //  Baked distance-derived closeness for the same 4 joints (pre-normalize),
+    //  so the debug display renders the auto-rig's own distance field instead
+    //  of recomputing it.  Rides through as a custom glTF vertex attribute.
+    std::vector<float> close_data(total_verts * 4, 0.0f);
+    for (size_t v = 0; v < total_verts; ++v) {
+        for (int i = 0; i < 4; ++i)
+            close_data[v * 4 + i] = skin_weights_.per_vertex[v].closeness[i];
+    }
+    size_t close_offset = appendData(
+        close_data.data(), close_data.size() * sizeof(float));
+    size_t close_size = close_data.size() * sizeof(float);
+
     // ---- Inverse bind matrices ---------------------------------------------
     std::vector<float> ibm_data;
     ibm_data.reserve(skeleton_.joints.size() * 16);
@@ -2483,6 +2694,7 @@ bool AutoRigPlugin::exportGltf(const std::string& output_path) {
 
     int bv_joints  = addBV(joints_offset,  joints_size,  34962);  // ARRAY_BUFFER
     int bv_weights = addBV(weights_offset, weights_size, 34962);
+    int bv_close   = addBV(close_offset,   close_size,   34962);
     int bv_ibm     = addBV(ibm_offset,     ibm_size);
 
     // ---- Accessors for the new data ----------------------------------------
@@ -2548,6 +2760,19 @@ bool AutoRigPlugin::exportGltf(const std::string& output_path) {
                     int idx = static_cast<int>(out.accessors.size());
                     out.accessors.push_back(acc);
                     prim.attributes["WEIGHTS_0"] = idx;
+                }
+
+                // _CLOSENESS_0 accessor (custom) for this primitive's slice.
+                {
+                    tinygltf::Accessor acc;
+                    acc.bufferView    = bv_close;
+                    acc.byteOffset    = vertex_offset * 4 * sizeof(float);
+                    acc.componentType = TINYGLTF_COMPONENT_TYPE_FLOAT;
+                    acc.type          = TINYGLTF_TYPE_VEC4;
+                    acc.count         = prim_verts;
+                    int idx = static_cast<int>(out.accessors.size());
+                    out.accessors.push_back(acc);
+                    prim.attributes["_CLOSENESS_0"] = idx;
                 }
 
                 vertex_offset += prim_verts;
