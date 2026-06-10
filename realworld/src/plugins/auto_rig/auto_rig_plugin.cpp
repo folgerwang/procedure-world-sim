@@ -2005,43 +2005,11 @@ bool AutoRigPlugin::computeSkinWeights() {
                 if (nd < dist[e.first]) { dist[e.first] = nd; pq.push({nd, e.first}); }
             }
         }
-        // ── Blur this bone's distance, propagating along CONNECTED EDGES ──
-        // Graph Dijkstra zig-zags along mesh edges, so the raw field is noisy
-        // (the mottled heat pattern) and that noise carries straight into the
-        // weights.  Each pass walks every vertex's edge-connected neighbours:
-        //   • a reached vertex (finite dist) is smoothed toward its neighbours;
-        //   • an unreached vertex (inf) that touches a reached one is FILLED via
-        //     the connecting edge (neighbour dist + edge length), so the field
-        //     EXPANDS outward one edge-ring per pass.
-        // Expansion only ever travels along real edges, so a disconnected island
-        // (a held bag, with no edge to the body) is never reached.
-        {
-            const int kBlurPasses = 3;
-            std::vector<float> blur(W);
-            for (int pass = 0; pass < kBlurPasses; ++pass) {
-                for (int w = 0; w < W; ++w) {
-                    const float gw = dist[w];
-                    double sm_acc = 0.0, sm_cnt = 0.0;   // smoothing: raw neighbour dists
-                    double ex_acc = 0.0, ex_cnt = 0.0;   // expansion: dist + edge length
-                    for (const auto& e : adj[w]) {
-                        const float gn = dist[e.first];
-                        if (gn >= 1e29f) continue;       // neighbour not reached yet
-                        sm_acc += gn;            sm_cnt += 1.0;
-                        ex_acc += gn + e.second; ex_cnt += 1.0;
-                    }
-                    if (gw < 1e29f) {                    // reached → smooth in place
-                        blur[w] = (sm_cnt > 0.0)
-                            ? static_cast<float>((gw + sm_acc) / (sm_cnt + 1.0))
-                            : gw;
-                    } else {                             // unreached → expand via edges
-                        blur[w] = (ex_cnt > 0.0)
-                            ? static_cast<float>(ex_acc / ex_cnt)
-                            : gw;                        // still isolated: stays inf
-                    }
-                }
-                dist.swap(blur);
-            }
-        }
+        // NOTE: no distance blur here — the preview's Dist mode (which this
+        // calculation mirrors) uses the RAW Dijkstra field directly, and with
+        // the wide preview tau (0.25 * scale) the edge zig-zag noise is
+        // negligible.  Disconnected islands (no edge path to any seed) stay at
+        // inf and are handled by the nearest-skin inheritance below.
         for (int w = 0; w < W; ++w) geo[static_cast<size_t>(w) * nb + bi] = dist[w];
     }
 
@@ -2077,29 +2045,32 @@ bool AutoRigPlugin::computeSkinWeights() {
         }
     }
 
-    // ── Weights from the geodesic DISTANCE — SMOOTH falloff ──
-    //    closeness = exp(-geo / tau), then eased to zero with a SMOOTHSTEP.
-    //    The old version did a HARD cut at kYellow=0.625 plus a linear remap,
-    //    which left a sharp edge (a corner where influence snapped to 0).  Here
-    //    smoothstep(kCut, 1, c) ramps with zero slope at both ends, so the
-    //    influence boundary is soft.  Lower kCut / wider tau = gentler, wider.
+    // ── Closeness from the geodesic DISTANCE — PREVIEW-MODE falloff ──
+    //    Mirrors the Debug Display's live distance view (menu.cpp Dist mode,
+    //    the one that looks right) exactly:
+    //      c = exp(-geo / tau),  tau = 0.25 * scale (welded-surface bbox diag);
+    //    the falloff ends at the "yellow" band kYellow and is linearly
+    //    remapped:  closeness = (c - kYellow) / (1 - kYellow), 0 below it.
+    //    Cf keeps this RAW closeness for baking (the Dist debug view displays
+    //    it verbatim); Wf starts as a copy and then goes through the weight
+    //    pipeline (fallbacks, Laplacian smoothing, top-4) below — that
+    //    processing must never leak back into the baked closeness.
     glm::vec3 bbmn( 1e30f), bbmx(-1e30f);
-    for (const auto& p : mesh_.positions) { bbmn = glm::min(bbmn, p); bbmx = glm::max(bbmx, p); }
+    for (const auto& p : wpos) { bbmn = glm::min(bbmn, p); bbmx = glm::max(bbmx, p); }
     const float model_scale = std::max(glm::length(bbmx - bbmn), 1e-4f);
-    const float tau_global = std::max(0.12f * model_scale, 1e-4f); // falloff width (cover radius)
-    const float kCut       = 0.35f;        // closeness where influence eases to 0
-    auto smoothstep = [](float e0, float e1, float x) -> float {
-        const float t = glm::clamp((x - e0) / (e1 - e0), 0.0f, 1.0f);
-        return t * t * (3.0f - 2.0f * t);
-    };
+    const float tau_global  = std::max(0.25f * model_scale, 1e-4f); // falloff width
+    const float kYellow     = 0.625f;     // closeness where influence reaches 0
+    std::vector<std::vector<float>> Cf(W, std::vector<float>(nb, 0.0f));
     std::vector<std::vector<float>> Wf(W, std::vector<float>(nb, 0.0f));
     for (int bi = 0; bi < nb; ++bi) {
         for (int w = 0; w < W; ++w) {
             const float g = geo[static_cast<size_t>(w) * nb + bi];
             if (g >= 1e29f) continue;                      // unreachable from this bone
-            const float c   = std::exp(-g / tau_global);   // closeness, 1 at the bone
-            const float wgt = smoothstep(kCut, 1.0f, c);   // SOFT ease to 0 below kCut
-            if (wgt > 0.0f) Wf[w][bi] = wgt;
+            const float c = std::exp(-g / tau_global);     // closeness, 1 at the bone
+            if (c <= kYellow) continue;                    // past the yellow band
+            const float cl = (c - kYellow) / (1.0f - kYellow);
+            Cf[w][bi] = cl;
+            Wf[w][bi] = cl;
         }
     }
 
@@ -2239,7 +2210,8 @@ bool AutoRigPlugin::computeSkinWeights() {
                     // Any unsearched vert (shell > r) is >= r*cell away, so stop.
                     if (best >= 0 && bestd <= (float)r * cell) break;
                 }
-                if (best >= 0) { Wf[w] = Wf[best]; ++skin_fallback; } // inherit skin weights
+                // Inherit skin weights AND closeness from the nearest skin vert.
+                if (best >= 0) { Wf[w] = Wf[best]; Cf[w] = Cf[best]; ++skin_fallback; }
             }
         }
     }
@@ -2299,7 +2271,10 @@ bool AutoRigPlugin::computeSkinWeights() {
             }
             vsd.joint_indices[i] = bones[idx[i]].joint_idx;
             vsd.weights[i] = val[i];
-            vsd.closeness[i] = val[i];          // RAW closeness (kept, not normalized)
+            // RAW preview-mode closeness for this bone — NOT the smoothed /
+            // truncated weight.  The Dist debug view displays this verbatim,
+            // so it matches the preview's live distance computation.
+            vsd.closeness[i] = Cf[wid[v]][idx[i]];
             total += val[i];
         }
         if (total > 1e-8f) {
