@@ -4021,8 +4021,16 @@ void AutoRigPlugin::drawMeshSelector(int& sel_idx, std::string& sel_path,
         const char* list_id = auto_rig ? "MeshFileList_ar" : "MeshFileList_re";
         if (ImGui::BeginChild(list_id, ImVec2(-1, list_h), true)) {
             for (int i = 0; i < (int)mesh_file_list_.size(); ++i) {
-                std::string dname = "  " + std::filesystem::path(mesh_file_list_[i]).filename().string();
-                if (ImGui::Selectable(dname.c_str(), sel_idx == i)) {
+                const bool is_sel = (sel_idx == i);
+                std::string fn = std::filesystem::path(mesh_file_list_[i]).filename().string();
+                // Selected row: arrow marker + accent text, on top of the
+                // Selectable's highlighted background.
+                std::string dname = (is_sel ? "> " : "  ") + fn;
+                if (is_sel)
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 1.0f, 0.55f, 1.0f));
+                bool clicked = ImGui::Selectable(dname.c_str(), is_sel);
+                if (is_sel) ImGui::PopStyleColor();
+                if (clicked) {
                     sel_idx  = i;
                     sel_path = mesh_file_list_[i];
                     if (auto_rig) {
@@ -4051,7 +4059,10 @@ void AutoRigPlugin::drawMeshSelector(int& sel_idx, std::string& sel_path,
     }
 
     if (sel_idx >= 0) {
-        ImGui::Text("Source: %s", std::filesystem::path(sel_path).filename().string().c_str());
+        ImGui::Text("Source:");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.45f, 1.0f, 0.55f, 1.0f), "%s",
+            std::filesystem::path(sel_path).filename().string().c_str());
     } else {
         ImGui::TextDisabled("No mesh selected");
     }
@@ -4190,7 +4201,7 @@ bool AutoRigPlugin::drawIconButton(const char* id, const char* label, int kind,
 // Model-info readout — shown in the main launcher window.  Long paths wrap so
 // they don't stretch the auto-sized window.
 void AutoRigPlugin::drawModelInfo() {
-    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 580.0f);
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 940.0f);
 
     ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Model Info:");
     ImGui::Text("  Model dir: %s", model_dir_.c_str());
@@ -4234,8 +4245,8 @@ void AutoRigPlugin::drawImGui() {
     ImGui::SetNextWindowPos(
         ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
         ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSizeConstraints(ImVec2(440.0f, 0.0f),
-                                        ImVec2(640.0f, 100000.0f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(720.0f, 0.0f),
+                                        ImVec2(1000.0f, 100000.0f));
 
     // Bring to front on open (only once, not every frame).
     if (just_opened)
