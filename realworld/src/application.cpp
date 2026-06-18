@@ -43,6 +43,42 @@ namespace er = engine::renderer;
 namespace ego = engine::game_object;
 
 namespace {
+// ── Recent Scenes (Scene → Recent Scenes submenu) ─────────────────────────────
+// A small on-disk MRU list of scene file paths so recently opened scenes are one
+// click away.  Stored one absolute path per line, newest first.
+constexpr int kMaxRecentScenes = 10;
+const char*   kRecentScenesFile = "content/scene/.recent_scenes";
+
+std::vector<std::string> readRecentScenesFile() {
+    std::vector<std::string> out;
+    std::ifstream in(kRecentScenesFile);
+    std::string line;
+    while (std::getline(in, line)) {
+        while (!line.empty() &&
+               (line.back() == '\r' || line.back() == '\n' || line.back() == ' '))
+            line.pop_back();
+        if (!line.empty()) out.push_back(line);
+    }
+    return out;
+}
+
+void writeRecentScenesFile(const std::vector<std::string>& list) {
+    std::error_code ec;
+    std::filesystem::create_directories("content/scene", ec);
+    std::ofstream out(kRecentScenesFile, std::ios::trunc);
+    for (const auto& p : list) out << p << "\n";
+}
+
+// Move `path` to the front of the MRU list (deduped, absolute) and cap length.
+void pushRecentScene(std::vector<std::string>& list, const std::string& path) {
+    std::error_code ec;
+    std::string canon = std::filesystem::absolute(path, ec).string();
+    if (ec || canon.empty()) canon = path;
+    list.erase(std::remove(list.begin(), list.end(), canon), list.end());
+    list.insert(list.begin(), canon);
+    if (static_cast<int>(list.size()) > kMaxRecentScenes) list.resize(kMaxRecentScenes);
+}
+
 // ── Background music (BGM scene objects) ──────────────────────────────────────
 // Drives one looping clip on the music bus from the scene's BGM objects (the
 // first ".rwbgm" object that has a clip wins).  Called every frame; restarts
@@ -2182,6 +2218,9 @@ void RealWorldApplication::initVulkan() {
 
     // Apply the --editor CLI flag: docked editor UI vs pure in-game viewport.
     menu_->setEditorEnabled(editor_mode_);
+
+    // Seed the Scene → Recent Scenes submenu from the on-disk MRU list.
+    menu_->setRecentScenes(readRecentScenesFile());
 
     // Default content-browser folders.  "player" is the fixed home for
     // character (skinned-model) imports — created up front so the folder
@@ -10627,6 +10666,10 @@ void RealWorldApplication::drawFrame() {
             if (loadSceneFromFile(p)) {
                 menu_->setSceneName(scene_.name);
                 // BGM is synced from the loaded scene's BGM objects.
+                auto recents = readRecentScenesFile();
+                pushRecentScene(recents, p);
+                writeRecentScenesFile(recents);
+                menu_->setRecentScenes(recents);
                 std::cout << "[scene] startup scene '" << p << "' loaded ("
                           << scene_.objects.size() << " object(s))"
                           << std::endl;
@@ -11086,6 +11129,35 @@ void RealWorldApplication::drawFrame() {
             if (!chosen.empty() && loadSceneFromFile(chosen)) {
                 menu_->setSceneName(scene_.name);
                 // BGM resumes from the loaded scene's BGM objects.
+                // Record in the Recent Scenes MRU and persist.
+                auto recents = readRecentScenesFile();
+                pushRecentScene(recents, chosen);
+                writeRecentScenesFile(recents);
+                menu_->setRecentScenes(recents);
+            }
+        }
+        // Scene → Recent Scenes entry clicked: load by known path (no dialog).
+        std::string recent_path;
+        if (menu_->consumeRecentSceneLoadRequest(recent_path)) {
+            if (loadSceneFromFile(recent_path)) {
+                menu_->setSceneName(scene_.name);
+                auto recents = readRecentScenesFile();
+                pushRecentScene(recents, recent_path);
+                writeRecentScenesFile(recents);
+                menu_->setRecentScenes(recents);
+            } else {
+                // Drop a stale/unloadable entry from the list so it stops
+                // cluttering the menu.
+                std::error_code ec;
+                std::string canon =
+                    std::filesystem::absolute(recent_path, ec).string();
+                if (ec || canon.empty()) canon = recent_path;
+                auto recents = readRecentScenesFile();
+                recents.erase(
+                    std::remove(recents.begin(), recents.end(), canon),
+                    recents.end());
+                writeRecentScenesFile(recents);
+                menu_->setRecentScenes(recents);
             }
         }
 
