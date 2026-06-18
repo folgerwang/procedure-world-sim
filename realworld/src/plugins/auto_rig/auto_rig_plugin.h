@@ -10,6 +10,8 @@
 #include <glm/glm.hpp>
 #include "imgui.h"
 
+namespace engine { namespace renderer { class Sampler; struct TextureInfo; } }
+
 namespace plugins {
 namespace auto_rig {
 
@@ -46,6 +48,11 @@ public:
     void setVisible(bool v) override { show_window_ = v; }
     bool isVisible() const override { return show_window_; }
 
+    // The Rig Editor lives in its own window with its own menu entry, toggled
+    // independently of the main Auto Rig window.
+    void setRigEditorVisible(bool v) { show_rig_editor_ = v; }
+    bool isRigEditorVisible() const  { return show_rig_editor_; }
+
     // -----------------------------------------------------------------------
     //  Public API
     // -----------------------------------------------------------------------
@@ -62,6 +69,15 @@ public:
     bool fuseAndBuildSkeleton();
     bool computeSkinWeights();
     bool exportGltf(const std::string& output_path);
+
+    // -----------------------------------------------------------------------
+    //  Manual 3-pass workflow (Generate -> Edit -> Bake).
+    //  Pass 1: build the skeleton joints only (no skin weights).  The mesh
+    //          must already be loaded (it is, once selected in the UI).
+    //  Pass 2: interactive 3D joint editing — see drawJointEditor3D().
+    //  Pass 3: computeSkinWeights() + exportGltf() (driven from the UI).
+    // -----------------------------------------------------------------------
+    bool generateJoints();
 
     // Accessors.
     const Skeleton&    getSkeleton()    const { return skeleton_; }
@@ -102,11 +118,18 @@ private:
     // of architecture name or per-arch version numbering.  -1 if none.
     int latestModelIndex() const;
 
-    // Input mesh data.
+    // Input mesh data (Auto Rig workflow).
     std::string     source_mesh_path_;   // original file — reloaded at export time
     TriangleMesh    mesh_;
     glm::mat4       mesh_node_world_transform_ = glm::mat4(1.0f);  // world xform of the mesh node
     int             detected_up_axis_ = 1;  // 0=X, 1=Y, 2=Z  (auto-detected from bbox)
+
+    // Independent mesh for the 2D Rig Editor window — kept fully separate from
+    // the auto-rig mesh_ so selecting/working in one window never affects the
+    // other.
+    TriangleMesh    re_mesh_;
+    std::string     re_src_path_;
+    glm::mat4       re_xform_ = glm::mat4(1.0f);
 
     // Multi-view capture.
     std::unique_ptr<SimpleRasterizer> rasterizer_;
@@ -128,6 +151,45 @@ private:
     // ImGui state.
     bool   show_window_  = false;
     bool   show_window_prev_ = false;  // track open transition for focus
+
+    // The Rig Editor lives in its own popup window, opened from the Auto Rig
+    // window.  Auto-rig content and rig-editor content are now separate windows.
+    bool   show_rig_editor_      = false;
+    bool   show_rig_editor_prev_ = false;
+    // The auto-rig workflow (Run Auto-Rig + manual 3-pass + 3D preview) also
+    // lives in its own popup window now; the main window is just a launcher.
+    bool   show_autorig_workflow_      = false;
+    bool   show_autorig_workflow_prev_ = false;
+    void   drawAutoRigWorkflowWindow();// the "Auto-Rig Workflow" popup window
+    void   drawRigEditorWindow();      // the "Rig Editor" popup window
+    // Mesh file picker.  Operates on caller-supplied selection state and, when
+    // auto_rig is false, loads into the Rig Editor's independent re_mesh_.
+    void   drawMeshSelector(int& sel_idx, std::string& sel_path, bool auto_rig);
+    // Load a mesh file into a caller-provided buffer without disturbing the
+    // auto-rig mesh_ (gives the Rig Editor its own mesh).
+    bool   loadMeshInto(const std::string& path, TriangleMesh& out_mesh,
+                        std::string& out_src, glm::mat4& out_xform);
+    void   drawModelInfo();            // model-info block (main launcher window)
+
+    // Custom card-style icon buttons (vector-drawn, no texture assets).
+    //   kind 0 = skeleton, 1 = 2D edit canvas, 2 = training network.
+    // If `image` is non-zero the PNG is drawn instead of the vector icon.
+    void   drawButtonIcon(int kind, ImVec2 c, float r, ImU32 col);
+    bool   drawIconButton(const char* id, const char* label, int kind,
+                          ImU32 accent, ImVec2 size, bool enabled = true,
+                          ImTextureID image = 0);
+
+    // ---- Optional PNG icons for the launcher cards (lazy-loaded) ----
+    std::shared_ptr<engine::renderer::Device>      device_;       // kept from init()
+    std::shared_ptr<engine::renderer::Sampler>     ui_sampler_;
+    std::shared_ptr<engine::renderer::TextureInfo> autorig_tex_info_;
+    std::shared_ptr<engine::renderer::TextureInfo> rigedit_tex_info_;
+    std::shared_ptr<engine::renderer::TextureInfo> train_tex_info_;
+    ImTextureID autorig_tex_id_     = 0;
+    ImTextureID rigedit_tex_id_     = 0;
+    ImTextureID train_tex_id_       = 0;
+    bool        ui_textures_loaded_ = false;   // attempted once
+    void        loadUiTextures();              // needs ImGui initialised
     char   output_path_buf_[512] = "rigged_output.glb";
     int    ui_num_views_ = 8;
     int    ui_resolution_ = 1024;
@@ -141,6 +203,8 @@ private:
     std::vector<std::string> mesh_file_list_;   // discovered .glb/.gltf/.obj/.fbx
     int    selected_mesh_idx_ = -1;
     std::string selected_mesh_path_;
+    int    re_selected_idx_ = -1;          // Rig Editor's own selection
+    std::string re_selected_path_;
     bool   files_scanned_ = false;
 
     // 3D preview rotation state (shared between both modes).
@@ -193,6 +257,43 @@ private:
     std::vector<SavedEditView> saved_edits_;
 
     int   drag_joint_ = -1;
+
+    // ---- Manual 3-pass workflow state ----
+    bool   joints_generated_ = false;   // Pass 1 produced a skeleton
+    bool   weights_baked_    = false;   // Pass 3 baked skin weights
+
+    // ---- Pass 2: interactive 3D joint editor ----
+    // Renders the original mesh translucently (OIT) and lets the user drag
+    // skeleton joints in the camera view-plane.  Rotate the view to set depth.
+    int    edit3d_drag_joint_   = -1;     // joint currently being dragged
+    bool   edit3d_rotating_     = false;  // view rotation in progress
+    bool   edit3d_show_         = false;  // Step-2 editor panel visible
+    float  edit3d_opacity_      = 0.55f;  // OIT mesh opacity in the editor
+    ViewCapture edit3d_render_;           // cached OIT mesh render
+    float  edit3d_render_yaw_   = -999.0f;
+    float  edit3d_render_pitch_ = -999.0f;
+    float  edit3d_render_dist_  = -1.0f;
+    float  edit3d_render_op_    = -1.0f;
+    // Draw the Pass-2 3D joint editor canvas (mesh OIT + draggable joints).
+    void   drawJointEditor3D(float canvas_size);
+    // Rebuild inverse-bind matrices from current joint positions (after edits).
+    void   refreshInverseBindMatrices();
+
+    // ---- Save / load skeleton joints ----
+    // Persist the current skeleton — names, parents and 3D positions — to a
+    // small text file so edits survive across sessions and can be reloaded
+    // without re-running joint generation.
+    //   generated joints  ->  "<character>.joints"
+    //   hand-edited joints ->  "<character>_edited.joints"
+    bool        joints_edited_ = false;          // a joint was dragged this session
+    std::string baseJointsPath()   const;        // "<character>.joints"
+    std::string editedJointsPath() const;        // "<character>_edited.joints"
+    std::string saveJointsPath()   const;        // edited path if edited, else base
+    std::string loadJointsPath()   const;        // edited if it exists, else base
+    bool        savedJointsExist() const;        // either file exists
+    bool   saveEditedJoints(const std::string& path);
+    bool   loadEditedJoints(const std::string& path);
+    std::string edit3d_save_status_;             // last save/load message
 
     void initEditableJointsForView(ViewEditState& state, const ViewCapture& cap);
     void initEditableJointsFromModel(ViewEditState& state, const ViewCapture& cap);

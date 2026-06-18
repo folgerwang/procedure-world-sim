@@ -15,6 +15,9 @@
 #include "imgui.h"
 #include "tiny_gltf.h"
 #include "stb_image_write.h"
+#include "renderer/renderer.h"       // engine::renderer::Helper, Device, enums
+#include "helper/engine_helper.h"    // engine::helper::createTextureImage
+#include <source_location>
 
 #include <cstdio>
 #include <cstring>
@@ -92,8 +95,9 @@ AutoRigPlugin::~AutoRigPlugin() { shutdown(); }
 // ============================================================================
 
 bool AutoRigPlugin::init(
-    const std::shared_ptr<engine::renderer::Device>& /*device*/)
+    const std::shared_ptr<engine::renderer::Device>& device)
 {
+    device_          = device;   // kept for lazy-loading launcher icon textures
     rasterizer_      = std::make_unique<SimpleRasterizer>();
     diffusion_model_ = std::make_unique<RigDiffusionModel>();
 
@@ -1030,8 +1034,8 @@ bool AutoRigPlugin::saveViewForTraining() {
     const ViewCapture& cap = edit_capture_;
     const int W = cap.width, H = cap.height;
 
-    std::string stem = selected_mesh_path_.empty() ? "untitled"
-        : std::filesystem::path(selected_mesh_path_).stem().string();
+    std::string stem = re_selected_path_.empty() ? "untitled"
+        : std::filesystem::path(re_selected_path_).stem().string();
     std::string dir = "assets/rigs_training/" + stem;   // engine runs from realworld/
     std::error_code ec; std::filesystem::create_directories(dir, ec);
 
@@ -2698,11 +2702,13 @@ void Skeleton::computeInverseBindMatrices() {
 // ============================================================================
 
 bool AutoRigPlugin::exportTrainingData(const std::string& output_dir) {
-    // Use the output file stem (e.g. "knight-skinned") as the base name
-    // so every file is  <base>_view<N>_color.png, etc.
-    std::string base_name = std::filesystem::path(output_path_buf_).stem().string();
+    // Name files after the Rig Editor's own selected mesh (this is a rig-editor
+    // feature, independent of the auto-rig mesh).
+    std::string base_name = std::filesystem::path(re_selected_path_).stem().string();
     if (base_name.empty())
-        base_name = std::filesystem::path(source_mesh_path_).stem().string();
+        base_name = std::filesystem::path(re_src_path_).stem().string();
+    if (base_name.empty())
+        base_name = "untitled";
     std::string data_dir = output_dir + "/" + base_name;
 
     // Create directory structure
@@ -3283,6 +3289,12 @@ bool AutoRigPlugin::rigCharacter(
     reportProgress(4, kTotalSteps, "Fusing 3D skeleton...");
     if (!fuseAndBuildSkeleton()) { state_ = PluginState::kError; return false; }
 
+    // Auto-rig also produces an editable skeleton — record it and auto-save the
+    // generated joints so they can be reopened/edited in the manual workflow.
+    joints_generated_ = true;
+    joints_edited_    = false;
+    saveEditedJoints(baseJointsPath());   // auto-write "<character>.joints"
+
     reportProgress(5, kTotalSteps, "Computing skin weights...");
     if (!computeSkinWeights()) { state_ = PluginState::kError; return false; }
 
@@ -3291,6 +3303,180 @@ bool AutoRigPlugin::rigCharacter(
 
     state_ = PluginState::kFinished;
     reportProgress(kTotalSteps, kTotalSteps, "Done!");
+    return true;
+}
+
+// ============================================================================
+//  Manual 3-pass workflow
+// ============================================================================
+
+// Pass 1: build the skeleton (no skin weights).  Assumes the mesh has already
+// been loaded by the file-selection UI.  Mirrors rigCharacter() steps 2-4.
+bool AutoRigPlugin::generateJoints() {
+    if (mesh_.empty()) {
+        ui_status_ = "Select a mesh first.";
+        return false;
+    }
+
+    state_ = PluginState::kRunning;
+    joints_generated_ = false;
+    joints_edited_    = false;
+    weights_baked_    = false;
+    skin_weights_     = SkinWeights{};  // drop any stale weights
+    weight_view_mode_ = 0;
+    edit3d_render_.width = 0;            // force editor re-render
+    edit3d_drag_joint_  = -1;
+
+    const int kTotalSteps = 3;
+
+    reportProgress(1, kTotalSteps, "Capturing multi-view renders...");
+    if (!captureViews(num_views_, capture_resolution_)) {
+        state_ = PluginState::kError; return false;
+    }
+
+    initEditableJoints();
+
+    {
+        std::string ml = (model_loaded_idx_ >= 0 && model_loaded_idx_ < (int)model_versions_.size())
+            ? model_versions_[model_loaded_idx_].label() : "stub/heuristic";
+        reportProgress(2, kTotalSteps, "Running model " + ml + "...");
+    }
+    if (!predictJoints()) { state_ = PluginState::kError; return false; }
+
+    reportProgress(3, kTotalSteps, "Fusing 3D skeleton...");
+    if (!fuseAndBuildSkeleton()) { state_ = PluginState::kError; return false; }
+
+    joints_generated_ = true;
+    joints_edited_    = false;
+    saveEditedJoints(baseJointsPath());   // auto-write "<character>.joints"
+
+    state_ = PluginState::kFinished;
+    reportProgress(kTotalSteps, kTotalSteps,
+                   "Joints generated. Edit in 3D, then bake weights.");
+    return true;
+}
+
+// Rebuild inverse-bind matrices from the current joint positions.  Joint edits
+// in Pass 2 move joint.position, which invalidates the IBMs computed during
+// fuseAndBuildSkeleton(); this restores the same relationship used there
+// (IBM = inverse(translate(pos)) * meshNodeWorld) before baking/export.
+void AutoRigPlugin::refreshInverseBindMatrices() {
+    for (auto& j : skeleton_.joints) {
+        glm::mat4 joint_world = glm::translate(glm::mat4(1.0f), j.position);
+        j.inverse_bind_matrix = glm::inverse(joint_world) * mesh_node_world_transform_;
+    }
+}
+
+// Sidecar paths for saved joints, next to the source mesh:
+//   "<character>.joints"         (generated / unedited)
+//   "<character>_edited.joints"  (hand-edited)
+std::string AutoRigPlugin::baseJointsPath() const {
+    if (source_mesh_path_.empty()) return "character.joints";
+    std::filesystem::path p(source_mesh_path_);
+    return (p.parent_path() / (p.stem().string() + ".joints")).string();
+}
+
+std::string AutoRigPlugin::editedJointsPath() const {
+    if (source_mesh_path_.empty()) return "character_edited.joints";
+    std::filesystem::path p(source_mesh_path_);
+    return (p.parent_path() / (p.stem().string() + "_edited.joints")).string();
+}
+
+// Where a save should go: the "_edited" file once joints have been dragged,
+// otherwise the plain generated-joints file.
+std::string AutoRigPlugin::saveJointsPath() const {
+    return joints_edited_ ? editedJointsPath() : baseJointsPath();
+}
+
+// Where a load should come from: prefer the edited file if it exists.
+std::string AutoRigPlugin::loadJointsPath() const {
+    return std::filesystem::exists(editedJointsPath())
+        ? editedJointsPath() : baseJointsPath();
+}
+
+bool AutoRigPlugin::savedJointsExist() const {
+    return std::filesystem::exists(editedJointsPath()) ||
+           std::filesystem::exists(baseJointsPath());
+}
+
+// Save the current skeleton to a simple, human-readable, round-trippable text
+// file.  One row per joint: "<idx> <parent> <px> <py> <pz> <name>".  Joint
+// names never contain spaces, so the name can safely be the last field.
+bool AutoRigPlugin::saveEditedJoints(const std::string& path) {
+    if (skeleton_.empty()) {
+        edit3d_save_status_ = "Nothing to save — generate joints first.";
+        return false;
+    }
+    FILE* f = std::fopen(path.c_str(), "w");
+    if (!f) {
+        edit3d_save_status_ = "Save failed: cannot open " + path;
+        fprintf(stderr, "[AutoRig] saveEditedJoints: cannot open %s\n", path.c_str());
+        return false;
+    }
+    std::fprintf(f, "# auto-rig edited joints v1\n");
+    std::fprintf(f, "# fields: index parent pos_x pos_y pos_z name\n");
+    std::fprintf(f, "count %d\n", (int)skeleton_.joints.size());
+    std::fprintf(f, "root %d\n", skeleton_.root);
+    for (int j = 0; j < (int)skeleton_.joints.size(); ++j) {
+        const Joint& jt = skeleton_.joints[j];
+        std::fprintf(f, "%d %d %.6f %.6f %.6f %s\n",
+            j, jt.parent, jt.position.x, jt.position.y, jt.position.z,
+            jt.name.c_str());
+    }
+    std::fclose(f);
+    edit3d_save_status_ = "Saved " + std::to_string(skeleton_.joints.size()) +
+        " joints to " + std::filesystem::path(path).filename().string();
+    fprintf(stderr, "[AutoRig] saved %d joints to %s\n",
+        (int)skeleton_.joints.size(), path.c_str());
+    return true;
+}
+
+// Rebuild skeleton_ from a file written by saveEditedJoints().  After loading,
+// the rig is ready to edit further or bake (joints_generated_ is set true).
+bool AutoRigPlugin::loadEditedJoints(const std::string& path) {
+    FILE* f = std::fopen(path.c_str(), "r");
+    if (!f) {
+        edit3d_save_status_ = "Load failed: " +
+            std::filesystem::path(path).filename().string() + " not found.";
+        return false;
+    }
+    Skeleton loaded;
+    int count = 0, root = -1;
+    char line[512];
+    while (std::fgets(line, sizeof(line), f)) {
+        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
+        if (std::strncmp(line, "count", 5) == 0) { std::sscanf(line, "count %d", &count); continue; }
+        if (std::strncmp(line, "root",  4) == 0) { std::sscanf(line, "root %d",  &root);  continue; }
+        int idx = 0, parent = -1; float x = 0, y = 0, z = 0; char name[128] = {0};
+        if (std::sscanf(line, "%d %d %f %f %f %127s", &idx, &parent, &x, &y, &z, name) == 6) {
+            if (idx >= (int)loaded.joints.size()) loaded.joints.resize(idx + 1);
+            Joint& jt = loaded.joints[idx];
+            jt.name = name;
+            jt.parent = parent;
+            jt.position = glm::vec3(x, y, z);
+            jt.rotation = glm::quat(1, 0, 0, 0);
+            jt.scale = glm::vec3(1.0f);
+        }
+    }
+    std::fclose(f);
+
+    if (loaded.joints.empty()) {
+        edit3d_save_status_ = "Load failed: no joints parsed.";
+        return false;
+    }
+    loaded.root = (root >= 0) ? root : 0;
+    skeleton_ = std::move(loaded);
+    refreshInverseBindMatrices();
+    joints_generated_   = true;
+    weights_baked_      = false;
+    // Loading the "_edited" file keeps the edited destination for re-saves.
+    joints_edited_      = (path.find("_edited.joints") != std::string::npos);
+    edit3d_drag_joint_  = -1;
+    edit3d_render_.width = 0;  // force editor re-render
+    edit3d_save_status_ = "Loaded " + std::to_string(skeleton_.joints.size()) +
+        " joints from " + std::filesystem::path(path).filename().string();
+    fprintf(stderr, "[AutoRig] loaded %d joints from %s\n",
+        (int)skeleton_.joints.size(), path.c_str());
     return true;
 }
 
@@ -3533,23 +3719,523 @@ static void drawViewPixels(
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+//  Pass 2: interactive 3D joint editor.
+//
+//  Draws the original character translucently (OIT) and overlays the skeleton
+//  with draggable joint handles.  Dragging a joint moves it in the camera
+//  view-plane (depth held constant in clip space); rotate the view (drag empty
+//  space) to reach the third axis.  Mesh is only re-rendered when the camera
+//  or opacity changes, so dragging stays cheap.
+// ---------------------------------------------------------------------------
+void AutoRigPlugin::drawJointEditor3D(float canvas_size) {
+    if (mesh_.empty() || skeleton_.empty() || !rasterizer_) {
+        ImGui::TextDisabled("Run 'Generate Joints' (Pass 1) first.");
+        return;
+    }
+
+    ImGui::TextWrapped(
+        "Drag a joint to move it in the view-plane. Drag empty space to "
+        "rotate. Rotate the view to adjust depth, then drag again.");
+
+    // ---- Controls ----
+    float old_op = edit3d_opacity_;
+    ImGui::SetNextItemWidth(160);
+    ImGui::SliderFloat("Mesh Opacity", &edit3d_opacity_, 0.05f, 1.0f, "%.2f");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(160);
+    ImGui::SliderFloat("Zoom##edit3d", &camera_distance_, 0.5f, 1.5f, "%.2f");
+
+    ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("##edit3d_canvas", ImVec2(canvas_size, canvas_size));
+    bool hovered = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    // ---- Camera (same construction as the Rig Editor capture) ----
+    float az = -glm::degrees(preview_yaw_);
+    float el = -glm::degrees(preview_pitch_);
+    glm::vec3 centre = (mesh_.bbox_min + mesh_.bbox_max) * 0.5f;
+    float ext    = glm::length(mesh_.bbox_max - mesh_.bbox_min);
+    float radius = ext * camera_distance_;
+    float fov    = glm::radians(45.0f);
+    float z_near = radius * 0.01f, z_far = radius * 10.0f;
+    glm::mat4 proj = glm::perspective(fov, 1.0f, z_near, z_far);
+    proj[1][1] *= -1.0f;
+    float az_rad = glm::radians(az), el_rad = glm::radians(el);
+    glm::vec3 eye;
+    eye.x = centre.x + radius * cosf(el_rad) * cosf(az_rad);
+    eye.y = centre.y + radius * sinf(el_rad);
+    eye.z = centre.z + radius * cosf(el_rad) * sinf(az_rad);
+    glm::mat4 view_mat = glm::lookAt(eye, centre, glm::vec3(0, 1, 0));
+    glm::mat4 vp     = proj * view_mat;
+    glm::mat4 inv_vp = glm::inverse(vp);
+
+    // ---- Re-render OIT mesh only when camera / opacity changed ----
+    int res = std::max(64, (int)canvas_size);
+    bool needs_render =
+        edit3d_render_.width != res ||
+        std::abs(preview_yaw_   - edit3d_render_yaw_)   > 0.001f ||
+        std::abs(preview_pitch_ - edit3d_render_pitch_) > 0.001f ||
+        std::abs(camera_distance_ - edit3d_render_dist_) > 0.0001f ||
+        std::abs(edit3d_opacity_  - edit3d_render_op_)   > 0.001f;
+    if (needs_render) {
+        edit3d_render_ = rasterizer_->renderOIT(
+            mesh_, res, res, view_mat, proj, edit3d_opacity_, az, el);
+        edit3d_render_yaw_   = preview_yaw_;
+        edit3d_render_pitch_ = preview_pitch_;
+        edit3d_render_dist_  = camera_distance_;
+        edit3d_render_op_    = edit3d_opacity_;
+    }
+    (void)old_op;
+
+    // World joint -> canvas pixel, using the SAME mapping the rasterizer uses
+    // (ndc.x/y in [-1,1]; image row 0 = top, matching drawViewPixels()).
+    auto worldToScreen = [&](const glm::vec3& P, bool& ok) -> ImVec2 {
+        glm::vec4 clip = vp * glm::vec4(P, 1.0f);
+        if (clip.w <= 1e-6f) { ok = false; return ImVec2(0, 0); }
+        ok = true;
+        float u = (clip.x / clip.w) * 0.5f + 0.5f;
+        float v = (clip.y / clip.w) * 0.5f + 0.5f;
+        return ImVec2(canvas_pos.x + u * canvas_size,
+                      canvas_pos.y + v * canvas_size);
+    };
+
+    // ---- Background + translucent mesh ----
+    dl->PushClipRect(canvas_pos,
+        ImVec2(canvas_pos.x + canvas_size, canvas_pos.y + canvas_size), true);
+    dl->AddRectFilled(canvas_pos,
+        ImVec2(canvas_pos.x + canvas_size, canvas_pos.y + canvas_size),
+        IM_COL32(25, 25, 30, 255));
+    if (edit3d_render_.width > 0)
+        drawViewPixels(dl, canvas_pos, canvas_size, canvas_size, edit3d_render_);
+
+    // ---- Per-joint projection + camera-depth coloring ----
+    //  Hue encodes distance from the camera: near = warm (red/orange),
+    //  far = cool (blue).  Both joints and bones use it so the 3D structure
+    //  reads clearly through the translucent mesh.
+    auto hsv2col = [](float h, float s, float v) -> ImU32 {
+        float r = 0, g = 0, b = 0;
+        int   i = (int)std::floor(h * 6.0f);
+        float f = h * 6.0f - i;
+        float p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s);
+        switch (((i % 6) + 6) % 6) {
+            case 0: r=v; g=t; b=p; break; case 1: r=q; g=v; b=p; break;
+            case 2: r=p; g=v; b=t; break; case 3: r=p; g=q; b=v; break;
+            case 4: r=t; g=p; b=v; break; default: r=v; g=p; b=q; break;
+        }
+        return IM_COL32((int)(r*255), (int)(g*255), (int)(b*255), 255);
+    };
+
+    const int nJoints = (int)skeleton_.joints.size();
+    std::vector<ImVec2>        jscreen(nJoints);
+    std::vector<unsigned char> jok(nJoints, 0);
+    std::vector<float>         jdepth(nJoints, 0.0f);
+    std::vector<ImU32>         jcol(nJoints, IM_COL32(200, 200, 200, 255));
+    float dmin = 1e30f, dmax = -1e30f;
+    for (int j = 0; j < nJoints; ++j) {
+        bool ok; jscreen[j] = worldToScreen(skeleton_.joints[j].position, ok);
+        jok[j] = ok ? 1 : 0;
+        if (!ok) continue;
+        float dcam = -(view_mat * glm::vec4(skeleton_.joints[j].position, 1.0f)).z;
+        jdepth[j] = dcam;
+        dmin = std::min(dmin, dcam);
+        dmax = std::max(dmax, dcam);
+    }
+    const float drange = (dmax > dmin) ? (dmax - dmin) : 1.0f;
+    for (int j = 0; j < nJoints; ++j) {
+        if (!jok[j]) continue;
+        float t = (jdepth[j] - dmin) / drange;        // 0 = nearest, 1 = farthest
+        jcol[j] = hsv2col(t * 0.62f, 0.85f, 1.0f);    // red (near) -> blue (far)
+    }
+
+    // ---- Pick / drag detection ----
+    ImVec2 mouse = ImGui::GetMousePos();
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        float best = 14.0f;  // pixel pick radius
+        int   best_j = -1;
+        for (int j = 0; j < nJoints; ++j) {
+            if (!jok[j]) continue;
+            const ImVec2& p = jscreen[j];
+            float d = std::sqrt((mouse.x-p.x)*(mouse.x-p.x) +
+                                (mouse.y-p.y)*(mouse.y-p.y));
+            if (d < best) { best = d; best_j = j; }
+        }
+        if (best_j >= 0) {
+            edit3d_drag_joint_ = best_j;     // grab a joint
+            edit3d_rotating_   = false;
+        } else {
+            edit3d_rotating_   = true;       // empty space -> rotate
+            preview_drag_start_ = mouse;
+        }
+    }
+
+    // ---- Apply joint drag: keep clip-space depth (z,w) fixed, move in plane ----
+    if (edit3d_drag_joint_ >= 0) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            Joint& jt = skeleton_.joints[edit3d_drag_joint_];
+            glm::vec4 clip0 = vp * glm::vec4(jt.position, 1.0f);
+            if (clip0.w > 1e-6f) {
+                float ndx = ((mouse.x - canvas_pos.x) / canvas_size) * 2.0f - 1.0f;
+                float ndy = ((mouse.y - canvas_pos.y) / canvas_size) * 2.0f - 1.0f;
+                glm::vec4 clip_new(ndx * clip0.w, ndy * clip0.w, clip0.z, clip0.w);
+                glm::vec4 world = inv_vp * clip_new;
+                if (std::abs(world.w) > 1e-6f) {
+                    jt.position = glm::vec3(world) / world.w;
+                    joints_edited_ = true;   // saves now go to "<name>_edited.joints"
+                }
+            }
+        } else {
+            edit3d_drag_joint_ = -1;
+        }
+    }
+
+    // ---- Handle view rotation (empty-space drag) ----
+    if (edit3d_rotating_) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            if (!lock_azimuth_)
+                preview_yaw_   += (mouse.x - preview_drag_start_.x) * 0.01f;
+            if (!lock_elevation_) {
+                preview_pitch_ += (mouse.y - preview_drag_start_.y) * 0.01f;
+                preview_pitch_  = std::clamp(preview_pitch_, -1.5f, 1.5f);
+            }
+            preview_drag_start_ = mouse;
+        } else {
+            edit3d_rotating_ = false;
+        }
+    }
+
+    // ---- Draw bones (depth gradient: each half tinted toward its joint) ----
+    for (int j = 0; j < nJoints; ++j) {
+        const Joint& jt = skeleton_.joints[j];
+        int pj = jt.parent;
+        if (pj < 0 || !jok[j] || !jok[pj]) continue;
+        ImVec2 a = jscreen[pj];
+        ImVec2 b = jscreen[j];
+        ImVec2 mid((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
+        dl->AddLine(a, b, IM_COL32(0, 0, 0, 150), 4.5f);   // dark outline
+        dl->AddLine(a, mid, jcol[pj], 2.4f);               // parent half
+        dl->AddLine(mid, b, jcol[j],  2.4f);               // child half
+    }
+
+    // ---- Draw joint handles (filled with depth color) ----
+    for (int j = 0; j < nJoints; ++j) {
+        if (!jok[j]) continue;
+        const Joint& jt = skeleton_.joints[j];
+        const ImVec2& p = jscreen[j];
+        bool is_root = (jt.parent < 0);
+        bool active  = (edit3d_drag_joint_ == j);
+        bool hov = false;
+        if (hovered) {
+            float d = std::sqrt((mouse.x-p.x)*(mouse.x-p.x) +
+                                (mouse.y-p.y)*(mouse.y-p.y));
+            hov = (d < 14.0f);
+        }
+        float rad = (active || hov) ? 7.0f : (is_root ? 6.0f : 5.0f);
+        dl->AddCircleFilled(p, rad, jcol[j]);              // depth color
+        // Outline: white when active/hovered, extra ring for the root.
+        dl->AddCircle(p, rad, IM_COL32(0, 0, 0, 230), 0, 1.5f);
+        if (active || hov)
+            dl->AddCircle(p, rad + 2.5f, IM_COL32(255, 255, 255, 235), 0, 2.0f);
+        else if (is_root)
+            dl->AddCircle(p, rad + 2.5f, IM_COL32(255, 255, 255, 180), 0, 1.5f);
+        if (active || hov) {
+            dl->AddText(ImVec2(p.x + rad + 3, p.y - 7),
+                        IM_COL32(0, 0, 0, 200), jt.name.c_str());
+            dl->AddText(ImVec2(p.x + rad + 2, p.y - 8),
+                        IM_COL32(255, 255, 255, 240), jt.name.c_str());
+        }
+    }
+
+    // ---- Near/far color legend (bottom-right) ----
+    {
+        const float lw = 90.0f, lh = 10.0f;
+        float lx = canvas_pos.x + canvas_size - lw - 10.0f;
+        float ly = canvas_pos.y + canvas_size - lh - 22.0f;
+        const int steps = 24;
+        for (int s = 0; s < steps; ++s) {
+            float t0 = (float)s / steps;
+            float x0 = lx + t0 * lw;
+            float x1 = lx + (float)(s + 1) / steps * lw;
+            dl->AddRectFilled(ImVec2(x0, ly), ImVec2(x1, ly + lh),
+                              hsv2col(t0 * 0.62f, 0.85f, 1.0f));
+        }
+        dl->AddRect(ImVec2(lx, ly), ImVec2(lx + lw, ly + lh),
+                    IM_COL32(0, 0, 0, 200));
+        dl->AddText(ImVec2(lx - 2, ly + lh + 1),    IM_COL32(0,0,0,200), "near");
+        dl->AddText(ImVec2(lx - 3, ly + lh),        IM_COL32(255,255,255,235), "near");
+        dl->AddText(ImVec2(lx + lw - 22, ly + lh + 1), IM_COL32(0,0,0,200), "far");
+        dl->AddText(ImVec2(lx + lw - 23, ly + lh),     IM_COL32(255,255,255,235), "far");
+    }
+
+    // ---- Border + angle tag ----
+    dl->AddRect(canvas_pos,
+        ImVec2(canvas_pos.x + canvas_size, canvas_pos.y + canvas_size),
+        IM_COL32(120, 120, 120, 200));
+    {
+        char ang[64];
+        std::snprintf(ang, sizeof(ang), "az:%.0f el:%.0f", az, el);
+        dl->AddText(ImVec2(canvas_pos.x + 4, canvas_pos.y + 3),
+                    IM_COL32(0, 0, 0, 200), ang);
+        dl->AddText(ImVec2(canvas_pos.x + 3, canvas_pos.y + 2),
+                    IM_COL32(255, 255, 0, 255), ang);
+    }
+    dl->PopClipRect();
+}
+
+// Load a mesh into a caller-provided buffer without disturbing the auto-rig
+// mesh_.  loadMesh() writes mesh_ / source_mesh_path_ / mesh_node_world_transform_,
+// so we save those, run it, capture the result, then restore the originals.
+bool AutoRigPlugin::loadMeshInto(const std::string& path, TriangleMesh& out_mesh,
+                                 std::string& out_src, glm::mat4& out_xform) {
+    TriangleMesh keep_mesh  = std::move(mesh_);
+    std::string  keep_src   = source_mesh_path_;
+    glm::mat4    keep_xform  = mesh_node_world_transform_;
+
+    bool ok = loadMesh(path);                 // populates mesh_ + the two members
+
+    out_mesh  = std::move(mesh_);
+    out_src   = source_mesh_path_;
+    out_xform = mesh_node_world_transform_;
+
+    mesh_                      = std::move(keep_mesh);
+    source_mesh_path_          = keep_src;
+    mesh_node_world_transform_ = keep_xform;
+    return ok;
+}
+
+// Mesh file picker.  Writes the supplied selection state.  When auto_rig is
+// true it loads/prepares the auto-rig mesh_; otherwise it loads the Rig
+// Editor's independent re_mesh_, leaving the auto-rig mesh untouched.
+void AutoRigPlugin::drawMeshSelector(int& sel_idx, std::string& sel_path,
+                                     bool auto_rig) {
+    if (!files_scanned_) { refreshMeshFileList(); files_scanned_ = true; }
+
+    if (ImGui::Button("Refresh")) refreshMeshFileList();
+    ImGui::SameLine();
+    ImGui::Text("Mesh Files (%d found)", (int)mesh_file_list_.size());
+
+    {
+        float list_h = ImGui::GetTextLineHeightWithSpacing() * std::min((int)mesh_file_list_.size(), 5) + 4.0f;
+        if (list_h < ImGui::GetTextLineHeightWithSpacing() * 2) list_h = ImGui::GetTextLineHeightWithSpacing() * 2;
+        // Unique child id per context so the two lists scroll independently.
+        const char* list_id = auto_rig ? "MeshFileList_ar" : "MeshFileList_re";
+        if (ImGui::BeginChild(list_id, ImVec2(-1, list_h), true)) {
+            for (int i = 0; i < (int)mesh_file_list_.size(); ++i) {
+                std::string dname = "  " + std::filesystem::path(mesh_file_list_[i]).filename().string();
+                if (ImGui::Selectable(dname.c_str(), sel_idx == i)) {
+                    sel_idx  = i;
+                    sel_path = mesh_file_list_[i];
+                    if (auto_rig) {
+                        auto p = std::filesystem::path(sel_path);
+                        auto out = p.parent_path() / (p.stem().string() + "-skinned" + p.extension().string());
+                        std::snprintf(output_path_buf_, sizeof(output_path_buf_), "%s", out.string().c_str());
+                        if (mesh_.empty() || source_mesh_path_ != sel_path) {
+                            loadMesh(sel_path);
+                            captures_ = rasterizer_->captureOrbit(
+                                mesh_, num_views_, capture_resolution_, 0.0f, camera_distance_);
+                            initEditableJoints();
+                            edit_capture_valid_ = false;
+                        }
+                    } else {
+                        // Rig Editor: load into its own mesh buffer.
+                        if (re_mesh_.empty() || re_src_path_ != sel_path) {
+                            loadMeshInto(sel_path, re_mesh_, re_src_path_, re_xform_);
+                            edit_capture_valid_ = false;
+                        }
+                    }
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", mesh_file_list_[i].c_str());
+            }
+        }
+        ImGui::EndChild();
+    }
+
+    if (sel_idx >= 0) {
+        ImGui::Text("Source: %s", std::filesystem::path(sel_path).filename().string().c_str());
+    } else {
+        ImGui::TextDisabled("No mesh selected");
+    }
+}
+
+// Vector icon painter for the card buttons (no texture assets needed).
+//   kind 0 = skeleton, 1 = 2D edit canvas, 2 = training network.
+void AutoRigPlugin::drawButtonIcon(int kind, ImVec2 c, float r, ImU32 col) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float th = 2.4f;
+    if (kind == 0) {
+        ImVec2 head (c.x,            c.y - r);
+        ImVec2 chest(c.x,            c.y - r * 0.25f);
+        ImVec2 hips (c.x,            c.y + r * 0.55f);
+        ImVec2 lh   (c.x - r*0.75f,  c.y + r * 0.15f);
+        ImVec2 rh   (c.x + r*0.75f,  c.y + r * 0.15f);
+        ImVec2 lf   (c.x - r*0.50f,  c.y + r * 1.05f);
+        ImVec2 rf   (c.x + r*0.50f,  c.y + r * 1.05f);
+        dl->AddLine(head, chest, col, th);
+        dl->AddLine(chest, hips, col, th);
+        dl->AddLine(chest, lh, col, th);
+        dl->AddLine(chest, rh, col, th);
+        dl->AddLine(hips, lf, col, th);
+        dl->AddLine(hips, rf, col, th);
+        for (ImVec2 j : { chest, hips, lh, rh, lf, rf })
+            dl->AddCircleFilled(j, 2.7f, col);
+        dl->AddCircleFilled(head, 4.4f, col);
+    } else if (kind == 1) {
+        ImVec2 a(c.x - r, c.y - r * 0.8f), b(c.x + r, c.y + r * 0.8f);
+        dl->AddRect(a, b, IM_COL32(150,150,160,200), 3.0f, 0, 1.6f);
+        ImVec2 n0(c.x - r*0.45f, c.y + r*0.35f);
+        ImVec2 n1(c.x,           c.y - r*0.25f);
+        ImVec2 n2(c.x + r*0.50f, c.y + r*0.10f);
+        dl->AddLine(n0, n1, col, th);
+        dl->AddLine(n1, n2, col, th);
+        for (ImVec2 j : { n0, n1, n2 })
+            dl->AddCircleFilled(j, 3.1f, col);
+        dl->AddLine(ImVec2(n1.x-5,n1.y), ImVec2(n1.x+5,n1.y), IM_COL32(255,255,255,190), 1.0f);
+        dl->AddLine(ImVec2(n1.x,n1.y-5), ImVec2(n1.x,n1.y+5), IM_COL32(255,255,255,190), 1.0f);
+    } else {
+        // Small neural network: two input nodes -> hidden -> two output nodes.
+        ImVec2 a (c.x - r*0.75f, c.y - r*0.5f);
+        ImVec2 b (c.x - r*0.75f, c.y + r*0.5f);
+        ImVec2 m (c.x,           c.y);
+        ImVec2 d (c.x + r*0.75f, c.y - r*0.5f);
+        ImVec2 e (c.x + r*0.75f, c.y + r*0.5f);
+        dl->AddLine(a, m, col, th); dl->AddLine(b, m, col, th);
+        dl->AddLine(m, d, col, th); dl->AddLine(m, e, col, th);
+        for (ImVec2 j : { a, b, d, e })
+            dl->AddCircleFilled(j, 3.0f, col);
+        dl->AddCircleFilled(m, 4.2f, col);
+    }
+}
+
+// Lazy-load optional PNG icons for the launcher cards.  Must run inside a
+// frame (ImGui's Vulkan backend initialised), so it's called from drawImGui().
+// Best-effort: on any failure the cards fall back to the vector icons.
+void AutoRigPlugin::loadUiTextures() {
+    if (ui_textures_loaded_) return;
+    ui_textures_loaded_ = true;          // attempt only once
+    if (!device_) return;
+    try {
+        if (!ui_sampler_)
+            ui_sampler_ = device_->createSampler(
+                engine::renderer::Filter::LINEAR,
+                engine::renderer::SamplerAddressMode::CLAMP_TO_EDGE,
+                engine::renderer::SamplerMipmapMode::LINEAR, 1.0f,
+                std::source_location::current());
+
+        // Load one PNG from content/images/ (tries a few relative roots) into
+        // an ImGui texture; returns 0 on any failure (card keeps vector icon).
+        auto loadIcon = [&](const char* file,
+                            std::shared_ptr<engine::renderer::TextureInfo>& info)
+                            -> ImTextureID {
+            const std::string roots[] = {
+                "content/images/", "../content/images/",
+                "../realworld/content/images/",
+            };
+            std::string path;
+            for (const auto& r : roots)
+                if (std::filesystem::exists(r + file)) { path = r + file; break; }
+            if (path.empty()) return 0;
+            info = std::make_shared<engine::renderer::TextureInfo>();
+            engine::helper::createTextureImage(
+                device_, path, engine::renderer::Format::R8G8B8A8_UNORM,
+                true, *info, std::source_location::current());
+            if (info->view && ui_sampler_)
+                return engine::renderer::Helper::addImTextureID(ui_sampler_, info->view);
+            return 0;
+        };
+
+        autorig_tex_id_ = loadIcon("auto-rig.png", autorig_tex_info_);
+        rigedit_tex_id_ = loadIcon("rig-edit.png", rigedit_tex_info_);
+        train_tex_id_   = loadIcon("ml-train.png", train_tex_info_);
+    } catch (...) {
+        // Leave whatever loaded; unset ids fall back to vector icons.
+    }
+}
+
+// Card-style button: rounded box + accent border + (PNG or vector icon) + label.
+bool AutoRigPlugin::drawIconButton(const char* id, const char* label, int kind,
+                                   ImU32 accent, ImVec2 size, bool enabled,
+                                   ImTextureID image) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (!enabled) ImGui::BeginDisabled();
+    ImVec2 p0 = ImGui::GetCursorScreenPos();
+    bool clicked = ImGui::InvisibleButton(id, size);
+    bool hov = enabled && ImGui::IsItemHovered();
+    bool act = enabled && ImGui::IsItemActive();
+    ImVec2 p1(p0.x + size.x, p0.y + size.y);
+    ImU32 bg = act ? IM_COL32(58,58,70,255)
+             : hov ? IM_COL32(48,48,60,255)
+                   : IM_COL32(36,36,44,255);
+    ImU32 border = hov ? accent : IM_COL32(90,90,100,255);
+    ImU32 iconc  = enabled ? accent : IM_COL32(110,110,118,255);
+    ImU32 textc  = enabled ? IM_COL32(228,228,233,255) : IM_COL32(140,140,146,255);
+    dl->AddRectFilled(p0, p1, bg, 8.0f);
+    dl->AddRect(p0, p1, border, 8.0f, 0, hov ? 2.5f : 1.0f);
+    if (image) {
+        // Draw the PNG centered in the area above the label.
+        float side = std::min(size.x - 22.0f, size.y - 34.0f);
+        ImVec2 ic(p0.x + size.x * 0.5f, p0.y + (size.y - 22.0f) * 0.5f);
+        ImVec2 ia(ic.x - side * 0.5f, ic.y - side * 0.5f);
+        ImVec2 ib(ic.x + side * 0.5f, ic.y + side * 0.5f);
+        ImU32 tint = enabled ? IM_COL32(255,255,255,255) : IM_COL32(255,255,255,120);
+        dl->AddImage(image, ia, ib, ImVec2(0,0), ImVec2(1,1), tint);
+    } else {
+        drawButtonIcon(kind, ImVec2(p0.x + size.x * 0.5f, p0.y + size.y * 0.4f), 20.0f, iconc);
+    }
+    ImVec2 ts = ImGui::CalcTextSize(label);
+    dl->AddText(ImVec2(p0.x + (size.x - ts.x) * 0.5f, p1.y - 24.0f), textc, label);
+    if (!enabled) ImGui::EndDisabled();
+    return clicked;
+}
+
+// Model-info readout — shown in the main launcher window.  Long paths wrap so
+// they don't stretch the auto-sized window.
+void AutoRigPlugin::drawModelInfo() {
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 580.0f);
+
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Model Info:");
+    ImGui::Text("  Model dir: %s", model_dir_.c_str());
+    ImGui::Text("  Versions found: %d", (int)model_versions_.size());
+    if (model_loaded_idx_ >= 0 && model_loaded_idx_ < (int)model_versions_.size()) {
+        auto& me = model_versions_[model_loaded_idx_];
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
+            "  Loaded: %s  (%s)", me.label().c_str(), me.path.c_str());
+    } else {
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f),
+            "  Loaded: STUB (heuristic placement)");
+    }
+    if (diffusion_model_) {
+        ImGui::Text("  Model loaded: %s, joints: %d, module ptr: %s",
+            diffusion_model_->isLoaded() ? "YES" : "NO",
+            diffusion_model_->numJoints(),
+            (model_loaded_idx_ >= 0) ? "LibTorch" : "stub");
+    } else {
+        ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f),
+            "  diffusion_model_ is NULL!");
+    }
+    ImGui::Text("  CWD: %s", std::filesystem::current_path().string().c_str());
+
+    ImGui::PopTextWrapPos();
+}
+
 void AutoRigPlugin::drawImGui() {
     // Track open/close transition (must run before early return).
     bool just_opened = show_window_ && !show_window_prev_;
     show_window_prev_ = show_window_;
 
-    if (!show_window_) return;
+    // The workflow / editor windows are independent: keep drawing them even
+    // when the main launcher window itself is hidden.
+    if (!show_window_) { drawAutoRigWorkflowWindow(); drawRigEditorWindow(); return; }
 
     ImGuiIO& io = ImGui::GetIO();
 
-    // Size to 80% of the display, centred.  Use Appearing so it re-centres
-    // each time the window is toggled open.
-    ImGui::SetNextWindowSize(
-        ImVec2(io.DisplaySize.x * 0.8f, io.DisplaySize.y * 0.85f),
-        ImGuiCond_Appearing);
+    // The launcher is a small hub — auto-size it to its content (no big empty
+    // window), with a sensible width range so long paths wrap instead of
+    // stretching it.  Centre on first appearance.
     ImGui::SetNextWindowPos(
         ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
         ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(440.0f, 0.0f),
+                                        ImVec2(640.0f, 100000.0f));
 
     // Bring to front on open (only once, not every frame).
     if (just_opened)
@@ -3564,17 +4250,29 @@ void AutoRigPlugin::drawImGui() {
     ImGuiWindowFlags flags =
         ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoSavedSettings |
-        ImGuiWindowFlags_NoDocking;
+        ImGuiWindowFlags_NoDocking |
+        ImGuiWindowFlags_AlwaysAutoResize;
 
     if (!ImGui::Begin("Auto Rig", &show_window_, flags)) {
         ImGui::End();
         return;
     }
 
+    loadUiTextures();   // lazy-load PNG launcher icons (once, inside a frame)
+
     // ---- Train Model (root level, always visible) ----
     {
-        // Model architecture selector.
-        ImGui::SetNextItemWidth(220);
+        // Model architecture selector — sized to the longest option so the
+        // preview text never clips.
+        {
+            const ImGuiStyle& st = ImGui::GetStyle();
+            float arch_w = ImGui::GetFrameHeight() + st.FramePadding.x * 2.0f;
+            for (int i = 0; i < kNumModelArchs; ++i)
+                arch_w = std::max(arch_w,
+                    ImGui::CalcTextSize(kModelArchLabels[i]).x
+                        + st.FramePadding.x * 2.0f + ImGui::GetFrameHeight() + 6.0f);
+            ImGui::SetNextItemWidth(arch_w);
+        }
         if (ImGui::BeginCombo("Architecture", kModelArchLabels[training_model_arch_])) {
             for (int i = 0; i < kNumModelArchs; ++i) {
                 bool selected = (i == training_model_arch_);
@@ -3584,13 +4282,13 @@ void AutoRigPlugin::drawImGui() {
             }
             ImGui::EndCombo();
         }
-        ImGui::SameLine();
 
-        // Snapshot the disabled state so Begin/End stay balanced even if the
+        // Snapshot the disabled state so it stays consistent even if the
         // button handler flips training_running_ mid-frame.
         const bool disable_train = training_running_;
-        if (disable_train) ImGui::BeginDisabled();
-        if (ImGui::Button("  Train Model  ")) {
+        if (drawIconButton("##btn_train", "Train Model", 2,
+                           IM_COL32(120,180,90,255), ImVec2(180.0f, 100.0f),
+                           !disable_train, train_tex_id_)) {
             training_running_ = true;
             training_finished_ = false;
             training_epoch_ = 0;
@@ -3626,10 +4324,12 @@ void AutoRigPlugin::drawImGui() {
                 // or the user may have data in assets/rigs_training/<stem>/
                 std::string data_dir;
 
-                // 1) If a mesh is selected, check its sibling training_data folder
-                if (!source_mesh_path_.empty()) {
-                    std::string stem = std::filesystem::path(source_mesh_path_).stem().string();
-                    std::string parent = std::filesystem::path(source_mesh_path_)
+                // 1) If the Rig Editor has a mesh selected, check its sibling
+                //    training_data folder (training data is exported per
+                //    rig-editor mesh).
+                if (!re_selected_path_.empty()) {
+                    std::string stem = std::filesystem::path(re_selected_path_).stem().string();
+                    std::string parent = std::filesystem::path(re_selected_path_)
                         .parent_path().string();
                     // Check training_data/<stem>
                     std::string cand = parent + "/training_data/" + stem;
@@ -3835,7 +4535,6 @@ void AutoRigPlugin::drawImGui() {
                 }
             }
         }
-        if (disable_train) ImGui::EndDisabled();
 
         // Training status + progress bar
         if (training_running_) {
@@ -3931,9 +4630,6 @@ void AutoRigPlugin::drawImGui() {
             }
 
             if (!model_versions_.empty()) {
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(200);
-
                 // Build combo items: "Latest (arch_vNNN)", individual entries...
                 // "Latest" = newest file on disk (latestModelIndex), so the
                 // label matches what loadModelByIndex(-1) actually loads.
@@ -3945,6 +4641,12 @@ void AutoRigPlugin::drawImGui() {
                     current_label = "Latest (" + latest_label + ")";
                 else
                     current_label = model_versions_[model_selected_idx_].label();
+
+                // Size the combo to its label so it never clips.
+                const ImGuiStyle& st = ImGui::GetStyle();
+                ImGui::SetNextItemWidth(
+                    ImGui::CalcTextSize(current_label.c_str()).x
+                        + st.FramePadding.x * 2.0f + ImGui::GetFrameHeight() + 6.0f);
 
                 if (ImGui::BeginCombo("##model_ver", current_label.c_str())) {
                     // "Latest" option
@@ -3973,60 +4675,74 @@ void AutoRigPlugin::drawImGui() {
 
     ImGui::Separator();
 
-    // ---- Mesh file selection (shared) ----
-    if (!files_scanned_) { refreshMeshFileList(); files_scanned_ = true; }
-
-    if (ImGui::Button("Refresh")) refreshMeshFileList();
-    ImGui::SameLine();
-    ImGui::Text("Mesh Files (%d found)", (int)mesh_file_list_.size());
-
+    // ---- Launch buttons: custom icon cards (vector-drawn, no textures) ----
     {
-        float list_h = ImGui::GetTextLineHeightWithSpacing() * std::min((int)mesh_file_list_.size(), 5) + 4.0f;
-        if (list_h < ImGui::GetTextLineHeightWithSpacing() * 2) list_h = ImGui::GetTextLineHeightWithSpacing() * 2;
-        if (ImGui::BeginChild("MeshFileList", ImVec2(-1, list_h), true)) {
-            for (int i = 0; i < (int)mesh_file_list_.size(); ++i) {
-                std::string dname = "  " + std::filesystem::path(mesh_file_list_[i]).filename().string();
-                if (ImGui::Selectable(dname.c_str(), selected_mesh_idx_ == i)) {
-                    selected_mesh_idx_ = i;
-                    selected_mesh_path_ = mesh_file_list_[i];
-                    auto p = std::filesystem::path(selected_mesh_path_);
-                    auto out = p.parent_path() / (p.stem().string() + "-skinned" + p.extension().string());
-                    std::snprintf(output_path_buf_, sizeof(output_path_buf_), "%s", out.string().c_str());
-
-                    // Pre-load mesh for the rig editor 3D preview.
-                    if (mesh_.empty() || source_mesh_path_ != selected_mesh_path_) {
-                        loadMesh(selected_mesh_path_);
-                        // Render a default orbit so we have captures ready.
-                        captures_ = rasterizer_->captureOrbit(mesh_, num_views_, capture_resolution_,
-                                                              0.0f, camera_distance_);
-                        initEditableJoints();
-                        edit_capture_valid_ = false;
-                    }
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", mesh_file_list_[i].c_str());
-            }
-        }
-        ImGui::EndChild();
+        const ImVec2 btn_sz(180.0f, 100.0f);
+        if (drawIconButton("##btn_autorig", "Auto Rig", 0,
+                           IM_COL32(217,136,59,255), btn_sz, true, autorig_tex_id_))
+            show_autorig_workflow_ = true;
+        ImGui::SameLine();
+        if (drawIconButton("##btn_rigeditor", "2D Rig Editor", 1,
+                           IM_COL32(74,127,196,255), btn_sz, true, rigedit_tex_id_))
+            show_rig_editor_ = true;
     }
-
-    if (selected_mesh_idx_ >= 0) {
-        ImGui::Text("Source: %s", std::filesystem::path(selected_mesh_path_).filename().string().c_str());
-    } else {
-        ImGui::TextDisabled("No mesh selected");
-    }
-
     ImGui::Separator();
 
-    // ---- Mode tabs ----
-    if (ImGui::BeginTabBar("##RigModeTabs")) {
+    // ---- Model Info (kept here in the main launcher window) ----
+    drawModelInfo();
 
-        // ================================================================
-        //  TAB 1: AUTO RIG
-        // ================================================================
-        if (ImGui::BeginTabItem("Auto Rig")) {
-            ui_mode_ = 0;
+    ImGui::End();   // end "Auto Rig" launcher window
 
+    // The two workflows are drawn as their own independent popup windows.
+    drawAutoRigWorkflowWindow();
+    drawRigEditorWindow();
+}
+
+// ---------------------------------------------------------------------------
+//  Auto-Rig Workflow — separate popup window.  Holds the one-click Run
+//  Auto-Rig, the manual 3-pass workflow, and the 3D preview / debug views.
+//  Opened via the "Open Auto Rig" button in the main launcher window.
+// ---------------------------------------------------------------------------
+void AutoRigPlugin::drawAutoRigWorkflowWindow() {
+    bool just_opened = show_autorig_workflow_ && !show_autorig_workflow_prev_;
+    show_autorig_workflow_prev_ = show_autorig_workflow_;
+    if (!show_autorig_workflow_) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowSize(
+        ImVec2(io.DisplaySize.x * 0.8f, io.DisplaySize.y * 0.85f),
+        ImGuiCond_Appearing);
+    ImGui::SetNextWindowPos(
+        ImVec2(io.DisplaySize.x * 0.48f, io.DisplaySize.y * 0.48f),
+        ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (just_opened) ImGui::SetNextWindowFocus();
+
+    ImGui::SetNextWindowViewport(0);
+    ImGuiWindowClass popup_class;
+    popup_class.ViewportFlagsOverrideSet = ImGuiViewportFlags_NoAutoMerge;
+    ImGui::SetNextWindowClass(&popup_class);
+
+    ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoDocking;
+
+    if (!ImGui::Begin("Auto-Rig Workflow", &show_autorig_workflow_, flags)) {
+        ImGui::End();
+        return;
+    }
+
+    // ---- Mesh file selection (Auto Rig's own mesh) ----
+    drawMeshSelector(selected_mesh_idx_, selected_mesh_path_, /*auto_rig=*/true);
+    ImGui::Separator();
+
+    {
+        ui_mode_ = 0;
+
+            ImGui::SetNextItemWidth(150);
             ImGui::SliderInt("Views", &ui_num_views_, 4, 16);
+            ImGui::SameLine(0, 24);
+            ImGui::SetNextItemWidth(190);
             ImGui::SliderInt("Resolution", &ui_resolution_, 128, 2048);
             ImGui::Text("Output: %s", std::filesystem::path(output_path_buf_).filename().string().c_str());
 
@@ -4045,29 +4761,129 @@ void AutoRigPlugin::drawImGui() {
             ImGui::SameLine(); ImGui::Text("%s", ui_status_.c_str());
             if (ui_progress_ > 0.0f) ImGui::ProgressBar(ui_progress_, ImVec2(-1, 0));
 
-            // ---- Debug: model info ----
+            // ---- Manual Workflow (3 passes) ----
+            //  Same pipeline as Run Auto-Rig, but split so joints can be
+            //  hand-edited in 3D before skin weights are baked.
             ImGui::Separator();
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Model Info:");
-            ImGui::Text("  Model dir: %s", model_dir_.c_str());
-            ImGui::Text("  Versions found: %d", (int)model_versions_.size());
-            if (model_loaded_idx_ >= 0 && model_loaded_idx_ < (int)model_versions_.size()) {
-                auto& me = model_versions_[model_loaded_idx_];
-                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f),
-                    "  Loaded: %s  (%s)", me.label().c_str(), me.path.c_str());
-            } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.2f, 1.0f),
-                    "  Loaded: STUB (heuristic placement)");
+            if (ImGui::CollapsingHeader("Manual Workflow (3 passes)",
+                                        ImGuiTreeNodeFlags_DefaultOpen)) {
+                const bool   running = (state_ == PluginState::kRunning);
+                const ImVec4 kDone(0.40f, 0.90f, 0.45f, 1.0f);
+
+                // Size all buttons to the widest label so text never clips.
+                const ImGuiStyle& st = ImGui::GetStyle();
+                const char* kAllBtnLabels[] = {
+                    "1. Generate Joints", "2. Hide Editor", "3. Bake & Export",
+                    "Reset to Generated", "Save Joints", "Load Saved Joints",
+                    "Load Generated", "Load Edited" };
+                float kBtnW = 0.0f;
+                for (const char* L : kAllBtnLabels)
+                    kBtnW = std::max(kBtnW, ImGui::CalcTextSize(L).x);
+                kBtnW += st.FramePadding.x * 2.0f + 14.0f;
+
+                ImGui::Spacing();
+
+                // ---- The three steps, side by side ----
+                // Step 1
+                {
+                    const bool dis = running || no_mesh;
+                    if (dis) ImGui::BeginDisabled();
+                    if (ImGui::Button("1. Generate Joints", ImVec2(kBtnW, 0))) {
+                        num_views_          = ui_num_views_;
+                        capture_resolution_ = ui_resolution_;
+                        generateJoints();
+                        edit3d_show_ = true;
+                    }
+                    if (dis) ImGui::EndDisabled();
+                }
+                ImGui::SameLine();
+                // Step 2 (toggles the 3D editor panel below)
+                {
+                    const bool dis = running || !joints_generated_;
+                    if (dis) ImGui::BeginDisabled();
+                    if (ImGui::Button(edit3d_show_ ? "2. Hide Editor" : "2. Edit Joints",
+                                      ImVec2(kBtnW, 0)))
+                        edit3d_show_ = !edit3d_show_;
+                    if (dis) ImGui::EndDisabled();
+                }
+                ImGui::SameLine();
+                // Step 3
+                {
+                    const bool dis = running || !joints_generated_;
+                    if (dis) ImGui::BeginDisabled();
+                    if (ImGui::Button("3. Bake & Export", ImVec2(kBtnW, 0))) {
+                        state_ = PluginState::kRunning;
+                        weights_baked_ = false;
+                        refreshInverseBindMatrices();   // edits moved joints
+                        bool ok = computeSkinWeights();
+                        if (ok) ok = exportGltf(output_path_buf_);
+                        if (ok) {
+                            weights_baked_ = true;
+                            state_ = PluginState::kFinished;
+                            ui_status_ = "Baked weights + exported: " +
+                                std::filesystem::path(output_path_buf_).filename().string();
+                            ui_progress_ = 1.0f;
+                        } else {
+                            state_ = PluginState::kError;
+                            ui_status_ = "Bake/export failed.";
+                        }
+                    }
+                    if (dis) ImGui::EndDisabled();
+                }
+
+                // ---- Step 2 editor panel (shown when toggled on) ----
+                if (joints_generated_ && edit3d_show_) {
+                    ImGui::Spacing();
+                    constexpr float kEditCanvas = 500.0f;
+                    drawJointEditor3D(kEditCanvas);
+
+                    if (ImGui::Button("Reset to Generated", ImVec2(kBtnW, 0))) {
+                        fuseAndBuildSkeleton();      // re-fuse from predictions
+                        joints_edited_     = false;
+                        edit3d_drag_joint_ = -1;
+                    }
+                    ImGui::SameLine();
+                    // Saves to "<name>.joints", or "<name>_edited.joints" once edited.
+                    if (ImGui::Button("Save Joints", ImVec2(kBtnW, 0)))
+                        saveEditedJoints(saveJointsPath());
+                    ImGui::SameLine();
+                    // Load: if both the generated and edited files exist, let the
+                    // user pick which one; otherwise a single button loads the one
+                    // that's there.
+                    {
+                        const bool hasBase   = std::filesystem::exists(baseJointsPath());
+                        const bool hasEdited = std::filesystem::exists(editedJointsPath());
+                        if (hasBase && hasEdited) {
+                            if (ImGui::Button("Load Generated", ImVec2(kBtnW, 0)))
+                                loadEditedJoints(baseJointsPath());
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("%s", std::filesystem::path(
+                                    baseJointsPath()).filename().string().c_str());
+                            ImGui::SameLine();
+                            if (ImGui::Button("Load Edited", ImVec2(kBtnW, 0)))
+                                loadEditedJoints(editedJointsPath());
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("%s", std::filesystem::path(
+                                    editedJointsPath()).filename().string().c_str());
+                        } else {
+                            const bool dis = !(hasBase || hasEdited);
+                            if (dis) ImGui::BeginDisabled();
+                            if (ImGui::Button("Load Saved Joints", ImVec2(kBtnW, 0)))
+                                loadEditedJoints(loadJointsPath());
+                            if (!dis && ImGui::IsItemHovered())
+                                ImGui::SetTooltip("%s", std::filesystem::path(
+                                    loadJointsPath()).filename().string().c_str());
+                            if (dis) ImGui::EndDisabled();
+                        }
+                    }
+                    if (!edit3d_save_status_.empty())
+                        ImGui::TextColored(kDone, "%s", edit3d_save_status_.c_str());
+                }
+
+                ImGui::Spacing();
             }
-            if (diffusion_model_) {
-                ImGui::Text("  Model loaded: %s, joints: %d, module ptr: %s",
-                    diffusion_model_->isLoaded() ? "YES" : "NO",
-                    diffusion_model_->numJoints(),
-                    (model_loaded_idx_ >= 0) ? "LibTorch" : "stub");
-            } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f),
-                    "  diffusion_model_ is NULL!");
-            }
-            ImGui::Text("  CWD: %s", std::filesystem::current_path().string().c_str());
+
+            // (Model Info is shown in the main Auto Rig launcher window.)
             ImGui::Separator();
 
             // ---- 3D Preview ----
@@ -4201,19 +5017,53 @@ void AutoRigPlugin::drawImGui() {
                 }
             }
 
-            ImGui::EndTabItem();
-        }
+    }  // end auto-rig controls block
 
-        // ================================================================
-        //  TAB 2: RIG EDITOR
-        // ================================================================
-        if (ImGui::BeginTabItem("Rig Editor")) {
-            ui_mode_ = 1;
+    ImGui::End();   // end "Auto-Rig Workflow" window
+}
 
-            if (mesh_.empty()) {
-                ImGui::TextDisabled("Select a mesh above to begin editing.");
-                ImGui::EndTabItem();
-                ImGui::EndTabBar();
+// ---------------------------------------------------------------------------
+//  Rig Editor — separate popup window (2D joint editing / training export).
+//  Opened via the "Open Rig Editor" button in the Auto Rig window.
+// ---------------------------------------------------------------------------
+void AutoRigPlugin::drawRigEditorWindow() {
+    bool just_opened = show_rig_editor_ && !show_rig_editor_prev_;
+    show_rig_editor_prev_ = show_rig_editor_;
+    if (!show_rig_editor_) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowSize(
+        ImVec2(io.DisplaySize.x * 0.8f, io.DisplaySize.y * 0.85f),
+        ImGuiCond_Appearing);
+    ImGui::SetNextWindowPos(
+        ImVec2(io.DisplaySize.x * 0.52f, io.DisplaySize.y * 0.52f),
+        ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (just_opened) ImGui::SetNextWindowFocus();
+
+    ImGui::SetNextWindowViewport(0);
+    ImGuiWindowClass popup_class;
+    popup_class.ViewportFlagsOverrideSet = ImGuiViewportFlags_NoAutoMerge;
+    ImGui::SetNextWindowClass(&popup_class);
+
+    ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoSavedSettings |
+        ImGuiWindowFlags_NoDocking;
+
+    if (!ImGui::Begin("Rig Editor", &show_rig_editor_, flags)) {
+        ImGui::End();
+        return;
+    }
+
+    // ---- Mesh file selection (Rig Editor's own mesh) ----
+    drawMeshSelector(re_selected_idx_, re_selected_path_, /*auto_rig=*/false);
+    ImGui::Separator();
+
+    {
+        ui_mode_ = 1;
+
+            if (re_mesh_.empty()) {
+                ImGui::TextDisabled("Select a mesh to begin editing.");
                 ImGui::End();
                 return;
             }
@@ -4264,7 +5114,7 @@ void AutoRigPlugin::drawImGui() {
 
             // Re-render the rasterized preview when the angle or size changes.
             int render_res = std::max(64, (int)canvas_dim);
-            if (!mesh_.empty() && rasterizer_) {
+            if (!re_mesh_.empty() && rasterizer_) {
                 bool angle_changed =
                     std::abs(preview_yaw_ - preview_render_yaw_) > 0.001f ||
                     std::abs(preview_pitch_ - preview_render_pitch_) > 0.001f;
@@ -4274,8 +5124,8 @@ void AutoRigPlugin::drawImGui() {
                     float az = -glm::degrees(preview_yaw_);
                     float el = -glm::degrees(preview_pitch_);
 
-                    glm::vec3 centre = (mesh_.bbox_min + mesh_.bbox_max) * 0.5f;
-                    float ext = glm::length(mesh_.bbox_max - mesh_.bbox_min);
+                    glm::vec3 centre = (re_mesh_.bbox_min + re_mesh_.bbox_max) * 0.5f;
+                    float ext = glm::length(re_mesh_.bbox_max - re_mesh_.bbox_min);
                     float radius = ext * camera_distance_;
                     float fov = glm::radians(45.0f);
                     float z_near = radius * 0.01f, z_far = radius * 10.0f;
@@ -4291,7 +5141,7 @@ void AutoRigPlugin::drawImGui() {
                     glm::mat4 view_mat = glm::lookAt(eye, centre, glm::vec3(0, 1, 0));
 
                     preview_render_ = rasterizer_->render(
-                        mesh_, render_res, render_res,
+                        re_mesh_, render_res, render_res,
                         view_mat, proj, az, el);
                     preview_render_yaw_   = preview_yaw_;
                     preview_render_pitch_ = preview_pitch_;
@@ -4352,8 +5202,8 @@ void AutoRigPlugin::drawImGui() {
                 float az = -glm::degrees(preview_yaw_);
                 float el = -glm::degrees(preview_pitch_);
 
-                glm::vec3 centre = (mesh_.bbox_min + mesh_.bbox_max) * 0.5f;
-                float ext = glm::length(mesh_.bbox_max - mesh_.bbox_min);
+                glm::vec3 centre = (re_mesh_.bbox_min + re_mesh_.bbox_max) * 0.5f;
+                float ext = glm::length(re_mesh_.bbox_max - re_mesh_.bbox_min);
                 float radius = ext * camera_distance_;
                 float fov = glm::radians(45.0f);
                 float z_near = radius * 0.01f, z_far = radius * 4.0f;
@@ -4372,7 +5222,7 @@ void AutoRigPlugin::drawImGui() {
                 // Training data export uses the color PNG from this capture, which
                 // is opaque; OIT only affects the interactive editing overlay.
                 edit_capture_ = rasterizer_->renderOIT(
-                    mesh_, capture_resolution_, capture_resolution_,
+                    re_mesh_, capture_resolution_, capture_resolution_,
                     view_mat, proj, mesh_opacity_, az, el);
                 initEditableJointsFromModel(edit_view_, edit_capture_);  // ML pre-fill
                 edit_capture_valid_ = true;
@@ -4615,13 +5465,9 @@ void AutoRigPlugin::drawImGui() {
                 if (no_saved) ImGui::EndDisabled();
             }
 
-            ImGui::EndTabItem();
-        }
+    }  // end Rig Editor controls block
 
-        ImGui::EndTabBar();
-    }
-
-    ImGui::End();
+    ImGui::End();   // end "Rig Editor" window
 }
 
 }  // namespace auto_rig
