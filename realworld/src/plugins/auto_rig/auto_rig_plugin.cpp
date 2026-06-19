@@ -1693,6 +1693,101 @@ bool AutoRigPlugin::fuseAndBuildSkeleton() {
     //   jointWorld * IBM * vertex = meshNodeWorld * vertex
     //   => IBM = inverse(jointWorld) * meshNodeWorld
     //
+    // ── Pre-skinning: CENTER each joint on its limb's MEDIAL AXIS ──
+    // Predicted joints sit off-centre, so the bones zig-zag (unnatural) and a
+    // foot/ankle joint can drift toward the OTHER foot — its seed rays then
+    // strike the wrong foot and the weight bleeds across.  For each joint we take
+    // the limb axis (parent->joint->child), fire rays around the perpendicular
+    // CROSS-SECTION, and slide the joint to the centre of that cross-section.
+    // Centred joints lie on the limb's medial axis: straight natural bones, well
+    // inside the body, and seed rays that can only reach the joint's OWN limb.
+    {
+        const int nj = (int)skeleton_.joints.size();
+        const size_t ntri = mesh_.indices.size() / 3;
+        std::vector<std::vector<int>> kids(nj);
+        for (int j = 0; j < nj; ++j) {
+            const int p = skeleton_.joints[j].parent;
+            if (p >= 0 && p < nj) kids[p].push_back(j);
+        }
+        // Moller-Trumbore ray vs original-mesh triangle (nearest positive t).
+        auto rayTriM = [&](const glm::vec3& o, const glm::vec3& d,
+                           int ia, int ib, int ic, float& outT) -> bool {
+            const glm::vec3& v0 = mesh_.positions[ia];
+            const glm::vec3& v1 = mesh_.positions[ib];
+            const glm::vec3& v2 = mesh_.positions[ic];
+            const glm::vec3 e1 = v1 - v0, e2 = v2 - v0;
+            const glm::vec3 pv = glm::cross(d, e2);
+            const float det = glm::dot(e1, pv);
+            if (std::fabs(det) < 1e-12f) return false;
+            const float inv = 1.0f / det;
+            const glm::vec3 tv = o - v0;
+            const float u = glm::dot(tv, pv) * inv;
+            if (u < -1e-5f || u > 1.0f + 1e-5f) return false;
+            const glm::vec3 qv = glm::cross(tv, e1);
+            const float vv = glm::dot(d, qv) * inv;
+            if (vv < -1e-5f || u + vv > 1.0f + 1e-5f) return false;
+            const float tt = glm::dot(e2, qv) * inv;
+            if (tt <= 1e-5f) return false;
+            outT = tt; return true;
+        };
+        const int kCenterPasses = 3;
+        int centred = 0;
+        for (int pass = 0; pass < kCenterPasses; ++pass) {
+            for (int j = 0; j < nj; ++j) {
+                const glm::vec3 p   = skeleton_.joints[j].position;
+                const int       par = skeleton_.joints[j].parent;
+                // limb axis at this joint
+                glm::vec3 axis(0.0f);
+                if (par >= 0) {
+                    const glm::vec3 din = p - skeleton_.joints[par].position;
+                    if (glm::length(din) > 1e-6f) axis += glm::normalize(din);
+                }
+                for (int c : kids[j]) {
+                    const glm::vec3 dout = skeleton_.joints[c].position - p;
+                    if (glm::length(dout) > 1e-6f) axis += glm::normalize(dout);
+                }
+                float al = glm::length(axis);
+                if (al < 1e-6f) axis = glm::vec3(0.0f, 1.0f, 0.0f); else axis /= al;
+                // orthonormal basis (u,v) spanning the cross-section plane
+                const glm::vec3 ref = (std::fabs(axis.y) < 0.9f)
+                    ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
+                const glm::vec3 u = glm::normalize(glm::cross(axis, ref));
+                const glm::vec3 v = glm::cross(axis, u);
+                const int N = 16;
+                glm::vec3 sum(0.0f); int hits = 0; float sumd = 0.0f;
+                for (int s = 0; s < N; ++s) {
+                    const float ang = 6.2831853f * (float)s / (float)N;
+                    const glm::vec3 dir = u * std::cos(ang) + v * std::sin(ang);
+                    float bestT = 1e30f; bool got = false;
+                    for (size_t t = 0; t < ntri; ++t) {
+                        float tt;
+                        if (!rayTriM(p, dir, mesh_.indices[t*3], mesh_.indices[t*3+1],
+                                     mesh_.indices[t*3+2], tt)) continue;
+                        if (tt < bestT) { bestT = tt; got = true; }
+                    }
+                    if (got) { sum += p + dir * bestT; ++hits; sumd += bestT; }
+                }
+                if (hits >= N / 2) {
+                    const glm::vec3 center = sum / (float)hits;
+                    glm::vec3 off = center - p;
+                    off -= axis * glm::dot(off, axis);             // in-plane only
+                    const float maxMove = 0.5f * (sumd / (float)hits);
+                    const float ol = glm::length(off);
+                    if (ol > maxMove && ol > 1e-9f) off *= (maxMove / ol);
+                    skeleton_.joints[j].position = p + off;
+                    if (pass == 0) ++centred;
+                }
+            }
+        }
+        if (centred > 0) {
+            char cb[160];
+            std::snprintf(cb, sizeof(cb),
+                "[AutoRig] centred %d joint(s) on the limb medial axis "
+                "(straighter bones, no cross-limb seeding).", centred);
+            std::cout << cb << std::endl;
+        }
+    }
+
     // Our joint positions are already in world space, so jointWorld at bind
     // pose is translate(joint.position).
     for (auto& j : skeleton_.joints) {
@@ -1722,18 +1817,37 @@ bool AutoRigPlugin::computeSkinWeights() {
     skin_weights_ = SkinWeights{};
     skin_weights_.per_vertex.resize(nv);
 
-    // EXACTLY ONE bone per joint — uniform, no special cases.  A bone is the
-    // segment parent→joint and binds weight to its joint; the ROOT has no
-    // parent so it is a degenerate point at the joint.  The segment is only the
-    // ray-cast origin line for seeding and the source of the tau falloff width;
-    // ALL distances used for weighting are GEODESIC (on-surface) — there is no
-    // euclidean / point-to-segment distance anywhere in this pass.
+    // ONE bone per joint.  A bone is the segment parent→joint; it is the
+    // ray-cast origin line for seeding and the source of the tau falloff width
+    // (ALL weighting distances are GEODESIC/on-surface — no euclidean
+    // point-to-segment distance anywhere in this pass).
+    //
+    // LEAF joints (hands, head, toe tips) get the segment EXTENDED past the
+    // joint along the incoming bone direction.  A leaf owns a whole terminal
+    // extremity (the hand past the wrist, the skull past the neck) but with the
+    // segment ending AT the joint, the seed ray fired down that extremity is
+    // the longest of the bunch and the outlier cut below (cutoff = 2×median
+    // hit) rejects it — so the extremity is never seeded and the geodesic never
+    // reaches it.  It then fell back to the euclidean nearest-skin (the thigh,
+    // with arms down) and inherited LEG weights.  Extending the segment marches
+    // the seed samples into the extremity so the geodesic genuinely covers it.
+    std::vector<int> childCount(nj, 0);
+    for (int j = 0; j < nj; ++j) {
+        const int p = skeleton_.joints[j].parent;
+        if (p >= 0 && p < nj) ++childCount[p];
+    }
     struct BoneSeg { int joint_idx; glm::vec3 a, b; };
     std::vector<BoneSeg> bones(nj);
     for (int j = 0; j < nj; ++j) {
         const int p = skeleton_.joints[j].parent;
-        const glm::vec3 b = skeleton_.joints[j].position;
-        const glm::vec3 a = (p >= 0) ? skeleton_.joints[p].position : b;
+        const glm::vec3 jp = skeleton_.joints[j].position;
+        const glm::vec3 a  = (p >= 0) ? skeleton_.joints[p].position : jp;
+        glm::vec3 b = jp;
+        if (p >= 0 && childCount[j] == 0) {                // leaf → extend past
+            const glm::vec3 dir = jp - skeleton_.joints[p].position;
+            const float len = glm::length(dir);
+            if (len > 1e-6f) b = jp + (dir / len) * (len * 0.75f);
+        }
         bones[j] = { j, a, b };
     }
 
@@ -1744,10 +1858,26 @@ bool AutoRigPlugin::computeSkinWeights() {
     // Welding only EXACT duplicates connects shared/seam vertices and soup
     // corners while keeping distinct layers (body vs clothing) apart, so the
     // geodesic graph follows the real surface.
-    std::unordered_map<uint64_t, int> weld;
+    // Per-ORIGINAL-vertex normals, used to keep the weld from FUSING two
+    // distinct surfaces that merely touch (e.g. the two feet / inner ankles in
+    // the bind pose).  Coincident verts merge only when their normals agree
+    // (same surface sheet); face-to-face contact has OPPOSING normals, so it
+    // stays two separate vertices and the geodesic graph never bridges the feet
+    // -> no cross-foot weight bleed.
+    std::vector<glm::vec3> vnrm0(nv, glm::vec3(0.0f));
+    for (size_t t = 0; t + 2 < mesh_.indices.size(); t += 3) {
+        const int a = mesh_.indices[t], b = mesh_.indices[t + 1],
+                  c = mesh_.indices[t + 2];
+        const glm::vec3 fn = glm::cross(mesh_.positions[b] - mesh_.positions[a],
+                                        mesh_.positions[c] - mesh_.positions[a]);
+        vnrm0[a] += fn; vnrm0[b] += fn; vnrm0[c] += fn;
+    }
+    for (auto& n : vnrm0) { const float l = glm::length(n); if (l > 1e-12f) n /= l; }
+    std::unordered_map<uint64_t, std::vector<int>> weld;  // cell -> candidate ids
     weld.reserve(static_cast<size_t>(nv) * 2);
     std::vector<int>       wid(nv);
     std::vector<glm::vec3> wpos;
+    std::vector<glm::vec3> wnrm0;            // representative normal per welded id
     // Weld with a TOLERANCE (snap to a grid), NOT exact float bits.  This asset
     // is soup-like (465k verts / 326k tris, most positions float-unique), so
     // exact welding leaves the surface in ~1553 disconnected islands and the
@@ -1766,13 +1896,22 @@ bool AutoRigPlugin::computeSkinWeights() {
     };
     for (int i = 0; i < nv; ++i) {
         const uint64_t k = keyOf(mesh_.positions[i]);
-        auto it = weld.find(k);
-        if (it == weld.end()) {
+        std::vector<int>& cand = weld[k];
+        int found = -1;
+        for (int id : cand) {
+            // Same surface sheet only: reject near-opposing normals (two
+            // surfaces pressed together, like the two feet), keep creases.
+            if (glm::dot(wnrm0[id], vnrm0[i]) > -0.5f) { found = id; break; }
+        }
+        if (found < 0) {
             const int id = static_cast<int>(wpos.size());
-            weld.emplace(k, id);
+            cand.push_back(id);
             wpos.push_back(mesh_.positions[i]);
+            wnrm0.push_back(vnrm0[i]);
             wid[i] = id;
-        } else wid[i] = it->second;
+        } else {
+            wid[i] = found;
+        }
     }
     const int W = static_cast<int>(wpos.size());
 
@@ -1870,12 +2009,17 @@ bool AutoRigPlugin::computeSkinWeights() {
     int skin_verts = 0;
     for (int w = 0; w < W; ++w)
         if (compSkin[comp[w]]) { isSkin[w] = true; ++skin_verts; }
-    // Layer split is ACTIVE: the geodesic field runs on the skin manifold
-    // only, and every outer-layer (cloth/hair) vertex inherits its weights
-    // from the skin point directly beneath it via the normal-filtered
-    // closest-point projection below.  (An earlier experiment disabled the
-    // split — cloth then took raw cross-layer geodesic weights and slid off
-    // the body at the hips/legs.)
+
+    // -- FORCE ALL-SKIN (layer split DISABLED) --
+    // This asset is a single BASE-SKIN model with NO separate cloth/hair layer.
+    // The ray classifier above can wrongly label a disconnected base-skin
+    // submesh (e.g. a dress / lower body) as "cloth" and then PROJECT it, which
+    // collapses its weights (the uniform-colour region).  Override it: mark
+    // EVERY welded vertex SKIN so the geodesic field runs over the WHOLE surface
+    // and the projection pass below is SKIPPED (skin_verts == W).  Pure geodesic
+    // everywhere, no projection.
+    isSkin.assign(W, true);
+    skin_verts = W;
 
     // ── Geodesic graph from SKIN triangles only ──
     // The surface distance must run on the skin manifold; clothing/hair edges
@@ -1890,6 +2034,70 @@ bool AutoRigPlugin::computeSkinWeights() {
     for (const auto& t : tris) {
         if (!isSkin[t.x]) continue;                       // skin triangles only
         addEdge(t.x, t.y); addEdge(t.y, t.z); addEdge(t.z, t.x);
+    }
+    // ── Bridge DISCONNECTED components into the geodesic graph ──
+    // The mesh can arrive as several welded islands (a foot/shoe separate from
+    // the leg, an eye, a stray patch).  The per-bone Dijkstra below cannot cross
+    // the gap, so an isolated island stays at INFINITE geodesic distance (reads
+    // as "0" in the Dist view) and ends up unweighted / defaulted to joint 0.
+    // Connect each island to the LARGEST component with a single short edge (its
+    // nearest vertex, via a spatial hash) so the surface is one graph and the
+    // geodesic flows everywhere (the island's own bones still dominate it).
+    {
+        std::unordered_map<int, int> csz;
+        for (int w = 0; w < W; ++w) ++csz[comp[w]];
+        int bigC = -1, bigN = -1;
+        for (const auto& kv : csz) if (kv.second > bigN) { bigN = kv.second; bigC = kv.first; }
+        if ((int)csz.size() > 1 && bigC >= 0) {
+            const glm::vec3 ext = mesh_.bbox_max - mesh_.bbox_min;
+            const float diag = std::max(glm::length(ext), 1e-4f);
+            const float cell = std::max(diag / 64.0f, 1e-6f);
+            auto hsh = [](int64_t x, int64_t y, int64_t z) -> int64_t {
+                return (x * 73856093LL) ^ (y * 19349663LL) ^ (z * 83492791LL); };
+            auto cof = [cell](float v) -> int64_t {
+                return (int64_t)std::floor((double)v / cell); };
+            auto iabs = [](int64_t v) -> int64_t { return v < 0 ? -v : v; };
+            std::unordered_map<int64_t, std::vector<int>> grid;
+            for (int w = 0; w < W; ++w) if (comp[w] == bigC)
+                grid[hsh(cof(wpos[w].x), cof(wpos[w].y), cof(wpos[w].z))].push_back(w);
+            std::unordered_map<int, std::pair<int,int>> bridge;
+            std::unordered_map<int, float> bridgeD;
+            for (int w = 0; w < W; ++w) {
+                if (comp[w] == bigC) continue;
+                const glm::vec3 p = wpos[w];
+                const int64_t cx = cof(p.x), cy = cof(p.y), cz = cof(p.z);
+                int best = -1; float bd2 = 1e30f;
+                for (int64_t r = 0; r <= 16; ++r) {
+                    for (int64_t dx = -r; dx <= r; ++dx)
+                    for (int64_t dy = -r; dy <= r; ++dy)
+                    for (int64_t dz = -r; dz <= r; ++dz) {
+                        if (std::max(std::max(iabs(dx), iabs(dy)), iabs(dz)) != r) continue;
+                        auto it = grid.find(hsh(cx + dx, cy + dy, cz + dz));
+                        if (it == grid.end()) continue;
+                        for (int bw : it->second) {
+                            const glm::vec3 dv = wpos[bw] - p;
+                            const float d2 = glm::dot(dv, dv);
+                            if (d2 < bd2) { bd2 = d2; best = bw; }
+                        }
+                    }
+                    if (best >= 0 && (float)(r * cell) > std::sqrt(bd2)) break;
+                }
+                if (best < 0) continue;
+                auto it = bridgeD.find(comp[w]);
+                if (it == bridgeD.end() || bd2 < it->second) {
+                    bridgeD[comp[w]] = bd2; bridge[comp[w]] = { w, best };
+                }
+            }
+            int nbridge = 0;
+            for (const auto& kv : bridge) { addEdge(kv.second.first, kv.second.second); ++nbridge; }
+            if (nbridge > 0) {
+                char bb[176];
+                std::snprintf(bb, sizeof(bb),
+                    "[AutoRig] bridged %d disconnected component(s) into the "
+                    "geodesic graph (e.g. foot island -> leg).", nbridge);
+                std::cout << bb << std::endl;
+            }
+        }
     }
     // Outer-layer (cloth/hair) edge graph — kept OUT of the geodesic (outer
     // edges would shortcut the on-surface distance) but used by the final
@@ -2066,33 +2274,37 @@ bool AutoRigPlugin::computeSkinWeights() {
         }
     }
 
-    // ── Closeness from the geodesic DISTANCE — PREVIEW-MODE falloff ──
-    //    Mirrors the Debug Display's live distance view (menu.cpp Dist mode,
-    //    the one that looks right) exactly:
-    //      c = exp(-geo / tau),  tau = 0.25 * scale (welded-surface bbox diag);
-    //    the falloff ends at the "yellow" band kYellow and is linearly
-    //    remapped:  closeness = (c - kYellow) / (1 - kYellow), 0 below it.
+    // ── Closeness from the geodesic DISTANCE — PER-BONE falloff ──
+    //    Each bone's falloff WIDTH is tau[bi] (computed above ≈ one
+    //    neighbour-bone reach), NOT a single global fraction of the whole-body
+    //    scale.  A global width (0.25 * model_scale, further widened 1.25× by a
+    //    kGeoDistScale=0.8) over-widened the SMALL bones: a foot/toe bone then
+    //    reached ~1/6 of the entire body along the surface, so its influence
+    //    bled across to the ADJACENT foot.  Scaling the width to the LOCAL bone
+    //    size keeps each bone's reach proportional to its own limb, which stops
+    //    the left/right foot bleed.
+    //      c = exp(-geo / tau[bi]);  the falloff ends at the "yellow" band
+    //    kYellow and is linearly remapped: closeness = (c - kYellow)/(1-kYellow),
+    //    0 below it.
     //    Cf keeps this RAW closeness for baking (the Dist debug view displays
     //    it verbatim); Wf starts as a copy and then goes through the weight
     //    pipeline (fallbacks, Laplacian smoothing, top-4) below — that
     //    processing must never leak back into the baked closeness.
-    glm::vec3 bbmn( 1e30f), bbmx(-1e30f);
-    for (const auto& p : wpos) { bbmn = glm::min(bbmn, p); bbmx = glm::max(bbmx, p); }
-    const float model_scale = std::max(glm::length(bbmx - bbmn), 1e-4f);
-    const float tau_global  = std::max(0.25f * model_scale, 1e-4f); // falloff width
-    const float kYellow     = 0.625f;     // closeness where influence reaches 0
-    // Global geodesic-distance scale: distances enter the falloff at 80% of
-    // their measured value, widening every bone's effective reach by 1.25×
-    // (and shifting the baked closeness/Dist debug view identically).
-    const float kGeoDistScale = 0.8f;
+    // Geodesic falloff WITH an out-of-range cutoff.  weight = exp(-geo/tau);
+    // a bone whose closeness drops to/below kYellow is OUT OF RANGE for that
+    // vertex and contributes EXACTLY ZERO (e.g. the root has no reach to the
+    // foot -> 0 there, so debugging joint 0 shows the foot BLACK).  In-range
+    // closeness is remapped to (c-kYellow)/(1-kYellow).
+    const float kYellow = 0.625f;     // out-of-range threshold (zero beyond it)
     std::vector<std::vector<float>> Cf(W, std::vector<float>(nb, 0.0f));
     std::vector<std::vector<float>> Wf(W, std::vector<float>(nb, 0.0f));
     for (int bi = 0; bi < nb; ++bi) {
+        const float tau_bi = std::max(tau[bi], 1e-4f);     // per-bone falloff width
         for (int w = 0; w < W; ++w) {
             const float g = geo[static_cast<size_t>(w) * nb + bi];
             if (g >= 1e29f) continue;                      // unreachable from this bone
-            const float c = std::exp(-(g * kGeoDistScale) / tau_global);  // closeness, 1 at the bone
-            if (c <= kYellow) continue;                    // past the yellow band
+            const float c = std::exp(-g / tau_bi);         // closeness, 1 at the bone
+            if (c <= kYellow) continue;                    // out of range -> zero weight
             const float cl = (c - kYellow) / (1.0f - kYellow);
             Cf[w][bi] = cl;
             Wf[w][bi] = cl;
@@ -2142,19 +2354,14 @@ bool AutoRigPlugin::computeSkinWeights() {
     // triangle; the outer-layer Laplacian smoothing below then diffuses any
     // residual seams (e.g. a hem ring crossing between the two legs).
     size_t projected_count = 0, project_fallback = 0;
+    // projAnchor[w] = this outer vert got a reliable INWARD-RAY hit (real skin
+    // directly beneath it).  Overhang verts (toe box past the toes, sole/heel
+    // edges) miss that ray and only get an edge-snapped closest-point match,
+    // which fans out when the toe bends.  After projection we hold the anchors
+    // fixed and harmonically fill the non-anchors from them along the layer's
+    // own surface, so the overhang inherits a coherent field (no fan-out).
+    std::vector<char> projAnchor(W, 0);
     if (skin_verts > 0 && skin_verts < W) {
-        // Area-weighted welded-vertex normals (cloth side of the filter).
-        std::vector<glm::vec3> wnrm(W, glm::vec3(0.0f));
-        for (const auto& t : tris) {
-            const glm::vec3 fn = glm::cross(wpos[t.y] - wpos[t.x],
-                                            wpos[t.z] - wpos[t.x]);
-            wnrm[t.x] += fn; wnrm[t.y] += fn; wnrm[t.z] += fn;
-        }
-        for (auto& n : wnrm) {
-            const float l = glm::length(n);
-            if (l > 1e-12f) n /= l;
-        }
-
         // Skin triangle list + face normals + spatial hash over tri AABBs.
         std::vector<int>       skinTri;            // indices into tris
         skinTri.reserve(tris.size());
@@ -2243,18 +2450,6 @@ bool AutoRigPlugin::computeSkinWeights() {
             }
         };
 
-        // Dominant bone per skin triangle (drives the allowed-bone mask).
-        std::vector<int> skinTriDom(skinTri.size(), -1);
-        for (size_t k = 0; k < skinTri.size(); ++k) {
-            const glm::ivec3& t = tris[skinTri[k]];
-            int dom = -1; float dw = 0.0f;
-            for (int bi = 0; bi < nb; ++bi) {
-                const float s = Wf[t.x][bi] + Wf[t.y][bi] + Wf[t.z][bi];
-                if (s > dw) { dw = s; dom = bi; }
-            }
-            skinTriDom[k] = dom;
-        }
-
         // Grid ray-march (Amanatides–Woo DDA) over the skin-triangle hash:
         // nearest ENTERING hit (front face toward the ray origin) within tmax.
         std::vector<int> triStamp(skinTri.size(), -1);
@@ -2318,210 +2513,99 @@ bool AutoRigPlugin::computeSkinWeights() {
             }
         };
 
-        const float kFitSlack  = 3.0f;   // filtered hit may be up to 3× farther
-        const float kFaceDot   = 0.05f;  // "same facing" threshold
-        const float kRayReach  = 0.5f * pdiag;   // inward-ray search range
-        const float kMaskFrac  = 0.02f;  // a bone must carry >= 2% of a cloth
-                                         // piece's total ray-hit weight mass to
-                                         // be an allowed target — prunes the
-                                         // arm/hand that the bind pose parks
-                                         // between a skirt panel and the hip
-
-        // Group outer vertices by connected component: each cloth piece gets
-        // its own allowed-bone mask.
+        // Group outer vertices by connected component (each layer piece).
         std::unordered_map<int, std::vector<int>> outerComps;
         for (int w = 0; w < W; ++w)
             if (!isSkin[w]) outerComps[comp[w]].push_back(w);
 
+        // Per-layer-vertex projection: find the CLOSEST BONE, cast toward it,
+        // intersect the BODY SKIN between vertex and bone, and inherit that skin
+        // point's per-bone weights/closeness.  Aiming at the closest bone makes
+        // the ray pass through the limb the layer actually wraps, so a shoe's
+        // toe box / sole hits the foot skin near the toe bone and inherits
+        // coherent foot/toe weights instead of edge-snapping.
         for (auto& oc : outerComps) {
-            const std::vector<int>& overts = oc.second;
-
-            // ── Stage 1: inward ray + MAJORITY-VOTE bone mask ──
-            // Every successful ray hit votes its interpolated bone weights
-            // into the component's tally; only bones carrying >= kMaskFrac of
-            // the total mass stay allowed.  A dress tallies overwhelmingly
-            // legs/hips/torso — the few side-panel rays that strike the arm
-            // parked beside the hip in the bind pose stay a tiny minority, so
-            // arm/hand bones are PRUNED and those hits are re-routed to the
-            // masked closest-point below.  A true sleeve or glove component
-            // gives arm bones the majority, so it still binds to the arm.
-            std::vector<int>   rk(overts.size(), -1);
-            std::vector<float> ru(overts.size(), 0.0f), rv(overts.size(), 0.0f);
-            std::vector<float> votes(nb, 0.0f);
-            float vote_total = 0.0f;
-            for (size_t i = 0; i < overts.size(); ++i) {
-                const int w = overts[i];
-                const glm::vec3 N = wnrm[w];
-                int k; float bu, bv;
-                if (!rayCastSkin(wpos[w], -N, kRayReach, k, bu, bv)) continue;
-                rk[i] = k; ru[i] = bu; rv[i] = bv;
-                const glm::ivec3& t = tris[skinTri[k]];
-                const float w0 = 1.0f - bu - bv;
+            for (int w : oc.second) {
+                // For EVERY bone (a bone = the line between two joints,
+                // parent -> joint), project the layer vertex toward that bone
+                // and take the FIRST body-skin intersection.  Select the bone
+                // whose intersection is CLOSEST to the layer vertex — i.e. by the
+                // layer->underlying-skin distance, NOT the raw distance to the
+                // bone line.  That nearest intersection's skin weights/closeness
+                // are inherited below.
+                int   best_k = -1;
+                float best_dist = 1e30f, best_bu = 0.0f, best_bv = 0.0f;
                 for (int bi = 0; bi < nb; ++bi) {
-                    const float s = w0 * Wf[t.x][bi] + bu * Wf[t.y][bi]
-                                  + bv * Wf[t.z][bi];
-                    votes[bi] += s; vote_total += s;
+                    const int jj = bones[bi].joint_idx;
+                    const int pj = skeleton_.joints[jj].parent;
+                    const glm::vec3 b = skeleton_.joints[jj].position;
+                    const glm::vec3 a = (pj >= 0)
+                        ? skeleton_.joints[pj].position : b;
+                    const glm::vec3 ab = b - a;
+                    const float len2 = glm::dot(ab, ab);
+                    const float tt = (len2 > 1e-12f)
+                        ? glm::clamp(glm::dot(wpos[w] - a, ab) / len2, 0.0f, 1.0f)
+                        : 0.0f;
+                    const glm::vec3 cp = a + ab * tt;
+                    glm::vec3 dir = cp - wpos[w];
+                    const float dl = glm::length(dir);
+                    if (dl < 1e-9f) continue;
+                    dir /= dl;
+                    int k; float bu, bv;
+                    if (!rayCastSkin(wpos[w], dir, dl + 1e-3f * pdiag, k, bu, bv))
+                        continue;
+                    const glm::ivec3& th = tris[skinTri[k]];
+                    const glm::vec3 hp = (1.0f - bu - bv) * wpos[th.x]
+                                       + bu * wpos[th.y] + bv * wpos[th.z];
+                    const float hdist = glm::length(hp - wpos[w]);
+                    if (hdist < best_dist) {
+                        best_dist = hdist; best_k = k;
+                        best_bu = bu; best_bv = bv;
+                    }
                 }
-            }
-            std::vector<char> allowed(nb, 0);
-            bool maskAny = false;
-            for (int bi = 0; bi < nb; ++bi) {
-                if (votes[bi] >= kMaskFrac * vote_total && votes[bi] > 0.0f) {
-                    allowed[bi] = 1; maskAny = true;
-                }
-            }
-            // Invalidate ray hits that landed on pruned bones (the arm
-            // between skirt and hip): they fall through to the masked
-            // closest-point search instead.
-            if (maskAny) {
-                for (size_t i = 0; i < overts.size(); ++i) {
-                    if (rk[i] < 0) continue;
-                    const int dom = skinTriDom[rk[i]];
-                    if (dom < 0 || !allowed[dom]) rk[i] = -1;
-                }
-            }
-
-            // ── Stage 2: apply ray hits; closest-point for the rest ──
-            for (size_t i = 0; i < overts.size(); ++i) {
-                const int w = overts[i];
-                if (rk[i] >= 0) {
-                    applyHit(w, rk[i], ru[i], rv[i]);
+                if (best_k >= 0) {
+                    applyHit(w, best_k, best_bu, best_bv);
+                    projAnchor[w] = 1;
                     ++projected_count;
                     continue;
                 }
+                // 2) Fallback (ray missed: fold/edge) -> nearest skin point; the
+                //    overhang harmonic fill below refines any residue.
                 const glm::vec3 P = wpos[w];
-                const glm::vec3 N = wnrm[w];
-                const int64_t cx = pCellOf(P.x), cy = pCellOf(P.y),
-                              cz = pCellOf(P.z);
-                // Three candidate tiers: fit = facing-aligned AND in-mask,
-                // msk = in-mask only, any = unrestricted.
-                int   tri_any = -1, tri_msk = -1, tri_fit = -1;
-                float d2_any = 1e30f, d2_msk = 1e30f, d2_fit = 1e30f;
-                float u_any = 0, v_any = 0, u_msk = 0, v_msk = 0,
-                      u_fit = 0, v_fit = 0;
+                const int64_t cx = pCellOf(P.x), cy = pCellOf(P.y), cz = pCellOf(P.z);
+                int best = -1; float bd2 = 1e30f, fu = 0.0f, fv = 0.0f;
                 for (int64_t r = 0; r <= 1024; ++r) {
                     pShell(r, [&](int64_t dx, int64_t dy, int64_t dz) {
                         auto it = pgrid.find(pHash(cx + dx, cy + dy, cz + dz));
                         if (it == pgrid.end()) return;
-                        for (int k : it->second) {
-                            float bu, bv;
-                            const float d2 =
-                                closestOnTri(P, tris[skinTri[k]], bu, bv);
-                            const bool in_mask = !maskAny ||
-                                (skinTriDom[k] >= 0 && allowed[skinTriDom[k]]);
-                            if (d2 < d2_any) {
-                                d2_any = d2; tri_any = k;
-                                u_any = bu; v_any = bv;
-                            }
-                            if (in_mask && d2 < d2_msk) {
-                                d2_msk = d2; tri_msk = k;
-                                u_msk = bu; v_msk = bv;
-                            }
-                            if (in_mask && d2 < d2_fit &&
-                                glm::dot(N, skinTriN[k]) > kFaceDot) {
-                                d2_fit = d2; tri_fit = k;
-                                u_fit = bu; v_fit = bv;
-                            }
+                        for (int kk : it->second) {
+                            float u, v;
+                            const float d2 = closestOnTri(P, tris[skinTri[kk]], u, v);
+                            if (d2 < bd2) { bd2 = d2; best = kk; fu = u; fv = v; }
                         }
                     });
-                    // Everything unscanned is >= r*cell away.  Stop once the
-                    // masked candidate is settled AND nothing beyond the
-                    // facing-slack bound could still flip the fit tier; give
-                    // up at kRayReach when no masked skin exists nearby.
-                    const float scanned  = (float)r * pcell;
-                    const float scanned2 = scanned * scanned;
-                    if (tri_msk >= 0 && scanned2 >= d2_msk &&
-                        tri_any >= 0 &&
-                        scanned2 >= d2_any * kFitSlack * kFitSlack)
-                        break;
-                    if (scanned > kRayReach) break;
+                    const float scanned = (float)r * pcell;
+                    if (best >= 0 && scanned * scanned >= bd2) break;
                 }
-                // A masked candidate ALWAYS beats an unmasked one, no matter
-                // the distance — cloth must never bind to a pruned bone (the
-                // hand) just because it is nearer than the hip.
-                const float slack2 = d2_any * kFitSlack * kFitSlack;
-                if (tri_fit >= 0 && d2_fit <= slack2) {
-                    applyHit(w, tri_fit, u_fit, v_fit);
-                    ++projected_count;
-                } else if (tri_msk >= 0) {
-                    applyHit(w, tri_msk, u_msk, v_msk);
-                    ++projected_count;
-                } else if (tri_any >= 0) {
-                    applyHit(w, tri_any, u_any, v_any);
+                if (best >= 0) {
+                    applyHit(w, best, fu, fv);
                     ++projected_count;
                     ++project_fallback;
                 }
-                // No skin found at all (cannot happen while skin_verts > 0):
-                // leave unweighted — the nearest-skin fallback below catches it.
             }
         }
     }
 
-    // ── Nearest-SKIN fallback for geodesically-unreachable verts ──
-    // A separate component (hair card, eye, eyelash, cloth piece) that no bone-ray
-    // reached has infinite geodesic distance to every bone.  Instead of binding it
-    // to the nearest BONE, attach it to the CLOSEST POINT on the already-weighted
-    // SKIN surface and INHERIT that point's bone weights — so hair follows the
-    // scalp it rests on, cloth follows the body beneath it.  A uniform spatial hash
-    // over the weighted welded verts makes the closest-point search fast.
-    size_t skin_fallback = 0;
-    {
-        std::vector<int> skinW;                          // welded verts that GOT weight
-        skinW.reserve(W);
-        for (int w = 0; w < W; ++w) {
-            float s = 0.0f;
-            for (int bi = 0; bi < nb; ++bi) s += Wf[w][bi];
-            if (s > 0.0f) skinW.push_back(w);
-        }
-        if (!skinW.empty() && (int)skinW.size() < W) {
-            const glm::vec3 ext = mesh_.bbox_max - mesh_.bbox_min;
-            const float diag = std::max(glm::length(ext), 1e-4f);
-            const float cell = std::max(diag / 64.0f, 1e-6f);
-            auto hashCell = [](int64_t x, int64_t y, int64_t z) -> int64_t {
-                return (x * 73856093LL) ^ (y * 19349663LL) ^ (z * 83492791LL);
-            };
-            auto cellOf = [cell](float v) -> int64_t {
-                return (int64_t)std::floor((double)v / cell);
-            };
-            std::unordered_map<int64_t, std::vector<int>> grid;
-            grid.reserve(skinW.size() * 2);
-            for (int sw : skinW) {
-                const glm::vec3& p = wpos[sw];
-                grid[hashCell(cellOf(p.x), cellOf(p.y), cellOf(p.z))].push_back(sw);
-            }
-            // Generate exactly the cells on the shell at chebyshev radius r (O(r^2)).
-            auto forShell = [](int64_t r, const std::function<void(int64_t,int64_t,int64_t)>& fn) {
-                if (r == 0) { fn(0, 0, 0); return; }
-                for (int64_t dx = -r; dx <= r; ++dx)
-                for (int64_t dy = -r; dy <= r; ++dy) {
-                    if (std::llabs(dx) == r || std::llabs(dy) == r)
-                        for (int64_t dz = -r; dz <= r; ++dz) fn(dx, dy, dz);
-                    else { fn(dx, dy, -r); fn(dx, dy, r); }
-                }
-            };
-            for (int w = 0; w < W; ++w) {
-                float s = 0.0f;
-                for (int bi = 0; bi < nb; ++bi) s += Wf[w][bi];
-                if (s > 0.0f) continue;                  // already weighted (skin)
-                const glm::vec3 P = wpos[w];
-                const int64_t cx = cellOf(P.x), cy = cellOf(P.y), cz = cellOf(P.z);
-                int best = -1; float bestd = 1e30f;
-                for (int64_t r = 0; r <= 1024; ++r) {
-                    forShell(r, [&](int64_t dx, int64_t dy, int64_t dz) {
-                        auto it = grid.find(hashCell(cx + dx, cy + dy, cz + dz));
-                        if (it == grid.end()) return;
-                        for (int sw : it->second) {
-                            const float d = glm::length(P - wpos[sw]);
-                            if (d < bestd) { bestd = d; best = sw; }
-                        }
-                    });
-                    // Any unsearched vert (shell > r) is >= r*cell away, so stop.
-                    if (best >= 0 && bestd <= (float)r * cell) break;
-                }
-                // Inherit skin weights AND closeness from the nearest skin vert.
-                if (best >= 0) { Wf[w] = Wf[best]; Cf[w] = Cf[best]; ++skin_fallback; }
-            }
-        }
+    // ── Base skin is PURELY GEODESIC: NO fallback ──
+    // Per-vertex weights come ONLY from the per-bone geodesic closeness above.
+    // A vertex that no bone's falloff reached is LEFT UNWEIGHTED (no geodesic
+    // flood, no euclidean), so the baked field is exactly the raw geodesic
+    // result.
+    size_t skin_fallback = 0, detached_unweighted = 0;
+    for (int w = 0; w < W; ++w) {
+        float s = 0.0f;
+        for (int bi = 0; bi < nb; ++bi) s += Wf[w][bi];
+        if (s <= 0.0f) ++detached_unweighted;
     }
 
     // ── Light smoothing of the baked DISTANCE map (closeness) ──
@@ -2556,36 +2640,52 @@ bool AutoRigPlugin::computeSkinWeights() {
         }
     }
 
-    // ── Smooth the weight field over the surface (kill discontinuities) ──
-    // The geodesic falloff, the top-4 truncation and the nearest-skin copies each
-    // introduce per-vertex jumps; at a bending joint those jumps CREASE/distort
-    // the mesh.  A few uniform Laplacian passes over the welded edge graph diffuse
-    // the weights into a continuous field (renormalized per vertex in finalize).
-    // Smoothing runs along real edges, so distinct layers (body vs cloth) don't
-    // bleed into each other.
+    // -- Base-skin weights are PURELY GEODESIC: no weight smoothing --
+    // Weights come ONLY from the per-bone geodesic-distance falloff
+    // (exp(-geo/tau)) computed above.  The Laplacian weight-smoothing pass that
+    // used to blur the field here has been REMOVED, so nothing but geodesic
+    // distance shapes the base-skin weights (finalize below only keeps the
+    // top-K influences and normalizes to a partition of unity).
+
+    // ── Overhang repair: harmonically fill NON-anchor outer verts ──
+    // Anchors (verts with a real inward-ray "skin beneath" hit) are held FIXED;
+    // every other outer vert is iteratively replaced by the average of its
+    // cloth-surface neighbours (Jacobi relaxation of Laplace, anchors = Dirichlet
+    // boundary).  Overhang verts — a shoe's toe box past the toes, the sole/heel
+    // edges — have no skin beneath, so they only got an edge-snapped closest-
+    // point match that FANNED OUT when the toe bent.  Filling them from the part
+    // of the shoe that hugs the foot gives a smooth, coherent field instead, so
+    // the shoe deforms as one piece.  Free regions with no anchor in their own
+    // cloth component keep their initial projection (harmless fallback).
     {
-        const int kSmoothPasses = 4;
-        std::vector<std::vector<float>> tmp(W, std::vector<float>(nb, 0.0f));
-        for (int pass = 0; pass < kSmoothPasses; ++pass) {
-            for (int w = 0; w < W; ++w) {
-                std::vector<float>& d = tmp[w];
-                const std::vector<float>& s = Wf[w];
-                for (int bi = 0; bi < nb; ++bi) d[bi] = s[bi];
-                float cnt = 1.0f;
-                for (const auto& e : adj[w]) {           // skin edges
-                    const std::vector<float>& nw = Wf[e.first];
-                    for (int bi = 0; bi < nb; ++bi) d[bi] += nw[bi];
-                    cnt += 1.0f;
+        const int kFillPasses = 48;
+        std::vector<int> freeV;
+        freeV.reserve(W);
+        for (int w = 0; w < W; ++w)
+            if (!isSkin[w] && !projAnchor[w] && !adjOuter[w].empty())
+                freeV.push_back(w);
+        if (!freeV.empty()) {
+            std::vector<std::vector<float>> tmp = Wf;
+            for (int pass = 0; pass < kFillPasses; ++pass) {
+                for (int w : freeV) {
+                    std::vector<float>& d = tmp[w];
+                    for (int bi = 0; bi < nb; ++bi) d[bi] = 0.0f;
+                    float cnt = 0.0f;
+                    for (const auto& e : adjOuter[w]) {
+                        const std::vector<float>& nw2 = Wf[e.first];
+                        for (int bi = 0; bi < nb; ++bi) d[bi] += nw2[bi];
+                        cnt += 1.0f;
+                    }
+                    if (cnt > 0.0f) {
+                        const float inv = 1.0f / cnt;
+                        for (int bi = 0; bi < nb; ++bi) d[bi] *= inv;
+                    } else {
+                        const std::vector<float>& s = Wf[w];
+                        for (int bi = 0; bi < nb; ++bi) d[bi] = s[bi];
+                    }
                 }
-                for (const auto& e : adjOuter[w]) {      // cloth/hair edges
-                    const std::vector<float>& nw = Wf[e.first];
-                    for (int bi = 0; bi < nb; ++bi) d[bi] += nw[bi];
-                    cnt += 1.0f;
-                }
-                const float inv = 1.0f / cnt;
-                for (int bi = 0; bi < nb; ++bi) d[bi] *= inv;
+                for (int w : freeV) Wf[w].swap(tmp[w]);
             }
-            Wf.swap(tmp);
         }
     }
 
@@ -2645,6 +2745,18 @@ bool AutoRigPlugin::computeSkinWeights() {
                     val[s] = wgt; idx[s] = bi; break;
                 }
         }
+        // Relative cut: keep the dominant bone (val[0]) plus only those within
+        // kKeepFrac of it; drop the far, exponentially-weaker bones.  This
+        // LOCALIZES each vertex to its geodesically-closest bones (clean blend)
+        // instead of a smear of many distant bones, while NEVER dropping the
+        // dominant -> no all-zero weights, no joint-0 default.  Still purely
+        // geodesic (the kept bones are the closest by geodesic distance).
+        if (val[0] > 0.0f) {
+            const float kKeepFrac = 0.20f;
+            const float thr = kKeepFrac * val[0];
+            for (int i = 1; i < K; ++i)
+                if (val[i] < thr) { val[i] = 0.0f; idx[i] = -1; }
+        }
         float total = 0.0f;
         for (int i = 0; i < K; ++i) {
             if (idx[i] < 0 || val[i] <= 0.0f) {
@@ -2665,20 +2777,21 @@ bool AutoRigPlugin::computeSkinWeights() {
             ++unweighted_count;   // no skin at all to inherit from (degenerate)
         }
     }
-    char sb[320];
-    if (skin_fallback > 0) {
+    char sb[360];
+    if (skin_fallback > 0 || detached_unweighted > 0) {
         std::snprintf(sb, sizeof(sb),
-            "[AutoRig] %zu vertex(es) geodesically unreachable (separate "
-            "components: hair/eyes/cloth) -> inherited CLOSEST-SKIN weights.",
-            skin_fallback);
+            "[AutoRig] missed-vert fallback: %zu inherited via GEODESIC nearest "
+            "skin (follows the limb); %zu detached vert(s) left UNWEIGHTED "
+            "(base skin is purely geodesic, no euclidean bleed).",
+            skin_fallback, detached_unweighted);
         std::cout << sb << std::endl;   // → on-screen Output Log window
     }
     std::snprintf(sb, sizeof(sb),
         "[AutoRig] geodesic skinning: %d verts (%d welded), %d bones | "
         "%d layer(s), %d skin / %zu cloth-projected (%zu normal-mismatch) / "
-        "%zu nearest-skin | %zu still-unweighted",
+        "%zu geo-fallback / %zu detached-unweighted | %zu still-unweighted",
         nv, W, nb, n_layers, skin_verts, projected_count, project_fallback,
-        skin_fallback, unweighted_count);
+        skin_fallback, detached_unweighted, unweighted_count);
     std::cout << sb << std::endl;
     return true;
 }
@@ -4233,6 +4346,28 @@ void AutoRigPlugin::drawImGui() {
     bool just_opened = show_window_ && !show_window_prev_;
     show_window_prev_ = show_window_;
 
+    // Deferred Bake & Export: the button only sets bake_pending_ + clears the
+    // progress bar (ui_progress_ = 0).  We run the (synchronous) bake here at
+    // the TOP of the NEXT frame, so the cleared bar is shown for a frame first
+    // instead of jumping straight to 100%.
+    if (bake_pending_) {
+        bake_pending_ = false;
+        weights_baked_ = false;
+        refreshInverseBindMatrices();   // edits moved joints
+        bool ok = computeSkinWeights();
+        if (ok) ok = exportGltf(output_path_buf_);
+        if (ok) {
+            weights_baked_ = true;
+            state_ = PluginState::kFinished;
+            ui_status_ = "Baked weights + exported: " +
+                std::filesystem::path(output_path_buf_).filename().string();
+            ui_progress_ = 1.0f;
+        } else {
+            state_ = PluginState::kError;
+            ui_status_ = "Bake/export failed.";
+        }
+    }
+
     // The workflow / editor windows are independent: keep drawing them even
     // when the main launcher window itself is hidden.
     if (!show_window_) { drawAutoRigWorkflowWindow(); drawRigEditorWindow(); return; }
@@ -4757,24 +4892,11 @@ void AutoRigPlugin::drawAutoRigWorkflowWindow() {
             ImGui::SliderInt("Resolution", &ui_resolution_, 128, 2048);
             ImGui::Text("Output: %s", std::filesystem::path(output_path_buf_).filename().string().c_str());
 
-            bool is_running = (state_ == PluginState::kRunning);
             bool no_mesh = selected_mesh_path_.empty();
-            // Snapshot the disabled state — rigCharacter() flips state_ to
-            // kRunning, which would otherwise unbalance Begin/End.
-            const bool disable_run = (is_running || no_mesh);
-            if (disable_run) ImGui::BeginDisabled();
-            if (ImGui::Button("  Run Auto-Rig  ")) {
-                num_views_ = ui_num_views_;
-                capture_resolution_ = ui_resolution_;
-                rigCharacter(selected_mesh_path_, output_path_buf_);
-            }
-            if (disable_run) ImGui::EndDisabled();
-            ImGui::SameLine(); ImGui::Text("%s", ui_status_.c_str());
-            if (ui_progress_ > 0.0f) ImGui::ProgressBar(ui_progress_, ImVec2(-1, 0));
 
-            // ---- Manual Workflow (3 passes) ----
-            //  Same pipeline as Run Auto-Rig, but split so joints can be
-            //  hand-edited in 3D before skin weights are baked.
+            // ---- Manual Workflow ----
+            //  Generate joints -> (optionally) hand-edit them in 3D -> bake.
+            //  "Run Combined All" (after step 3) runs the whole pipeline at once.
             ImGui::Separator();
             if (ImGui::CollapsingHeader("Manual Workflow (3 passes)",
                                         ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -4794,8 +4916,16 @@ void AutoRigPlugin::drawAutoRigWorkflowWindow() {
 
                 ImGui::Spacing();
 
-                // ---- The three steps, side by side ----
-                // Step 1
+                // ===== Pipeline (horizontal): 1 Get Joints -> 2 Edit -> 3 Bake =====
+                // Buttons only, laid left-to-right in pipeline order; hover a
+                // button for a description of that step.
+                ImGui::SeparatorText("Rigging Pipeline   (left -> right)");
+
+                // Distinct hover / active colours so buttons clearly react.
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.62f, 0.18f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.80f, 0.50f, 0.12f, 1.0f));
+
+                // -- 1. Get joints: Generate OR Load (adjacent = same step) --
                 {
                     const bool dis = running || no_mesh;
                     if (dis) ImGui::BeginDisabled();
@@ -4806,9 +4936,31 @@ void AutoRigPlugin::drawAutoRigWorkflowWindow() {
                         edit3d_show_ = true;
                     }
                     if (dis) ImGui::EndDisabled();
+                    if (!dis && ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Step 1: predict a skeleton from the mesh "
+                                          "(renders multiple views -> joints).");
                 }
                 ImGui::SameLine();
-                // Step 2 (toggles the 3D editor panel below)
+                {
+                    const bool dis = running || no_mesh;
+                    if (dis) ImGui::BeginDisabled();
+                    if (ImGui::Button("Load Joints", ImVec2(kBtnW, 0))) {
+                        if (mesh_.empty() || source_mesh_path_ != selected_mesh_path_)
+                            loadMesh(selected_mesh_path_);
+                        if (savedJointsExist()) {
+                            if (loadEditedJoints(loadJointsPath())) edit3d_show_ = true;
+                        } else {
+                            ui_status_ = "No saved .joints for this mesh - Generate first.";
+                            edit3d_save_status_ = ui_status_;
+                        }
+                    }
+                    if (dis) ImGui::EndDisabled();
+                    if (!dis && ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Step 1 (alternative): load previously saved "
+                                          ".joints for this mesh and skip prediction.");
+                }
+                ImGui::SameLine(0.0f, 28.0f);   // gap -> next pipeline step
+                // -- 2. Edit joints --
                 {
                     const bool dis = running || !joints_generated_;
                     if (dis) ImGui::BeginDisabled();
@@ -4816,31 +4968,48 @@ void AutoRigPlugin::drawAutoRigWorkflowWindow() {
                                       ImVec2(kBtnW, 0)))
                         edit3d_show_ = !edit3d_show_;
                     if (dis) ImGui::EndDisabled();
+                    if (!dis && ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Step 2: open the 3D editor and drag joints to "
+                                          "refine their placement before baking.");
                 }
-                ImGui::SameLine();
-                // Step 3
+                ImGui::SameLine(0.0f, 28.0f);
+                // -- 3. Bake + export --
                 {
                     const bool dis = running || !joints_generated_;
                     if (dis) ImGui::BeginDisabled();
                     if (ImGui::Button("3. Bake & Export", ImVec2(kBtnW, 0))) {
-                        state_ = PluginState::kRunning;
-                        weights_baked_ = false;
-                        refreshInverseBindMatrices();   // edits moved joints
-                        bool ok = computeSkinWeights();
-                        if (ok) ok = exportGltf(output_path_buf_);
-                        if (ok) {
-                            weights_baked_ = true;
-                            state_ = PluginState::kFinished;
-                            ui_status_ = "Baked weights + exported: " +
-                                std::filesystem::path(output_path_buf_).filename().string();
-                            ui_progress_ = 1.0f;
-                        } else {
-                            state_ = PluginState::kError;
-                            ui_status_ = "Bake/export failed.";
-                        }
+                        state_       = PluginState::kRunning;
+                        ui_progress_ = 0.0f;          // clear the bar from the start
+                        ui_status_   = "Baking...";
+                        bake_pending_ = true;         // actual bake runs next frame
                     }
                     if (dis) ImGui::EndDisabled();
+                    if (!dis && ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Step 3: compute skin weights from the joints "
+                                          "and export the rigged glTF.");
                 }
+                ImGui::SameLine(0.0f, 28.0f);
+                // -- Run all three steps at once --
+                {
+                    const bool dis = running || no_mesh;
+                    if (dis) ImGui::BeginDisabled();
+                    if (ImGui::Button("Run Combined All", ImVec2(kBtnW, 0))) {
+                        num_views_          = ui_num_views_;
+                        capture_resolution_ = ui_resolution_;
+                        rigCharacter(selected_mesh_path_, output_path_buf_);
+                    }
+                    if (dis) ImGui::EndDisabled();
+                    if (!dis && ImGui::IsItemHovered())
+                        ImGui::SetTooltip("Run all three steps in one shot "
+                                          "(generate -> bake, no manual editing).");
+                }
+
+                ImGui::PopStyleColor(2);
+
+                // ---- Progress + status (below the buttons) ----
+                if (ui_progress_ > 0.0f) ImGui::ProgressBar(ui_progress_, ImVec2(-1, 0));
+                if (!ui_status_.empty())
+                    ImGui::TextColored(kDone, "%s", ui_status_.c_str());
 
                 // ---- Step 2 editor panel (shown when toggled on) ----
                 if (joints_generated_ && edit3d_show_) {

@@ -261,6 +261,7 @@ private:
     // ---- Manual 3-pass workflow state ----
     bool   joints_generated_ = false;   // Pass 1 produced a skeleton
     bool   weights_baked_    = false;   // Pass 3 baked skin weights
+    bool   bake_pending_     = false;   // Bake queued; runs next frame (clears bar)
 
     // ---- Pass 2: interactive 3D joint editor ----
     // Renders the original mesh translucently (OIT) and lets the user drag
