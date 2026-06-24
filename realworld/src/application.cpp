@@ -15,6 +15,7 @@
 #include <random>
 #include <cctype>
 #include <cstdio>
+#include <cstdarg>
 #include <unordered_set>
 #include "Windows.h"
 
@@ -43,6 +44,22 @@ namespace er = engine::renderer;
 namespace ego = engine::game_object;
 
 namespace {
+// ── Debug-output logging ──────────────────────────────────────────────────────
+// Routes a formatted message to the debugger's Output window (OutputDebugString)
+// instead of the console, so high-frequency diagnostics like the per-frame
+// [shadow] traces don't flood stdout.  No-op formatting fallback off Windows.
+void debugOut(const char* fmt, ...) {
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    buf[sizeof(buf) - 1] = '\0';
+#ifdef _WIN32
+    OutputDebugStringA(buf);
+#endif
+}
+
 // ── Recent Scenes (Scene → Recent Scenes submenu) ─────────────────────────────
 // A small on-disk MRU list of scene file paths so recently opened scenes are one
 // click away.  Stored one absolute path per line, newest first.
@@ -4461,6 +4478,9 @@ void RealWorldApplication::drawScene(
     //
     //   9  DEBUG_RENDER_MODE_TRANSLUCENT — needs BINDLESS_MAT_TRANSLUCENT
     //   13 DEBUG_RENDER_MODE_CATEGORY    — needs BINDLESS_MAT_CATEGORY_*
+    //   15 DEBUG_RENDER_MODE_WEIGHT_SUM  — needs per-vertex skin weights
+    //                                      (the G-buffer carries baked
+    //                                      positions, not the raw weights)
     //
     // The menu's deferred_rendering_ state is left untouched so flipping
     // the debug mode back to 0 restores the user's chosen pipeline.
@@ -4469,7 +4489,8 @@ void RealWorldApplication::drawScene(
         const int dbg_mode = menu_->getDebugRenderMode();
         if (dbg_mode == DEBUG_RENDER_MODE_TRANSLUCENT ||
             dbg_mode == DEBUG_RENDER_MODE_CATEGORY ||
-            dbg_mode == DEBUG_RENDER_MODE_OBJECT_ID) {
+            dbg_mode == DEBUG_RENDER_MODE_OBJECT_ID ||
+            dbg_mode == DEBUG_RENDER_MODE_WEIGHT_SUM) {
             if (deferred_rendering_enabled_) {
                 static bool s_logged = false;
                 if (!s_logged) {
@@ -4980,7 +5001,7 @@ void RealWorldApplication::drawScene(
                         (total > 0)
                             ? (100.0 * double(cutoff) / double(total))
                             : 0.0;
-                    std::printf(
+                    debugOut(
                         "[shadow] frame=%llu alpha_cutoff=%d/%d (%.1f%%)\n",
                         static_cast<unsigned long long>(current_frame_),
                         cutoff, total, pct);
@@ -5083,7 +5104,7 @@ void RealWorldApplication::drawScene(
                         (csm_mode == CsmDrawMode::kRegular)    ? "Regular (per-cascade)" :
                         (csm_mode == CsmDrawMode::kMeshShader) ? "MeshShader (task+mesh, GS fallback for ineligible)" :
                                                                  "GeometryShader (layered)";
-                    std::printf("[shadow] csm_draw_mode=%s\n", mode_name);
+                    debugOut("[shadow] csm_draw_mode=%s\n", mode_name);
                     s_last_mode  = csm_mode;
                     s_last_print = current_time;
                     s_first      = false;
