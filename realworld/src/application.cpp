@@ -10627,6 +10627,8 @@ void RealWorldApplication::drawFrame() {
             eso.collision_map =
                 (is_col && i < scene_.objects.size())
                     ? &scene_.objects[i].asset_path : nullptr;
+            if (i < scene_.objects.size())
+                eso.asset_path = scene_.objects[i].asset_path;
             eobjs.push_back(std::move(eso));
         }
         for (size_t i = 0; i < drawable_objects_.size(); ++i) {

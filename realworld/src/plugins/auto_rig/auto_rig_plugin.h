@@ -83,6 +83,9 @@ public:
     const Skeleton&    getSkeleton()    const { return skeleton_; }
     const SkinWeights& getSkinWeights() const { return skin_weights_; }
     const std::vector<ViewCapture>& getCaptures() const { return captures_; }
+    // Per-vertex base-skin classification (1 = base skin), for the Debug Display.
+    const std::vector<uint8_t>& getBaseSkinVerts() const { return base_skin_vert_; }
+    const TriangleMesh&         getMesh()          const { return mesh_; }
 
 private:
     void reportProgress(int step, int total, const std::string& msg);
@@ -221,6 +224,16 @@ private:
     // Skin-weight debug overlay on the 3D preview.
     //   0 = off (flat shaded), 1 = per-slot RGBA, 2 = per-bone palette.
     int    weight_view_mode_ = 0;
+
+    // Debug: draw each joint's tau (geodesic falloff width) as a ring on the
+    // 3D preview.  debug_tau_ is filled per joint by computeSkinWeights.
+    bool   show_tau_ = false;
+    std::vector<float> debug_tau_;
+
+    // Per-vertex base-skin classification (1 = base/innermost skin, 0 =
+    // cloth/hair), filled by computeSkinWeights.  Exposed for the main-window
+    // Debug Display "skin layer only" draw.
+    std::vector<uint8_t> base_skin_vert_;
 
     // Live rasterized preview for Rig Editor (cached, re-rendered on angle change).
     ViewCapture preview_render_;
