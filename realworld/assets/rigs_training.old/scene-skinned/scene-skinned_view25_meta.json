@@ -1,0 +1,105 @@
+{
+  "view_index": 25,
+  "azimuth_deg": -429.7,
+  "elevation_deg": -44.1,
+  "width": 1024,
+  "height": 1024,
+  "joints": [
+    {
+      "name": "hips",
+      "uv": [0.515473, 0.416628],
+      "edited": true
+    },
+    {
+      "name": "spine",
+      "uv": [0.516397, 0.358891],
+      "edited": true
+    },
+    {
+      "name": "chest",
+      "uv": [0.513626, 0.317783],
+      "edited": true
+    },
+    {
+      "name": "neck",
+      "uv": [0.509469, 0.294688],
+      "edited": true
+    },
+    {
+      "name": "head",
+      "uv": [0.497460, 0.265589],
+      "edited": true
+    },
+    {
+      "name": "left_shoulder",
+      "uv": [0.541340, 0.291455],
+      "edited": true
+    },
+    {
+      "name": "left_upper_arm",
+      "uv": [0.576905, 0.352425],
+      "edited": true
+    },
+    {
+      "name": "left_lower_arm",
+      "uv": [0.572286, 0.406005],
+      "edited": true
+    },
+    {
+      "name": "left_hand",
+      "uv": [0.575520, 0.425404],
+      "edited": true
+    },
+    {
+      "name": "right_shoulder",
+      "uv": [0.494688, 0.358430],
+      "edited": true
+    },
+    {
+      "name": "right_upper_arm",
+      "uv": [0.514550, 0.472979],
+      "edited": true
+    },
+    {
+      "name": "right_lower_arm",
+      "uv": [0.476212, 0.569977],
+      "edited": true
+    },
+    {
+      "name": "right_hand",
+      "uv": [0.471594, 0.604157],
+      "edited": true
+    },
+    {
+      "name": "left_upper_leg",
+      "uv": [0.549654, 0.472517],
+      "edited": true
+    },
+    {
+      "name": "left_lower_leg",
+      "uv": [0.509469, 0.604619],
+      "edited": true
+    },
+    {
+      "name": "left_foot",
+      "uv": [0.544573, 0.866051],
+      "edited": true
+    },
+    {
+      "name": "right_upper_leg",
+      "uv": [0.478522, 0.496074],
+      "edited": true
+    },
+    {
+      "name": "right_lower_leg",
+      "uv": [0.477598, 0.596305],
+      "edited": true
+    },
+    {
+      "name": "right_foot",
+      "uv": [0.503464, 0.888222],
+      "edited": true
+    }
+  ],
+  "parents": [-1, 0, 1, 2, 3, 2, 5, 6, 7, 2, 9, 10, 11, 0, 13, 14, 0, 16, 17]
+}
