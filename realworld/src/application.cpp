@@ -1040,13 +1040,58 @@ void RealWorldApplication::initDeferredResolve() {
     // shaders for IBL / camera / runtime lights.  An empty layout is dropped
     // at SKIN_PARAMS_SET (3) since the resolve doesn't skin anything.
     auto empty_layout = device_->createDescriptorSetLayout({});
-    er::DescriptorSetLayoutList all_layouts(RUNTIME_LIGHTS_PARAMS_SET + 1);
+
+    // ── Software-RT shadow data set (RUNTIME_LIGHTS_PARAMS_SET + 1) ──
+    // Seven COMPUTE-visible storage buffers: cluster cull infos, draw
+    // infos, merged VB, merged IB, materials, BVH nodes, BVH leaf
+    // indices.  The app owns this layout (identically defined to the one
+    // ClusterRenderer creates for the REAL set — identically-defined
+    // layouts are compatible per the Vulkan spec) so the pipeline can be
+    // created before the first cluster finalize.  A dummy set backed by
+    // one tiny buffer keeps the statically-used binding legal until the
+    // real set exists; the shader only traverses it when the app raises
+    // FEATURE_INPUT_RT_SHADOW, which is gated on rtShadowReady().
+    if (!rt_shadow_dummy_desc_set_) {
+        std::vector<er::DescriptorSetLayoutBinding> rt_bindings(7);
+        for (int i = 0; i < 7; ++i) {
+            rt_bindings[i] = er::helper::getBufferDescriptionSetLayoutBinding(
+                i, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::STORAGE_BUFFER);
+        }
+        rt_shadow_data_desc_set_layout_ =
+            device_->createDescriptorSetLayout(rt_bindings);
+
+        device_->createBuffer(
+            64,
+            SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
+            SET_2_FLAG_BITS(MemoryProperty, HOST_VISIBLE_BIT,
+                            HOST_COHERENT_BIT),
+            0,
+            rt_shadow_dummy_buffer_.buffer,
+            rt_shadow_dummy_buffer_.memory,
+            std::source_location::current());
+
+        rt_shadow_dummy_desc_set_ = device_->createDescriptorSets(
+            descriptor_pool_, rt_shadow_data_desc_set_layout_, 1)[0];
+        er::WriteDescriptorList dummy_writes;
+        dummy_writes.reserve(7);
+        for (int i = 0; i < 7; ++i) {
+            er::Helper::addOneBuffer(dummy_writes, rt_shadow_dummy_desc_set_,
+                er::DescriptorType::STORAGE_BUFFER, i,
+                rt_shadow_dummy_buffer_.buffer, 64);
+        }
+        device_->updateDescriptorSets(dummy_writes);
+    }
+
+    er::DescriptorSetLayoutList all_layouts(RUNTIME_LIGHTS_PARAMS_SET + 2);
     all_layouts[PBR_GLOBAL_PARAMS_SET]     = pbr_lighting_desc_set_layout_;
     all_layouts[VIEW_PARAMS_SET]           =
         ego::CameraObject::getViewCameraDescriptorSetLayout();
     all_layouts[PBR_MATERIAL_PARAMS_SET]   = deferred_resolve_desc_set_layout_;
     all_layouts[SKIN_PARAMS_SET]           = empty_layout;
     all_layouts[RUNTIME_LIGHTS_PARAMS_SET] = runtime_lights_desc_set_layout_;
+    all_layouts[RUNTIME_LIGHTS_PARAMS_SET + 1] =
+        rt_shadow_data_desc_set_layout_;
     for (auto& l : all_layouts) if (!l) l = empty_layout;
 
     deferred_resolve_pipeline_layout_ = er::helper::createComputePipelineLayout(
@@ -4882,8 +4927,22 @@ void RealWorldApplication::drawScene(
         // dispatch on the active "Render Debug" visualisation mode.
         {
             uint32_t input_flags = 0u;
-            if (menu_->isShadowPassTurnOff())
+            // Raytraced shadow modes (screen-space AND world-space BVH)
+            // also raise SHADOW_DISABLED: the forward shaders can't trace
+            // rays, so they skip CSM sampling (which is stale — the CSM
+            // pass is skipped below).  deferred_resolve.comp checks the
+            // RT / SSRT flags FIRST, so deferred pixels still get
+            // ray-traced shadows.
+            const bool rt_ready = menu_->isRtShadowsOn() &&
+                                  cluster_renderer_ &&
+                                  cluster_renderer_->rtShadowReady();
+            if (menu_->isShadowPassTurnOff() || menu_->isSsrtShadowsOn() ||
+                menu_->isRtShadowsOn())
                 input_flags |= FEATURE_INPUT_SHADOW_DISABLED;
+            if (menu_->isSsrtShadowsOn())
+                input_flags |= FEATURE_INPUT_SSRT_SHADOW;
+            if (rt_ready)
+                input_flags |= FEATURE_INPUT_RT_SHADOW;
             // Pack the menu's render-debug mode (0..255) into bits 16..23.
             // base.frag and cluster_bindless.frag mask + branch on this.
             input_flags |= (static_cast<uint32_t>(menu_->getDebugRenderMode())
@@ -5127,7 +5186,13 @@ void RealWorldApplication::drawScene(
         // array layers in one draw.  Vertex transform runs once per vertex
         // instead of 4×, giving roughly 4× the throughput of separate passes.
         // The full 4-layer array view is used so the GS can write to all layers.
-        if (!menu_->isShadowPassTurnOff()) {
+        // Raytraced shadow techniques (screen-space and world-space BVH)
+        // render NO shadow maps at all — the deferred resolve traces
+        // rays instead, so the whole CSM pass is skipped (same code path
+        // as the "Turn off shadow pass" toggle; the post-pass layout
+        // transition below runs unconditionally either way).
+        if (!menu_->isShadowPassTurnOff() && !menu_->isSsrtShadowsOn() &&
+            !menu_->isRtShadowsOn()) {
             engine::helper::GpuProfiler::Scope _scope_shadow(
                 gpu_profiler_, cmd_buf, "CSM Shadow");
 
@@ -6039,12 +6104,22 @@ void RealWorldApplication::drawScene(
                     engine::helper::GpuProfiler::Scope _scope_resolve(
                         gpu_profiler_, cmd_buf, "Deferred Resolve Compute");
                     er::DescriptorSetList resolve_sets(
-                        RUNTIME_LIGHTS_PARAMS_SET + 1, nullptr);
+                        RUNTIME_LIGHTS_PARAMS_SET + 2, nullptr);
                     resolve_sets[PBR_GLOBAL_PARAMS_SET]     = pbr_lighting_desc_set_;
                     resolve_sets[VIEW_PARAMS_SET]           =
                         main_camera_object_->getViewCameraDescriptorSet();
                     resolve_sets[PBR_MATERIAL_PARAMS_SET]   = deferred_resolve_desc_set_;
                     resolve_sets[RUNTIME_LIGHTS_PARAMS_SET] = runtime_lights_desc_set_;
+                    // Software-RT shadow data (cluster BVH + geometry).
+                    // The shader statically references this set, so a
+                    // valid set must always be bound — the dummy stands
+                    // in until the cluster path's first finalize builds
+                    // the real one (the RT flag is app-gated on
+                    // rtShadowReady(), so the dummy is never traversed).
+                    resolve_sets[RUNTIME_LIGHTS_PARAMS_SET + 1] =
+                        (cluster_renderer_ && cluster_renderer_->rtShadowReady())
+                            ? cluster_renderer_->getRtShadowDescSet()
+                            : rt_shadow_dummy_desc_set_;
                     cmd_buf->bindPipeline(
                         er::PipelineBindPoint::COMPUTE, deferred_resolve_pipeline_);
                     cmd_buf->bindDescriptorSets(

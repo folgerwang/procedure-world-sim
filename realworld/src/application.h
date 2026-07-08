@@ -327,6 +327,14 @@ private:
     std::shared_ptr<er::DescriptorSet>       deferred_resolve_desc_set_;
     std::shared_ptr<er::PipelineLayout>      deferred_resolve_pipeline_layout_;
     std::shared_ptr<er::Pipeline>            deferred_resolve_pipeline_;
+    // Software-RT shadow data set (RUNTIME_LIGHTS_PARAMS_SET + 1 of the
+    // resolve pipeline).  App-owned layout (identical to the renderer's
+    // real set layout) + a dummy set bound while the cluster BVH doesn't
+    // exist yet — the shader statically references the bindings, so a
+    // valid set must always be bound even when the RT path is inactive.
+    std::shared_ptr<er::DescriptorSetLayout> rt_shadow_data_desc_set_layout_;
+    std::shared_ptr<er::DescriptorSet>       rt_shadow_dummy_desc_set_;
+    er::BufferInfo                           rt_shadow_dummy_buffer_;
 
     er::TextureInfo sample_tex_;
     er::TextureInfo ggx_lut_tex_;
@@ -498,6 +506,7 @@ private:
     // ECS object-level frustum culling: stats from the last
     // CullingSystem::update (drawScene, just before the forward pass).
     eecs::CullingStats ecs_cull_stats_;
+
 
     // ECS material dedup: refcounted interning cache over the MaterialDescs
     // captured at asset load. Entities holding a Renderable get a MaterialSet
