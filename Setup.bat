@@ -796,7 +796,6 @@ echo.
 
 :tts_done
 
-<<<<<<< Updated upstream
 rem ── Qwen3.5-2B Jin Yong chatbot fine-tune (default ON, idempotent) ───────────
 rem   Delegates to the standalone jinyong_finetune\setup.bat so both entry points
 rem   share one path. That script installs deps, prepares the dataset into
@@ -816,7 +815,7 @@ echo -- Qwen3.5-2B Jin Yong fine-tune --------------------------
 call "jinyong_finetune\setup.bat"
 if errorlevel 1 echo [WARN]  Jin Yong fine-tune step reported an error.
 :jinyong_done
-=======
+
 rem -----------------------------------------------------------
 rem  Animation model fine-tune (19-joint Qwen -> Ollama).
 rem  One-time + idempotent: the sub-script skips if 'anim-qwen-19joint'
@@ -835,7 +834,6 @@ if exist "%~dp0ml_training\anim_finetune\build_anim_model.bat" (
     echo [anim-ft] build_anim_model.bat not found -- skipping.
 )
 echo -----------------------------------------------------------
->>>>>>> Stashed changes
 
 echo.
 echo ============================================================
