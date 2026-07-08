@@ -130,6 +130,44 @@ struct SkinWeights {
 };
 
 // ---------------------------------------------------------------------------
+//  Skeletal animation clip (keyframed LOCAL joint rotations).
+//
+//  Produced by the "Animate" step (Qwen text->keyframes) and serialized to a
+//  binary "<character>.anim" sidecar.  Rotations are LOCAL (relative to the
+//  bind pose) so a clip is reusable across any rig that shares the standard
+//  joint names.  Times are in seconds, ascending; sampling is linear (slerp).
+// ---------------------------------------------------------------------------
+struct AnimRotKey {
+    float     time = 0.0f;                    // seconds
+    glm::quat rot{1, 0, 0, 0};                // LOCAL rotation (relative to bind)
+};
+
+struct AnimVecKey {
+    float     time = 0.0f;                    // seconds
+    glm::vec3 v{0.0f};                        // translation offset (model units)
+};
+
+struct AnimJointTrack {
+    int                     joint = -1;       // index into Skeleton::joints
+    std::vector<AnimRotKey> rot;              // sorted by time
+};
+
+struct AnimClip {
+    std::string                 name;
+    float                       fps      = 24.0f;
+    float                       duration = 0.0f;   // seconds (max keyframe time)
+    std::vector<AnimJointTrack> tracks;            // per moving joint
+    std::vector<AnimVecKey>     root_pos;          // optional root/hips offset
+
+    bool empty() const { return tracks.empty() && root_pos.empty(); }
+    size_t keyCount() const {
+        size_t n = root_pos.size();
+        for (const auto& t : tracks) n += t.rot.size();
+        return n;
+    }
+};
+
+// ---------------------------------------------------------------------------
 //  Standard humanoid joint names used by the diffusion model.
 // ---------------------------------------------------------------------------
 inline const std::vector<std::string>& getStandardJointNames() {

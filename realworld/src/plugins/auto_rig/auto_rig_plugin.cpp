@@ -9,18 +9,21 @@
 #    define NOMINMAX
 #  endif
 #  include <windows.h>
+#  include <winhttp.h>               // Ollama HTTP (text-to-animation, Pass 4)
 #endif
 
 #include "auto_rig_plugin.h"
 #include "imgui.h"
 #include "tiny_gltf.h"
 #include "stb_image_write.h"
+#include "json.hpp"                  // nlohmann::json (vendored w/ tinygltf)
 #include "renderer/renderer.h"       // engine::renderer::Helper, Device, enums
 #include "helper/engine_helper.h"    // engine::helper::createTextureImage
 #include <source_location>
 
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>        // std::getenv / std::atoi (Ollama host/model env)
 #include <cmath>
 #include <iostream>      // std::cout → editor Output Log window (see main.cpp)
 #include <algorithm>
@@ -31,6 +34,9 @@
 #include <functional>
 #include <queue>          // geodesic skinning (Dijkstra over the mesh surface)
 #include <thread>
+#include <chrono>         // worker-future polling (text-to-animation)
+#include <regex>          // light JSON repair for small-model keyframe output
+#include <cstdint>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -2033,6 +2039,39 @@ bool AutoRigPlugin::computeSkinWeights() {
     for (int w = 0; w < W; ++w)
         if (compSkin[comp[w]]) { isSkin[w] = true; ++skin_verts; }
 
+    // ── Per-component classification report (diagnostic) ──
+    // Reveals WHY a part is/ isn't hidden by the "Skin layer only" debug draw:
+    //   * size      = welded vertices in the island
+    //   * first/tot = how often joint-rays hit it FIRST vs merely crossed it
+    //   * SKIN if first/tot >= 0.50, or if tot==0 (never hit → default skin)
+    // If a part you expected hidden is one big island with the body, it cannot
+    // be split (weld merged them).  If it is its OWN island but still SKIN, then
+    // either no body is modelled beneath it (it IS the first hit) or tot==0.
+    {
+        std::unordered_map<int, int> csz;
+        for (int w = 0; w < W; ++w) ++csz[comp[w]];
+        std::vector<int> reps;
+        reps.reserve(csz.size());
+        for (const auto& kv : csz) reps.push_back(kv.first);
+        std::sort(reps.begin(), reps.end(),
+                  [&](int a, int b) { return csz[a] > csz[b]; });
+        char hdr[160];
+        std::snprintf(hdr, sizeof(hdr),
+            "[AutoRig] skin classification: %zu island(s), %d/%d verts SKIN "
+            "(top islands below)", csz.size(), skin_verts, W);
+        std::cout << hdr << std::endl;
+        const int kShow = std::min<int>((int)reps.size(), 14);
+        for (int r = 0; r < kShow; ++r) {
+            const int rep = reps[r];
+            char ln[160];
+            std::snprintf(ln, sizeof(ln),
+                "[AutoRig]   island #%-2d  size=%-6d  first=%-6ld tot=%-6ld  -> %s",
+                r, csz[rep], firstHits[rep], totalHits[rep],
+                compSkin[rep] ? "SKIN" : "cloth/hair");
+            std::cout << ln << std::endl;
+        }
+    }
+
     // Stash the classification (pre-override) per ORIGINAL vertex for the
     // "Skin layer only" debug draw: 1 = base/innermost skin, 0 = cloth/hair.
     base_skin_vert_.assign(nv, 1);
@@ -2643,16 +2682,90 @@ bool AutoRigPlugin::computeSkinWeights() {
             return false;
         };
 
+        // Ray vs SKIN surface (Amanatides–Woo DDA over the skin-triangle hash
+        // pgrid).  Returns the nearest hit triangle (index into skinTri) and its
+        // barycentrics.  Used to fire a cloth vertex's inward (reversed-normal)
+        // ray at the skin directly beneath it.
+        auto rayCastSkin = [&](const glm::vec3& o, const glm::vec3& d, float tmax,
+                               int& outK, float& bu, float& bv) -> bool {
+            outK = -1; float bestT = tmax;
+            int64_t cx = pCellOf(o.x), cy = pCellOf(o.y), cz = pCellOf(o.z);
+            float tNextX = 1e30f, tNextY = 1e30f, tNextZ = 1e30f;
+            float tDeltaX = 1e30f, tDeltaY = 1e30f, tDeltaZ = 1e30f;
+            int sx = 0, sy = 0, sz = 0;
+            if (std::fabs(d.x) > 1e-12f) { sx = d.x > 0 ? 1 : -1; tDeltaX = pcell / std::fabs(d.x);
+                tNextX = ((float)((double)(cx + (d.x > 0 ? 1 : 0)) * pcell) - o.x) / d.x; }
+            if (std::fabs(d.y) > 1e-12f) { sy = d.y > 0 ? 1 : -1; tDeltaY = pcell / std::fabs(d.y);
+                tNextY = ((float)((double)(cy + (d.y > 0 ? 1 : 0)) * pcell) - o.y) / d.y; }
+            if (std::fabs(d.z) > 1e-12f) { sz = d.z > 0 ? 1 : -1; tDeltaZ = pcell / std::fabs(d.z);
+                tNextZ = ((float)((double)(cz + (d.z > 0 ? 1 : 0)) * pcell) - o.z) / d.z; }
+            for (int guard = 0; guard < 8192; ++guard) {
+                auto it = pgrid.find(pHash(cx, cy, cz));
+                if (it != pgrid.end())
+                    for (int k : it->second) {
+                        float tt, u, v;
+                        if (rayTri(o, d, tris[skinTri[k]], tt, u, v) && tt < bestT) {
+                            bestT = tt; outK = k; bu = u; bv = v;
+                        }
+                    }
+                float tmin = tNextX;
+                if (tNextY < tmin) tmin = tNextY;
+                if (tNextZ < tmin) tmin = tNextZ;
+                if (tmin > bestT || tmin >= 1e30f) break;
+                if      (tmin == tNextX) { cx += sx; tNextX += tDeltaX; }
+                else if (tmin == tNextY) { cy += sy; tNextY += tDeltaY; }
+                else                     { cz += sz; tNextZ += tDeltaZ; }
+            }
+            return outK >= 0;
+        };
+
+        // Per-welded-vertex normals (authoritative shading normals from the
+        // mesh) for the inward-ray projection below.
+        std::vector<glm::vec3> wnrm(W, glm::vec3(0.0f));
+        if (mesh_.normals.size() == static_cast<size_t>(nv)) {
+            for (int v = 0; v < nv; ++v) wnrm[wid[v]] += mesh_.normals[v];
+        } else {
+            for (const auto& t : tris) {
+                const glm::vec3 fn = glm::cross(wpos[t.y] - wpos[t.x],
+                                                wpos[t.z] - wpos[t.x]);
+                wnrm[t.x] += fn; wnrm[t.y] += fn; wnrm[t.z] += fn;
+            }
+        }
+        for (auto& n : wnrm) { const float l = glm::length(n); if (l > 1e-12f) n /= l; }
+
+        // Project a cloth vertex to the skin DIRECTLY BENEATH it: fire a ray
+        // along its REVERSED normal (inward) and take the first skin hit.  A
+        // dress panel hanging next to the hand fires inward at the leg, so it
+        // can never bind to the euclidean-closer hand.  Closest-point is only a
+        // fallback for verts whose inward ray misses (hems, folds, flipped
+        // normals).
+        auto projectVert = [&](int w, int& k, float& bu, float& bv,
+                               float& dist) -> bool {
+            k = -1;
+            if (glm::dot(wnrm[w], wnrm[w]) > 1e-12f) {
+                const glm::vec3 d = -wnrm[w];          // reversed normal = inward
+                int rk; float ru, rv;
+                if (rayCastSkin(wpos[w], d, pdiag, rk, ru, rv)) {
+                    const glm::ivec3& t = tris[skinTri[rk]];
+                    const glm::vec3 q = (1.0f - ru - rv) * wpos[t.x]
+                                      + ru * wpos[t.y] + rv * wpos[t.z];
+                    k = rk; bu = ru; bv = rv; dist = glm::length(q - wpos[w]);
+                    return true;
+                }
+            }
+            return findSkin(wpos[w], nullptr, k, bu, bv, dist);   // fallback
+        };
+
         struct ProjHit { int w, best; float fu, fv, dist; };
         for (auto& oc : outerComps) {
-            // Pass 1: unrestricted nearest skin; tally which base-skin bones this
-            // garment piece lands on.
+            // Pass 1: project each vert (inward ray, else nearest skin); tally
+            // which base-skin bones this garment piece lands on.
             std::vector<ProjHit> hits;   hits.reserve(oc.second.size());
             std::vector<int>     domOf;  domOf.reserve(oc.second.size());
             std::vector<int>     votes(nb, 0);
             for (int w : oc.second) {
                 int k; float bu, bv, dist;
-                if (!findSkin(wpos[w], nullptr, k, bu, bv, dist)) continue;
+                if (!projectVert(w, k, bu, bv, dist)) continue;
                 hits.push_back({w, k, bu, bv, dist});
                 const int dom = skinTriDom[k];
                 domOf.push_back(dom);
@@ -3819,6 +3932,785 @@ bool AutoRigPlugin::loadEditedJoints(const std::string& path) {
 }
 
 // ============================================================================
+//  Pass 4 — text-to-animation (Qwen via local Ollama)
+// ============================================================================
+namespace {
+
+// Resolve OLLAMA_HOST ("host[:port]", default localhost:11434).
+void ollamaHostPort(std::string& host, unsigned short& port) {
+    host = "localhost";
+    port = 11434;
+    if (const char* e = std::getenv("OLLAMA_HOST")) {
+        std::string s = e;
+        // Strip any scheme prefix.
+        const auto sl = s.find("//");
+        if (sl != std::string::npos) s = s.substr(sl + 2);
+        const auto colon = s.find(':');
+        if (colon != std::string::npos) {
+            host = s.substr(0, colon);
+            const int p = std::atoi(s.c_str() + colon + 1);
+            if (p > 0 && p < 65536) port = static_cast<unsigned short>(p);
+        } else if (!s.empty()) {
+            host = s;
+        }
+    }
+    if (host.empty()) host = "localhost";
+}
+
+// Stock/fallback model (shared OLLAMA_MODEL env, as the material classifier).
+std::string ollamaModel() {
+    if (const char* e = std::getenv("OLLAMA_MODEL"))
+        if (*e) return std::string(e);
+    return "qwen3.5:2b";
+}
+
+// PRIMARY model for animation generation: the fine-tuned 19-joint model built
+// at setup time (ml_training/anim_finetune).  Overridable via ANIM_MODEL.  If it
+// isn't installed in Ollama, generateAnimClipOnce() falls back to ollamaModel()
+// automatically, so animation still works without the fine-tune.
+std::string animModel() {
+    if (const char* e = std::getenv("ANIM_MODEL"))
+        if (*e) return std::string(e);
+    return "anim-qwen-19joint";
+}
+
+#ifdef _WIN32
+std::wstring animToW(const std::string& s) {
+    if (s.empty()) return std::wstring();
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(),
+                                static_cast<int>(s.size()), nullptr, 0);
+    if (n <= 0) return std::wstring();
+    std::wstring out(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.data(),
+                        static_cast<int>(s.size()), out.data(), n);
+    return out;
+}
+
+// Single-shot synchronous plaintext HTTP POST to a local Ollama daemon.
+// Returns (status>=200 && <300) and fills `body`; on any failure returns false
+// and sets `err`.  Mirrors the material-classifier transport (NO_PROXY, plain
+// HTTP, generous receive timeout for CPU inference).
+bool ollamaPost(const std::string& host, unsigned short port,
+                const std::string& path, const std::string& body,
+                std::string& outBody, std::string& err,
+                unsigned int* outStatus = nullptr) {
+    HINTERNET hSession = WinHttpOpen(L"RealWorld-AutoRigAnim/1.0",
+        WINHTTP_ACCESS_TYPE_NO_PROXY, WINHTTP_NO_PROXY_NAME,
+        WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSession) { err = "WinHttpOpen failed"; return false; }
+    // connect 5s, send 10s, receive headers 10s, receive data 10min.
+    WinHttpSetTimeouts(hSession, 5000, 10000, 10000, 600000);
+
+    HINTERNET hConnect = WinHttpConnect(hSession, animToW(host).c_str(), port, 0);
+    if (!hConnect) { err = "WinHttpConnect failed (is `ollama serve` running on "
+                           + host + ":" + std::to_string(port) + "?)";
+                     WinHttpCloseHandle(hSession); return false; }
+
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"POST",
+        animToW(path).c_str(), nullptr, WINHTTP_NO_REFERER,
+        WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
+    if (!hRequest) { err = "WinHttpOpenRequest failed";
+                     WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession);
+                     return false; }
+
+    std::wstring headers = L"content-type: application/json\r\n";
+    BOOL ok = WinHttpSendRequest(hRequest, headers.c_str(),
+        static_cast<DWORD>(headers.size()),
+        const_cast<char*>(body.data()), static_cast<DWORD>(body.size()),
+        static_cast<DWORD>(body.size()), 0);
+    if (!ok) { err = "WinHttpSendRequest failed err=" +
+                     std::to_string(GetLastError());
+               WinHttpCloseHandle(hRequest); WinHttpCloseHandle(hConnect);
+               WinHttpCloseHandle(hSession); return false; }
+
+    if (!WinHttpReceiveResponse(hRequest, nullptr)) {
+        err = "WinHttpReceiveResponse failed err=" + std::to_string(GetLastError());
+        WinHttpCloseHandle(hRequest); WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession); return false;
+    }
+    DWORD status_code = 0, status_size = sizeof(status_code);
+    WinHttpQueryHeaders(hRequest,
+        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        WINHTTP_HEADER_NAME_BY_INDEX, &status_code, &status_size,
+        WINHTTP_NO_HEADER_INDEX);
+
+    for (;;) {
+        DWORD avail = 0;
+        if (!WinHttpQueryDataAvailable(hRequest, &avail)) break;
+        if (avail == 0) break;
+        std::string buf(avail, '\0');
+        DWORD read = 0;
+        if (!WinHttpReadData(hRequest, buf.data(), avail, &read)) break;
+        if (read == 0) break;
+        outBody.append(buf.data(), read);
+    }
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
+
+    if (outStatus) *outStatus = (unsigned int)status_code;
+    if (status_code < 200 || status_code >= 300) {
+        err = "Ollama HTTP status " + std::to_string(status_code) +
+              " (model installed? `ollama list`)";
+        return false;
+    }
+    return true;
+}
+#else
+bool ollamaPost(const std::string&, unsigned short, const std::string&,
+                const std::string&, std::string&, std::string& err,
+                unsigned int* outStatus = nullptr) {
+    if (outStatus) *outStatus = 0;
+    err = "text-to-animation requires Windows/WinHTTP";
+    return false;
+}
+#endif
+
+}  // namespace
+
+// "<character>.anim" next to the source mesh (falls back to CWD).
+std::string AutoRigPlugin::animPath() const {
+    if (source_mesh_path_.empty()) return "character.anim";
+    std::filesystem::path p(source_mesh_path_);
+    return (p.parent_path() / (p.stem().string() + ".anim")).string();
+}
+
+// Thin member delegate (kept for the in-plugin Animate step).
+bool AutoRigPlugin::generateAnimationBlocking(
+        const std::string& prompt,
+        const std::vector<std::string>& jointNames,
+        int seconds, int fps,
+        AnimClip& out, std::string& err) const {
+    return generateAnimClip(prompt, jointNames, seconds, fps, out, err);
+}
+
+// ONE generation attempt (file-local).  `attempt` varies the sampling seed so
+// the public retry wrapper below can explore different outputs — small models
+// frequently emit invalid JSON, so a fresh roll usually succeeds.
+static bool generateAnimClipOnce(
+        const std::string& prompt,
+        const std::vector<std::string>& jointNames,
+        int seconds, int fps, int attempt,
+        AnimClip& out, std::string& err) {
+    using nlohmann::json;
+
+    if (prompt.empty()) { err = "empty prompt"; return false; }
+    if (jointNames.empty()) { err = "no skeleton (generate joints first)"; return false; }
+
+    // Name -> index for fast lookup while parsing the response.
+    std::unordered_map<std::string, int> nameToIdx;
+    for (int i = 0; i < (int)jointNames.size(); ++i) nameToIdx[jointNames[i]] = i;
+
+    // ---- system prompt: schema + rules ----
+    // The constraints below encode the rig's bind frame and human joint limits
+    // so even a small model produces plausible, on-axis motion.
+    const std::string sys =
+        "You are an animation keyframe generator for a 3D humanoid skeleton in a "
+        "T-pose (arms straight out to the sides). Output ONE JSON object: "
+        "keyframes of LOCAL joint rotations in DEGREES (intrinsic X then Y then "
+        "Z) relative to the bind pose.\n"
+        "\nCOORDINATE FRAME: +Y up, +Z forward (the face/toes point +Z), +X is "
+        "the character's LEFT. A rotation is about the joint's own axis:\n"
+        "- LEGS & FEET (point down): rotate about X to swing forward/back (walk, "
+        "kick, step); about Z to spread sideways. Knees (lower_leg) bend only one "
+        "direction (use a CONSISTENT sign), magnitude 0..130.\n"
+        "- ARMS (point sideways in the T-pose): rotate about Z to lower/raise the "
+        "arm; about Y to swing forward/back; about X to twist. To lower the arms "
+        "to a natural rest at the sides use left_upper_arm [0,0,-75] and "
+        "right_upper_arm [0,0,75]. Elbows (lower_arm) bend one direction "
+        "(consistent sign), magnitude 0..130.\n"
+        "- SPINE/CHEST: small bends, about X to lean fwd/back, Y to turn L/R, "
+        "Z to side-tilt; keep each within +/-30.\n"
+        "- NECK/HEAD: about X to nod, Y to look L/R, Z to tilt; within +/-40.\n"
+        "\nRULES:\n"
+        "- Include ONLY joints that actually move (usually 2 to 8) — never all "
+        "joints; omit the rest. This keeps the JSON small.\n"
+        "- The rig has EXACTLY 19 joints. Use ONLY the 19 exact joint names "
+        "provided in the user message — never invent, rename, abbreviate, split, "
+        "or add joints; any name not in that list of 19 is discarded.\n"
+        "- Rotations are local euler degrees [x,y,z]; [0,0,0] = bind pose.\n"
+        "- Use 4 to 6 keyframes; times in seconds ascending from 0 to the target "
+        "duration. Poses must CHANGE meaningfully between keyframes (no repeats).\n"
+        "- Move smoothly: change each angle gradually between adjacent keyframes "
+        "(avoid large jumps).\n"
+        "- ANGLE LIMITS (degrees): hips/spine/chest <=30, neck/head <=40, "
+        "shoulders/upper arms <=90, upper legs <=70, knees & elbows 0..130 "
+        "(one direction only). Never exceed +/-150 on any axis.\n"
+        "- For WALK/RUN: left and right legs swing in OPPOSITE phase, and each "
+        "arm swings opposite its same-side leg. For symmetric motions (jump, "
+        "wave-both) mirror left/right.\n"
+        "- For cyclic motion (walk, run, wave, idle) make the LAST keyframe "
+        "EQUAL the FIRST so it loops seamlessly.\n"
+        "- Optionally add \"root_translation\" keyframes (hips offset in METERS, "
+        "[x,y,z]) for locomotion/jumps: +Z moves forward, +Y is up. Keep small "
+        "(< 1 m) and start at [0,0,0].\n"
+        "Output JSON ONLY, no prose, exactly this schema:\n"
+        "{\"name\":string,\"fps\":number,\"duration\":number,"
+        "\"keyframes\":[{\"time\":number,\"rotations\":{\"<joint>\":[x,y,z]}}],"
+        "\"root_translation\":[{\"time\":number,\"offset\":[x,y,z]}]}";
+
+    // ---- user prompt: motion + joint hierarchy ----
+    std::string joints_list;
+    {
+        const std::vector<int>& par = getStandardJointParents();
+        for (int i = 0; i < (int)jointNames.size(); ++i) {
+            joints_list += jointNames[i];
+            if (i < (int)par.size() && par[i] >= 0 &&
+                par[i] < (int)jointNames.size())
+                joints_list += "(child of " + jointNames[par[i]] + ")";
+            else
+                joints_list += "(root)";
+            if (i + 1 < (int)jointNames.size()) joints_list += ", ";
+        }
+    }
+    std::string usr = "Motion: \"" + prompt + "\".\n"
+        "Target duration ~" + std::to_string(seconds) + " seconds at " +
+        std::to_string(fps) + " fps.\n"
+        "The rig has EXACTLY " + std::to_string((int)jointNames.size()) +
+        " joints. Use ONLY these " + std::to_string((int)jointNames.size()) +
+        " exact names (do not invent or rename any): " + joints_list +
+        ".\nGenerate the animation JSON now. Output ONLY the JSON object, no "
+        "prose, no markdown fences, no reasoning. /no_think";
+
+    // ---- request body (Ollama /api/chat, non-streaming, JSON-forced) ----
+    // PRIMARY = the fine-tuned 19-joint model; if Ollama doesn't have it (404),
+    // we retry once with the stock fallback below so generation always works.
+    const std::string primaryModel  = animModel();
+    const std::string fallbackModel = ollamaModel();
+    json req;
+    req["model"]  = primaryModel;
+    req["stream"] = false;
+    req["think"]  = false;        // Qwen3: skip reasoning, answer in content
+    req["options"]["temperature"] = 0.2;    // steadier, better-formed JSON
+    req["options"]["num_predict"] = 8192;   // headroom; schema bounds keyframes
+    req["options"]["seed"]        = 7000 + attempt;   // vary across retries
+    // Structured outputs: a JSON SCHEMA (not just "json") grammar-constrains the
+    // model to valid, conforming JSON — small models otherwise emit fractions,
+    // unquoted keys, comments, etc.  (Ollama >= 0.5; the repair pass below is a
+    // fallback for older servers that ignore the schema.)
+    req["format"] = json::parse(R"({
+        "type":"object",
+        "properties":{
+            "name":{"type":"string"},
+            "fps":{"type":"number"},
+            "duration":{"type":"number"},
+            "keyframes":{"type":"array","minItems":2,"maxItems":16,"items":{
+                "type":"object",
+                "properties":{
+                    "time":{"type":"number"},
+                    "rotations":{"type":"object",
+                        "additionalProperties":{"type":"array",
+                            "minItems":3,"maxItems":3,"items":{"type":"number"}}}
+                },
+                "required":["time","rotations"]
+            }},
+            "root_translation":{"type":"array","maxItems":16,"items":{
+                "type":"object",
+                "properties":{
+                    "time":{"type":"number"},
+                    "offset":{"type":"array","minItems":3,"maxItems":3,
+                        "items":{"type":"number"}}
+                },
+                "required":["time","offset"]
+            }}
+        },
+        "required":["name","fps","duration","keyframes"]
+    })");
+    req["messages"] = json::array({
+        json{{"role", "system"}, {"content", sys}},
+        json{{"role", "user"},   {"content", usr}},
+    });
+    std::string body = req.dump();
+
+    std::string host; unsigned short port;
+    ollamaHostPort(host, port);
+    std::cout << "[AutoRig] anim: POST " << host << ":" << port
+              << "/api/chat model=" << primaryModel
+              << " prompt=\"" << prompt << "\"" << std::endl;
+
+    std::string resp;
+    unsigned int status = 0;
+    bool posted = ollamaPost(host, port, "/api/chat", body, resp, err, &status);
+    if (!posted && status == 404 && fallbackModel != primaryModel) {
+        std::cout << "[AutoRig] anim: model '" << primaryModel << "' not found; "
+                     "falling back to '" << fallbackModel << "' (run setup or "
+                     "ml_training/anim_finetune to build the fine-tuned model)"
+                  << std::endl;
+        req["model"] = fallbackModel;
+        body = req.dump();
+        resp.clear(); err.clear(); status = 0;
+        posted = ollamaPost(host, port, "/api/chat", body, resp, err, &status);
+    }
+    if (!posted) return false;
+
+    // ---- unwrap /api/chat: { message: { content: "<json>" } } ----
+    // Robust against: an "error" field returned with HTTP 200; "thinking"
+    // models (Qwen3) that put the answer in message.thinking and leave content
+    // empty; and the /api/generate "response" shape.
+    std::string content;
+    try {
+        json r = json::parse(resp);
+        if (r.contains("error")) {
+            err = "Ollama error: " + (r["error"].is_string()
+                  ? r["error"].get<std::string>() : r["error"].dump());
+            return false;
+        }
+        if (r.contains("message") && r["message"].is_object()) {
+            const auto& m = r["message"];
+            if (m.contains("content") && m["content"].is_string())
+                content = m["content"].get<std::string>();
+            // NOTE: we deliberately do NOT fall back to message.thinking —
+            // that's free-form reasoning prose, never the keyframe JSON.
+        }
+        if (content.empty() && r.contains("response") &&
+            r["response"].is_string())                     // /api/generate
+            content = r["response"].get<std::string>();
+    } catch (const std::exception& e) {
+        err = std::string("response not JSON: ") + e.what();
+        std::cout << "[AutoRig] anim raw response (head): "
+                  << resp.substr(0, 600) << std::endl;
+        return false;
+    }
+    if (content.empty()) {
+        err = "empty model content (model returned no text — see Output Log)";
+        std::cout << "[AutoRig] anim raw response (head): "
+                  << resp.substr(0, 600) << std::endl;
+        return false;
+    }
+
+    // Sanitize: strip inline <think>...</think> reasoning and ``` fences that
+    // small models sometimes emit around the JSON.
+    for (;;) {
+        const auto a = content.find("<think>");
+        if (a == std::string::npos) break;
+        const auto b = content.find("</think>", a);
+        if (b == std::string::npos) { content.erase(a); break; }
+        content.erase(a, (b + 8) - a);
+    }
+    {
+        const auto f = content.find("```");
+        if (f != std::string::npos) {
+            // Drop the opening fence (and an optional "json" tag) + closing fence.
+            auto nl = content.find('\n', f);
+            content.erase(f, (nl == std::string::npos ? content.size()
+                                                      : nl + 1) - f);
+            const auto g = content.rfind("```");
+            if (g != std::string::npos) content.erase(g);
+        }
+    }
+
+    // The content should itself be the animation JSON.  Extract the outermost
+    // {...}, then repair the slips small models make in "JSON" output:
+    //   * integer/decimal FRACTIONS (e.g. 1/24, 0.5/2) → decimal value
+    //   * // line and /* */ block comments
+    //   * trailing commas before } or ]
+    std::string js = content;
+    {
+        const auto a = content.find('{');
+        const auto b = content.rfind('}');
+        if (a != std::string::npos && b != std::string::npos && b > a)
+            js = content.substr(a, b - a + 1);
+    }
+    try {
+        js = std::regex_replace(js, std::regex(R"(/\*[\s\S]*?\*/)"), "");
+        js = std::regex_replace(js, std::regex(R"(//[^\n\r]*)"), "");
+        // Quote bare / numeric object keys: {key: ...} or {0.5: ...} → "key".
+        js = std::regex_replace(js,
+            std::regex(R"(([{,]\s*)([A-Za-z_$][\w$]*|\d+(?:\.\d+)?)(\s*:))"),
+            R"($1"$2"$3)");
+        // a/b → decimal (iterate so chained tokens are all handled).
+        const std::regex frac(R"((\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?))");
+        std::smatch m;
+        for (int guard = 0; guard < 64 && std::regex_search(js, m, frac); ++guard) {
+            const double a = std::stod(m[1].str()), b = std::stod(m[2].str());
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "%.5g", (b != 0.0) ? a / b : a);
+            js = m.prefix().str() + buf + m.suffix().str();
+        }
+        js = std::regex_replace(js, std::regex(R"(,(\s*[}\]]))"), "$1");
+    } catch (...) { /* regex is best-effort; fall through to parse */ }
+
+    // Salvage TRUNCATED output (model hit the token cap mid-array): trim to the
+    // last complete '}'/']' and append the brackets still open at that point, so
+    // the completed keyframes survive and the cut-off tail is dropped.
+    auto salvage = [](const std::string& s) -> std::string {
+        size_t lastClose = std::string::npos;
+        bool instr = false, esc = false;
+        for (size_t i = 0; i < s.size(); ++i) {
+            char c = s[i];
+            if (instr) { if (esc) esc = false; else if (c == '\\') esc = true;
+                         else if (c == '"') instr = false; continue; }
+            if (c == '"') instr = true;
+            else if (c == '}' || c == ']') lastClose = i;
+        }
+        if (lastClose == std::string::npos) return s;
+        std::vector<char> st; instr = false; esc = false;
+        for (size_t i = 0; i <= lastClose; ++i) {
+            char c = s[i];
+            if (instr) { if (esc) esc = false; else if (c == '\\') esc = true;
+                         else if (c == '"') instr = false; continue; }
+            if (c == '"') instr = true;
+            else if (c == '{' || c == '[') st.push_back(c);
+            else if (c == '}' || c == ']') { if (!st.empty()) st.pop_back(); }
+        }
+        std::string out = s.substr(0, lastClose + 1);
+        for (auto it = st.rbegin(); it != st.rend(); ++it)
+            out += (*it == '{') ? '}' : ']';
+        return out;
+    };
+
+    json anim;
+    bool parsed = false;
+    try { anim = json::parse(js); parsed = true; } catch (...) {}
+    if (!parsed) {
+        try { anim = json::parse(salvage(js)); parsed = true;
+              std::cout << "[AutoRig] anim: salvaged truncated JSON" << std::endl;
+        } catch (...) {}
+    }
+    if (!parsed) {
+        err = "keyframe JSON parse failed (even after salvage)";
+        std::cout << "[AutoRig] anim content (head): "
+                  << content.substr(0, 700) << std::endl;
+        return false;
+    }
+
+    // ---- translate into AnimClip ----
+    // Every read below is type-guarded, and the whole block is wrapped so a
+    // malformed/truncated field can NEVER throw out of the worker thread (an
+    // uncaught exception there crashes the app when the future is joined).
+    try {
+        // Safe scalar getter — returns def unless the node is a real number.
+        auto jnum = [](const json& j, float def) -> float {
+            return j.is_number() ? j.get<float>() : def;
+        };
+        auto eulerDegToQuat = [](float xd, float yd, float zd) -> glm::quat {
+            return glm::quat(glm::vec3(glm::radians(xd), glm::radians(yd),
+                                       glm::radians(zd)));
+        };
+
+        out = AnimClip{};
+        out.name = (anim.contains("name") && anim["name"].is_string())
+                       ? anim["name"].get<std::string>() : prompt;
+        out.fps  = anim.contains("fps") ? jnum(anim["fps"], (float)fps)
+                                        : (float)fps;
+        if (out.fps <= 0.0f) out.fps = (float)fps;
+
+        std::unordered_map<int, std::vector<AnimRotKey>> tracks;
+        float maxTime = 0.0f;
+        if (anim.contains("keyframes") && anim["keyframes"].is_array()) {
+            for (const auto& kf : anim["keyframes"]) {
+                if (!kf.is_object()) continue;
+                const float t = kf.contains("time") ? jnum(kf["time"], 0.0f)
+                                                    : 0.0f;
+                maxTime = std::max(maxTime, t);
+                if (!kf.contains("rotations") || !kf["rotations"].is_object())
+                    continue;
+                for (auto it = kf["rotations"].begin();
+                     it != kf["rotations"].end(); ++it) {
+                    auto found = nameToIdx.find(it.key());
+                    if (found == nameToIdx.end()) continue;   // unknown joint
+                    const auto& arr = it.value();
+                    if (!arr.is_array() || arr.size() < 3) continue;
+                    if (!arr[0].is_number() || !arr[1].is_number() ||
+                        !arr[2].is_number()) continue;
+                    tracks[found->second].push_back(
+                        {t, eulerDegToQuat(arr[0].get<float>(),
+                                           arr[1].get<float>(),
+                                           arr[2].get<float>())});
+                }
+            }
+        }
+
+        // Optional root translation.
+        if (anim.contains("root_translation") &&
+            anim["root_translation"].is_array()) {
+            for (const auto& rk : anim["root_translation"]) {
+                if (!rk.is_object()) continue;
+                const float t = rk.contains("time") ? jnum(rk["time"], 0.0f)
+                                                    : 0.0f;
+                maxTime = std::max(maxTime, t);
+                if (rk.contains("offset") && rk["offset"].is_array() &&
+                    rk["offset"].size() >= 3 &&
+                    rk["offset"][0].is_number() &&
+                    rk["offset"][1].is_number() &&
+                    rk["offset"][2].is_number()) {
+                    out.root_pos.push_back({t, glm::vec3(
+                        rk["offset"][0].get<float>(),
+                        rk["offset"][1].get<float>(),
+                        rk["offset"][2].get<float>())});
+                }
+            }
+        }
+
+        // Duration must cover every keyframe — small models often report a
+        // bogus value (e.g. the frame time), so clamp up to maxTime.
+        const float decl = anim.contains("duration")
+                               ? jnum(anim["duration"], 0.0f) : 0.0f;
+        out.duration = std::max(decl, maxTime);
+        if (out.duration <= 0.0f) out.duration = std::max(maxTime, 1.0f);
+
+        // Sort each joint's keys by time and emit tracks.
+        for (auto& kv : tracks) {
+            std::sort(kv.second.begin(), kv.second.end(),
+                      [](const AnimRotKey& a, const AnimRotKey& b) {
+                          return a.time < b.time; });
+            AnimJointTrack tr;
+            tr.joint = kv.first;
+            tr.rot   = std::move(kv.second);
+            out.tracks.push_back(std::move(tr));
+        }
+        std::sort(out.tracks.begin(), out.tracks.end(),
+                  [](const AnimJointTrack& a, const AnimJointTrack& b) {
+                      return a.joint < b.joint; });
+        std::sort(out.root_pos.begin(), out.root_pos.end(),
+                  [](const AnimVecKey& a, const AnimVecKey& b) {
+                      return a.time < b.time; });
+    } catch (const std::exception& e) {
+        err = std::string("keyframe translation failed: ") + e.what();
+        return false;
+    }
+
+    if (out.tracks.empty() && out.root_pos.empty()) {
+        err = "model returned no usable keyframes";
+        return false;
+    }
+    std::cout << "[AutoRig] anim parsed: '" << out.name << "' "
+              << out.tracks.size() << " tracks, " << out.keyCount()
+              << " keys, " << out.duration << "s" << std::endl;
+    return true;
+}
+
+// Public entry: retry generation a few times.  A 2B model emits invalid JSON
+// unpredictably (the schema grammar isn't reliably enforced), so each attempt
+// is a fresh roll with a different seed; the first that parses cleanly wins.
+bool generateAnimClip(const std::string& prompt,
+                      const std::vector<std::string>& jointNames,
+                      int seconds, int fps, AnimClip& out, std::string& err) {
+    constexpr int kAttempts = 3;
+    std::string lastErr;
+    for (int a = 0; a < kAttempts; ++a) {
+        if (generateAnimClipOnce(prompt, jointNames, seconds, fps, a, out, err))
+            return true;
+        lastErr = err;
+        std::cout << "[AutoRig] anim attempt " << (a + 1) << "/" << kAttempts
+                  << " failed: " << err << (a + 1 < kAttempts ? "; retrying"
+                                                              : "") << std::endl;
+    }
+    err = "after " + std::to_string(kAttempts) + " attempts: " + lastErr;
+    return false;
+}
+
+// ---- binary "<character>.anim" serialization ----------------------------
+// Layout (little-endian native): magic "RWAN", u32 version=1,
+//   u32 nameLen, name bytes, f32 fps, f32 duration,
+//   u32 trackCount { i32 joint, u32 keyN { f32 t, f32 qx,qy,qz,qw } },
+//   u32 rootN { f32 t, f32 x,y,z }.
+bool saveAnimClip(const AnimClip& clip, const std::string& path) {
+    if (clip.empty()) return false;
+    std::ofstream f(path, std::ios::binary);
+    if (!f) { std::cerr << "[AutoRig] saveAnimClip: cannot open " << path
+                        << std::endl; return false; }
+    auto wu32 = [&](uint32_t v){ f.write(reinterpret_cast<const char*>(&v), 4); };
+    auto wi32 = [&](int32_t  v){ f.write(reinterpret_cast<const char*>(&v), 4); };
+    auto wf32 = [&](float    v){ f.write(reinterpret_cast<const char*>(&v), 4); };
+
+    f.write("RWAN", 4);
+    wu32(1);
+    wu32(static_cast<uint32_t>(clip.name.size()));
+    if (!clip.name.empty())
+        f.write(clip.name.data(), (std::streamsize)clip.name.size());
+    wf32(clip.fps);
+    wf32(clip.duration);
+    wu32(static_cast<uint32_t>(clip.tracks.size()));
+    for (const auto& tr : clip.tracks) {
+        wi32(tr.joint);
+        wu32(static_cast<uint32_t>(tr.rot.size()));
+        for (const auto& k : tr.rot) {
+            wf32(k.time);
+            wf32(k.rot.x); wf32(k.rot.y); wf32(k.rot.z); wf32(k.rot.w);
+        }
+    }
+    wu32(static_cast<uint32_t>(clip.root_pos.size()));
+    for (const auto& k : clip.root_pos) {
+        wf32(k.time); wf32(k.v.x); wf32(k.v.y); wf32(k.v.z);
+    }
+    std::cout << "[AutoRig] saved animation -> " << path << std::endl;
+    return true;
+}
+
+bool loadAnimClip(AnimClip& out, const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    auto ru32 = [&](uint32_t& v){ f.read(reinterpret_cast<char*>(&v), 4); };
+    auto ri32 = [&](int32_t&  v){ f.read(reinterpret_cast<char*>(&v), 4); };
+    auto rf32 = [&](float&    v){ f.read(reinterpret_cast<char*>(&v), 4); };
+
+    char magic[4] = {0};
+    f.read(magic, 4);
+    if (std::strncmp(magic, "RWAN", 4) != 0) return false;
+    uint32_t ver = 0; ru32(ver);
+    AnimClip clip;
+    uint32_t nlen = 0; ru32(nlen);
+    if (nlen > 0 && nlen < (1u << 20)) {
+        clip.name.resize(nlen);
+        f.read(clip.name.data(), nlen);
+    }
+    rf32(clip.fps); rf32(clip.duration);
+    uint32_t ntr = 0; ru32(ntr);
+    for (uint32_t i = 0; i < ntr && f; ++i) {
+        AnimJointTrack tr;
+        ri32(tr.joint);
+        uint32_t nk = 0; ru32(nk);
+        tr.rot.reserve(nk);
+        for (uint32_t k = 0; k < nk && f; ++k) {
+            AnimRotKey key;
+            rf32(key.time);
+            rf32(key.rot.x); rf32(key.rot.y); rf32(key.rot.z); rf32(key.rot.w);
+            tr.rot.push_back(key);
+        }
+        clip.tracks.push_back(std::move(tr));
+    }
+    uint32_t nrp = 0; ru32(nrp);
+    for (uint32_t i = 0; i < nrp && f; ++i) {
+        AnimVecKey key;
+        rf32(key.time); rf32(key.v.x); rf32(key.v.y); rf32(key.v.z);
+        clip.root_pos.push_back(key);
+    }
+    if (!f && !f.eof()) return false;
+    out = std::move(clip);
+    std::cout << "[AutoRig] loaded animation <- " << path
+              << " (v" << ver << ")" << std::endl;
+    return true;
+}
+
+// One-shot: generate with the standard humanoid joints, save to a .anim file.
+bool generateAnimationFile(const std::string& prompt, int seconds, int fps,
+                           const std::string& outPath, std::string& err) {
+    AnimClip clip;
+    if (!generateAnimClip(prompt, getStandardJointNames(), seconds, fps, clip, err))
+        return false;
+    if (clip.name.empty()) clip.name = prompt;
+    if (!saveAnimClip(clip, outPath)) { err = "could not write " + outPath; return false; }
+    return true;
+}
+
+bool AutoRigPlugin::saveAnimation(const std::string& path) const {
+    return saveAnimClip(anim_clip_, path);
+}
+
+bool AutoRigPlugin::loadAnimation(const std::string& path) {
+    AnimClip clip;
+    if (!loadAnimClip(clip, path)) {
+        anim_status_ = "Load failed: " +
+            std::filesystem::path(path).filename().string();
+        return false;
+    }
+    anim_clip_      = std::move(clip);
+    anim_generated_ = true;
+    anim_status_ = "Loaded '" + anim_clip_.name + "' (" +
+        std::to_string(anim_clip_.tracks.size()) + " tracks, " +
+        std::to_string(anim_clip_.keyCount()) + " keys)";
+    return true;
+}
+
+// ---- Pass-4 UI: text prompt -> Qwen -> keyframes -> save -----------------
+void AutoRigPlugin::drawAnimateStep() {
+    const ImVec4 kDone(0.40f, 0.90f, 0.45f, 1.0f);
+    const ImVec4 kWarn(0.95f, 0.70f, 0.25f, 1.0f);
+
+    if (!ImGui::CollapsingHeader("4. Animate  (text -> Qwen keyframes)"))
+        return;
+
+    const bool have_rig = joints_generated_ && !skeleton_.empty();
+    if (!have_rig) {
+        ImGui::TextColored(kWarn,
+            "Generate or load joints first (the rig defines the joints to animate).");
+        return;
+    }
+
+    ImGui::TextDisabled("Local model: %s   (needs `ollama serve`)",
+                        ollamaModel().c_str());
+
+    ImGui::SetNextItemWidth(360.0f);
+    ImGui::InputText("Motion prompt", anim_prompt_buf_, sizeof(anim_prompt_buf_));
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("e.g. \"walk forward\", \"wave right hand\", "
+                          "\"jump\", \"idle breathing\", \"T-pose to bow\"");
+
+    ImGui::SetNextItemWidth(150.0f);
+    ImGui::SliderInt("Seconds", &anim_seconds_, 1, 10);
+    ImGui::SameLine(0, 24);
+    ImGui::SetNextItemWidth(150.0f);
+    ImGui::SliderInt("FPS", &anim_fps_, 12, 30);
+
+    const bool running = anim_running_.load();
+    {
+        if (running) ImGui::BeginDisabled();
+        if (ImGui::Button("Generate Animation", ImVec2(180, 0))) {
+            std::vector<std::string> names;
+            names.reserve(skeleton_.joints.size());
+            for (const auto& j : skeleton_.joints) names.push_back(j.name);
+            const std::string prompt = anim_prompt_buf_;
+            const int secs = anim_seconds_, fps = anim_fps_;
+            anim_clip_pending_ = AnimClip{};
+            anim_err_.clear();
+            anim_status_ = "Generating with " + ollamaModel() +
+                           " ... (CPU inference can take a while)";
+            anim_running_ = true;
+            anim_future_ = std::async(std::launch::async,
+                [this, prompt, names, secs, fps]() {
+                    return generateAnimationBlocking(
+                        prompt, names, secs, fps, anim_clip_pending_, anim_err_);
+                });
+        }
+        if (running) ImGui::EndDisabled();
+    }
+
+    ImGui::SameLine();
+    {
+        const bool dis = running || !anim_generated_ || anim_clip_.empty();
+        if (dis) ImGui::BeginDisabled();
+        if (ImGui::Button("Save .anim", ImVec2(110, 0))) {
+            if (saveAnimation(animPath()))
+                anim_status_ = "Saved " +
+                    std::filesystem::path(animPath()).filename().string();
+            else
+                anim_status_ = "Save failed.";
+        }
+        if (dis) ImGui::EndDisabled();
+        if (!dis && ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", animPath().c_str());
+    }
+    ImGui::SameLine();
+    {
+        const bool dis = running || !std::filesystem::exists(animPath());
+        if (dis) ImGui::BeginDisabled();
+        if (ImGui::Button("Load .anim", ImVec2(110, 0)))
+            loadAnimation(animPath());
+        if (dis) ImGui::EndDisabled();
+        if (!dis && ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", animPath().c_str());
+    }
+
+    if (running) {
+        // Indeterminate animated bar while the worker runs.
+        const float t = (float)ImGui::GetTime();
+        ImGui::ProgressBar(-1.0f * t, ImVec2(-1, 0), "generating...");
+    }
+    if (!anim_status_.empty())
+        ImGui::TextColored(running ? kWarn : kDone, "%s", anim_status_.c_str());
+
+    // Clip summary.
+    if (anim_generated_ && !anim_clip_.empty()) {
+        ImGui::Spacing();
+        ImGui::Text("Clip \"%s\": %.2fs @ %.0f fps, %d joint track(s), %d key(s)%s",
+            anim_clip_.name.c_str(), anim_clip_.duration, anim_clip_.fps,
+            (int)anim_clip_.tracks.size(), (int)anim_clip_.keyCount(),
+            anim_clip_.root_pos.empty() ? "" : ", +root motion");
+    }
+}
+
+// ============================================================================
 //  ImGui panel
 // ============================================================================
 
@@ -4604,6 +5496,32 @@ void AutoRigPlugin::drawImGui() {
         }
     }
 
+    // Text-to-animation worker: poll the future once it's done, then apply the
+    // result + auto-save on the main thread (no UI/GPU touches off-thread).
+    if (anim_running_.load() && anim_future_.valid() &&
+        anim_future_.wait_for(std::chrono::seconds(0)) ==
+            std::future_status::ready) {
+        bool ok = false;
+        try { ok = anim_future_.get(); }
+        catch (const std::exception& e) { anim_err_ = e.what(); ok = false; }
+        anim_running_ = false;
+        if (ok) {
+            anim_clip_      = std::move(anim_clip_pending_);
+            anim_generated_ = true;
+            const bool saved = saveAnimation(animPath());
+            char buf[160];
+            std::snprintf(buf, sizeof(buf),
+                "Generated '%s': %d track(s), %d key(s), %.2fs",
+                anim_clip_.name.c_str(), (int)anim_clip_.tracks.size(),
+                (int)anim_clip_.keyCount(), anim_clip_.duration);
+            anim_status_ = std::string(buf) + (saved
+                ? "  -> " + std::filesystem::path(animPath()).filename().string()
+                : std::string("  (save failed)"));
+        } else {
+            anim_status_ = "Generation failed: " + anim_err_;
+        }
+    }
+
     // The workflow / editor windows are independent: keep drawing them even
     // when the main launcher window itself is hidden.
     if (!show_window_) { drawAutoRigWorkflowWindow(); drawRigEditorWindow(); return; }
@@ -5298,6 +6216,10 @@ void AutoRigPlugin::drawAutoRigWorkflowWindow() {
 
                 ImGui::Spacing();
             }
+
+            // ---- Pass 4: text-to-animation (Qwen) ----
+            ImGui::Separator();
+            drawAnimateStep();
 
             // (Model Info is shown in the main Auto Rig launcher window.)
             ImGui::Separator();

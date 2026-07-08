@@ -7,6 +7,8 @@
 #include <vector>
 #include <memory>
 #include <filesystem>
+#include <future>
+#include <atomic>
 #include <glm/glm.hpp>
 #include "imgui.h"
 
@@ -86,6 +88,7 @@ public:
     // Per-vertex base-skin classification (1 = base skin), for the Debug Display.
     const std::vector<uint8_t>& getBaseSkinVerts() const { return base_skin_vert_; }
     const TriangleMesh&         getMesh()          const { return mesh_; }
+    const AnimClip&             getAnimClip()      const { return anim_clip_; }
 
 private:
     void reportProgress(int step, int total, const std::string& msg);
@@ -341,7 +344,52 @@ private:
     std::string training_device_ = "?";  // e.g. "cuda" or "cpu"
     std::string training_device_detail_;  // "NVIDIA RTX 3090 (cc 8.6, cuda 12.1)"
 
+    // ---- Pass 4: text-to-animation (Qwen via local Ollama) ----
+    // A short text prompt + the rig's joint list is sent to the local Ollama
+    // daemon (OLLAMA_MODEL, default qwen3.5:2b); the model returns keyframes of
+    // local joint rotations, which we parse into an AnimClip and serialize to a
+    // binary "<character>.anim" sidecar.  Generation runs on a worker thread so
+    // the UI stays responsive while the model thinks.
+    AnimClip          anim_clip_;                       // last generated clip
+    AnimClip          anim_clip_pending_;               // worker fills this
+    char              anim_prompt_buf_[256] = "walk forward";
+    int               anim_seconds_ = 3;                // desired duration hint
+    int               anim_fps_     = 24;               // desired fps hint
+    bool              anim_generated_ = false;
+    std::string       anim_status_;                     // UI status line
+    std::string       anim_err_;                        // worker error (read post-join)
+    std::atomic<bool> anim_running_{false};             // worker in flight
+    std::future<bool> anim_future_;
+
+    void        drawAnimateStep();                      // Pass-4 UI block
+    std::string animPath() const;                       // "<character>.anim"
+    // Blocking (worker-thread) generation: builds prompts, calls Ollama, parses
+    // the response into `out`.  `jointNames` is a snapshot of the rig so the
+    // worker never touches skeleton_ concurrently.  Returns false + sets `err`.
+    bool generateAnimationBlocking(const std::string& prompt,
+                                   const std::vector<std::string>& jointNames,
+                                   int seconds, int fps,
+                                   AnimClip& out, std::string& err) const;
+    bool saveAnimation(const std::string& path) const;
+    bool loadAnimation(const std::string& path);
+
 };
+
+// ---------------------------------------------------------------------------
+//  Free helpers for text-to-animation, usable WITHOUT a plugin instance (e.g.
+//  the Content Browser's "Generate Animation..." and the .anim preview).
+// ---------------------------------------------------------------------------
+// Generate a clip from a text prompt via local Qwen/Ollama, targeting the
+// given joint names (use getStandardJointNames() for a standard rig).
+bool generateAnimClip(const std::string& prompt,
+                      const std::vector<std::string>& jointNames,
+                      int seconds, int fps, AnimClip& out, std::string& err);
+// One-shot: generate with the standard humanoid joints and write a .anim file.
+bool generateAnimationFile(const std::string& prompt, int seconds, int fps,
+                           const std::string& outPath, std::string& err);
+// Binary "<name>.anim" (magic "RWAN") read/write.
+bool saveAnimClip(const AnimClip& clip, const std::string& path);
+bool loadAnimClip(AnimClip& out, const std::string& path);
 
 }  // namespace auto_rig
 }  // namespace plugins
