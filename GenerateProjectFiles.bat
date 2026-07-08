@@ -150,7 +150,9 @@ if "!CMAKE_VULKAN!"=="" (
     set "CMAKE_LIBTORCH=-DCMAKE_PREFIX_PATH=!LIBTORCH_DIR!"
 ) else (
     rem Extract the Vulkan path from -DCMAKE_PREFIX_PATH=<path> and combine
-    set "_vk_path=!CMAKE_VULKAN:-DCMAKE_PREFIX_PATH=!"
+    rem (substring from char 20: batch substitution can't match the '=', which
+    rem  used to leave a leading '=' and produce -DCMAKE_PREFIX_PATH==<path>)
+    set "_vk_path=!CMAKE_VULKAN:~20!"
     set "CMAKE_LIBTORCH=-DCMAKE_PREFIX_PATH=!_vk_path!;!LIBTORCH_DIR!"
     set "CMAKE_VULKAN="
 )
@@ -175,10 +177,13 @@ if not "!CMAKE_LIBTORCH!"=="" (
 )
 
 echo.
-echo [INFO]  cmake -G "%VS_GENERATOR%" -A x64 -B %BUILD_DIR% !CMAKE_ALL_PREFIX!
+rem Release listed first => Visual Studio picks it as the default configuration.
+set "CMAKE_CONFIGS=-DCMAKE_CONFIGURATION_TYPES=Release;Debug"
+
+echo [INFO]  cmake -G "%VS_GENERATOR%" -A x64 -B %BUILD_DIR% "!CMAKE_CONFIGS!" !CMAKE_ALL_PREFIX!
 echo.
 
-cmake -G "%VS_GENERATOR%" -A x64 -B "%BUILD_DIR%" !CMAKE_ALL_PREFIX!
+cmake -G "%VS_GENERATOR%" -A x64 -B "%BUILD_DIR%" "!CMAKE_CONFIGS!" !CMAKE_ALL_PREFIX!
 
 if errorlevel 1 (
     echo.
