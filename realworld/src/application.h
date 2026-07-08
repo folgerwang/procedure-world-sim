@@ -436,6 +436,11 @@ private:
     // restore a baked .rwcmap — drawScene's reset block tears down the
     // previous scene's (now stale) collision world the next frame.
     bool collision_world_reset_pending_ = false;
+    // Set by loadSceneFromFile when the scene references a .rwcmap that
+    // failed to load.  The editor play-mode spawn gate consults this so
+    // the player doesn't wait forever for a collision world that will
+    // never arrive (spawn falls back to the real-floor probe grounding).
+    bool collision_map_load_failed_ = false;
 
     // ── Scene player adoption (editor play mode) ──────────────────────
     // The editor scene's player is an authored ".rwplayer" node whose
@@ -458,6 +463,11 @@ private:
     // serializable description; imported_objects_ holds the live drawables,
     // index-matched 1:1 with scene_.objects.
     engine::scene::Scene scene_;
+    // Absolute path of the scene file currently loaded (set by
+    // loadSceneFromFile / saveSceneToFile, cleared by Create Scene).  Used to
+    // make Content Browser double-click an "open if not already open" — a
+    // second double-click on the loaded scene is a no-op instead of a reload.
+    std::string loaded_scene_path_;
     std::vector<std::shared_ptr<ego::DrawableObject>> imported_objects_;
     // ECS: one transform/hierarchy entity per imported object, kept in sync
     // with scene_ by rebuildImportedEntities(). The ECS transform system is

@@ -6,6 +6,7 @@
 #include <map>
 #include <limits>
 #include <chrono>
+#include <thread>
 #include <cmath>
 #include <cstring>
 #include <future>
@@ -3324,6 +3325,42 @@ void RealWorldApplication::applySceneHierarchyTransforms() {
 void RealWorldApplication::updateEcsAnimation(float clock) {
     auto& reg = ecs_world_.registry();
 
+    // Controller-driven rigs are OFF-LIMITS to the ECS animation driver.
+    // Editor play mode ADOPTS the scene's authored player from
+    // imported_objects_ (see "Scene player adoption") and PlayerController
+    // then owns the rig: it writes the root placement + procedural pose every
+    // frame. If the ECS keeps applying the imported clip pose on top, the two
+    // writers fight — the player spawns away from its authored position and
+    // the animation is garbage. The same applies to any OTHER placement that
+    // SHARES the adopted player's DrawableData (loader dedup cache): its
+    // applyPose would stomp the same shared nodes. Both are skipped, and any
+    // previously attached player is detached (play can start mid-session).
+    const engine::game_object::DrawableData* player_data =
+        (player_object_ && player_object_->isReady())
+            ? &player_object_->getDrawableData() : nullptr;
+    auto ecs_may_animate =
+        [player_data](const std::shared_ptr<ego::DrawableObject>& obj) {
+            if (obj->isControllerDriven()) return false;
+            return !(player_data && &obj->getDrawableData() == player_data);
+        };
+
+    // (0) Disengage from rigs the controller took over since last frame.
+    //     Dropping external_animation restores the drawable's own update
+    //     path (the controller sets use_node_transform_only, which already
+    //     skips imported channels). On play-mode exit (controller released)
+    //     step (1) simply re-attaches and editor preview resumes.
+    for (size_t i = 0; i < imported_entities_.size() &&
+                       i < imported_objects_.size(); ++i) {
+        eecs::Entity e = imported_entities_[i];
+        auto& obj = imported_objects_[i];
+        if (e == eecs::kNull || !reg.valid(e) || !obj || !obj->isReady()) continue;
+        if (!reg.all_of<eecs::AnimationPlayer>(e)) continue;
+        if (ecs_may_animate(obj)) continue;
+        reg.remove<eecs::AnimationPlayer>(e);
+        if (reg.all_of<eecs::AnimPose>(e)) reg.remove<eecs::AnimPose>(e);
+        obj->setExternalAnimation(false);
+    }
+
     // (1) Lazily attach an AnimationPlayer to each ready, non-procedural
     //     imported drawable that actually has imported animation clips.
     for (size_t i = 0; i < imported_entities_.size() &&
@@ -3332,12 +3369,13 @@ void RealWorldApplication::updateEcsAnimation(float clock) {
         auto& obj = imported_objects_[i];
         if (e == eecs::kNull || !reg.valid(e) || !obj || !obj->isReady()) continue;
         if (reg.all_of<eecs::AnimationPlayer>(e)) continue;
+        if (!ecs_may_animate(obj)) continue;   // controller owns this rig
         // NOTE: we intentionally do NOT skip use_node_transform_only drawables.
         // Placed skinned characters (e.g. CesiumMan) set that flag for instance/
         // placement handling, which also makes update() skip the imported
         // channels — so without an external driver they sit frozen. The ECS is
-        // that driver. The actual procedurally-posed rigs (player / NPC) live in
-        // their own members, never in imported_objects_, so they are unaffected.
+        // that driver. (The adopted play-mode player IS in imported_objects_,
+        // which is why ecs_may_animate gates both this loop and the apply.)
         auto clips = eecs::AnimationBridge::extractClips(*obj);
         if (clips.empty()) continue;
         auto& cached = ecs_anim_clips_[obj.get()];
@@ -3363,6 +3401,7 @@ void RealWorldApplication::updateEcsAnimation(float clock) {
         auto& obj = imported_objects_[i];
         if (e == eecs::kNull || !reg.valid(e) || !obj || !obj->isReady()) continue;
         if (!reg.all_of<eecs::AnimPose>(e)) continue;
+        if (!ecs_may_animate(obj)) continue;   // never stomp a controller rig
         eecs::AnimationBridge::applyPose(*obj, reg.get<eecs::AnimPose>(e));
     }
 }
@@ -3926,6 +3965,13 @@ bool RealWorldApplication::saveSceneToFile(const std::string& path) {
     const bool ok = engine::scene::saveSceneBinary(path, scene_);
     std::cout << "[scene] save '" << path << "' -> "
               << (ok ? "OK" : "FAILED") << std::endl;
+    if (ok) {
+        // The saved file is now the live scene on disk — track it so a
+        // Content Browser double-click on it is recognised as already open.
+        std::error_code ec;
+        std::string canon = std::filesystem::absolute(path, ec).string();
+        loaded_scene_path_ = (ec || canon.empty()) ? path : canon;
+    }
     return ok;
 }
 
@@ -4015,6 +4061,32 @@ bool RealWorldApplication::loadSceneFromFile(const std::string& path) {
             break;
         }
     }
+    // Convention fallback: the bake writes to
+    // content/maps/collision/<scene-name>.rwcmap, but the scene only
+    // remembers that path if the user hits Save Scene AFTER the bake.  A
+    // baked map sitting at the conventional path for THIS scene shouldn't
+    // be ignored just because the reference wasn't persisted — pick it up
+    // (the migration block below then materialises the Collision Map row,
+    // and the next Save Scene persists it properly).
+    if (cmap.empty() && !scene_.name.empty()) {
+        std::string stem = scene_.name;
+        for (auto& c : stem) {
+            if (c == '/' || c == '\\' || c == ':' || c == '*' ||
+                c == '?' || c == '"' || c == '<' || c == '>' || c == '|')
+                c = '_';
+        }
+        const std::string conventional =
+            "content/maps/collision/" + stem + ".rwcmap";
+        std::error_code ec;
+        if (std::filesystem::exists(conventional, ec) && !ec) {
+            std::cout << "[scene] no collision reference in the scene file, "
+                         "but a baked map exists at '" << conventional
+                      << "' — loading it (Save Scene to persist the "
+                         "reference)" << std::endl;
+            cmap = conventional;
+        }
+    }
+    collision_map_load_failed_ = false;
     if (!cmap.empty()) {
         if (loadCollisionMapFromFile(cmap)) {
             scene_.collision_map_path = cmap;       // keep trailer in sync
@@ -4052,7 +4124,18 @@ bool RealWorldApplication::loadSceneFromFile(const std::string& path) {
             std::cout << "[scene] baked collision map '" << cmap
                       << "' failed to load — bake a new one via Tools > "
                          "Bake Collision Map (Player Walk)" << std::endl;
+            // Remember the failure so the play-mode spawn gate doesn't wait
+            // forever for a collision world that will never arrive.
+            collision_map_load_failed_ = true;
         }
+    }
+
+    // Remember which scene file is now live (canonical form) so "open"
+    // requests for the same file can no-op instead of reloading.
+    {
+        std::error_code ec;
+        std::string canon = std::filesystem::absolute(path, ec).string();
+        loaded_scene_path_ = (ec || canon.empty()) ? path : canon;
     }
     return true;
 }
@@ -4103,52 +4186,41 @@ bool RealWorldApplication::bakeCollisionMapToFile(const std::string& path) {
     return ok;
 }
 
+// Streaming radii for baked collision maps.  load < unload = hysteresis so
+// a mesh sitting on the boundary doesn't thrash in/out.
+static constexpr float kCollisionStreamLoadRadius   = 150.0f;
+static constexpr float kCollisionStreamUnloadRadius = 200.0f;
+
 bool RealWorldApplication::loadCollisionMapFromFile(const std::string& path) {
-    std::ifstream is(path, std::ios::binary);
-    if (!is) {
-        std::cout << "[collision-bake] cannot open '" << path << "'"
-                  << std::endl;
-        return false;
-    }
-    char magic[8] = {0};
-    uint32_t version = 0, count = 0;
-    if (!is.read(magic, 8) ||
-        std::memcmp(magic, kRwCmapMagic, 8) != 0 ||
-        !is.read(reinterpret_cast<char*>(&version), 4) ||
-        version < 1 || version > kRwCmapVersion ||
-        !is.read(reinterpret_cast<char*>(&count), 4) ||
-        count > (1u << 20)) {
-        std::cout << "[collision-bake] '" << path
-                  << "' is not a valid .rwcmap" << std::endl;
-        return false;
-    }
-    // Stage into a temporary list first so a corrupt file can't leave a
-    // half-replaced world behind.
-    std::vector<std::shared_ptr<engine::helper::CollisionMesh>> loaded;
-    loaded.reserve(count);
-    for (uint32_t i = 0; i < count; ++i) {
-        auto m = std::make_shared<engine::helper::CollisionMesh>();
-        if (!m->deserialize(is)) {
-            std::cout << "[collision-bake] '" << path
-                      << "' corrupt at mesh " << i << "/" << count
-                      << std::endl;
-            return false;
-        }
-        loaded.push_back(std::move(m));
-    }
-    // Swap in: tear down the current world (debug buffers reference the
-    // device) and adopt the loaded meshes.  BVHs build asynchronously;
-    // raycasts brute-force per mesh until each tree is ready.
+    // STREAMED load: once a collision map is baked, the world never needs
+    // rebuilding — and it doesn't need to be fully resident either.
+    // openStreamingSource() indexes the file once (per-mesh AABB + byte
+    // offset, no payloads); the per-frame updateCollisionStreaming() then
+    // keeps exactly the meshes near the camera loaded and releases the
+    // rest through the ECS deferred deleter (GPU-safe).
     device_->waitIdle();
     collision_world_.destroyDebugBuffers(device_);
     collision_world_.clear();
-    for (auto& m : loaded) collision_world_.addMesh(std::move(m));
-    collision_world_.buildBVHsAsync();
+    if (!collision_world_.openStreamingSource(
+            path, kCollisionStreamLoadRadius, kCollisionStreamUnloadRadius)) {
+        return false;   // openStreamingSource already logged why
+    }
+    // Prime the area around the current focus synchronously (no per-call
+    // budget) so the very first spawn has ground under it immediately.
+    glm::vec3 focus(0.0f);
+    if (main_camera_object_) focus = main_camera_object_->getCameraPosition();
+    collision_world_.updateStreaming(
+        focus, device_,
+        [this](std::function<void()> fn) {
+            ecs_world_.deleter().schedule(std::move(fn));
+        },
+        /*max_loads_per_call=*/SIZE_MAX);
     collision_world_built_ = true;
     if (menu_) menu_->setCollisionMeshCount(collision_world_.meshCount());
-    std::cout << "[collision-bake] loaded '" << path << "'  ("
-              << collision_world_.meshCount()
-              << " meshes) — player walk ready" << std::endl;
+    std::cout << "[collision-stream] '" << path << "' active: "
+              << collision_world_.meshCount() << "/"
+              << collision_world_.streamEntryCount()
+              << " meshes resident — player walk ready" << std::endl;
     return true;
 }
 
@@ -4502,8 +4574,29 @@ void RealWorldApplication::createTextureSampler() {
 
 void RealWorldApplication::mainLoop() {
     while (!glfwWindowShouldClose(window_) && !s_exit_game) {
+        const auto frame_t0 = std::chrono::steady_clock::now();
         glfwPollEvents();
         drawFrame();
+
+        // ── Frame cap (GPU-sharing relief) ────────────────────────────
+        // The swapchain prefers MAILBOX, which presents UNCAPPED — the
+        // editor happily eats every GPU cycle it can get.  When heavy ML
+        // shares the card (the in-app Ollama classifier, or an external
+        // fine-tune / image-gen job), that contention starves
+        // presentation and the screen flashes black.  Hold the frame
+        // time to the menu's FPS cap (default 60, "Off" available), and
+        // clamp harder to 30 while the material classifier is running.
+        // A CPU-side sleep also frees whole GPU time slices for the ML.
+        int cap = menu_ ? menu_->fpsCap() : 0;
+        if (menu_ && menu_->classifierBusy())
+            cap = (cap > 0) ? std::min(cap, 30) : 30;
+        if (cap > 0) {
+            const auto target =
+                frame_t0 + std::chrono::duration_cast<
+                               std::chrono::steady_clock::duration>(
+                               std::chrono::duration<double>(1.0 / cap));
+            std::this_thread::sleep_until(target);
+        }
     }
 
     device_->waitIdle();
@@ -7346,6 +7439,26 @@ void RealWorldApplication::drawFrame() {
     // recomputes dirty transforms, runs streaming, collects garbage.
     tickEcs();
 
+    // Collision streaming: with a baked .rwcmap source open, keep only the
+    // meshes near the camera resident.  Budgeted (few loads per frame) so
+    // walking across the map streams ground in without hitches; unloads
+    // release through the ECS deferred deleter so in-flight GPU debug
+    // draws can't dangle.  The camera is the focus — the follow camera
+    // tracks the player in play mode, and in the editor it's what you're
+    // looking at / placing near.
+    if (collision_world_built_ && collision_world_.streamingActive()) {
+        glm::vec3 cs_focus(0.0f);
+        if (main_camera_object_)
+            cs_focus = main_camera_object_->getCameraPosition();
+        const size_t cs_changed = collision_world_.updateStreaming(
+            cs_focus, device_,
+            [this](std::function<void()> fn) {
+                ecs_world_.deleter().schedule(std::move(fn));
+            });
+        if (cs_changed && menu_)
+            menu_->setCollisionMeshCount(collision_world_.meshCount());
+    }
+
     // ---- "New Game" handler: add the bistro scenes (already created at
     // startup and streaming in the background) into the scene views so
     // they start rendering.  The XML mesh list is available for any
@@ -7531,9 +7644,33 @@ void RealWorldApplication::drawFrame() {
     // grounds her via the collision / real-floor raycast, which needs the
     // collision world ready).  The manual "Reset player position" path
     // (reset_pos_req) still fires anytime.
+    //
+    // EXCEPT: a grid-only editor scene has no collision map at all, so
+    // collision_world_built_ can never latch and the first spawn used to
+    // deadlock forever ("player can't spawn/walk").  In editor play mode,
+    // wait for collision ONLY when the scene actually references a .rwcmap
+    // row — and not when loading that map already failed (don't wait on a
+    // corpse).  Without collision the follow block grounds her via the
+    // real-floor probe / camera-relative fallback.  Game mode keeps the
+    // original gate: its collision world always arrives (auto-built), and
+    // waiting guarantees the first placement lands on the ground.
+    bool wait_for_collision = !collision_world_built_;
+    if (wait_for_collision && menu_ && menu_->isPlayMode()) {
+        bool scene_has_cmap = false;
+        for (const auto& so : scene_.objects) {
+            const std::string& ap = so.asset_path;
+            if (ap.size() > 7 &&
+                ap.compare(ap.size() - 7, 7, ".rwcmap") == 0) {
+                scene_has_cmap = true;
+                break;
+            }
+        }
+        if (!scene_has_cmap || collision_map_load_failed_)
+            wait_for_collision = false;
+    }
     if (player_object_ && player_object_->isReady() &&
         player_controller_ &&
-        ((!player_controller_->isSpawned() && collision_world_built_) ||
+        ((!player_controller_->isSpawned() && !wait_for_collision) ||
          reset_pos_req)) {
         // ── Apply configuration flags on the player ───────────────────
         // object_ is now guaranteed non-null (isReady true), so the
@@ -8812,6 +8949,7 @@ void RealWorldApplication::drawFrame() {
         device_->waitIdle();
         collision_world_.destroyDebugBuffers(device_);
         collision_world_.clear();
+        collision_world_.closeStreamingSource();  // stale map: stop streaming
         collision_world_built_ = false;
         resetCollisionBuild();   // restart the incremental build clean
         if (collision_world_reset_pending_ && !classifier_in_flight) {
@@ -8841,6 +8979,10 @@ void RealWorldApplication::drawFrame() {
             device_->waitIdle();
             collision_world_.destroyDebugBuffers(device_);
             collision_world_.clear();
+            // Re-bake replaces any streamed source; the freshly built
+            // world stays fully resident this session and the NEXT scene
+            // load streams from the new .rwcmap.
+            collision_world_.closeStreamingSource();
             collision_world_built_ = false;
             resetCollisionBuild();
             resetClassifier();
@@ -10803,6 +10945,8 @@ void RealWorldApplication::drawFrame() {
         // (mirrors loadSceneFromFile's teardown).
         if (menu_->consumeCreateSceneRequest()) {
             device_->waitIdle();
+            // Fresh unsaved scene: no backing file until the next Save.
+            loaded_scene_path_.clear();
             // Fresh scene = no BGM objects, so syncBgmObjectsImpl stops the
             // previous scene's music automatically next frame.
             // Drop the placed cluster tail FIRST — the drawables (and
@@ -11250,6 +11394,29 @@ void RealWorldApplication::drawFrame() {
                 // Record in the Recent Scenes MRU and persist.
                 auto recents = readRecentScenesFile();
                 pushRecentScene(recents, chosen);
+                writeRecentScenesFile(recents);
+                menu_->setRecentScenes(recents);
+            }
+        }
+        // Content Browser: a .scene tile was double-clicked — "open if not
+        // already open".  If the file is already the live scene this is a
+        // no-op (unlike Recent Scenes, which always reloads so it can be
+        // used to revert unsaved edits).  On load, updates the MRU like the
+        // other load paths.
+        std::string cb_scene_path;
+        if (menu_->consumeContentSceneOpenRequest(cb_scene_path)) {
+            std::error_code ec;
+            std::string want =
+                std::filesystem::absolute(cb_scene_path, ec).string();
+            if (ec || want.empty()) want = cb_scene_path;
+            if (want == loaded_scene_path_) {
+                std::cout << "[scene] '" << cb_scene_path
+                          << "' is already the loaded scene — skipping"
+                          << std::endl;
+            } else if (loadSceneFromFile(cb_scene_path)) {
+                menu_->setSceneName(scene_.name);
+                auto recents = readRecentScenesFile();
+                pushRecentScene(recents, cb_scene_path);
                 writeRecentScenesFile(recents);
                 menu_->setRecentScenes(recents);
             }
