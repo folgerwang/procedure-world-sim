@@ -39,6 +39,8 @@
 #include "application.h"
 #include "ecs/engine/render_components.h"
 #include "ecs/engine/animation_bridge.h"
+#include "ecs/culling_system.h"
+#include "ecs/material_cache.h"
 
 namespace er = engine::renderer;
 namespace ego = engine::game_object;
@@ -3074,6 +3076,14 @@ void RealWorldApplication::ensureEcsReady() {
                     s->handle = eecs::kInvalidStream;
                 }
             }
+            // Material dedup: drop this entity's interned refs so the
+            // cache's refcounts always mirror LIVE usage.  A unique
+            // material whose last user dies is freed inside release().
+            if (auto* ms = r.try_get<eecs::MaterialSet>(e)) {
+                for (auto id : ms->ids) ecs_material_cache_.release(id);
+                ecs_material_refs_ -= ms->ids.size();
+                ms->ids.clear();
+            }
         });
 
     ecs_ready_ = true;
@@ -3095,6 +3105,8 @@ void RealWorldApplication::tickEcs() {
         if (main_camera_object_) focus = main_camera_object_->getCameraPosition();
         ecs_world_.updateStreaming(focus);
     }
+
+    updateEcsMaterials();           // intern load-time MaterialDescs (dedup)
 
     ecs_world_.collectGarbage();    // destroy PendingDestroy entities
 
@@ -3352,6 +3364,54 @@ void RealWorldApplication::updateEcsAnimation(float clock) {
         if (e == eecs::kNull || !reg.valid(e) || !obj || !obj->isReady()) continue;
         if (!reg.all_of<eecs::AnimPose>(e)) continue;
         eecs::AnimationBridge::applyPose(*obj, reg.get<eecs::AnimPose>(e));
+    }
+}
+
+// ECS material dedup (data level, ECS_DESIGN.md §14 step 1): intern each
+// ready Renderable's load-time MaterialDescs into ecs_material_cache_ and
+// attach the interned ids as a MaterialSet component.  Identical materials
+// (same params + texture identity) collapse to one id with a bumped
+// refcount; the GC cleanup hook (ensureEcsReady) releases on entity death,
+// so liveCount() == unique live materials and ecs_material_refs_ == total
+// live uses.  The delta between them is the exact saving a shared
+// MaterialId→GPU-material table would bank (steps 2–3, still to come —
+// this pass changes no render behaviour).
+void RealWorldApplication::updateEcsMaterials() {
+    if (!ecs_ready_) return;  // cleanup hook not installed yet — don't intern
+    auto& reg = ecs_world_.registry();
+    bool changed = false;
+    for (auto [e, r] : reg.view<eecs::Renderable>(
+             entt::exclude<eecs::MaterialSet>).each()) {
+        if (!r.drawable || !r.drawable->isReady()) continue;
+        const auto* mats = r.drawable->getMaterials();
+        if (!mats) continue;
+        eecs::MaterialSet ms;
+        ms.ids.reserve(mats->size());
+        for (const auto& m : *mats)
+            ms.ids.push_back(ecs_material_cache_.intern(m.desc_));
+        ecs_material_refs_ += ms.ids.size();
+        // Emplaced even when empty so the entity leaves the exclude-view
+        // and is not rescanned every frame.
+        reg.emplace<eecs::MaterialSet>(e, std::move(ms));
+        changed = true;
+    }
+    // Streamed unload detaches Renderable but keeps the entity alive —
+    // release those refs too so an unloaded asset doesn't pin materials.
+    // (On re-load the intern loop above re-attaches a fresh MaterialSet.)
+    std::vector<eecs::Entity> stale;
+    for (auto [e, ms] : reg.view<eecs::MaterialSet>(
+             entt::exclude<eecs::Renderable>).each()) {
+        for (auto id : ms.ids) ecs_material_cache_.release(id);
+        ecs_material_refs_ -= ms.ids.size();
+        stale.push_back(e);
+        changed = true;
+    }
+    for (auto e : stale) reg.remove<eecs::MaterialSet>(e);
+
+    if (changed) {
+        std::cout << "[ecs] material dedup: "
+                  << ecs_material_cache_.liveCount() << " unique / "
+                  << ecs_material_refs_ << " refs live" << std::endl;
     }
 }
 
@@ -5546,6 +5606,30 @@ void RealWorldApplication::drawScene(
             ego::DrawableObject::setFrustumCullPlanes(fplanes);
         }
 
+        // ── ECS object-level frustum cull (coarse early-out) ──────────
+        // WorldBounds were refreshed by tickEcs() earlier this frame; the
+        // camera VP read here is the one this forward pass renders with,
+        // so there is no frame of lag.  CullingSystem toggles the Culled
+        // tag; we then push it onto each ECS-managed drawable as a
+        // transient hint that DrawableObject::draw() honours for
+        // DrawMode::kForward ONLY.  The hints are cleared right after the
+        // forward pass below, so shadow / CSM / probe passes never see
+        // them.  Controller-driven drawables are skipped: their entity
+        // WorldBounds mirror the authored scene transform, not the
+        // controller's live placement, so culling them here could hide
+        // the player mid-screen.
+        if (main_camera_object_) {
+            const auto frustum = eecs::FrustumPlanes::fromViewProj(
+                main_camera_object_->getViewProjMatrix());
+            ecs_cull_stats_ =
+                eecs::CullingSystem::update(ecs_world_.registry(), frustum);
+            auto& ecs_reg = ecs_world_.registry();
+            for (auto [e, r] : ecs_reg.view<eecs::Renderable>().each()) {
+                if (!r.drawable || r.drawable->isControllerDriven()) continue;
+                r.drawable->setEcsCulledHint(ecs_reg.all_of<eecs::Culled>(e));
+            }
+        }
+
         // Hoisted so the cluster / sky passes below can see it and
         // skip themselves -- collision debug is meant to be a clean
         // segmentation view, no cluster geometry layered on top.
@@ -5569,6 +5653,17 @@ void RealWorldApplication::drawScene(
 
         // Clear frustum cull state so depth-only / shadow passes are not culled.
         ego::DrawableObject::clearFrustumCull();
+
+        // Disarm the ECS cull hints for the same reason — the shadow /
+        // CSM / probe passes below (and next frame's probe passes, which
+        // run before this point) must record every drawable regardless of
+        // the main camera frustum.
+        {
+            auto& ecs_reg = ecs_world_.registry();
+            for (auto [e, r] : ecs_reg.view<eecs::Renderable>().each()) {
+                if (r.drawable) r.drawable->setEcsCulledHint(false);
+            }
+        }
 
         // ── Bindless cluster draw (single drawIndexedIndirectCount) ──
         // Rendered in its own dynamic rendering pass, on top of the

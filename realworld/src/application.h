@@ -50,6 +50,8 @@
 #include "plugins/auto_rig/auto_rig_plugin.h"
 #include "ecs/world.h"
 #include "ecs/animation_system.h"
+#include "ecs/culling_system.h"
+#include "ecs/material_cache.h"
 #include "ecs/engine/drawable_asset_streamer.h"
 #include "ecs/engine/render_system.h"
 
@@ -482,6 +484,20 @@ private:
     eecs::World ecs_world_{kMaxFramesInFlight};
     std::unique_ptr<eecs::DrawableAssetStreamer> ecs_streamer_;
     bool ecs_ready_ = false;
+
+    // ECS object-level frustum culling: stats from the last
+    // CullingSystem::update (drawScene, just before the forward pass).
+    eecs::CullingStats ecs_cull_stats_;
+
+    // ECS material dedup: refcounted interning cache over the MaterialDescs
+    // captured at asset load. Entities holding a Renderable get a MaterialSet
+    // of interned ids (see updateEcsMaterials); the GC cleanup hook releases
+    // them, so liveCount() tracks the number of UNIQUE live materials while
+    // total refs count every (entity, sub-material) use — the delta is the
+    // dedup win a MaterialId→GPU-material table would bank (phase-3 step).
+    eecs::MaterialCache ecs_material_cache_;
+    size_t ecs_material_refs_ = 0;   // live interned refs (for stats)
+    void updateEcsMaterials();
 
     void ensureEcsReady();
     void tickEcs();

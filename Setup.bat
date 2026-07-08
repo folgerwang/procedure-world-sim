@@ -14,6 +14,7 @@ echo    * Ollama install + qwen3.5:2b pull (Mesh Category classifier)
 echo    * FLUX.2-klein-4B image generator install + weight download (Content Browser)
 echo    * Stable Audio Open text-to-audio generator install + weights (Generate Audio)
 echo    * Text-to-voice voices download -- English Piper, lowest-RAM (-skip-tts to skip)
+echo    * Qwen3.5-2B Jin Yong chatbot fine-tune (default ON, idempotent; -skip-jinyong)
 echo.
 echo  Run GenerateProjectFiles.bat afterwards to produce the VS
 echo  solution. GenerateProjectFiles.bat also invokes this script
@@ -80,6 +81,12 @@ rem Default downloads the ENGLISH Piper voices only, smallest (lowest-RAM,
 rem int8) model per voice.  Override: -tts-voice=all (every language),
 rem -tts-voice=all:<substr> (filtered), an explicit comma list, or -skip-tts.
 set "TTS_VOICE=all:vits-piper-en_"
+rem Qwen3.5-2B Jin Yong chatbot fine-tune. ON by default; delegates to
+rem jinyong_finetune\setup.bat (full fp16 fine-tune on realworld\assets\txt;
+rem dataset -> ml_training\qwen3.5-2b-jinyong\data). It is IDEMPOTENT: once a
+rem trained model exists it skips, and it auto-skips when no NVIDIA GPU is found.
+rem Disable with -skip-jinyong.
+set "SKIP_JINYONG=0"
 
 :arg_loop
 if "%~1"=="" goto :arg_done
@@ -97,6 +104,8 @@ if /i "!_a!"=="-skip-flux" set "SKIP_FLUX=1"
 if /i "!_a!"=="-skip-audiogen" set "SKIP_AUDIOGEN=1"
 if /i "!_a!"=="-skip-tts" set "SKIP_TTS=1"
 if /i "!_a:~0,11!"=="-tts-voice=" set "TTS_VOICE=!_a:~11!"
+if /i "!_a!"=="-skip-jinyong" set "SKIP_JINYONG=1"
+if /i "!_a!"=="-jinyong" set "SKIP_JINYONG=0"
 shift
 goto :arg_loop
 :arg_done
@@ -786,6 +795,26 @@ echo -----------------------------------------------------------
 echo.
 
 :tts_done
+
+rem ── Qwen3.5-2B Jin Yong chatbot fine-tune (default ON, idempotent) ───────────
+rem   Delegates to the standalone jinyong_finetune\setup.bat so both entry points
+rem   share one path. That script installs deps, prepares the dataset into
+rem   ml_training\qwen3.5-2b-jinyong\data, then runs the full fp16 fine-tune --
+rem   but SKIPS training if a trained model already exists, and skips on no-GPU.
+rem   Disable entirely with -skip-jinyong.
+if "!SKIP_JINYONG!"=="1" (
+    echo [INFO]  Skipping Qwen3.5-2B Jin Yong fine-tune ^(-skip-jinyong^)
+    goto :jinyong_done
+)
+if not exist "jinyong_finetune\setup.bat" (
+    echo [WARN]  jinyong_finetune\setup.bat not found -- skipping Jin Yong fine-tune.
+    goto :jinyong_done
+)
+echo.
+echo -- Qwen3.5-2B Jin Yong fine-tune --------------------------
+call "jinyong_finetune\setup.bat"
+if errorlevel 1 echo [WARN]  Jin Yong fine-tune step reported an error.
+:jinyong_done
 
 echo.
 echo ============================================================
