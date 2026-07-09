@@ -5060,6 +5060,11 @@ void RealWorldApplication::drawScene(
                 input_flags |= FEATURE_INPUT_RT_SHADOW;
             if (hw_rt_ready)
                 input_flags |= FEATURE_INPUT_HW_RT_SHADOW;
+            // Ray-traced AO rides whichever RT backend is active and
+            // respects the SSAO enable toggle (it REPLACES the
+            // screen-space pass — see the SSAO skip in drawScene).
+            if ((rt_ready || hw_rt_ready) && ssao_ && ssao_->enabled)
+                input_flags |= FEATURE_INPUT_RT_AO;
             // Pack the menu's render-debug mode (0..255) into bits 16..23.
             // base.frag and cluster_bindless.frag mask + branch on this.
             input_flags |= (static_cast<uint32_t>(menu_->getDebugRenderMode())
@@ -6803,8 +6808,12 @@ void RealWorldApplication::drawScene(
         // ── Editor reference grid / ruler ("Create Scene" mode) ──────────
         // Drawn over the rendered scene in object_scene_view_, occluded by it
         // (depth LOADed), exactly like the collision overlay above.  Gated by
-        // the Scene menu's "Show Grid" toggle / "Create Scene" action.
-        if (menu_ && menu_->sceneGridEnabled() && eh::SceneGrid::ready()) {
+        // the Scene menu's "Show Grid" toggle / "Create Scene" action —
+        // AND on NOT being in play mode: the toggle latches on from
+        // "Create Scene", and an editor authoring aid (origin gizmo +
+        // ruler) must never render during gameplay.
+        if (menu_ && menu_->sceneGridEnabled() && !menu_->isPlayMode() &&
+            eh::SceneGrid::ready()) {
             engine::helper::GpuProfiler::Scope _scope_scene_grid(
                 gpu_profiler_, cmd_buf, "Scene grid");
 
@@ -7006,7 +7015,16 @@ void RealWorldApplication::drawScene(
         const bool ssao_mode_allowed =
             dbg_mode == DEBUG_RENDER_MODE_FINAL ||
             dbg_mode == DEBUG_RENDER_MODE_SSAO;
-        if (ssao_ && ssao_mode_allowed &&
+        // RT AO replaces screen-space SSAO while an RT shadow mode is
+        // active: deferred_resolve traces hemisphere rays per pixel
+        // (FEATURE_INPUT_RT_AO), so the gen/blur/apply chain would
+        // double-darken AND waste GPU.  The SSAO debug view (mode 11)
+        // still forces the pass so the screen-space term stays
+        // inspectable for comparison.
+        const bool rt_ao_active =
+            (menu_->isRtShadowsOn() || menu_->isHwRtShadowsOn()) &&
+            dbg_mode != DEBUG_RENDER_MODE_SSAO;
+        if (ssao_ && ssao_mode_allowed && !rt_ao_active &&
             (ssao_->enabled || dbg_mode == DEBUG_RENDER_MODE_SSAO)) {
             engine::helper::GpuProfiler::Scope _scope_ssao(
                 gpu_profiler_, cmd_buf, "SSAO");
