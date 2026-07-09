@@ -335,6 +335,31 @@ private:
     std::shared_ptr<er::DescriptorSetLayout> rt_shadow_data_desc_set_layout_;
     std::shared_ptr<er::DescriptorSet>       rt_shadow_dummy_desc_set_;
     er::BufferInfo                           rt_shadow_dummy_buffer_;
+
+    // ── ReSTIR direct lighting (set 2, bindings 7/8) ──────────────────
+    // Reservoir ping-pong SSBO (2× screen-sized halves, parity flips per
+    // frame) + the per-frame point-light list from .rwlight scene rows.
+    // ── RT shadow/AO smooth pass (trace → bilateral filter → shade) ───
+    // RG16F ping-pong (R = shadow, G = AO raw visibility) sized with the
+    // G-buffer; rt_filter.comp blurs raw → filtered between the resolve's
+    // GEN and APPLY dispatches.
+    er::TextureInfo rt_smooth_raw_tex_;
+    er::TextureInfo rt_smooth_filtered_tex_;
+    std::shared_ptr<er::DescriptorSetLayout> rt_filter_desc_set_layout_;
+    std::shared_ptr<er::DescriptorSet>       rt_filter_desc_set_;      // raw→filtered
+    std::shared_ptr<er::DescriptorSet>       rt_filter_desc_set_rev_;  // filtered→raw
+    std::shared_ptr<er::PipelineLayout>      rt_filter_pipeline_layout_;
+    std::shared_ptr<er::Pipeline>            rt_filter_pipeline_;
+
+    static constexpr uint32_t kRestirMaxLights = 256;
+    er::BufferInfo restir_reservoir_buffer_;
+    uint64_t       restir_reservoir_bytes_  = 0;
+    bool           restir_reservoirs_dirty_ = true;  // zero-fill pending
+    er::BufferInfo restir_lights_buffer_;
+    uint32_t       restir_light_count_ = 0;
+    uint32_t       restir_parity_      = 0;
+    uint32_t       restir_frame_       = 0;
+    void updateRestirLights();
     // Hardware-RT (ray query) resolve variant.  Separate pipeline +
     // layout: it appends one more set (RUNTIME_LIGHTS_PARAMS_SET + 2 =
     // TLAS + masked-caster buffers) which only exists after the cluster

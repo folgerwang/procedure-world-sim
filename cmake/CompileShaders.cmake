@@ -339,6 +339,17 @@ add_spirv(SPIRV_FILES "ssao_compute_comp.spv"     "ssao_compute.comp"     comput
 add_spirv(SPIRV_FILES "ssao_blur_comp.spv"        "ssao_blur.comp"        compute)
 add_spirv(SPIRV_FILES "ssao_apply_comp.spv"       "ssao_apply.comp"       compute)
 
+# ── Deferred resolve + RT shadow filtering ────────────────────────────────────
+# These were previously compiled by hand and shipped as stale .spv files in
+# lib/shaders/ — registering them here makes shader edits actually reach the
+# build.  The _hwrt variant compiles the SAME source with the ray-query
+# backend enabled (GL_EXT_ray_query, cluster TLAS).
+add_spirv(SPIRV_FILES "deferred_resolve_comp.spv"      "deferred_resolve.comp" compute)
+add_spirv(SPIRV_FILES "deferred_resolve_hwrt_comp.spv" "deferred_resolve.comp" compute HW_RT_SHADOW)
+# Edge-aware bilateral smoother for the RT shadow/AO pair (runs between the
+# resolve's GEN and APPLY dispatches — see rt_filter.comp).
+add_spirv(SPIRV_FILES "rt_filter_comp.spv"             "rt_filter.comp"        compute)
+
 # ── Blur ──────────────────────────────────────────────────────────────────────
 add_spirv(SPIRV_FILES "blur_image_x_comp.spv"        "blur_image_x.comp"        compute)
 add_spirv(SPIRV_FILES "blur_image_y_merge_comp.spv"  "blur_image_y_merge.comp"  compute)

@@ -489,6 +489,33 @@ void RealWorldApplication::createGBuffer(const glm::uvec2& display_size) {
         er::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         std::source_location::current());
 
+    // ── RT shadow/AO smoothing ping-pong (RG16F: R=shadow, G=AO) ─────
+    // Written by the resolve's GEN dispatch, blurred by rt_filter.comp,
+    // consumed by the APPLY dispatch.  Storage-image access only, so
+    // they live in GENERAL layout for their whole lifetime.
+    {
+        auto rt_usage = SET_2_FLAG_BITS(
+            ImageUsage, STORAGE_BIT, SAMPLED_BIT);
+        er::Helper::create2DTextureImage(
+            device_,
+            er::Format::R16G16_SFLOAT,
+            display_size,
+            1,
+            rt_smooth_raw_tex_,
+            rt_usage,
+            er::ImageLayout::GENERAL,
+            std::source_location::current());
+        er::Helper::create2DTextureImage(
+            device_,
+            er::Format::R16G16_SFLOAT,
+            display_size,
+            1,
+            rt_smooth_filtered_tex_,
+            rt_usage,
+            er::ImageLayout::GENERAL,
+            std::source_location::current());
+    }
+
     // Hi-Z pyramid scales with the swap-chain too.  Recreate it BEFORE
     // writing the resolve descriptors: binding 6 references
     // hiz_pyramid_full_view_, and on a resize cleanupSwapChain destroyed the
@@ -1031,8 +1058,71 @@ void RealWorldApplication::initDeferredResolve() {
         bindings[6] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(
             6, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
             er::DescriptorType::COMBINED_IMAGE_SAMPLER);
+        // Bindings 7/8 — ReSTIR direct lighting: per-pixel reservoir
+        // ping-pong SSBO (two screen-sized halves back to back) and the
+        // authored point-light list (.rwlight scene objects), uploaded
+        // per frame.  See restirDirectLighting in deferred_resolve.comp.
+        bindings.resize(11);
+        for (int i = 7; i < 9; ++i) {
+            bindings[i] = er::helper::getBufferDescriptionSetLayoutBinding(
+                i, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::STORAGE_BUFFER);
+        }
+        // Bindings 9/10 — RT shadow/AO smooth pass: raw (GEN writes) and
+        // filtered (APPLY reads) RG16F storage images.
+        for (int i = 9; i < 11; ++i) {
+            bindings[i] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                i, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::STORAGE_IMAGE);
+        }
         deferred_resolve_desc_set_layout_ =
             device_->createDescriptorSetLayout(bindings);
+    }
+
+    // ── rt_filter.comp — bilateral smoother for RT shadow/AO ─────────
+    // Own tiny set: raw in (storage), filtered out (storage), depth
+    // (sampler, edge weights).  Runs between the resolve's GEN and
+    // APPLY dispatches.
+    if (!rt_filter_desc_set_layout_) {
+        std::vector<er::DescriptorSetLayoutBinding> fbind(3);
+        for (int i = 0; i < 2; ++i) {
+            fbind[i] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                i, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::STORAGE_IMAGE);
+        }
+        fbind[2] = er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+            2, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::COMBINED_IMAGE_SAMPLER);
+        rt_filter_desc_set_layout_ =
+            device_->createDescriptorSetLayout(fbind);
+        // Push constant: uint step_px — the à-trous tap spacing (the app
+        // dispatches three iterations at 1 / 2 / 4).
+        rt_filter_pipeline_layout_ = er::helper::createComputePipelineLayout(
+            device_, { rt_filter_desc_set_layout_ },
+            /*push_const_range_size*/ sizeof(uint32_t));
+        // Non-fatal: an OPTIONAL post-filter must never kill startup.  A
+        // build dir configured before rt_filter.comp was registered in
+        // CompileShaders.cmake has no rt_filter_comp.spv — degrade to
+        // "smoothing unavailable" (smooth_active checks the pipeline).
+        try {
+            rt_filter_pipeline_ = er::helper::createComputePipeline(
+                device_, rt_filter_pipeline_layout_,
+                "rt_filter_comp.spv",
+                std::source_location::current());
+        } catch (const std::exception& e) {
+            rt_filter_pipeline_.reset();
+            std::cout << "[rt-filter] pipeline unavailable (" << e.what()
+                      << ") — RT shadow/AO smoothing disabled.  Re-run "
+                         "GenerateProjectFiles.bat so rt_filter.comp is "
+                         "compiled." << std::endl;
+        }
+        rt_filter_desc_set_ = device_->createDescriptorSets(
+            descriptor_pool_, rt_filter_desc_set_layout_, 1)[0];
+        // Reverse-direction set for the à-trous ping-pong (in = filtered,
+        // out = raw) — iterations alternate A, B, A so the final result
+        // lands in the filtered image the APPLY dispatch reads.
+        rt_filter_desc_set_rev_ = device_->createDescriptorSets(
+            descriptor_pool_, rt_filter_desc_set_layout_, 1)[0];
     }
 
     // ── Pipeline layout ──
@@ -1135,8 +1225,11 @@ void RealWorldApplication::initDeferredResolve() {
         rt_shadow_data_desc_set_layout_;
     for (auto& l : all_layouts) if (!l) l = empty_layout;
 
+    // Push constant: uint pass_mode (0 = single trace+shade, 1 = GEN
+    // trace-only, 2 = APPLY with filtered shadow/AO) — see ResolvePC in
+    // deferred_resolve.comp.
     deferred_resolve_pipeline_layout_ = er::helper::createComputePipelineLayout(
-        device_, all_layouts, /*push_const_range_size*/ 0);
+        device_, all_layouts, /*push_const_range_size*/ sizeof(uint32_t));
 
     deferred_resolve_pipeline_ = er::helper::createComputePipeline(
         device_, deferred_resolve_pipeline_layout_,
@@ -1165,7 +1258,8 @@ void RealWorldApplication::initDeferredResolve() {
         hw_layouts.push_back(hw_rt_shadow_data_desc_set_layout_);
         deferred_resolve_hwrt_pipeline_layout_ =
             er::helper::createComputePipelineLayout(
-                device_, hw_layouts, /*push_const_range_size*/ 0);
+                device_, hw_layouts,
+                /*push_const_range_size*/ sizeof(uint32_t));
         deferred_resolve_hwrt_pipeline_ = er::helper::createComputePipeline(
             device_, deferred_resolve_hwrt_pipeline_layout_,
             "deferred_resolve_hwrt_comp.spv",
@@ -1257,7 +1351,146 @@ void RealWorldApplication::writeDeferredResolveDescriptors(
             hiz_sampler_, hiz_pyramid_full_view_,
             er::ImageLayout::GENERAL);
     }
+
+    // ── ReSTIR resources (bindings 7/8) ─────────────────────────────
+    // Reservoir ping-pong: TWO screen-sized halves of 16 B entries in
+    // one SSBO, (re)created to match the G-buffer size.  New buffers
+    // start life zeroed (restir_reservoirs_dirty_ triggers a fillBuffer
+    // in drawScene before the first dispatch) — id 0 = empty reservoir.
+    {
+        const glm::uvec3 gsz = gbuf_albedo_ao_.size;
+        const uint64_t   need =
+            uint64_t(gsz.x) * gsz.y * 2ull * sizeof(glsl::RestirReservoir);
+        if (need > 0 &&
+            (restir_reservoir_bytes_ != need ||
+             !restir_reservoir_buffer_.buffer)) {
+            device_->waitIdle();
+            if (restir_reservoir_buffer_.buffer)
+                restir_reservoir_buffer_.destroy(device_);
+            device_->createBuffer(
+                need,
+                SET_2_FLAG_BITS(BufferUsage, STORAGE_BUFFER_BIT,
+                                TRANSFER_DST_BIT),
+                SET_FLAG_BIT(MemoryProperty, DEVICE_LOCAL_BIT),
+                0,
+                restir_reservoir_buffer_.buffer,
+                restir_reservoir_buffer_.memory,
+                std::source_location::current());
+            restir_reservoir_bytes_  = need;
+            restir_reservoirs_dirty_ = true;
+        }
+    }
+    // Point-light list: header (uvec4 count) + a fixed 256-light block,
+    // HOST_VISIBLE so updateRestirLights() can rewrite it every frame.
+    if (!restir_lights_buffer_.buffer) {
+        device_->createBuffer(
+            sizeof(glm::uvec4) +
+                kRestirMaxLights * sizeof(glsl::RestirPointLight),
+            SET_FLAG_BIT(BufferUsage, STORAGE_BUFFER_BIT),
+            SET_2_FLAG_BITS(MemoryProperty, HOST_VISIBLE_BIT,
+                            HOST_COHERENT_BIT),
+            0,
+            restir_lights_buffer_.buffer,
+            restir_lights_buffer_.memory,
+            std::source_location::current());
+    }
+    if (restir_reservoir_buffer_.buffer) {
+        er::Helper::addOneBuffer(writes, deferred_resolve_desc_set_,
+            er::DescriptorType::STORAGE_BUFFER, 7,
+            restir_reservoir_buffer_.buffer,
+            static_cast<uint32_t>(restir_reservoir_bytes_));
+    }
+    if (restir_lights_buffer_.buffer) {
+        er::Helper::addOneBuffer(writes, deferred_resolve_desc_set_,
+            er::DescriptorType::STORAGE_BUFFER, 8,
+            restir_lights_buffer_.buffer,
+            static_cast<uint32_t>(
+                sizeof(glm::uvec4) +
+                kRestirMaxLights * sizeof(glsl::RestirPointLight)));
+    }
+    // RT smooth pass images (bindings 9/10) + the filter's own set.
+    if (rt_smooth_raw_tex_.view && rt_smooth_filtered_tex_.view) {
+        er::Helper::addOneTexture(writes, deferred_resolve_desc_set_,
+            er::DescriptorType::STORAGE_IMAGE, 9,
+            nullptr, rt_smooth_raw_tex_.view,
+            er::ImageLayout::GENERAL);
+        er::Helper::addOneTexture(writes, deferred_resolve_desc_set_,
+            er::DescriptorType::STORAGE_IMAGE, 10,
+            nullptr, rt_smooth_filtered_tex_.view,
+            er::ImageLayout::GENERAL);
+        if (rt_filter_desc_set_) {
+            er::Helper::addOneTexture(writes, rt_filter_desc_set_,
+                er::DescriptorType::STORAGE_IMAGE, 0,
+                nullptr, rt_smooth_raw_tex_.view,
+                er::ImageLayout::GENERAL);
+            er::Helper::addOneTexture(writes, rt_filter_desc_set_,
+                er::DescriptorType::STORAGE_IMAGE, 1,
+                nullptr, rt_smooth_filtered_tex_.view,
+                er::ImageLayout::GENERAL);
+            er::Helper::addOneTexture(writes, rt_filter_desc_set_,
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER, 2,
+                gbuf_sampler_, depth_view,
+                er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        }
+        if (rt_filter_desc_set_rev_) {
+            er::Helper::addOneTexture(writes, rt_filter_desc_set_rev_,
+                er::DescriptorType::STORAGE_IMAGE, 0,
+                nullptr, rt_smooth_filtered_tex_.view,
+                er::ImageLayout::GENERAL);
+            er::Helper::addOneTexture(writes, rt_filter_desc_set_rev_,
+                er::DescriptorType::STORAGE_IMAGE, 1,
+                nullptr, rt_smooth_raw_tex_.view,
+                er::ImageLayout::GENERAL);
+            er::Helper::addOneTexture(writes, rt_filter_desc_set_rev_,
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER, 2,
+                gbuf_sampler_, depth_view,
+                er::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        }
+    }
     device_->updateDescriptorSets(writes);
+}
+
+// Upload the authored point lights (.rwlight scene rows) into the ReSTIR
+// light SSBO.  Positions come from the rows' WORLD transforms via the
+// same ECS gather every drawable uses, so parenting/group moves apply.
+// Called once per frame from drawScene while the ReSTIR technique is on.
+void RealWorldApplication::updateRestirLights() {
+    if (!restir_lights_buffer_.memory) return;
+    struct Blob {
+        glm::uvec4              header;
+        glsl::RestirPointLight  lights[kRestirMaxLights];
+    };
+    static Blob blob;  // 8 KB — static to avoid per-frame stack traffic
+    uint32_t n = 0;
+    for (size_t i = 0; i < scene_.objects.size() && n < kRestirMaxLights;
+         ++i) {
+        const auto& so = scene_.objects[i];
+        const std::string& ap = so.asset_path;
+        if (ap.size() <= 8 ||
+            ap.compare(ap.size() - 8, 8, ".rwlight") != 0)
+            continue;
+        // World position: compose through the parent chain (lights are
+        // usually top-level, but respect grouping when present).
+        glm::mat4 world = so.transform.toMatrix();
+        int p = so.parent_index;
+        int guard = 0;
+        while (p >= 0 && p < (int)scene_.objects.size() && guard++ < 64) {
+            world = scene_.objects[p].transform.toMatrix() * world;
+            p = scene_.objects[p].parent_index;
+        }
+        world = scene_.root.toMatrix() * world;
+        auto& dst = blob.lights[n++];
+        dst.position  = glm::vec3(world[3]);
+        dst.radius    = std::max(so.light_radius, 0.1f);
+        dst.color     = so.light_color;
+        dst.intensity = so.light_intensity;
+    }
+    blob.header = glm::uvec4(n, 0, 0, 0);
+    device_->updateBufferMemory(
+        restir_lights_buffer_.memory,
+        sizeof(glm::uvec4) + n * sizeof(glsl::RestirPointLight),
+        &blob);
+    restir_light_count_ = n;
 }
 
 void RealWorldApplication::createRenderPasses() {
@@ -5052,8 +5285,35 @@ void RealWorldApplication::drawScene(
             const bool hw_rt_ready = menu_->isHwRtShadowsOn() &&
                                      cluster_renderer_ &&
                                      cluster_renderer_->hwRtShadowReady();
+            // ReSTIR needs the software BVH (winner visibility rays) and,
+            // in the HW-RT pipeline variant, uses ray queries instead.
+            const bool restir_ready =
+                menu_->isRestirOn() && cluster_renderer_ &&
+                cluster_renderer_->rtShadowReady() &&
+                restir_reservoir_buffer_.buffer;
+            // ReSTIR selected but inactive → the whole frame renders
+            // unshadowed (SHADOW_DISABLED is raised, CSM is skipped, and
+            // no RT path runs).  Say WHY, once per state change, instead
+            // of failing silently.
+            if (menu_->isRestirOn()) {
+                static int s_restir_state = -1;
+                const int state =
+                    restir_ready                             ? 0 :
+                    !cluster_renderer_                       ? 1 :
+                    !cluster_renderer_->rtShadowReady()      ? 2 : 3;
+                if (state != s_restir_state) {
+                    s_restir_state = state;
+                    const char* why[] = {
+                        "ACTIVE",
+                        "no cluster renderer",
+                        "cluster BVH not built yet (finalize pending)",
+                        "reservoir buffer missing (G-buffer not created?)" };
+                    std::cout << "[restir] " << why[state] << std::endl;
+                }
+            }
             if (menu_->isShadowPassTurnOff() || menu_->isSsrtShadowsOn() ||
-                menu_->isRtShadowsOn() || menu_->isHwRtShadowsOn())
+                menu_->isRtShadowsOn() || menu_->isHwRtShadowsOn() ||
+                menu_->isRestirOn())
                 input_flags |= FEATURE_INPUT_SHADOW_DISABLED;
             if (menu_->isSsrtShadowsOn())
                 input_flags |= FEATURE_INPUT_SSRT_SHADOW;
@@ -5061,10 +5321,23 @@ void RealWorldApplication::drawScene(
                 input_flags |= FEATURE_INPUT_RT_SHADOW;
             if (hw_rt_ready)
                 input_flags |= FEATURE_INPUT_HW_RT_SHADOW;
+            if (restir_ready) {
+                input_flags |= FEATURE_INPUT_RESTIR;
+                // Ride the HW ray-query backend when this device has it.
+                if (cluster_renderer_->hwRtShadowReady())
+                    input_flags |= FEATURE_INPUT_HW_RT_SHADOW;
+                restir_parity_ ^= 1u;
+                if (restir_parity_)
+                    input_flags |= FEATURE_INPUT_RESTIR_PARITY;
+                input_flags |= ((restir_frame_++) << FEATURE_INPUT_FRAME_SHIFT)
+                               & FEATURE_INPUT_FRAME_MASK;
+                updateRestirLights();
+            }
             // Ray-traced AO rides whichever RT backend is active and
             // respects the SSAO enable toggle (it REPLACES the
             // screen-space pass — see the SSAO skip in drawScene).
-            if ((rt_ready || hw_rt_ready) && ssao_ && ssao_->enabled)
+            if ((rt_ready || hw_rt_ready || restir_ready) &&
+                ssao_ && ssao_->enabled)
                 input_flags |= FEATURE_INPUT_RT_AO;
             // Pack the menu's render-debug mode (0..255) into bits 16..23.
             // base.frag and cluster_bindless.frag mask + branch on this.
@@ -5320,7 +5593,8 @@ void RealWorldApplication::drawScene(
         // on this command buffer (hardware mode).  Gated on an RT mode
         // being active — the CPU skinning isn't free.
         if (cluster_renderer_ &&
-            (menu_->isRtShadowsOn() || menu_->isHwRtShadowsOn())) {
+            (menu_->isRtShadowsOn() || menu_->isHwRtShadowsOn() ||
+             menu_->isRestirOn())) {
             engine::helper::GpuProfiler::Scope _scope_rt_skel(
                 gpu_profiler_, cmd_buf, "RT Skeleton Update");
             std::vector<es::ClusterRenderer::RtSkeletonFrameData> skels;
@@ -5363,7 +5637,8 @@ void RealWorldApplication::drawScene(
         }
 
         if (!menu_->isShadowPassTurnOff() && !menu_->isSsrtShadowsOn() &&
-            !menu_->isRtShadowsOn() && !menu_->isHwRtShadowsOn()) {
+            !menu_->isRtShadowsOn() && !menu_->isHwRtShadowsOn() &&
+            !menu_->isRestirOn()) {
             engine::helper::GpuProfiler::Scope _scope_shadow(
                 gpu_profiler_, cmd_buf, "CSM Shadow");
 
@@ -6274,6 +6549,40 @@ void RealWorldApplication::drawScene(
                 {
                     engine::helper::GpuProfiler::Scope _scope_resolve(
                         gpu_profiler_, cmd_buf, "Deferred Resolve Compute");
+
+                    // ── ReSTIR reservoir maintenance ─────────────────
+                    // First-use (or post-resize) zero-fill: id 0 = empty
+                    // reservoir, so the temporal path starts clean.  Then
+                    // a compute→compute barrier so LAST frame's reservoir
+                    // writes (this frame's read half) are visible — with
+                    // 2 frames in flight the two resolves could otherwise
+                    // overlap on the same buffer.
+                    if (restir_reservoir_buffer_.buffer) {
+                        er::BufferResourceInfo comp_rw = {
+                            SET_2_FLAG_BITS(Access, SHADER_READ_BIT,
+                                            SHADER_WRITE_BIT),
+                            SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) };
+                        if (restir_reservoirs_dirty_) {
+                            er::BufferResourceInfo xfer_w = {
+                                SET_FLAG_BIT(Access, TRANSFER_WRITE_BIT),
+                                SET_FLAG_BIT(PipelineStage, TRANSFER_BIT) };
+                            cmd_buf->addBufferBarrier(
+                                restir_reservoir_buffer_.buffer,
+                                comp_rw, xfer_w);
+                            cmd_buf->fillBuffer(
+                                restir_reservoir_buffer_.buffer, 0,
+                                restir_reservoir_bytes_, 0u);
+                            cmd_buf->addBufferBarrier(
+                                restir_reservoir_buffer_.buffer,
+                                xfer_w, comp_rw);
+                            restir_reservoirs_dirty_ = false;
+                        } else {
+                            cmd_buf->addBufferBarrier(
+                                restir_reservoir_buffer_.buffer,
+                                comp_rw, comp_rw);
+                        }
+                    }
+
                     er::DescriptorSetList resolve_sets(
                         RUNTIME_LIGHTS_PARAMS_SET + 2, nullptr);
                     resolve_sets[PBR_GLOBAL_PARAMS_SET]     = pbr_lighting_desc_set_;
@@ -6296,34 +6605,121 @@ void RealWorldApplication::drawScene(
                     // taken once the AS exists — until then the software
                     // paths (or unshadowed) run on the regular pipeline.
                     const bool use_hw_rt =
-                        menu_ && menu_->isHwRtShadowsOn() &&
+                        menu_ &&
+                        (menu_->isHwRtShadowsOn() ||
+                         // ReSTIR rides the HW ray-query variant whenever
+                         // the TLAS exists (winner visibility rays).
+                         menu_->isRestirOn()) &&
                         deferred_resolve_hwrt_pipeline_ &&
                         cluster_renderer_ &&
                         cluster_renderer_->hwRtShadowReady();
-                    if (use_hw_rt) {
-                        auto hw_sets = resolve_sets;
-                        hw_sets.push_back(
-                            cluster_renderer_->getHwRtShadowDescSet());
-                        cmd_buf->bindPipeline(
-                            er::PipelineBindPoint::COMPUTE,
-                            deferred_resolve_hwrt_pipeline_);
-                        cmd_buf->bindDescriptorSets(
-                            er::PipelineBindPoint::COMPUTE,
-                            deferred_resolve_hwrt_pipeline_layout_,
-                            hw_sets);
-                    } else {
-                        cmd_buf->bindPipeline(
-                            er::PipelineBindPoint::COMPUTE,
-                            deferred_resolve_pipeline_);
-                        cmd_buf->bindDescriptorSets(
-                            er::PipelineBindPoint::COMPUTE,
-                            deferred_resolve_pipeline_layout_,
-                            resolve_sets);
-                    }
+                    auto bind_resolve = [&]() {
+                        if (use_hw_rt) {
+                            auto hw_sets = resolve_sets;
+                            hw_sets.push_back(
+                                cluster_renderer_->getHwRtShadowDescSet());
+                            cmd_buf->bindPipeline(
+                                er::PipelineBindPoint::COMPUTE,
+                                deferred_resolve_hwrt_pipeline_);
+                            cmd_buf->bindDescriptorSets(
+                                er::PipelineBindPoint::COMPUTE,
+                                deferred_resolve_hwrt_pipeline_layout_,
+                                hw_sets);
+                        } else {
+                            cmd_buf->bindPipeline(
+                                er::PipelineBindPoint::COMPUTE,
+                                deferred_resolve_pipeline_);
+                            cmd_buf->bindDescriptorSets(
+                                er::PipelineBindPoint::COMPUTE,
+                                deferred_resolve_pipeline_layout_,
+                                resolve_sets);
+                        }
+                    };
+                    auto push_mode = [&](uint32_t m) {
+                        cmd_buf->pushConstants(
+                            SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                            use_hw_rt ? deferred_resolve_hwrt_pipeline_layout_
+                                      : deferred_resolve_pipeline_layout_,
+                            &m, sizeof(m), 0);
+                    };
                     const uint32_t kGroupSize = 8;
                     uint32_t gx = (screen_size.x + kGroupSize - 1) / kGroupSize;
                     uint32_t gy = (screen_size.y + kGroupSize - 1) / kGroupSize;
-                    cmd_buf->dispatch(gx, gy, 1);
+
+                    // ── RT shadow/AO smooth pass ─────────────────────
+                    // trace (GEN) → bilateral filter → shade (APPLY).
+                    // Only for the plain RT techniques: ReSTIR shades
+                    // through its reservoir (filtering its winner
+                    // visibility separately would bias the estimator).
+                    const bool smooth_active =
+                        menu_ && menu_->isRtSmoothingOn() &&
+                        (menu_->isRtShadowsOn() ||
+                         menu_->isHwRtShadowsOn()) &&
+                        rt_filter_pipeline_ && rt_filter_desc_set_ &&
+                        rt_smooth_raw_tex_.view &&
+                        rt_smooth_filtered_tex_.view &&
+                        cluster_renderer_ &&
+                        (cluster_renderer_->rtShadowReady() ||
+                         cluster_renderer_->hwRtShadowReady());
+
+                    bind_resolve();
+                    if (!smooth_active) {
+                        push_mode(0u);
+                        cmd_buf->dispatch(gx, gy, 1);
+                    } else {
+                        er::ImageResourceInfo comp_read = {
+                            er::ImageLayout::GENERAL,
+                            SET_FLAG_BIT(Access, SHADER_READ_BIT),
+                            SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) };
+                        er::ImageResourceInfo comp_write = {
+                            er::ImageLayout::GENERAL,
+                            SET_FLAG_BIT(Access, SHADER_WRITE_BIT),
+                            SET_FLAG_BIT(PipelineStage, COMPUTE_SHADER_BIT) };
+
+                        // GEN: trace raw shadow/AO.
+                        cmd_buf->addImageBarrier(rt_smooth_raw_tex_.image,
+                            comp_read, comp_write, 0, 1, 0, 1);
+                        push_mode(1u);
+                        cmd_buf->dispatch(gx, gy, 1);
+                        cmd_buf->addImageBarrier(rt_smooth_raw_tex_.image,
+                            comp_write, comp_read, 0, 1, 0, 1);
+
+                        // FILTER: à-trous edge-aware bilateral, three
+                        // iterations at tap spacing 1 / 2 / 4 ping-ponging
+                        // raw↔filtered (A, B, A — result lands in
+                        // filtered).  The widened footprint (~29×29) turns
+                        // the discrete ray-count levels of wide penumbras
+                        // into smooth ramps instead of contour bands.
+                        cmd_buf->bindPipeline(
+                            er::PipelineBindPoint::COMPUTE,
+                            rt_filter_pipeline_);
+                        const uint32_t steps[3] = { 1u, 2u, 4u };
+                        for (int it = 0; it < 3; ++it) {
+                            const bool forward = (it % 2) == 0;
+                            auto& out_img = forward
+                                ? rt_smooth_filtered_tex_.image
+                                : rt_smooth_raw_tex_.image;
+                            cmd_buf->addImageBarrier(out_img,
+                                comp_read, comp_write, 0, 1, 0, 1);
+                            cmd_buf->bindDescriptorSets(
+                                er::PipelineBindPoint::COMPUTE,
+                                rt_filter_pipeline_layout_,
+                                { forward ? rt_filter_desc_set_
+                                          : rt_filter_desc_set_rev_ });
+                            cmd_buf->pushConstants(
+                                SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                                rt_filter_pipeline_layout_,
+                                &steps[it], sizeof(uint32_t), 0);
+                            cmd_buf->dispatch(gx, gy, 1);
+                            cmd_buf->addImageBarrier(out_img,
+                                comp_write, comp_read, 0, 1, 0, 1);
+                        }
+
+                        // APPLY: full shading with the smoothed pair.
+                        bind_resolve();
+                        push_mode(2u);
+                        cmd_buf->dispatch(gx, gy, 1);
+                    }
                     // _scope_resolve auto-closes via RAII.
                 }
 
@@ -7023,7 +7419,8 @@ void RealWorldApplication::drawScene(
         // still forces the pass so the screen-space term stays
         // inspectable for comparison.
         const bool rt_ao_active =
-            (menu_->isRtShadowsOn() || menu_->isHwRtShadowsOn()) &&
+            (menu_->isRtShadowsOn() || menu_->isHwRtShadowsOn() ||
+             menu_->isRestirOn()) &&
             dbg_mode != DEBUG_RENDER_MODE_SSAO;
         if (ssao_ && ssao_mode_allowed && !rt_ao_active &&
             (ssao_->enabled || dbg_mode == DEBUG_RENDER_MODE_SSAO)) {
@@ -11121,7 +11518,7 @@ void RealWorldApplication::drawFrame() {
             // link; player rows (.rwplayer) are link targets; collision
             // rows (.rwcol/.rwcmap) hold the scene's baked collision map.
             bool is_cam = false, is_player = false, is_bgm = false;
-            bool is_col = false;
+            bool is_col = false, is_light = false;
             int32_t* follow_link = nullptr;
             std::string* audio_clip = nullptr;
             bool*  audio_loop = nullptr;
@@ -11135,6 +11532,7 @@ void RealWorldApplication::drawFrame() {
                 is_cam    = ends_with(".rwcam", 6);
                 is_player = ends_with(".rwplayer", 9);
                 is_bgm    = ends_with(".rwbgm", 6);
+                is_light  = ends_with(".rwlight", 8);
                 is_col    = ends_with(".rwcol", 6) ||
                             ends_with(".rwcmap", 7);
                 if (is_cam) {
@@ -11163,6 +11561,12 @@ void RealWorldApplication::drawFrame() {
             eso.audio_clip = audio_clip;
             eso.audio_loop = audio_loop;
             eso.audio_volume = audio_volume;
+            eso.is_light = is_light;
+            if (is_light && i < scene_.objects.size()) {
+                eso.light_color     = &scene_.objects[i].light_color;
+                eso.light_intensity = &scene_.objects[i].light_intensity;
+                eso.light_radius    = &scene_.objects[i].light_radius;
+            }
             eso.is_collision = is_col;
             eso.collision_map =
                 (is_col && i < scene_.objects.size())
@@ -11350,6 +11754,45 @@ void RealWorldApplication::drawFrame() {
             imported_objects_.push_back(nullptr);
             std::cout << "[scene] created BGM object '" << bgm_name
                       << "' (drag a music clip onto it in Details)"
+                      << std::endl;
+        }
+
+        // ── "Add Point Light": ReSTIR lighting scene object ──────────────
+        // A virtual ".rwlight" marker (no drawable) placed 2.5 m in front
+        // of the camera.  Position moves with the standard transform
+        // gizmo; colour / intensity / radius edit in Details.  Consumed by
+        // updateRestirLights() → deferred_resolve.comp every frame while
+        // the ReSTIR shadow technique is active.
+        if (menu_->consumeCreateLightRequest() && main_camera_object_) {
+            int light_count = 0;
+            for (const auto& o : scene_.objects) {
+                const std::string& ap = o.asset_path;
+                if (ap.size() > 8 &&
+                    ap.compare(ap.size() - 8, 8, ".rwlight") == 0)
+                    ++light_count;
+            }
+            const std::string light_name =
+                "PointLight_" + std::to_string(light_count + 1);
+            const auto& cam = main_camera_object_->getCameraViewInfo();
+            glm::vec3 fwd = cam.facing_dir;
+            if (glm::length(fwd) > 1e-3f) fwd = glm::normalize(fwd);
+            else                          fwd = glm::vec3(0, 0, -1);
+            engine::scene::Object so;
+            so.name = light_name;
+            so.asset_path = light_name + ".rwlight";  // virtual type marker
+            so.parent_index = -1;
+            so.source_node_index = -1;
+            so.is_group = false;
+            so.visible = true;
+            so.transform.translation =
+                main_camera_object_->getCameraPosition() + fwd * 2.5f;
+            // light_color / light_intensity / light_radius keep their
+            // scene_types.h defaults (warm lantern, 20, 12 m).
+            scene_.objects.push_back(so);
+            imported_objects_.push_back(nullptr);
+            std::cout << "[scene] created point light '" << light_name
+                      << "' (colour/intensity/radius in Details; select "
+                         "the ReSTIR shadow technique to see it)"
                       << std::endl;
         }
 
