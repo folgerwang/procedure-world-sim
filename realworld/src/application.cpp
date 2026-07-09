@@ -306,9 +306,10 @@ static void keyInputCallback(GLFWwindow* window, int key, int scancode, int acti
     if (action != GLFW_RELEASE && !s_camera_paused) {
         s_key = key;
     }
-    if (action == GLFW_PRESS && key == GLFW_KEY_ESCAPE) {
-        s_exit_game = true;
-    }
+    // ESC no longer quits the app — accidental presses (habitual "close
+    // this dialog/menu" muscle memory) were killing whole sessions.
+    // Quit via the window close button or the app's own menus instead.
+    // (s_exit_game stays as the programmatic quit hook.)
     if (action == GLFW_PRESS && key == GLFW_KEY_SPACE) {
         s_toggle_profiler_pause = true;
     }
