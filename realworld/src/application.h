@@ -335,6 +335,15 @@ private:
     std::shared_ptr<er::DescriptorSetLayout> rt_shadow_data_desc_set_layout_;
     std::shared_ptr<er::DescriptorSet>       rt_shadow_dummy_desc_set_;
     er::BufferInfo                           rt_shadow_dummy_buffer_;
+    // Hardware-RT (ray query) resolve variant.  Separate pipeline +
+    // layout: it appends one more set (RUNTIME_LIGHTS_PARAMS_SET + 2 =
+    // TLAS + masked-caster buffers) which only exists after the cluster
+    // finalize builds the AS — the HW pipeline is never dispatched
+    // before hwRtShadowReady(), so no dummy TLAS is needed.  The set
+    // layout is app-owned and identically defined to ClusterRenderer's.
+    std::shared_ptr<er::DescriptorSetLayout> hw_rt_shadow_data_desc_set_layout_;
+    std::shared_ptr<er::PipelineLayout>      deferred_resolve_hwrt_pipeline_layout_;
+    std::shared_ptr<er::Pipeline>            deferred_resolve_hwrt_pipeline_;
 
     er::TextureInfo sample_tex_;
     er::TextureInfo ggx_lut_tex_;

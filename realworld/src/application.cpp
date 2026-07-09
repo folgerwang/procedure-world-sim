@@ -1042,9 +1042,10 @@ void RealWorldApplication::initDeferredResolve() {
     auto empty_layout = device_->createDescriptorSetLayout({});
 
     // ── Software-RT shadow data set (RUNTIME_LIGHTS_PARAMS_SET + 1) ──
-    // Seven COMPUTE-visible storage buffers: cluster cull infos, draw
-    // infos, merged VB, merged IB, materials, BVH nodes, BVH leaf
-    // indices.  The app owns this layout (identically defined to the one
+    // Seven COMPUTE-visible storage buffers (cluster cull infos, draw
+    // infos, packed pos+uv, merged IB, materials, BVH nodes, BVH leaf
+    // indices) + the base-colour texture array (binding 7) for the
+    // alpha-cutoff hit test.  The app owns this layout (identically defined to the one
     // ClusterRenderer creates for the REAL set — identically-defined
     // layouts are compatible per the Vulkan spec) so the pipeline can be
     // created before the first cluster finalize.  A dummy set backed by
@@ -1052,8 +1053,24 @@ void RealWorldApplication::initDeferredResolve() {
     // real set exists; the shader only traverses it when the app raises
     // FEATURE_INPUT_RT_SHADOW, which is gated on rtShadowReady().
     if (!rt_shadow_dummy_desc_set_) {
-        std::vector<er::DescriptorSetLayoutBinding> rt_bindings(7);
+        // 12 bindings: 7 storage buffers + the base-colour texture array
+        // (binding 7) used by the alpha-cutoff hit test + 4 skeleton-
+        // caster buffers (8..11, see updateRtSkeletons).  MUST stay
+        // identically defined to ClusterRenderer::buildRtShadowBvh()'s
+        // layout — identically-defined layouts are compatible per spec.
+        std::vector<er::DescriptorSetLayoutBinding> rt_bindings(12);
         for (int i = 0; i < 7; ++i) {
+            rt_bindings[i] = er::helper::getBufferDescriptionSetLayoutBinding(
+                i, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::STORAGE_BUFFER);
+        }
+        auto rt_tex_binding =
+            er::helper::getTextureSamplerDescriptionSetLayoutBinding(
+                7, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER);
+        rt_tex_binding.descriptor_count = MAX_CLUSTER_TEXTURES;
+        rt_bindings[7] = rt_tex_binding;
+        for (int i = 8; i < 12; ++i) {
             rt_bindings[i] = er::helper::getBufferDescriptionSetLayoutBinding(
                 i, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
                 er::DescriptorType::STORAGE_BUFFER);
@@ -1074,11 +1091,34 @@ void RealWorldApplication::initDeferredResolve() {
         rt_shadow_dummy_desc_set_ = device_->createDescriptorSets(
             descriptor_pool_, rt_shadow_data_desc_set_layout_, 1)[0];
         er::WriteDescriptorList dummy_writes;
-        dummy_writes.reserve(7);
+        dummy_writes.reserve(11 + MAX_CLUSTER_TEXTURES);
         for (int i = 0; i < 7; ++i) {
             er::Helper::addOneBuffer(dummy_writes, rt_shadow_dummy_desc_set_,
                 er::DescriptorType::STORAGE_BUFFER, i,
                 rt_shadow_dummy_buffer_.buffer, 64);
+        }
+        // Skeleton-caster bindings (8..11) — same zeroed dummy: the
+        // header's zero skeleton count keeps the shader loop a no-op.
+        for (int i = 8; i < 12; ++i) {
+            er::Helper::addOneBuffer(dummy_writes, rt_shadow_dummy_desc_set_,
+                er::DescriptorType::STORAGE_BUFFER, i,
+                rt_shadow_dummy_buffer_.buffer, 64);
+        }
+        // Binding 7 must hold valid samplers even in the dummy set (the
+        // shader statically references the array); any texture works —
+        // it's never sampled while FEATURE_INPUT_RT_SHADOW is off.
+        for (uint32_t ti = 0; ti < MAX_CLUSTER_TEXTURES; ++ti) {
+            auto tex_write = std::make_shared<er::TextureDescriptor>();
+            tex_write->binding           = 7;
+            tex_write->dst_array_element = ti;
+            tex_write->desc_type         =
+                er::DescriptorType::COMBINED_IMAGE_SAMPLER;
+            tex_write->desc_set          = rt_shadow_dummy_desc_set_;
+            tex_write->image_layout      =
+                er::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+            tex_write->sampler           = texture_sampler_;
+            tex_write->texture           = sample_tex_.view;
+            dummy_writes.push_back(tex_write);
         }
         device_->updateDescriptorSets(dummy_writes);
     }
@@ -1101,6 +1141,35 @@ void RealWorldApplication::initDeferredResolve() {
         device_, deferred_resolve_pipeline_layout_,
         "deferred_resolve_comp.spv",
         std::source_location::current());
+
+    // ── Hardware-RT (ray query) resolve variant ──────────────────────
+    // Same sets 0..RUNTIME_LIGHTS+1 plus one more: the TLAS + masked-
+    // caster data set built by ClusterRenderer::buildHwRtShadowAs().
+    // MUST stay identically defined to the layout created there.
+    {
+        std::vector<er::DescriptorSetLayoutBinding> hw_bindings(3);
+        hw_bindings[0] = er::helper::getBufferDescriptionSetLayoutBinding(
+            0, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::ACCELERATION_STRUCTURE_KHR);
+        hw_bindings[1] = er::helper::getBufferDescriptionSetLayoutBinding(
+            1, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::STORAGE_BUFFER);
+        hw_bindings[2] = er::helper::getBufferDescriptionSetLayoutBinding(
+            2, SET_FLAG_BIT(ShaderStage, COMPUTE_BIT),
+            er::DescriptorType::STORAGE_BUFFER);
+        hw_rt_shadow_data_desc_set_layout_ =
+            device_->createDescriptorSetLayout(hw_bindings);
+
+        auto hw_layouts = all_layouts;
+        hw_layouts.push_back(hw_rt_shadow_data_desc_set_layout_);
+        deferred_resolve_hwrt_pipeline_layout_ =
+            er::helper::createComputePipelineLayout(
+                device_, hw_layouts, /*push_const_range_size*/ 0);
+        deferred_resolve_hwrt_pipeline_ = er::helper::createComputePipeline(
+            device_, deferred_resolve_hwrt_pipeline_layout_,
+            "deferred_resolve_hwrt_comp.spv",
+            std::source_location::current());
+    }
 
     // ── Descriptor set ──
     // Allocated once; image-view bindings are refreshed by
@@ -3923,6 +3992,49 @@ void RealWorldApplication::rebuildImportedObjectsFromScene() {
                     imported_objects_.push_back(nullptr);
                     continue;
                 }
+                // ── CONTENT-ONLY migration for legacy character rows ──
+                // Scenes saved before the .rwchar bind stored the
+                // ORIGINAL model (.gltf/.glb/.fbx) in skeleton-mesh
+                // rows.  Originals are import input only — remap to the
+                // sibling baked manifest when the file belongs to a
+                // character group (its directory holds import.rwmeta
+                // with type=character + <leaf>.rwchar).
+                if (ext == ".gltf" || ext == ".glb" || ext == ".fbx") {
+                    namespace fs = std::filesystem;
+                    std::error_code cec;
+                    fs::path dir = fs::path(load_path).parent_path();
+                    for (int up = 0; up < 3 && !dir.empty();
+                         ++up, dir = dir.parent_path()) {
+                        std::ifstream meta(
+                            (dir / "import.rwmeta").string());
+                        if (!meta) continue;
+                        std::string ln;
+                        bool is_char = false;
+                        while (std::getline(meta, ln)) {
+                            if (ln == "type=character") {
+                                is_char = true;
+                                break;
+                            }
+                        }
+                        if (!is_char) break;
+                        const fs::path rwchar =
+                            dir / (dir.filename().string() + ".rwchar");
+                        if (fs::exists(rwchar, cec)) {
+                            std::cout << "[scene] content-only remap: '"
+                                      << load_path << "' -> '"
+                                      << rwchar.string() << "'"
+                                      << std::endl;
+                            load_path = rwchar.string();
+                        } else {
+                            std::cout << "[scene] WARNING: '" << load_path
+                                      << "' is an original model inside a "
+                                         "character group with no baked "
+                                         ".rwchar — re-import the "
+                                         "character." << std::endl;
+                        }
+                        break;
+                    }
+                }
                 if (ext == ".rwobj") {
                     std::string src_path, ref_name, geo_path;
                     int ordinal = -1;
@@ -4936,13 +5048,18 @@ void RealWorldApplication::drawScene(
             const bool rt_ready = menu_->isRtShadowsOn() &&
                                   cluster_renderer_ &&
                                   cluster_renderer_->rtShadowReady();
+            const bool hw_rt_ready = menu_->isHwRtShadowsOn() &&
+                                     cluster_renderer_ &&
+                                     cluster_renderer_->hwRtShadowReady();
             if (menu_->isShadowPassTurnOff() || menu_->isSsrtShadowsOn() ||
-                menu_->isRtShadowsOn())
+                menu_->isRtShadowsOn() || menu_->isHwRtShadowsOn())
                 input_flags |= FEATURE_INPUT_SHADOW_DISABLED;
             if (menu_->isSsrtShadowsOn())
                 input_flags |= FEATURE_INPUT_SSRT_SHADOW;
             if (rt_ready)
                 input_flags |= FEATURE_INPUT_RT_SHADOW;
+            if (hw_rt_ready)
+                input_flags |= FEATURE_INPUT_HW_RT_SHADOW;
             // Pack the menu's render-debug mode (0..255) into bits 16..23.
             // base.frag and cluster_bindless.frag mask + branch on this.
             input_flags |= (static_cast<uint32_t>(menu_->getDebugRenderMode())
@@ -5191,8 +5308,56 @@ void RealWorldApplication::drawScene(
         // rays instead, so the whole CSM pass is skipped (same code path
         // as the "Turn off shadow pass" toggle; the post-pass layout
         // transition below runs unconditionally either way).
+        // ── RT-shadow skeletons (skinned characters) ─────────────────
+        // CPU-skin every ready skinned character into the RT caster
+        // buffers (software mode) and rebuild the skeleton BLAS + TLAS
+        // on this command buffer (hardware mode).  Gated on an RT mode
+        // being active — the CPU skinning isn't free.
+        if (cluster_renderer_ &&
+            (menu_->isRtShadowsOn() || menu_->isHwRtShadowsOn())) {
+            engine::helper::GpuProfiler::Scope _scope_rt_skel(
+                gpu_profiler_, cmd_buf, "RT Skeleton Update");
+            std::vector<es::ClusterRenderer::RtSkeletonFrameData> skels;
+            auto add_skel =
+                [&](const std::shared_ptr<ego::DrawableObject>& d) {
+                if (!d || !d->isReady()) return;
+                // Visibility parity with the raster paths: a hidden
+                // drawable (visible_ == false skips forward AND CSM)
+                // must not cast RT shadows either — otherwise hidden
+                // dev/startup characters shadow the scene invisibly.
+                if (!d->isVisible()) return;
+                const auto& src = d->getRtSkinSource();
+                const auto* jm  = d->getRtSkinJointMatrices();
+                if (!src || !jm || jm->empty()) return;
+                es::ClusterRenderer::RtSkeletonFrameData fd;
+                fd.positions      = &src->positions;
+                fd.joints         = &src->joints;
+                fd.weights        = &src->weights;
+                fd.joints1  = src->joints1.empty()  ? nullptr : &src->joints1;
+                fd.weights1 = src->weights1.empty() ? nullptr : &src->weights1;
+                fd.indices        = &src->indices;
+                fd.joint_matrices = jm;
+                fd.model          = d->getRtSkinWorldMatrix();
+                skels.push_back(fd);
+            };
+            add_skel(player_object_);
+            add_skel(npc_scifi_girl_);
+            // Editor-bound characters (Details → Skeleton Mesh) live in
+            // imported_objects_ — the startup members above are only the
+            // dev-default characters.  Without this, RT shadows come
+            // from the WRONG (startup) mesh while the visible character
+            // is the bound one.
+            for (const auto& obj : imported_objects_) {
+                if (obj && obj != player_object_ &&
+                    obj != npc_scifi_girl_) {
+                    add_skel(obj);
+                }
+            }
+            cluster_renderer_->updateRtSkeletons(cmd_buf, skels);
+        }
+
         if (!menu_->isShadowPassTurnOff() && !menu_->isSsrtShadowsOn() &&
-            !menu_->isRtShadowsOn()) {
+            !menu_->isRtShadowsOn() && !menu_->isHwRtShadowsOn()) {
             engine::helper::GpuProfiler::Scope _scope_shadow(
                 gpu_profiler_, cmd_buf, "CSM Shadow");
 
@@ -6120,12 +6285,35 @@ void RealWorldApplication::drawScene(
                         (cluster_renderer_ && cluster_renderer_->rtShadowReady())
                             ? cluster_renderer_->getRtShadowDescSet()
                             : rt_shadow_dummy_desc_set_;
-                    cmd_buf->bindPipeline(
-                        er::PipelineBindPoint::COMPUTE, deferred_resolve_pipeline_);
-                    cmd_buf->bindDescriptorSets(
-                        er::PipelineBindPoint::COMPUTE,
-                        deferred_resolve_pipeline_layout_,
-                        resolve_sets);
+                    // Hardware-RT shadow mode: dispatch the ray-query
+                    // pipeline variant with the TLAS set appended.  Only
+                    // taken once the AS exists — until then the software
+                    // paths (or unshadowed) run on the regular pipeline.
+                    const bool use_hw_rt =
+                        menu_ && menu_->isHwRtShadowsOn() &&
+                        deferred_resolve_hwrt_pipeline_ &&
+                        cluster_renderer_ &&
+                        cluster_renderer_->hwRtShadowReady();
+                    if (use_hw_rt) {
+                        auto hw_sets = resolve_sets;
+                        hw_sets.push_back(
+                            cluster_renderer_->getHwRtShadowDescSet());
+                        cmd_buf->bindPipeline(
+                            er::PipelineBindPoint::COMPUTE,
+                            deferred_resolve_hwrt_pipeline_);
+                        cmd_buf->bindDescriptorSets(
+                            er::PipelineBindPoint::COMPUTE,
+                            deferred_resolve_hwrt_pipeline_layout_,
+                            hw_sets);
+                    } else {
+                        cmd_buf->bindPipeline(
+                            er::PipelineBindPoint::COMPUTE,
+                            deferred_resolve_pipeline_);
+                        cmd_buf->bindDescriptorSets(
+                            er::PipelineBindPoint::COMPUTE,
+                            deferred_resolve_pipeline_layout_,
+                            resolve_sets);
+                    }
                     const uint32_t kGroupSize = 8;
                     uint32_t gx = (screen_size.x + kGroupSize - 1) / kGroupSize;
                     uint32_t gy = (screen_size.y + kGroupSize - 1) / kGroupSize;
