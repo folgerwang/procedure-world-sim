@@ -185,6 +185,16 @@ def main() -> None:
 
         # ── device split: encoder->CPU, transformer+VAE->GPU ────────────────
         pipe.vae = pipe.vae.to("cuda")
+        # VAE tiling + slicing: decode the (up to 2048^2) image in TILES rather
+        # than one giant activation tensor.  fp8 shrinks the transformer WEIGHTS
+        # but not the decode ACTIVATIONS, which at 2048^2 are the real VRAM
+        # spike at the end of a run — this caps them with no quality loss.
+        try:
+            pipe.vae.enable_tiling()
+            pipe.vae.enable_slicing()
+            print("[flux] VAE tiling + slicing enabled", flush=True)
+        except Exception as _e:
+            print(f"[flux] VAE tiling unavailable: {_e}", flush=True)
         pipe.text_encoder = pipe.text_encoder.to("cpu")
         if pre_transformer is None:
             pipe.transformer = pipe.transformer.to("cuda")
@@ -204,6 +214,19 @@ def main() -> None:
             quantize(pipe.text_encoder,
                      weights=qint8 if args.encoder_quant == "int8" else qint4)
             freeze(pipe.text_encoder)
+
+        # ── Release the bf16 masters left behind by quantize()/freeze() ─────
+        # quanto quantizes the transformer IN PLACE: the bf16 weights are moved
+        # to the GPU (~8 GB for klein-4B), then swapped for fp8 and dropped.
+        # But torch's CUDA caching allocator keeps that freed bf16 memory in
+        # its POOL rather than returning it to the driver, so nvidia-smi / the
+        # in-app HUD keep reporting the ~10 GB bf16 peak even though the live
+        # model is ~4 GB fp8 ("still using all the memory").  gc.collect() drops
+        # the now-dead tensors; empty_cache() hands the pool back to the driver.
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         pin_encoder_to_cpu(pipe, torch.device("cuda"))
         force_cuda_execution_device(pipe)

@@ -109,7 +109,12 @@ def run_flux(full_prompt: str, out_png: str, size: int, steps: int,
                "--prompt-file", prompt_file,
                "--out", out_png,
                "--width", str(size), "--height", str(size),
-               "--steps", str(steps), "--seed", str(seed)]
+               "--steps", str(steps), "--seed", str(seed),
+               # Quantize the FLUX transformer to fp8 (quanto qfloat8): ~half
+               # the VRAM of the bf16 weights with no visible quality loss on
+               # this DiT.  Passed explicitly so terrain generation stays fp8
+               # regardless of flux_generate.py's (drifting) default.
+               "--transformer-quant", "fp8"]
         if ref_image:
             cmd += ["--ref-image", ref_image]
         print(f"[terrain] FLUX {label}:", " ".join(cmd))
@@ -243,6 +248,11 @@ def main():
                     help="skip FLUX; use this image as the raw heightmap")
     ap.add_argument("--out", default="content/terrain/generated_map.png")
     ap.add_argument("--size", type=int, default=2048)
+    ap.add_argument("--gen-size", type=int, default=1024,
+                    help="FLUX RENDER resolution.  The heightfield is upsampled "
+                         "from this to --size, so lowering it cuts FLUX VRAM + "
+                         "time ~quadratically with almost no loss on a heightmap "
+                         "(1024 => ~4x less activation memory than 2048).")
     ap.add_argument("--steps", type=int, default=28)
     ap.add_argument("--seed", type=int, default=-1)
     ap.add_argument("--no-refine", action="store_true",
@@ -275,7 +285,7 @@ def main():
     if not raw_png:
         raw_png = os.path.join(tempfile.gettempdir(), "terrain_raw.png")
         run_flux(PROMPT_TEMPLATE.format(user_prompt=args.prompt),
-                 raw_png, args.size, args.steps, args.seed,
+                 raw_png, args.gen_size, args.steps, args.seed,
                  label="heightmap", prog_lo=0.02, prog_hi=hm_hi)
 
     print("[terrain] stage 2: heightmap -> terrain conversion")
@@ -301,9 +311,20 @@ def main():
         ).convert("RGB").save(ref8)
         run_flux(COLOR_PROMPT_TEMPLATE.format(
                      user_prompt=args.prompt or "natural terrain"),
-                 color_out, args.size, args.steps, args.seed,
+                 color_out, args.gen_size, args.steps, args.seed,
                  ref_image=ref8, label="color satellite",
                  prog_lo=0.58, prog_hi=0.95)
+        # FLUX renders the albedo/colour map at --gen-size; upsample it to
+        # --size so it matches the heightmap output resolution (the heightfield
+        # is already upsampled in image_to_heightfield).  LANCZOS upscale of a
+        # 1024 render — no new detail, but the map_mask matches the terrain.
+        if args.gen_size != args.size:
+            _ci = Image.open(color_out).convert("RGB")
+            if _ci.size != (args.size, args.size):
+                _ci.resize((args.size, args.size),
+                           Image.LANCZOS).save(color_out)
+                print(f"[terrain] upscaled colour map "
+                      f"{args.gen_size} -> {args.size}")
         print(f"[terrain] wrote {color_out}  (color satellite map)")
 
     report(0.97, "writing terrain map")
