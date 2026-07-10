@@ -4937,6 +4937,95 @@ void RealWorldApplication::registerIblDebugImTextureIds() {
     }
 }
 
+// ── Terrain from generated texture maps ─────────────────────────────────────
+// Creates the terrain from a heightmap + albedo (color satellite) pair
+// produced by the AI terrain pipeline, then regenerates the meshes:
+//   1. reload both textures (albedo optional),
+//   2. rewrite every descriptor set referencing the old image views,
+//   3. drop the tile cache — updateAllTiles() re-allocates the visible
+//      tiles next frame, and each new tile rebuilds its mesh buffers —
+//      and flag the tile-creator compute to re-run so the rock/soil
+//      layers regenerate from the new heights.
+// waitIdle first: in-flight frames still reference the old image views.
+void RealWorldApplication::createTerrainFromMaps(
+    const std::string& height_png,
+    const std::string& albedo_png) {
+    // Load into TEMPORARIES first and swap only on success: the maps are
+    // produced at runtime by the AI pipeline, so a truncated/corrupt file
+    // must abort the apply (keeping the current terrain intact), not
+    // propagate a runtime_error out of the frame loop and kill the app.
+    er::TextureInfo new_height{};
+    try {
+        eh::createTextureImage(
+            device_, height_png, er::Format::R16_UNORM, false,
+            new_height, std::source_location::current());
+    } catch (const std::exception& e) {
+        std::cerr << "[terrain] createTerrainFromMaps: failed to load "
+                     "heightmap '" << height_png << "' (" << e.what()
+                  << ") — keeping current terrain" << std::endl;
+        return;
+    }
+
+    // Albedo = the terrain's surface texture: the tile fragment shader
+    // samples it at full-world UV.  Optional — heightmap-only reloads
+    // keep the current surface colour.
+    er::TextureInfo new_albedo{};
+    bool have_albedo = false;
+    if (!albedo_png.empty() && std::filesystem::exists(albedo_png)) {
+        try {
+            eh::createTextureImage(
+                device_, albedo_png, er::Format::R8G8B8A8_UNORM, false,
+                new_albedo, std::source_location::current());
+            have_albedo = true;
+        } catch (const std::exception& e) {
+            std::cerr << "[terrain] createTerrainFromMaps: failed to load "
+                         "albedo '" << albedo_png << "' (" << e.what()
+                      << ") — keeping current surface colour" << std::endl;
+        }
+    }
+
+    device_->waitIdle();
+
+    heightmap_tex_.destroy(device_);
+    heightmap_tex_ = new_height;
+    if (have_albedo) {
+        map_mask_tex_.destroy(device_);
+        map_mask_tex_ = new_albedo;
+    }
+
+    // Rewrites BOTH the tile-render static set and the tile creator set
+    // (SRC_DEPTH_TEX binding) — the creator pass samples the heightmap
+    // directly.
+    ego::TileObject::generateAllDescriptorSets(
+        device_,
+        descriptor_pool_,
+        texture_sampler_,
+        heightmap_tex_.view);
+    // Tile render sets carry the map-mask (surface colour) view.
+    if (terrain_scene_view_ && weather_system_ && volume_noise_) {
+        terrain_scene_view_->updateTileResDescriptorSet(
+            device_,
+            descriptor_pool_,
+            texture_sampler_,
+            repeat_texture_sampler_,
+            weather_system_->getTempTexes(),
+            map_mask_tex_.view,
+            volume_noise_->getDetailNoiseTexture().view,
+            volume_noise_->getRoughNoiseTexture().view);
+    }
+
+    // Generate the meshes: dropping the cache forces updateAllTiles() to
+    // re-add every visible tile (createMeshBuffers / createGrassBuffers),
+    // and the pending flag re-runs generateTileBuffers next drawScene.
+    ego::TileObject::destroyAllTiles(device_);
+    terrain_rebuild_pending_ = true;
+    terrain_render_enabled_ = true;   // terrain is hidden until created
+
+    std::cout << "[terrain] created terrain from '" << height_png << "'"
+              << (albedo_png.empty() ? "" : " + '" + albedo_png + "'")
+              << " — meshes regenerate next frame" << std::endl;
+}
+
 void RealWorldApplication::createTextureSampler() {
     texture_sampler_ = device_->createSampler(
         er::Filter::LINEAR,
@@ -6256,6 +6345,32 @@ void RealWorldApplication::drawScene(
                 s_dbuf_idx,
                 delta_t,
                 current_time);
+
+            // ── Terrain tile meshes ────────────────────────────────────
+            // Drawn on top of the forward output in a LOAD pass, sharing
+            // object_scene_view_'s depth buffer so terrain and scene
+            // objects occlude each other correctly.  This is the ONLY
+            // place the tile meshes are rendered — TerrainSceneView's own
+            // draw()/color buffer is never composited into the display.
+            // Skipped in collision-debug view (clean segmentation only).
+            // NOT rendered by default: terrain_render_enabled_ flips on
+            // when a terrain is created from generated maps.
+            if (terrain_render_enabled_ &&
+                terrain_scene_view_ && !show_collision_dbg &&
+                object_scene_view_->getColorBuffer() &&
+                object_scene_view_->getDepthBuffer()) {
+                engine::helper::GpuProfiler::Scope _scope_tiles(
+                    gpu_profiler_, cmd_buf, "Terrain Tiles");
+                terrain_scene_view_->drawTilesInto(
+                    cmd_buf,
+                    object_scene_view_->getColorBuffer()->view,
+                    object_scene_view_->getDepthBuffer()->view,
+                    screen_size,
+                    desc_sets[PBR_GLOBAL_PARAMS_SET],
+                    s_dbuf_idx,
+                    delta_t,
+                    current_time);
+            }
 
             // _scope_forward auto-closes via RAII.
         }
@@ -7755,6 +7870,25 @@ void RealWorldApplication::drawFrame() {
         gpu_profiler_.endCpuFrame(cpu_frame_idx);
         recreateSwapChain();
         return;
+    }
+
+    // ── Terrain apply: create terrain from the generated texture maps ──
+    // Fired automatically by the menu when the AI pipeline finishes
+    // writing the heightmap + albedo pair (and by "Rebuild Terrain Now"
+    // as a re-apply).  MUST run HERE, at the very top of the frame,
+    // BEFORE any command recording: it destroys the tile buffers and the
+    // old heightmap texture and rewrites descriptor sets — doing that
+    // after drawScene() has recorded tile draws into this frame's
+    // command buffer is a VK_ERROR_DEVICE_LOST at submit (waitIdle only
+    // covers already-SUBMITTED frames, not the one being recorded).
+    // updateAllTiles() later this same frame re-creates the tile meshes.
+    {
+        std::string terrain_height_png, terrain_albedo_png;
+        if (menu_->consumeTerrainApplyRequest(terrain_height_png,
+                                              terrain_albedo_png)) {
+            createTerrainFromMaps(terrain_height_png,
+                                  terrain_albedo_png);
+        }
     }
 
     // Outer "Fence Wait + Acquire" scope kept for at-a-glance timing
@@ -11760,53 +11894,6 @@ void RealWorldApplication::drawFrame() {
             std::cout << "[scene] created BGM object '" << bgm_name
                       << "' (drag a music clip onto it in Details)"
                       << std::endl;
-        }
-
-        // ── "Rebuild Terrain Now": hot-reload the generated heightmap ────
-        // Re-reads assets/map.png (freshly installed by the AI terrain
-        // pipeline), rewrites every descriptor set referencing the old
-        // texture, and schedules a tile-creator re-run so the rock/soil
-        // layers rebuild from the new heights — no engine restart.
-        // waitIdle first: in-flight frames reference the old image view.
-        if (menu_->consumeTerrainApplyRequest()) {
-            device_->waitIdle();
-            heightmap_tex_.destroy(device_);
-            auto height_map_format = er::Format::R16_UNORM;
-            eh::createTextureImage(
-                device_, "assets/map.png", height_map_format, false,
-                heightmap_tex_, std::source_location::current());
-            // Colour satellite map = the terrain's surface texture: the
-            // tile fragment shader samples assets/map_mask.png at full-
-            // world UV for its albedo.  Reload it too (the AI pipeline
-            // installs <name>_color.png there).
-            map_mask_tex_.destroy(device_);
-            eh::createTextureImage(
-                device_, "assets/map_mask.png",
-                er::Format::R8G8B8A8_UNORM, false,
-                map_mask_tex_, std::source_location::current());
-            // Rewrites BOTH the tile-render static set and the tile
-            // creator set (SRC_DEPTH_TEX binding) — the creator pass
-            // samples the heightmap directly.
-            ego::TileObject::generateAllDescriptorSets(
-                device_,
-                descriptor_pool_,
-                texture_sampler_,
-                heightmap_tex_.view);
-            // Tile render sets carry the map-mask (surface colour) view.
-            if (terrain_scene_view_ && weather_system_ && volume_noise_) {
-                terrain_scene_view_->updateTileResDescriptorSet(
-                    device_,
-                    descriptor_pool_,
-                    texture_sampler_,
-                    repeat_texture_sampler_,
-                    weather_system_->getTempTexes(),
-                    map_mask_tex_.view,
-                    volume_noise_->getDetailNoiseTexture().view,
-                    volume_noise_->getRoughNoiseTexture().view);
-            }
-            terrain_rebuild_pending_ = true;
-            std::cout << "[terrain] heightmap + surface color reloaded — "
-                         "terrain rebuilds next frame" << std::endl;
         }
 
         // ── "Add Point Light": ReSTIR lighting scene object ──────────────

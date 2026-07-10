@@ -238,6 +238,143 @@ def save_u16(h, path: str):
     print(f"[terrain] wrote {path}  ({a.shape[1]}x{a.shape[0]}, 16-bit)")
 
 
+# ── Terrain mesh export ─────────────────────────────────────────────────────
+# Bakes the (already height-scaled) heightfield into a textured grid mesh
+# saved NEXT TO the textures with the SAME base name: <out>.glb.  GLB so the
+# editor's Content Browser can thumbnail it and the scene importer can place
+# it directly.  Self-contained: the albedo rides inside the GLB buffer, and
+# the writer is dependency-free (json + struct + numpy).
+#
+# World mapping matches the engine (tile_creator.comp): the map spans
+# kWorldMapSize = 16384 m centered on the origin, white = 2000 m.
+def save_mesh_glb(h, out_png: str, color_png: str = None, mesh_res: int = 256):
+    import json
+    import struct
+
+    WORLD_SIZE = 16384.0   # kWorldMapSize (global_definition.glsl.h)
+    HEIGHT_AMP = 2000.0    # tile_creator.comp heightmap multiplier
+
+    a = h.numpy().astype(np.float32)
+    src_h, src_w = a.shape
+    res = max(2, int(mesh_res))
+
+    # Decimated grid sample of the heightfield.
+    ys = np.round(np.linspace(0, src_h - 1, res)).astype(np.int64)
+    xs = np.round(np.linspace(0, src_w - 1, res)).astype(np.int64)
+    grid = a[np.ix_(ys, xs)] * HEIGHT_AMP                     # [res, res] m
+
+    half = WORLD_SIZE * 0.5
+    lin = np.linspace(-half, half, res, dtype=np.float32)
+    xw = np.broadcast_to(lin[None, :], (res, res))            # +u -> +x
+    zw = np.broadcast_to(lin[:, None], (res, res))            # +v -> +z
+    pos = np.stack([xw, grid, zw], axis=-1).reshape(-1, 3).astype(np.float32)
+
+    # Normals via central differences on the sampled grid.
+    step = WORLD_SIZE / (res - 1)
+    dx = np.gradient(grid, step, axis=1)
+    dz = np.gradient(grid, step, axis=0)
+    n = np.stack([-dx, np.ones_like(grid), -dz], axis=-1)
+    n /= np.linalg.norm(n, axis=-1, keepdims=True)
+    nrm = n.reshape(-1, 3).astype(np.float32)
+
+    # UVs: glTF texcoord origin is the image top-left, which is exactly
+    # how the engine maps the heightmap (row 0 = world_min.z edge).
+    uu = np.broadcast_to(np.linspace(0.0, 1.0, res, dtype=np.float32)[None, :],
+                         (res, res))
+    vv = np.broadcast_to(np.linspace(0.0, 1.0, res, dtype=np.float32)[:, None],
+                         (res, res))
+    uv = np.stack([uu, vv], axis=-1).reshape(-1, 2).astype(np.float32)
+
+    # Two CCW (viewed from +Y) triangles per quad.
+    i0 = (np.arange(res - 1)[:, None] * res + np.arange(res - 1)[None, :])
+    i0 = i0.reshape(-1)
+    quad = np.stack([i0, i0 + res, i0 + 1,
+                     i0 + 1, i0 + res, i0 + res + 1], axis=-1)
+    idx = quad.reshape(-1).astype(np.uint32)
+
+    def pad4(b, fill=b"\x00"):
+        return b + fill * ((4 - len(b) % 4) % 4)
+
+    pos_b, nrm_b, uv_b, idx_b = (pad4(x.tobytes())
+                                 for x in (pos, nrm, uv, idx))
+    img_b = b""
+    if color_png and os.path.exists(color_png):
+        with open(color_png, "rb") as f:
+            img_b = pad4(f.read())
+
+    views, accessors, offset = [], [], 0
+
+    def add_view(blob, target=None):
+        nonlocal offset
+        v = {"buffer": 0, "byteOffset": offset, "byteLength": len(blob)}
+        if target:
+            v["target"] = target
+        views.append(v)
+        offset += len(blob)
+        return len(views) - 1
+
+    vcount = res * res
+    add_view(pos_b, 34962)
+    accessors.append({"bufferView": 0, "componentType": 5126,
+                      "count": vcount, "type": "VEC3",
+                      "min": pos.min(axis=0).tolist(),
+                      "max": pos.max(axis=0).tolist()})
+    add_view(nrm_b, 34962)
+    accessors.append({"bufferView": 1, "componentType": 5126,
+                      "count": vcount, "type": "VEC3"})
+    add_view(uv_b, 34962)
+    accessors.append({"bufferView": 2, "componentType": 5126,
+                      "count": vcount, "type": "VEC2"})
+    add_view(idx_b, 34963)
+    accessors.append({"bufferView": 3, "componentType": 5125,
+                      "count": int(idx.size), "type": "SCALAR"})
+
+    material = {"name": "terrain",
+                "pbrMetallicRoughness": {"metallicFactor": 0.0,
+                                         "roughnessFactor": 1.0},
+                "doubleSided": False}
+    gltf = {
+        "asset": {"version": "2.0", "generator": "terrain_from_text.py"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [{"mesh": 0, "name": "terrain"}],
+        "meshes": [{"name": "terrain", "primitives": [{
+            "attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2},
+            "indices": 3, "material": 0, "mode": 4}]}],
+        "materials": [material],
+        "bufferViews": views,
+        "accessors": accessors,
+    }
+    if img_b:
+        img_view = add_view(img_b)
+        gltf["images"] = [{"bufferView": img_view, "mimeType": "image/png"}]
+        gltf["samplers"] = [{"magFilter": 9729, "minFilter": 9987,
+                             "wrapS": 33071, "wrapT": 33071}]
+        gltf["textures"] = [{"sampler": 0, "source": 0}]
+        material["pbrMetallicRoughness"]["baseColorTexture"] = {"index": 0}
+    else:
+        material["pbrMetallicRoughness"]["baseColorFactor"] = \
+            [0.45, 0.5, 0.4, 1.0]
+
+    bin_chunk = pos_b + nrm_b + uv_b + idx_b + img_b
+    gltf["buffers"] = [{"byteLength": len(bin_chunk)}]
+    json_chunk = pad4(json.dumps(gltf, separators=(",", ":"))
+                      .encode("utf-8"), b" ")
+
+    glb_path = os.path.splitext(out_png)[0] + ".glb"
+    total = 12 + 8 + len(json_chunk) + 8 + len(bin_chunk)
+    with open(glb_path, "wb") as f:
+        f.write(struct.pack("<III", 0x46546C67, 2, total))          # glTF v2
+        f.write(struct.pack("<II", len(json_chunk), 0x4E4F534A))    # JSON
+        f.write(json_chunk)
+        f.write(struct.pack("<II", len(bin_chunk), 0x004E4942))     # BIN
+        f.write(bin_chunk)
+    print(f"[terrain] wrote {glb_path}  ({res}x{res} grid, "
+          f"{idx.size // 3} tris"
+          f"{', albedo embedded' if img_b else ''})")
+    return glb_path
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--prompt", help="terrain description (stage 1 input)")
@@ -257,6 +394,16 @@ def main():
     ap.add_argument("--seed", type=int, default=-1)
     ap.add_argument("--no-refine", action="store_true",
                     help="skip the stage-2 terrain conversion model")
+    ap.add_argument("--mesh-res", type=int, default=256,
+                    help="terrain mesh grid resolution (verts per side) for "
+                         "the .glb export; 0 disables the mesh")
+    ap.add_argument("--height-scale", type=float, default=0.25,
+                    help="peak height as a fraction of the engine's full "
+                         "range (tile_creator.comp maps white to 2000 m, "
+                         "far too dramatic for a full-range normalized "
+                         "map).  0.25 => ~500 m peaks.  Applied when "
+                         "writing the 16-bit PNG so engine constants and "
+                         "CPU/GPU sync stay untouched.")
     ap.add_argument("--color", action="store_true",
                     help="also generate a matching COLOR satellite map "
                          "(<out>_color.png) via a second FLUX pass "
@@ -328,7 +475,27 @@ def main():
         print(f"[terrain] wrote {color_out}  (color satellite map)")
 
     report(0.97, "writing terrain map")
+    # World-height scaling happens HERE (not in the engine): the refined
+    # heightfield spans the full [0,1] range, which the tile creator maps
+    # to 0..2000 m.  NOTE: applied after the colour pass, whose FLUX
+    # conditioning wants the full-contrast reference.
+    scale = max(0.0, min(1.0, args.height_scale))
+    if scale < 1.0:
+        h = h * scale
+        print(f"[terrain] height scale {scale:g} "
+              f"(peaks ~{2000.0 * scale:.0f} m)")
     save_u16(h, out)
+
+    # Terrain mesh: same folder, same base name as the textures
+    # (<out>.glb), baked from the scaled heightfield with the albedo
+    # embedded.  Before the .done sentinel, so the editor's auto-apply
+    # only fires once every artifact is complete.
+    if args.mesh_res > 0:
+        report(0.98, "baking terrain mesh")
+        color_out = None
+        if args.color:
+            color_out = os.path.splitext(out)[0] + "_color.png"
+        save_mesh_glb(h, out, color_out, args.mesh_res)
 
     if args.install:
         if os.path.exists(MAP_PNG) and not os.path.exists(MAP_PNG + ".bak"):
@@ -355,13 +522,20 @@ def main():
               "map, but CPU physics (terrainMap) still runs the analytic "
               "FBM until the engine-side sync is implemented.")
 
-    # Progress file served its purpose — the editor switches to "done" the
-    # moment the output PNG exists.
+    # Progress file served its purpose.
     try:
         if _PROGRESS_PATH and os.path.exists(_PROGRESS_PATH):
             os.remove(_PROGRESS_PATH)
     except OSError:
         pass
+
+    # Completion sentinel — written LAST, after every artifact (heightmap,
+    # colour map, --install copies) is fully on disk.  The editor polls
+    # THIS file, not the output PNG: polling the PNG races the auto-apply
+    # against PIL still flushing it (partial read -> stbi returns null ->
+    # engine runtime_error).
+    with open(out + ".done", "w", encoding="utf-8") as df:
+        df.write("ok")
 
 
 if __name__ == "__main__":

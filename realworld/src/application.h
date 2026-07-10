@@ -147,6 +147,15 @@ private:
     void recreateRenderBuffer(const glm::uvec2& display_size);
     void createTextureSampler();
     void createDescriptorSets();
+    // Creates the terrain from a heightmap + albedo (color satellite)
+    // texture pair: loads both images, rewrites every descriptor set that
+    // references the old views, then regenerates the tile meshes (tile
+    // cache is dropped so meshes rebuild, and the tile-creator compute
+    // re-runs next frame to rebuild the rock/soil layers).  Called
+    // automatically when the AI terrain pipeline finishes generating the
+    // two textures; albedo_png may be empty (heightmap-only reload).
+    void createTerrainFromMaps(const std::string& height_png,
+                               const std::string& albedo_png);
     void setupCsmDebugDraw();
     void registerCsmDebugImTextureIds();
     // Registers ImGui texture IDs for the IBL/sky cubemap debug window.
@@ -355,6 +364,13 @@ private:
     // is re-read + descriptors rewritten; the next drawScene re-runs
     // TileObject::generateTileBuffers to rebuild the rock/soil layers.
     bool terrain_rebuild_pending_ = false;
+
+    // The terrain is NOT rendered by default: tiles only draw after a
+    // terrain has been created from generated texture maps
+    // (createTerrainFromMaps — AI pipeline completion or "Rebuild
+    // Terrain Now").  Tile compute/update still runs so the layers are
+    // warm when the terrain is enabled.
+    bool terrain_render_enabled_ = false;
 
     static constexpr uint32_t kRestirMaxLights = 256;
     er::BufferInfo restir_reservoir_buffer_;
