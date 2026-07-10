@@ -351,6 +351,11 @@ private:
     std::shared_ptr<er::PipelineLayout>      rt_filter_pipeline_layout_;
     std::shared_ptr<er::Pipeline>            rt_filter_pipeline_;
 
+    // Terrain hot-reload ("Rebuild Terrain Now"): set after assets/map.png
+    // is re-read + descriptors rewritten; the next drawScene re-runs
+    // TileObject::generateTileBuffers to rebuild the rock/soil layers.
+    bool terrain_rebuild_pending_ = false;
+
     static constexpr uint32_t kRestirMaxLights = 256;
     er::BufferInfo restir_reservoir_buffer_;
     uint64_t       restir_reservoir_bytes_  = 0;

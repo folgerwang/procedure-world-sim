@@ -5173,13 +5173,18 @@ void RealWorldApplication::drawScene(
     {
         engine::helper::GpuProfiler::Scope _scope_terrain(
             gpu_profiler_, cmd_buf, "Terrain / Weather Update");
-        // only init one time.
+        // only init one time — EXCEPT terrain hot-reload ("Rebuild
+        // Terrain Now"), which re-runs the creator pass so the rock/soil
+        // layers regenerate from the freshly reloaded heightmap.
         static bool s_tile_buffer_inited = false;
-        if (!s_tile_buffer_inited) {
+        if (!s_tile_buffer_inited || terrain_rebuild_pending_) {
             ego::TileObject::generateTileBuffers(cmd_buf);
-            weather_system_->initTemperatureBuffer(cmd_buf);
-            volume_noise_->initNoiseTexture(cmd_buf);
+            if (!s_tile_buffer_inited) {
+                weather_system_->initTemperatureBuffer(cmd_buf);
+                volume_noise_->initNoiseTexture(cmd_buf);
+            }
             s_tile_buffer_inited = true;
+            terrain_rebuild_pending_ = false;
         }
         else {
             ego::TileObject::updateTileFlowBuffers(cmd_buf, current_time_, s_dbuf_idx);
@@ -11755,6 +11760,53 @@ void RealWorldApplication::drawFrame() {
             std::cout << "[scene] created BGM object '" << bgm_name
                       << "' (drag a music clip onto it in Details)"
                       << std::endl;
+        }
+
+        // ── "Rebuild Terrain Now": hot-reload the generated heightmap ────
+        // Re-reads assets/map.png (freshly installed by the AI terrain
+        // pipeline), rewrites every descriptor set referencing the old
+        // texture, and schedules a tile-creator re-run so the rock/soil
+        // layers rebuild from the new heights — no engine restart.
+        // waitIdle first: in-flight frames reference the old image view.
+        if (menu_->consumeTerrainApplyRequest()) {
+            device_->waitIdle();
+            heightmap_tex_.destroy(device_);
+            auto height_map_format = er::Format::R16_UNORM;
+            eh::createTextureImage(
+                device_, "assets/map.png", height_map_format, false,
+                heightmap_tex_, std::source_location::current());
+            // Colour satellite map = the terrain's surface texture: the
+            // tile fragment shader samples assets/map_mask.png at full-
+            // world UV for its albedo.  Reload it too (the AI pipeline
+            // installs <name>_color.png there).
+            map_mask_tex_.destroy(device_);
+            eh::createTextureImage(
+                device_, "assets/map_mask.png",
+                er::Format::R8G8B8A8_UNORM, false,
+                map_mask_tex_, std::source_location::current());
+            // Rewrites BOTH the tile-render static set and the tile
+            // creator set (SRC_DEPTH_TEX binding) — the creator pass
+            // samples the heightmap directly.
+            ego::TileObject::generateAllDescriptorSets(
+                device_,
+                descriptor_pool_,
+                texture_sampler_,
+                heightmap_tex_.view);
+            // Tile render sets carry the map-mask (surface colour) view.
+            if (terrain_scene_view_ && weather_system_ && volume_noise_) {
+                terrain_scene_view_->updateTileResDescriptorSet(
+                    device_,
+                    descriptor_pool_,
+                    texture_sampler_,
+                    repeat_texture_sampler_,
+                    weather_system_->getTempTexes(),
+                    map_mask_tex_.view,
+                    volume_noise_->getDetailNoiseTexture().view,
+                    volume_noise_->getRoughNoiseTexture().view);
+            }
+            terrain_rebuild_pending_ = true;
+            std::cout << "[terrain] heightmap + surface color reloaded — "
+                         "terrain rebuilds next frame" << std::endl;
         }
 
         // ── "Add Point Light": ReSTIR lighting scene object ──────────────
