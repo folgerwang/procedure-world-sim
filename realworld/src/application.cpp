@@ -3669,12 +3669,33 @@ void RealWorldApplication::reconcileImportedSceneViewMembership() {
             ecs_view_members_.end()) {
             if (object_scene_view_)        object_scene_view_->addDrawableObject(d);
             if (shadow_object_scene_view_) shadow_object_scene_view_->addDrawableObject(d);
+            // ── Identity instance transform for STATIC placed imports ──
+            // Same double-transform bug the player opts out of at spawn:
+            // without this, base.vert's per-instance transform comes from
+            // the shared game_objects_buffer_ (a GPU-SIM entity —
+            // camera_pos@frame0 + gravity drift), so the mesh renders
+            // offset from where the editor placed it and slowly sinks —
+            // while the CPU-side selection bbox (identity instance root)
+            // stays at the CORRECT place.  Exactly the "PCG glb: bbox
+            // right, mesh wrong/invisible" symptom.  Placement TRS still
+            // applies through model_params (m_current_instance_world_).
+            // Skinned/animated imports keep the default path: node-only
+            // mode would also skip their animation evaluation.
+            // Safe to call here: gather() only returns READY drawables
+            // (the setter silently no-ops on a not-yet-loaded shell).
+            const auto& dd = d->getDrawableData();
+            if (dd.skins_.empty() && dd.animations_.empty()) {
+                d->setUseNodeTransformOnly(true);
+            }
             // Draw-reach counters for placed drawables (see the
             // [placed.draw] per-second report in drawFrame).
             d->setDebugLogDraws(true);
             std::cout << "[ecs] scene-view ADD drawable ("
-                      << d->getDrawableData().meshes_.size()
-                      << " mesh(es))" << std::endl;
+                      << dd.meshes_.size() << " mesh(es), instance xform: "
+                      << (d->getUseNodeTransformOnly()
+                              ? "identity/node-only"
+                              : "game_objects_buffer (sim-driven)")
+                      << ")" << std::endl;
         }
     }
     ecs_view_members_ = std::move(desired);
@@ -5168,11 +5189,17 @@ void RealWorldApplication::createTerrainFromMaps(
                                     glm::vec2(-half * 0.9f),
                                     glm::vec2(half * 0.9f));
             }
-            const glm::vec2 uv = (cam_xz + glm::vec2(half)) / kWorldMapSize;
+            // Map footprint is kTerrainMapMeters (NOT kWorldMapSize —
+            // dividing by the 32 km world size sampled a texel near the
+            // map corner instead of under the camera).
+            const glm::vec2 uv = (cam_xz + glm::vec2(half)) / kTerrainMapMeters;
             const int px = glm::clamp(int(uv.x * hw), 0, hw - 1);
             const int py = glm::clamp(int(uv.y * hh), 0, hh - 1);
+            // + soil layer: the rendered surface is rock + kSoilInitLevel
+            // (5 m, tile_creator.comp) — the SOIL_PASS is what's visible.
             const float ground =
-                float(hpix[py * hw + px]) / 65535.0f * kTerrainHeightAmpMeters;
+                float(hpix[py * hw + px]) / 65535.0f * kTerrainHeightAmpMeters
+                + 5.0f;
             terrain_camera_snap_pos_ =
                 glm::vec3(cam_xz.x, ground + 30.0f, cam_xz.y);
             terrain_camera_snap_pending_ = true;
@@ -5235,10 +5262,32 @@ void RealWorldApplication::createTerrainFromMaps(
             if (!already) {
                 const glm::vec3 origin(0.0f);
                 importModelFromFile(pcg_glb, &origin);
+                // File mtime in the log: distinguishes a STALE glb (from
+                // a previous pipeline run) from one freshly baked by this
+                // apply — "PCG placed" alone can't tell those apart.
+                std::error_code mt_ec;
+                const auto mt = std::filesystem::last_write_time(
+                    pcg_glb, mt_ec);
+                const auto mt_sec =
+                    std::chrono::duration_cast<std::chrono::seconds>(
+                        mt.time_since_epoch()).count();
                 std::cout << "[terrain] PCG proxies placed: " << pcg_glb
-                          << " (previous map's PCG object, if any, can "
+                          << " (size "
+                          << std::filesystem::file_size(pcg_glb, mt_ec)
+                          << " B, mtime " << mt_sec
+                          << ") (previous map's PCG object, if any, can "
                              "be deleted in the Outliner)" << std::endl;
+            } else {
+                std::cout << "[terrain] PCG proxies SKIPPED: '" << pcg_glb
+                          << "' is already in the scene (re-apply/reload)."
+                             " Delete the object in the Outliner first to"
+                             " re-import a regenerated glb." << std::endl;
             }
+        } else {
+            std::cout << "[terrain] PCG proxies NOT FOUND: '" << pcg_glb
+                      << "' does not exist — the pipeline's PCG stage "
+                         "(terrain_pcg.py) did not run or failed."
+                      << std::endl;
         }
     }
 

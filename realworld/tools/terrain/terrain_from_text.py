@@ -100,6 +100,229 @@ COLOR_PROMPT_TEMPLATE = (
 )
 
 
+# ── Layout-first generation: land-cover map → masks + height + albedo ──────
+# Instead of guessing classes from satellite-photo colours (heuristics that
+# confuse rivers with roofs and scrub with towns), FLUX renders a FLAT-COLOUR
+# land-cover map in a fixed palette.  Nearest-palette quantization then gives
+# EXACT class masks; the heightfield and albedo derive from those masks, so
+# heightmap, segmentation, albedo and PCG placement agree by construction.
+SEG_CLASSES = [
+    #  name      palette RGB        base elev  relief amp   (0..1 of range)
+    ("water",  ( 30,  60, 200)),
+    ("grass",  (120, 200,  80)),
+    ("forest", ( 20, 110,  40)),
+    ("town",   (220,  60,  40)),
+    ("road",   ( 70,  70,  70)),
+    ("rock",   (150, 115,  85)),
+    ("snow",   (245, 245, 245)),
+    ("sand",   (215, 185, 130)),
+]
+SEG_BASE_ELEV = {"water": 0.04, "grass": 0.16, "forest": 0.22,
+                 "town": 0.14, "road": 0.15, "rock": 0.55,
+                 "snow": 0.75, "sand": 0.10}
+SEG_RELIEF_AMP = {"water": 0.01, "grass": 0.06, "forest": 0.10,
+                  "town": 0.02, "road": 0.02, "rock": 0.45,
+                  "snow": 0.35, "sand": 0.04}
+
+# NOTE style vocabulary: "cartographic game world map" made FLUX draw an
+# ANTIQUE illustrated map — brown houses on tan paper, hatched mountains —
+# and the palette quantizer classified every house as rock/sand (towns:
+# 0%).  The wording below pushes toward a GIS classification raster with
+# saturated primary colours instead.
+SEG_PROMPT_TEMPLATE = (
+    "GIS land cover classification raster, semantic segmentation map, "
+    "computer game minimap in flat saturated primary colors, "
+    "top-down orthographic view of a 4 kilometer wide region, "
+    "{user_prompt}, "
+    "every land cover class painted in its pure signal color: "
+    "BRIGHT PURE BLUE rivers and lakes, LIGHT GREEN grassland and "
+    "fields, DARK GREEN forest and woodland, BRIGHT PURE RED town and "
+    "village building blocks, DARK GRAY roads and streets connecting "
+    "the towns, BROWN bare rock mountains and cliffs, WHITE snow on "
+    "the highest peaks, TAN sand and dirt, "
+    "hard edges, solid color fills, no outlines, no gradients, "
+    "no shading, no texture, no hatching, no text, no labels, "
+    "no borders, no legend, no paper style, not an antique map, "
+    "flat 2D digital classification image"
+)
+
+COLOR_FROM_LAYOUT_TEMPLATE = (
+    "photorealistic full-color satellite aerial orthophoto of the exact "
+    "same region as the reference land cover map, matching its layout "
+    "precisely: blue areas are water, dark green areas are forest, "
+    "light green areas are grassland, red areas are towns with dense "
+    "buildings, gray lines are roads, brown areas are bare rock "
+    "mountains, white areas are snow, "
+    "covering a 4 kilometer wide area, {user_prompt}, "
+    "nadir view seen straight down, orthographic map projection, "
+    "natural earth colors, no perspective, no horizon, no sky, "
+    "no clouds, no text, no borders"
+)
+
+
+def quantize_to_classes(png_path: str, size: int):
+    """Classification of the FLUX layout render → uint8 class-index map
+    [size, size].  HSV RULES first (robust to FLUX's colour drift —
+    'red' towns come out brick, 'blue' water comes out steel...), with
+    nearest-palette distance only as the tiebreak for pixels no rule
+    claims.  Majority-vote smoothing removes border speckle."""
+    from scipy import ndimage as ndi
+    im = Image.open(png_path).convert("RGB")
+    if im.size != (size, size):
+        im = im.resize((size, size), Image.NEAREST)
+    rgbf = np.asarray(im, dtype=np.float32) / 255.0
+    r, g, b = rgbf[..., 0], rgbf[..., 1], rgbf[..., 2]
+    v = rgbf.max(-1)
+    mn = rgbf.min(-1)
+    c = v - mn
+    s = c / (v + 1e-6)
+    # Hue in degrees (0..360); undefined (c≈0) stays 0 but s gates it.
+    hue = np.zeros_like(v)
+    m = (c > 1e-6) & (v == r)
+    hue[m] = (60.0 * ((g - b) / c) % 360.0)[m]
+    m = (c > 1e-6) & (v == g)
+    hue[m] = (60.0 * ((b - r) / c) + 120.0)[m]
+    m = (c > 1e-6) & (v == b)
+    hue[m] = (60.0 * ((r - g) / c) + 240.0)[m]
+
+    names = [n for n, _ in SEG_CLASSES]
+    idx = {n: i for i, n in enumerate(names)}
+    cls = np.full(v.shape, 255, np.uint8)          # 255 = unclaimed
+
+    def put(mask, name):
+        cls[(cls == 255) & mask] = idx[name]
+
+    put((v > 0.75) & (s < 0.18), "snow")
+    put((hue >= 185) & (hue <= 265) & (s > 0.2) & (v > 0.15), "water")
+    put((hue >= 65) & (hue <= 175) & (s > 0.2) & (v < 0.45), "forest")
+    put((hue >= 60) & (hue <= 175) & (s > 0.2), "grass")
+    put(((hue >= 335) | (hue <= 22)) & (s > 0.35) & (v > 0.25), "town")
+    put((s < 0.22) & (v < 0.55), "road")           # dark achromatic
+    put((hue > 22) & (hue < 55) & (v < 0.55), "rock")   # dark brown
+    put((hue >= 22) & (hue <= 65) & (v >= 0.55), "sand")  # tan
+    # Unclaimed pixels: nearest palette colour.
+    if (cls == 255).any():
+        a16 = np.asarray(im, dtype=np.int32)
+        pal = np.array([col for _, col in SEG_CLASSES], dtype=np.int32)
+        un = cls == 255
+        d = ((a16[un][:, None, :] - pal[None]) ** 2).sum(-1)
+        cls[un] = d.argmin(-1).astype(np.uint8)
+    # Majority-vote smoothing: per-class box score, argmax — kills
+    # single-texel speckle without the label-averaging bug a plain
+    # median on indices would have.
+    score = np.zeros((len(SEG_CLASSES),) + cls.shape, np.float32)
+    for i in range(len(SEG_CLASSES)):
+        score[i] = ndi.uniform_filter((cls == i).astype(np.float32), 5)
+    cls = score.argmax(0).astype(np.uint8)
+    return cls
+
+
+def save_seg_png(cls, path: str):
+    """Class-index map → indexed-palette PNG (exact colours, tiny file)."""
+    pal_img = Image.fromarray(cls, mode="P")
+    flat = []
+    for _, c in SEG_CLASSES:
+        flat += list(c)
+    pal_img.putpalette(flat + [0] * (768 - len(flat)))
+    pal_img.save(path)
+
+
+def height_from_classes(cls, size: int, seed: int):
+    """Heightfield synthesised FROM the layout: per-class base elevation
+    + fractal relief whose amplitude is also class-driven (mountains
+    rough, towns/water near-flat).  Class borders are feathered so
+    region edges don't ring as cliffs.  Aligned with the segmentation
+    by construction."""
+    import torch
+    import torch.nn.functional as F
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    names = [n for n, _ in SEG_CLASSES]
+    base = np.zeros(cls.shape, np.float32)
+    amp = np.zeros(cls.shape, np.float32)
+    for i, n in enumerate(names):
+        m = cls == i
+        base[m] = SEG_BASE_ELEV[n]
+        amp[m] = SEG_RELIEF_AMP[n]
+    base_t = torch.from_numpy(base).to(dev)[None, None]
+    amp_t = torch.from_numpy(amp).to(dev)[None, None]
+    # Feather class borders over ~60 m.
+    k = max(3, int(60.0 / (WORLD_SIZE_M / cls.shape[0])) | 1)
+    base_t = F.avg_pool2d(base_t, k, 1, k // 2)
+    amp_t = F.avg_pool2d(amp_t, k, 1, k // 2)
+    # Value-noise fBm relief (deterministic per seed).
+    gen = torch.Generator().manual_seed(seed & 0x7FFFFFFF)
+    fbm = torch.zeros_like(base_t)
+    total, a_ = 0.0, 1.0
+    for res in (8, 16, 32, 64, 128, 256, 512):
+        n = torch.rand((1, 1, res, res), generator=gen).to(dev)
+        n = F.interpolate(n, size=cls.shape, mode="bicubic",
+                          align_corners=False)
+        fbm += (n - 0.5) * a_
+        total += a_
+        a_ *= 0.55
+    fbm /= total
+    h = torch.clamp(base_t + fbm * amp_t * 2.0, 0.0, 1.0)
+    if cls.shape[0] != size:
+        h = F.interpolate(h, size=(size, size), mode="bicubic",
+                          align_corners=False)
+    return torch.clamp(h[0, 0], 0.0, 1.0).cpu()
+
+
+def masks_height_pass(h, cls):
+    """Mask-driven replacement for semantic_height_pass + carve_water:
+    towns/roads pulled flat, water pinned below its banks — using the
+    TRUE class masks instead of colour guesses."""
+    import torch
+    import torch.nn.functional as F
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    size = h.shape[-1]
+    names = [n for n, _ in SEG_CLASSES]
+    cls_r = np.asarray(Image.fromarray(cls).resize((size, size),
+                                                   Image.NEAREST))
+    civ_np = ((cls_r == names.index("town")) |
+              (cls_r == names.index("road"))).astype(np.float32)
+    wat_np = (cls_r == names.index("water")).astype(np.float32)
+    hd = h.to(dev)[None, None]
+    civ = torch.from_numpy(civ_np).to(dev)[None, None]
+    civ = torch.clamp(F.avg_pool2d(civ, 9, 1, 4) * 2.0, 0.0, 1.0)
+    tgt = F.avg_pool2d(hd, 49, 1, 24)
+    hd = hd + (tgt - hd) * civ * 0.9
+    for _ in range(4):
+        nb = F.avg_pool2d(hd, 3, 1, 1)
+        hd = hd + (nb - hd) * civ * 0.7
+    # Water: below the local bank level, flat.
+    w = torch.from_numpy(wat_np).to(dev)[None, None]
+    wb = torch.clamp(F.avg_pool2d(w, 9, 1, 4) * 2.0, 0.0, 1.0)
+    hb = -F.max_pool2d(-hd, 51, 1, 25)
+    hd = torch.where(w > 0.5, torch.minimum(hd, hb - 0.02), hd)
+    band = wb - (w > 0.5).float()
+    hd = hd * (1.0 - band) + torch.minimum(hd, hb) * band
+    return torch.clamp(hd[0, 0], 0.0, 1.0).cpu()
+
+
+def colorize_from_classes(cls, size: int, seed: int, path: str):
+    """Procedural albedo fallback: per-class base colour + value noise.
+    Used when the FLUX layout-conditioned colour pass is disabled or
+    fails — guarantees the pipeline always emits a usable albedo."""
+    base_rgb = {"water": (52, 84, 130), "grass": (116, 142, 86),
+                "forest": (58, 92, 55), "town": (128, 120, 116),
+                "road": (110, 108, 104), "rock": (138, 128, 118),
+                "snow": (235, 238, 242), "sand": (196, 176, 138)}
+    names = [n for n, _ in SEG_CLASSES]
+    cls_r = np.asarray(Image.fromarray(cls).resize((size, size),
+                                                   Image.NEAREST))
+    out = np.zeros((size, size, 3), np.float32)
+    for i, n in enumerate(names):
+        out[cls_r == i] = base_rgb[n]
+    rng = np.random.default_rng(seed & 0x7FFFFFFF)
+    noise = rng.random((size // 4, size // 4, 1), dtype=np.float32)
+    noise = np.asarray(Image.fromarray(
+        (noise[..., 0] * 255).astype(np.uint8)).resize(
+            (size, size), Image.BILINEAR), np.float32)[..., None] / 255.0
+    out *= 0.85 + noise * 0.3
+    Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)).save(path)
+
+
 # ── Progress reporting for the editor ───────────────────────────────────
 # The popup's progress bar polls "<out>.progress": a single line
 # "<fraction 0..1> <stage label>".  Overwritten in place at every update.
@@ -671,6 +894,13 @@ def main():
                          "FIRST: FLUX renders only the orthophoto and "
                          "the heightfield derives from it — heightmap "
                          "and albedo match by construction.")
+    ap.add_argument("--layout", action="store_true",
+                    help="LAYOUT-FIRST: FLUX renders a flat-color land-"
+                         "cover map (fixed palette), quantized into "
+                         "exact class masks (<out>_seg.png).  Heightmap "
+                         "AND albedo derive from the masks, and PCG "
+                         "places buildings/trees from ground-truth "
+                         "classes instead of color heuristics.")
     ap.add_argument("--carve-water", action="store_true",
                     help="reshape the heightfield so the colour map's "
                          "water sits below its banks (OFF by default: "
@@ -696,10 +926,31 @@ def main():
     hm_hi = 0.48 if args.color else 0.90
 
     refine_res = min(args.refine_size, args.size)
-    color_first = args.color and not args.height_first \
-        and not args.from_image
+    layout_mode = args.layout and not args.from_image
+    color_first = (args.color and not args.height_first
+                   and not args.from_image and not layout_mode)
     color_raw = None
-    if color_first:
+    cls_map = None
+    seg_raw = None
+    if layout_mode:
+        # ── LAYOUT-FIRST: FLUX renders the flat-color land-cover map;
+        # classes, heightfield and albedo all derive from it.
+        seg_raw = os.path.join(tempfile.gettempdir(),
+                               "terrain_seg_raw.png")
+        run_flux(SEG_PROMPT_TEMPLATE.format(user_prompt=args.prompt),
+                 seg_raw, args.gen_size, args.steps, args.seed,
+                 label="land-cover layout", prog_lo=0.02, prog_hi=0.42)
+        report(0.44, "quantizing layout into class masks")
+        cls_map = quantize_to_classes(seg_raw, args.gen_size)
+        names = [n for n, _ in SEG_CLASSES]
+        stats = {n: float((cls_map == i).mean() * 100.0)
+                 for i, n in enumerate(names)}
+        print("[terrain] layout classes: " +
+              "  ".join(f"{n} {v:.1f}%" for n, v in stats.items()))
+        report(0.46, "heightfield from class layout")
+        h = height_from_classes(cls_map, refine_res,
+                                args.seed if args.seed >= 0 else 12345)
+    elif color_first:
         # ── COLOUR-FIRST: one FLUX pass renders the orthophoto; the
         # heightfield DERIVES from it (height_from_color) — heightmap
         # and albedo cannot disagree.
@@ -729,7 +980,12 @@ def main():
     h = condition_base(h)          # despeckle BEFORE erosion
     if not args.no_refine:
         h = refine(h)
-    if color_first:
+    if layout_mode:
+        # Mask-driven: towns/roads flat, water below its banks —
+        # enforced AFTER erosion so the hydraulic pass can't re-roughen
+        # them.  Uses the TRUE class masks.
+        h = masks_height_pass(h, cls_map)
+    elif color_first:
         # Roads flat, settlements level — enforced AFTER erosion so the
         # hydraulic pass can't re-roughen them.
         h = semantic_height_pass(h, color_raw)
@@ -749,7 +1005,36 @@ def main():
     # refined heightfield so its layout matches the terrain.  Runs BEFORE
     # the final heightmap write: the editor treats the heightmap PNG's
     # existence as "job complete", so it must be the LAST artifact.
-    if args.color and color_first:
+    if layout_mode:
+        stem, _ = os.path.splitext(out)
+        # 1. Segmentation map at final resolution (exact palette PNG).
+        seg_out = stem + "_seg.png"
+        save_seg_png(np.asarray(Image.fromarray(cls_map).resize(
+            (args.size, args.size), Image.NEAREST)), seg_out)
+        print(f"[terrain] wrote {seg_out}  (land-cover class masks)")
+        # 2. Albedo: FLUX conditioned on the layout render when --color,
+        #    procedural class colorization otherwise / on failure.
+        color_out = stem + "_color.png"
+        wrote_color = False
+        if args.color:
+            try:
+                run_flux(COLOR_FROM_LAYOUT_TEMPLATE.format(
+                             user_prompt=args.prompt),
+                         color_out, args.gen_size, args.steps, args.seed,
+                         ref_image=seg_raw, label="albedo from layout",
+                         prog_lo=0.60, prog_hi=0.93)
+                Image.open(color_out).convert("RGB").resize(
+                    (args.size, args.size), Image.LANCZOS).save(color_out)
+                wrote_color = True
+            except Exception as e:                        # noqa: BLE001
+                print(f"[terrain] layout albedo FLUX pass failed ({e}) "
+                      "— procedural colorization")
+        if not wrote_color:
+            colorize_from_classes(cls_map, args.size,
+                                  args.seed if args.seed >= 0 else 12345,
+                                  color_out)
+        print(f"[terrain] wrote {color_out}  (albedo, layout-aligned)")
+    elif args.color and color_first:
         # COLOUR-FIRST: the orthophoto ALREADY exists (the heightfield
         # was derived from it) — just upscale/install it.  No second
         # FLUX pass, no retry loop, no possible mismatch.
@@ -849,15 +1134,29 @@ def main():
 
     # PCG proxies: segmentation-driven white placeholder meshes
     # (buildings + trees) placed on the terrain — <out>_pcg.glb.
-    if args.pcg and args.color:
+    if args.pcg and (args.color or layout_mode):
         report(0.985, "PCG proxies from segmentation")
+        pcg_out = os.path.splitext(out)[0] + "_pcg.glb"
         try:
             import terrain_pcg
+            seg_png = (os.path.splitext(out)[0] + "_seg.png"
+                       if layout_mode else None)
+            print(f"[pcg] stage START -> {pcg_out}"
+                  + (f" (masks: {seg_png})" if seg_png else
+                     " (color heuristics)"), flush=True)
             terrain_pcg.build_pcg_glb(
-                os.path.splitext(out)[0] + "_color.png", out,
-                os.path.splitext(out)[0] + "_pcg.glb")
+                os.path.splitext(out)[0] + "_color.png", out, pcg_out,
+                seg_path=seg_png)
+            print(f"[pcg] stage DONE -> {pcg_out} "
+                  f"({os.path.getsize(pcg_out)} B)", flush=True)
         except Exception as e:                            # noqa: BLE001
-            print(f"[terrain] PCG stage failed (non-fatal): {e}")
+            import traceback
+            traceback.print_exc()
+            print(f"[terrain] PCG stage FAILED (non-fatal): {e}",
+                  flush=True)
+    elif args.pcg:
+        print("[pcg] stage SKIPPED: no --color albedo "
+              "(segmentation needs the colour map)", flush=True)
 
     if args.install:
         if os.path.exists(MAP_PNG) and not os.path.exists(MAP_PNG + ".bak"):
