@@ -29,6 +29,7 @@
 
 #include "renderer/renderer.h"
 #include "renderer/renderer_helper.h"
+#include "stb_image.h"   // terrain-apply camera snap: sample the heightmap PNG
 #include "ray_tracing/raytracing_callable.h"
 #include "ray_tracing/raytracing_shadow.h"
 #include "helper/engine_helper.h"
@@ -2042,6 +2043,12 @@ void RealWorldApplication::initVulkan() {
             descriptor_pool_,
             glm::vec3(0.3f, -0.8f, 0.0f));
 
+    // Runtime 1 m terrain detail cache (idle until a terrain is created
+    // from generated maps — createTerrainFromMaps points it at the tile
+    // dir and spawns the python detail worker).
+    terrain_detail_stream_ =
+        std::make_shared<es::TerrainDetailStream>(device_);
+
     terrain_scene_view_ =
         std::make_shared<es::TerrainSceneView>(
             device_,
@@ -2203,7 +2210,12 @@ void RealWorldApplication::initVulkan() {
         weather_system_->getTempTexes(),
         map_mask_tex_.view,
         volume_noise_->getDetailNoiseTexture().view,
-        volume_noise_->getRoughNoiseTexture().view);
+        volume_noise_->getRoughNoiseTexture().view,
+        terrain_detail_stream_->getHeightArrayView(),
+        terrain_detail_stream_->getColorArrayView(),
+        terrain_detail_stream_->getTableBuffer(),
+        es::TerrainDetailStream::tableBytes(),
+        makeTileVtBindings());
 
     ego::TileObject::updateStaticDescriptorSet(
         device_,
@@ -3005,7 +3017,12 @@ void RealWorldApplication::recreateSwapChain() {
         weather_system_->getTempTexes(),
         map_mask_tex_.view,
         volume_noise_->getDetailNoiseTexture().view,
-        volume_noise_->getRoughNoiseTexture().view);
+        volume_noise_->getRoughNoiseTexture().view,
+        terrain_detail_stream_->getHeightArrayView(),
+        terrain_detail_stream_->getColorArrayView(),
+        terrain_detail_stream_->getTableBuffer(),
+        es::TerrainDetailStream::tableBytes(),
+        makeTileVtBindings());
 
     volume_cloud_->recreate(
         device_,
@@ -3652,6 +3669,9 @@ void RealWorldApplication::reconcileImportedSceneViewMembership() {
             ecs_view_members_.end()) {
             if (object_scene_view_)        object_scene_view_->addDrawableObject(d);
             if (shadow_object_scene_view_) shadow_object_scene_view_->addDrawableObject(d);
+            std::cout << "[ecs] scene-view ADD drawable ("
+                      << d->getDrawableData().meshes_.size()
+                      << " mesh(es))" << std::endl;
         }
     }
     ecs_view_members_ = std::move(desired);
@@ -3956,6 +3976,32 @@ void RealWorldApplication::syncPlacedObjectsToClusters() {
         sig ^= cur_sigs[i] + 0x9e3779b97f4a7c15ull + (sig << 6) + (sig >> 2);
     }
     sig ^= (uint64_t)ready_count * 1099511628211ull;
+
+    // Diagnostic: placed-object pipeline visibility (PCG debugging).
+    {
+        static size_t s_last_logged_ready = (size_t)-1;
+        if (ready_count != s_last_logged_ready) {
+            s_last_logged_ready = ready_count;
+            std::cout << "[placed] ready drawables: " << ready_count
+                      << "/" << imported_objects_.size()
+                      << "  sig=" << sig
+                      << (sig == placed_sig_last_synced_
+                              ? " (cluster in sync)"
+                              : " (cluster merge pending)")
+                      << std::endl;
+            for (size_t i = 0; i < imported_objects_.size(); ++i) {
+                const auto& w = imported_objects_[i];
+                if (w && !w->isReady()) {
+                    std::cout << "[placed]   NOT READY [" << i << "] '"
+                              << (i < scene_.objects.size()
+                                      ? scene_.objects[i].asset_path
+                                      : std::string("?"))
+                              << "' — this BLOCKS the cluster merge"
+                              << std::endl;
+                }
+            }
+        }
+    }
 
     if (sig == placed_sig_last_synced_) {
         placed_sig_prev_frame_ = sig;
@@ -4937,6 +4983,23 @@ void RealWorldApplication::registerIblDebugImTextureIds() {
     }
 }
 
+ego::TileVtBindings RealWorldApplication::makeTileVtBindings() const {
+    ego::TileVtBindings vt = {};
+    if (!vt_manager_) return vt;
+    vt.sampler = vt_manager_->getPoolSampler();
+    vt.pool_views[0] = vt_manager_->getPoolImageView(es::VtLayer::ALBEDO);
+    vt.pool_views[1] = vt_manager_->getPoolImageView(es::VtLayer::NORMAL);
+    vt.pool_views[2] = vt_manager_->getPoolImageView(es::VtLayer::METAL_ROUGH_AO);
+    vt.pool_views[3] = vt_manager_->getPoolImageView(es::VtLayer::EMISSIVE);
+    vt.page_table = vt_manager_->getPageTableBuffer();
+    vt.page_table_bytes = (uint32_t)vt_manager_->getPageTableBufferBytes();
+    vt.meta = vt_manager_->getMetaBuffer();
+    vt.meta_bytes = (uint32_t)vt_manager_->getMetaBufferBytes();
+    vt.feedback = vt_manager_->getFeedbackBuffer();
+    vt.feedback_bytes = (uint32_t)vt_manager_->getFeedbackBufferBytes();
+    return vt;
+}
+
 // ── Terrain from generated texture maps ─────────────────────────────────────
 // Creates the terrain from a heightmap + albedo (color satellite) pair
 // produced by the AI terrain pipeline, then regenerates the meshes:
@@ -4993,6 +5056,39 @@ void RealWorldApplication::createTerrainFromMaps(
         map_mask_tex_ = new_albedo;
     }
 
+    // Virtual-texture the terrain albedo: register the colour map with
+    // the shared VT manager from CPU PIXELS (the preferred path —
+    // registerMaterial consumes them synchronously).  The GPU
+    // blit+readback fallback used before is meant for BC-compressed DDS
+    // sources; feeding it our RGBA8 map produced corrupted pool pages
+    // (wrong/checkered tile content).  Pages stream in via tile.frag's
+    // feedback; until then the pinned smallest mip shows.
+    if (vt_manager_ && have_albedo && !albedo_png.empty()) {
+        int aw = 0, ah = 0, acomp = 0;
+        stbi_uc* apix = stbi_load(albedo_png.c_str(), &aw, &ah, &acomp,
+                                  STBI_rgb_alpha);
+        if (apix && aw > 0 && ah > 0) {
+            const auto vt_id = vt_manager_->registerMaterial(
+                /*albedo_pixels*/ apix,
+                /*albedo_image*/ nullptr,
+                /*normal*/ nullptr,
+                /*mr_ao*/ nullptr,
+                /*emissive*/ nullptr,
+                (uint32_t)aw,
+                (uint32_t)ah);
+            ego::TileObject::setTerrainVtAlbedoId(vt_id);
+            std::cout << "[terrain] albedo registered as VT id " << vt_id
+                      << " (" << aw << "x" << ah << ", CPU pixels)"
+                      << std::endl;
+        } else {
+            ego::TileObject::setTerrainVtAlbedoId(0xFFFFFFFFu);
+            std::cerr << "[terrain] albedo VT registration skipped: "
+                         "could not load '" << albedo_png << "'"
+                      << std::endl;
+        }
+        if (apix) stbi_image_free(apix);
+    }
+
     // Rewrites BOTH the tile-render static set and the tile creator set
     // (SRC_DEPTH_TEX binding) — the creator pass samples the heightmap
     // directly.
@@ -5011,7 +5107,12 @@ void RealWorldApplication::createTerrainFromMaps(
             weather_system_->getTempTexes(),
             map_mask_tex_.view,
             volume_noise_->getDetailNoiseTexture().view,
-            volume_noise_->getRoughNoiseTexture().view);
+            volume_noise_->getRoughNoiseTexture().view,
+            terrain_detail_stream_->getHeightArrayView(),
+            terrain_detail_stream_->getColorArrayView(),
+            terrain_detail_stream_->getTableBuffer(),
+            es::TerrainDetailStream::tableBytes(),
+            makeTileVtBindings());
     }
 
     // Generate the meshes: dropping the cache forces updateAllTiles() to
@@ -5020,6 +5121,123 @@ void RealWorldApplication::createTerrainFromMaps(
     ego::TileObject::destroyAllTiles(device_);
     terrain_rebuild_pending_ = true;
     terrain_render_enabled_ = true;   // terrain is hidden until created
+
+    // Point the 1 m detail streamer at this terrain: tiles land in
+    // "<heightmap>_tiles/", produced on demand by the python worker.
+    if (terrain_detail_stream_) {
+        std::string stem = height_png;
+        const auto dot = stem.find_last_of('.');
+        if (dot != std::string::npos) stem = stem.substr(0, dot);
+        const std::string tiles_dir = stem + "_tiles";
+#ifdef _WIN32
+        const std::string worker_cmd =
+            "cmd /c start \"terrain-detail\" /B python "
+            "\"tools\\terrain\\terrain_detail_worker.py\""
+            " --map \"" + height_png + "\""
+            " --tiles-dir \"" + tiles_dir + "\"" +
+            (albedo_png.empty() ? "" : " --color \"" + albedo_png + "\"");
+#else
+        const std::string worker_cmd =
+            "python3 \"tools/terrain/terrain_detail_worker.py\""
+            " --map \"" + height_png + "\""
+            " --tiles-dir \"" + tiles_dir + "\"" +
+            (albedo_png.empty() ? "" : " --color \"" + albedo_png + "\"") +
+            " &";
+#endif
+        terrain_detail_stream_->setSource(device_, tiles_dir, worker_cmd);
+    }
+
+    // ── Camera on top of the new terrain ─────────────────────────────
+    // Sample the heightmap PNG at the camera's XZ (clamped into the
+    // world) and queue a one-frame camera snap to ground + 30 m.  CPU
+    // sample from the file: the CPU-side terrainMap() is still analytic
+    // FBM and knows nothing about the generated map.
+    {
+        int hw = 0, hh = 0, hcomp = 0;
+        stbi_us* hpix = stbi_load_16(height_png.c_str(), &hw, &hh, &hcomp,
+                                     STBI_grey);
+        if (hpix && hw > 0 && hh > 0) {
+            const float half = kTerrainMapMeters * 0.5f;
+            glm::vec2 cam_xz(0.0f);
+            if (main_camera_object_) {
+                const auto p = main_camera_object_->getCameraPosition();
+                cam_xz = glm::clamp(glm::vec2(p.x, p.z),
+                                    glm::vec2(-half * 0.9f),
+                                    glm::vec2(half * 0.9f));
+            }
+            const glm::vec2 uv = (cam_xz + glm::vec2(half)) / kWorldMapSize;
+            const int px = glm::clamp(int(uv.x * hw), 0, hw - 1);
+            const int py = glm::clamp(int(uv.y * hh), 0, hh - 1);
+            const float ground =
+                float(hpix[py * hw + px]) / 65535.0f * kTerrainHeightAmpMeters;
+            terrain_camera_snap_pos_ =
+                glm::vec3(cam_xz.x, ground + 30.0f, cam_xz.y);
+            terrain_camera_snap_pending_ = true;
+            std::cout << "[terrain] camera snap queued: ground "
+                      << ground << " m at (" << cam_xz.x << ", "
+                      << cam_xz.y << ")" << std::endl;
+        }
+        if (hpix) stbi_image_free(hpix);
+    }
+
+    // Terrain is a SCENE OBJECT: upsert a virtual ".rwterrain" marker
+    // whose asset_path encodes the heightmap ("<png>.rwterrain"; albedo
+    // derives from the stem).  It saves/loads with the scene and shows
+    // in the Outliner — no scene terrain object, no terrain.
+    {
+        int found = -1;
+        for (size_t i = 0; i < scene_.objects.size(); ++i) {
+            const auto& ap = scene_.objects[i].asset_path;
+            if (ap.size() > 10 &&
+                ap.compare(ap.size() - 10, 10, ".rwterrain") == 0) {
+                found = (int)i;
+                break;
+            }
+        }
+        const std::string marker = height_png + ".rwterrain";
+        if (found < 0) {
+            engine::scene::Object so;
+            so.name = "Terrain";
+            so.asset_path = marker;
+            so.parent_index = -1;
+            so.source_node_index = -1;
+            so.is_group = false;
+            so.visible = true;
+            scene_.objects.push_back(so);
+            imported_objects_.push_back(nullptr);
+        } else {
+            scene_.objects[found].asset_path = marker;
+            scene_.objects[found].visible = true;
+        }
+        terrain_applied_height_ = height_png;
+    }
+
+    // ── PCG proxies on top of the terrain ────────────────────────────
+    // The pipeline bakes segmentation-driven placeholder meshes
+    // (buildings/trees, world coordinates) into "<stem>_pcg.glb".
+    // Import it at the ORIGIN (identity transform: the geometry is
+    // already world-placed on the terrain surface).  Skipped when the
+    // scene already contains this exact asset (re-apply, scene reload).
+    {
+        std::string stem = height_png;
+        const auto dot2 = stem.find_last_of('.');
+        if (dot2 != std::string::npos) stem = stem.substr(0, dot2);
+        const std::string pcg_glb = stem + "_pcg.glb";
+        std::error_code pcg_ec;
+        if (std::filesystem::exists(pcg_glb, pcg_ec)) {
+            bool already = false;
+            for (const auto& o : scene_.objects) {
+                if (o.asset_path == pcg_glb) { already = true; break; }
+            }
+            if (!already) {
+                const glm::vec3 origin(0.0f);
+                importModelFromFile(pcg_glb, &origin);
+                std::cout << "[terrain] PCG proxies placed: " << pcg_glb
+                          << " (previous map's PCG object, if any, can "
+                             "be deleted in the Outliner)" << std::endl;
+            }
+        }
+    }
 
     std::cout << "[terrain] created terrain from '" << height_png << "'"
               << (albedo_png.empty() ? "" : " + '" + albedo_png + "'")
@@ -7883,12 +8101,58 @@ void RealWorldApplication::drawFrame() {
     // covers already-SUBMITTED frames, not the one being recorded).
     // updateAllTiles() later this same frame re-creates the tile meshes.
     {
+        // Terrain follows the SCENE: a ".rwterrain" object (created by
+        // the generate/apply flow, persisted in the .scene file)
+        // declares the active maps.  No terrain object in the loaded
+        // scene — or object hidden — means no terrain is displayed.
+        {
+            std::string want_height;
+            bool want_visible = false;
+            for (const auto& o : scene_.objects) {
+                const auto& ap = o.asset_path;
+                if (ap.size() > 10 &&
+                    ap.compare(ap.size() - 10, 10, ".rwterrain") == 0) {
+                    want_height = ap.substr(0, ap.size() - 10);
+                    want_visible = o.visible;
+                    break;
+                }
+            }
+            if (want_height.empty() || !want_visible) {
+                terrain_render_enabled_ = false;
+            } else if (want_height != terrain_applied_height_) {
+                std::error_code ec;
+                if (std::filesystem::exists(want_height, ec)) {
+                    std::string albedo;
+                    const auto dot = want_height.find_last_of('.');
+                    if (dot != std::string::npos)
+                        albedo = want_height.substr(0, dot) + "_color.png";
+                    std::cout << "[terrain] scene terrain object -> "
+                              << want_height << std::endl;
+                    createTerrainFromMaps(want_height, albedo);
+                }
+            } else {
+                terrain_render_enabled_ = true;   // object re-shown
+            }
+        }
+
         std::string terrain_height_png, terrain_albedo_png;
         if (menu_->consumeTerrainApplyRequest(terrain_height_png,
                                               terrain_albedo_png)) {
             createTerrainFromMaps(terrain_height_png,
                                   terrain_albedo_png);
         }
+    }
+
+    // Terrain detail streaming: request/evict 1 m tiles around the
+    // camera and hot-load finished ones (loader-queue upload, main-thread
+    // publish).  Safe here — no command buffer is recording yet.
+    if (terrain_detail_stream_ && terrain_render_enabled_ &&
+        main_camera_object_) {
+        terrain_detail_stream_->update(
+            device_,
+            glm::vec2(main_camera_object_->getCameraPosition().x,
+                      main_camera_object_->getCameraPosition().z),
+            mesh_load_task_manager_.get());
     }
 
     // Outer "Fence Wait + Acquire" scope kept for at-a-glance timing
@@ -9526,6 +9790,18 @@ void RealWorldApplication::drawFrame() {
         const glm::vec3 dir = glm::normalize(-eye);   // look at the origin
         main_camera_object_->setViewDirection(dir);
         main_camera_object_->updateCamera(command_buffer, eye, dir);
+    }
+    // Terrain apply queued a camera snap: place the eye 30 m above the
+    // freshly created terrain, looking gently down at the landscape.
+    if (terrain_camera_snap_pending_ && main_camera_object_) {
+        terrain_camera_snap_pending_ = false;
+        const glm::vec3 eye = terrain_camera_snap_pos_;
+        glm::vec3 dir = glm::normalize(glm::vec3(0.7f, -0.25f, 0.7f));
+        main_camera_object_->setViewDirection(dir);
+        main_camera_object_->updateCamera(command_buffer, eye, dir);
+        std::cout << "[terrain] camera snapped to ("
+                  << eye.x << ", " << eye.y << ", " << eye.z << ")"
+                  << std::endl;
     }
     if (editor_campose_active_) {
         glm::vec3 eye = editor_campose_pos_;
@@ -13239,6 +13515,7 @@ void RealWorldApplication::cleanup() {
     // both camera instances have released their descriptor sets).
     ego::CameraObject::destroyStaticMembers(device_);
     terrain_scene_view_->destroy(device_);
+    if (terrain_detail_stream_) terrain_detail_stream_->destroy(device_);
     object_scene_view_->destroy(device_);
 
     // Destroy CSM debug colour targets and pipeline.

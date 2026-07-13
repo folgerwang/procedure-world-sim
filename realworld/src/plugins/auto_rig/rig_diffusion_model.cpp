@@ -16,6 +16,14 @@
 #include <numeric>
 
 #if HAS_LIBTORCH
+// libtorch headers emit C4267 (size_t -> int/uint32 narrowing) all over
+// their template internals under MSVC /W3+.  Third-party code we can't
+// fix — suppress for the includes AND the template instantiations they
+// trigger in this TU (warnings fire at instantiation time, so the
+// pragma stays in effect for the whole file; our own code below is
+// small and reviewed for narrowing).
+#  pragma warning(push)
+#  pragma warning(disable : 4267)
 #  include <torch/script.h>
 #  include <torch/torch.h>
 #endif
@@ -536,3 +544,7 @@ std::vector<ViewJointPrediction> RigDiffusionModel::predictBatch(
 
 }  // namespace auto_rig
 }  // namespace plugins
+
+#if HAS_LIBTORCH
+#  pragma warning(pop)   // C4267 suppression for libtorch (see top of file)
+#endif

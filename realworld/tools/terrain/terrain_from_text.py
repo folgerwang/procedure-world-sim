@@ -47,6 +47,16 @@ REPO_ROOT = os.path.abspath(os.path.join(HERE, os.pardir, os.pardir))
 FLUX      = os.path.join(REPO_ROOT, "tools", "flux", "flux_generate.py")
 MAP_PNG   = os.path.join(REPO_ROOT, "assets", "map.png")
 
+# Terrain map footprint — MUST match kTerrainMapMeters in
+# src/sim_engine/shaders/global_definition.glsl.h (decoupled from the
+# 32 km world; 8192 px over 4096 m = 0.5 m/texel).  White = 2000 m.
+WORLD_SIZE_M   = 4096.0
+HEIGHT_AMP_M   = 250.0   # matches kTerrainHeightAmpMeters
+# Detail tiling (terrain_detail_worker.py): 16x16 detail tiles of 2 km,
+# each 2048^2 at 1 m/texel.
+DETAIL_TILE_M   = 2048.0
+DETAIL_TILE_RES = 2048
+
 # Prompt scaffold: FLUX responds well to explicit "heightmap" framing plus
 # photographic-DEM vocabulary.  The user's text slots into the middle.
 # The view language is deliberately redundant (satellite / nadir / straight
@@ -56,9 +66,17 @@ MAP_PNG   = os.path.join(REPO_ROOT, "assets", "map.png")
 PROMPT_TEMPLATE = (
     "satellite view terrain heightmap seen directly from above, "
     "nadir aerial view, straight down 90 degrees overhead, "
-    "orthographic map projection, {user_prompt}, "
+    "orthographic map projection, "
+    # Regional-scale conditioning: the map spans the WHOLE 32 km world,
+    # so the content must be drawn at wide-area scale — whole mountain
+    # ranges and valley systems, not a village-photo crop.  Without
+    # this, FLUX draws ~2 km of content and the engine stretches it
+    # 16x (houses become 300 m blobs).
+    "digital elevation model covering a 4 kilometer wide area, "
+    "complete valley and ridge systems in frame, {user_prompt}, "
     "grayscale digital elevation model, white is high elevation, "
-    "black is low elevation, smooth gradients, satellite DEM data, "
+    "black is low elevation, rivers and lakes are the DARKEST lowest "
+    "channels, smooth gradients, satellite DEM data, "
     "flat 2D map, no perspective, no horizon, no sky, no shading, "
     "no colors, no text, no borders, no vignette"
 )
@@ -71,7 +89,11 @@ PROMPT_TEMPLATE = (
 COLOR_PROMPT_TEMPLATE = (
     "photorealistic full-color satellite imagery of the exact same "
     "terrain as the reference heightmap, matching its layout precisely, "
-    "{user_prompt}, nadir aerial orthophoto seen straight down, "
+    # Same regional-scale conditioning as the heightmap pass: 30 km of
+    # ground in frame, like a Landsat/Sentinel tile — towns are tiny
+    # pixel clusters, individual buildings and trees are NOT resolvable.
+    "aerial orthophoto covering a 4 kilometer wide area, {user_prompt}, "
+    "nadir aerial orthophoto seen straight down, "
     "natural earth colors, vegetation in valleys, exposed rock and snow "
     "on high peaks, water in the lowest channels, "
     "no perspective, no horizon, no sky, no clouds, no text, no borders"
@@ -156,7 +178,10 @@ def run_flux(full_prompt: str, out_png: str, size: int, steps: int,
 # Torch implementation so it runs on the GPU and can be swapped for a learned
 # model behind the same interface.
 def refine(h, iters_hydraulic=160, iters_thermal=60, talus=0.008,
-           rain=0.01, evap=0.5, capacity=0.08, detail_keep=0.25):
+           rain=0.01, evap=0.5, capacity=0.08, detail_keep=0.05):
+    # detail_keep dropped 0.25 -> 0.05: the "high-frequency relief" it
+    # preserved was mostly diffusion speckle (see condition_base); the
+    # runtime detail tiles provide the close-range relief instead.
     """h: float32 tensor [H, W] in [0, 1] -> refined tensor [H, W] in [0, 1]."""
     import torch
     import torch.nn.functional as F
@@ -214,6 +239,57 @@ def refine(h, iters_hydraulic=160, iters_thermal=60, talus=0.008,
     return h.cpu()
 
 
+def condition_base(h):
+    """Kill diffusion speckle before erosion.  FLUX draws forests and
+    photo texture as texel-scale dots; interpreted as elevation each dot
+    becomes a 50-150 m pit/spike — rendered as an endless field of sharp
+    cones ("egg-carton" terrain).  A 3x3 median removes the dots and a
+    small Gaussian removes residual texel noise; real landforms are
+    10-100x larger and pass through untouched.  The runtime detail
+    worker re-adds controlled 1 m relief, so the base map should carry
+    ONLY landforms."""
+    import torch
+    import torch.nn.functional as F
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    x = h.to(dev)[None, None]
+    # Grayscale CLOSING (dilate -> erode, 9x9): fills dark pits smaller
+    # than ~9 texels — exactly the forest-dot speckle — while large
+    # valleys/rivers pass through.  (Validated on a real generation:
+    # mean gradient 9.0 -> 4.0 m/texel, landforms intact.)
+    x = F.max_pool2d(x, 9, stride=1, padding=4)
+    x = -F.max_pool2d(-x, 9, stride=1, padding=4)
+    # Gentle OPENING (erode -> dilate, 5x5): shaves isolated bright
+    # spikes the closing can't touch.
+    x = -F.max_pool2d(-x, 5, stride=1, padding=2)
+    x = F.max_pool2d(x, 5, stride=1, padding=2)
+    # 3x3 median for the remaining single-texel outliers.
+    xp = F.pad(x, (1, 1, 1, 1), mode="replicate")
+    p = xp.unfold(2, 3, 1).unfold(3, 3, 1)
+    x = p.reshape(p.shape[0], p.shape[1], p.shape[2], p.shape[3], 9) \
+         .median(dim=-1).values
+    # Separable Gaussian, sigma ~1.2 texels.
+    k = torch.tensor([0.061, 0.242, 0.383, 0.242, 0.061],
+                     device=dev, dtype=torch.float32)
+    k = (k / k.sum()).view(1, 1, 1, 5)
+    x = F.conv2d(F.pad(x, (2, 2, 0, 0), mode="replicate"), k)
+    x = F.conv2d(F.pad(x, (0, 0, 2, 2), mode="replicate"),
+                 k.transpose(2, 3))
+    # Slope-adaptive flattening: valley floors, fields and roads are
+    # naturally SMOOTH — keep relief on steep rock, strip the residual
+    # diffusion noise from the flats (this is what makes roads drivable
+    # instead of corrugated).
+    texel_m = WORLD_SIZE_M / x.shape[-1]
+    gs = HEIGHT_AMP_M / (2.0 * texel_m)
+    gx = (torch.roll(x, -1, -1) - torch.roll(x, 1, -1)) * gs
+    gy = (torch.roll(x, -1, -2) - torch.roll(x, 1, -2)) * gs
+    slope = torch.sqrt(gx * gx + gy * gy)          # m per m
+    flat_w = torch.clamp(1.0 - slope / 0.12, 0.0, 1.0)
+    flat_w = flat_w * flat_w
+    wide = F.avg_pool2d(x, 13, 1, 6)
+    x = x + (wide - x) * flat_w * 0.85
+    return x[0, 0].cpu()
+
+
 def image_to_heightfield(path: str, size: int):
     import torch
     im = Image.open(path).convert("F")   # float grayscale (luma of RGB ok)
@@ -229,6 +305,167 @@ def image_to_heightfield(path: str, size: int):
     # (raw diffusion output tends to hover around mid-gray).
     a = a ** 1.4
     return torch.from_numpy(a)
+
+
+# ── Colour-first heightfield derivation ─────────────────────────────────────
+# The two-pass pipeline (FLUX heightmap, then ref-conditioned FLUX colour)
+# keeps producing MISMATCHED pairs — reference conditioning is a soft
+# prior that many seeds ignore.  Colour-first inverts it: FLUX renders
+# only the colour orthophoto (its strong suit), and the heightfield is
+# DERIVED from that image — aligned by construction.
+COLOR_FIRST_TEMPLATE = (
+    "photorealistic full-color satellite aerial orthophoto covering a "
+    "4 kilometer wide area, {user_prompt}, nadir view seen straight "
+    "down, orthographic map projection, natural earth colors, "
+    "no perspective, no horizon, no sky, no clouds, no text, no borders"
+)
+
+
+def height_from_color(color_path: str, size: int):
+    """Derive a plausible heightfield (torch [size,size], 0..1) from the
+    colour orthophoto: MiDaS monocular depth when available, else a
+    semantic heuristic (water low+flat, vegetation mid, bare rock high,
+    snow highest, low-frequency luminance for relief)."""
+    import torch
+    import torch.nn.functional as F
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    im = Image.open(color_path).convert("RGB")
+    if im.size != (size, size):
+        im = im.resize((size, size), Image.LANCZOS)
+    a = torch.from_numpy(np.asarray(im, dtype=np.float32) / 255.0).to(dev)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+
+    h = None
+    try:  # MiDaS small: relative inverse-depth; for a nadir ortho higher
+        #  ground is closer to the camera => higher inverse depth.
+        midas = torch.hub.load("intel-isl/MiDaS", "MiDaS_small",
+                               trust_repo=True).to(dev).eval()
+        tfm = torch.hub.load("intel-isl/MiDaS", "transforms",
+                             trust_repo=True).small_transform
+        with torch.no_grad():
+            inp = tfm((a.cpu().numpy() * 255).astype(np.uint8)).to(dev)
+            pred = midas(inp)
+            pred = F.interpolate(pred[None], size=(size, size),
+                                 mode="bicubic",
+                                 align_corners=False)[0, 0]
+        h = pred
+        print("[terrain] height_from_color: MiDaS depth")
+    except Exception as e:                                # noqa: BLE001
+        print(f"[terrain] MiDaS unavailable ({e}) — semantic heuristic")
+
+    if h is None:
+        lum = (0.3 * r + 0.5 * g + 0.2 * b)
+        mx = a.max(-1).values
+        mn = a.min(-1).values
+        sat = (mx - mn) / (mx + 1e-6)
+        veg = ((g > r) & (g > b)).float()
+        snow = ((mx > 0.75) & (sat < 0.15)).float()
+        rock = ((sat < 0.35) & (mx > 0.3)).float() * (1.0 - snow)
+        base = 0.25 + 0.10 * veg + 0.30 * rock + 0.55 * snow
+        blur = F.avg_pool2d(lum[None, None], 65, 1, 32)[0, 0]
+        h = base * 0.6 + blur * 0.4
+
+    # Normalize, then force water LOW and FLAT (strict blue-dominant
+    # mask, same as carve_water).
+    h = h - h.min()
+    h = h / (h.max() + 1e-6)
+    water = ((b > r * 1.15) & (b >= g * 0.90) & (g > r) &
+             (a.max(-1).values > 0.15)).float()
+    w = F.avg_pool2d(water[None, None], 9, 1, 4)[0, 0]
+    hb = -F.max_pool2d(-h[None, None], 51, 1, 25)[0, 0]
+    h = torch.where(w > 0.5, torch.minimum(h, hb - 0.02), h)
+    band = torch.clamp(w * 2.0, 0.0, 1.0) - (w > 0.5).float()
+    h = h * (1.0 - band) + torch.minimum(h, hb) * band
+    return torch.clamp(h, 0.0, 1.0).cpu()
+
+
+def semantic_height_pass(h, color_path: str):
+    """Segmentation-guided height cleanup.  Classes come from the albedo
+    (colour heuristics): ROADS/plazas = low-saturation gray/tan;
+    BUILDINGS = red/orange roofs or dark slate blocks.  Those areas are
+    pulled onto wide, slope-limited ground and relaxed — roads read as
+    graded, drivable surfaces instead of noise ribbons.  Water handling
+    lives in height_from_color/carve_water; rock keeps its relief."""
+    import torch
+    import torch.nn.functional as F
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    size = h.shape[-1]
+    im = Image.open(color_path).convert("RGB").resize(
+        (size, size), Image.BILINEAR)
+    a = torch.from_numpy(np.asarray(im, dtype=np.float32) / 255.0).to(dev)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    mx = a.max(-1).values
+    mn = a.min(-1).values
+    sat = (mx - mn) / (mx + 1e-6)
+    road = ((sat < 0.18) & (mx > 0.35) & (mx < 0.85)).float()
+    roof = (((r > g * 1.25) & (r > b * 1.25) & (r > 0.3)) |
+            ((sat < 0.25) & (mx < 0.35) & (mx > 0.15))).float()
+    civ = torch.clamp(road + roof, 0.0, 1.0)[None, None]
+    civ = torch.clamp(F.avg_pool2d(civ, 9, 1, 4) * 2.0, 0.0, 1.0)
+    frac = float(civ.mean())
+    print(f"[terrain] semantic pass: {frac * 100.0:.1f}% road/settlement")
+
+    hd = h.to(dev)[None, None]
+    # Pull onto wide, gently-graded ground...
+    tgt = F.avg_pool2d(hd, 49, 1, 24)
+    hd = hd + (tgt - hd) * civ * 0.9
+    # ...then relax residual spikes inside the mask.
+    for _ in range(4):
+        nb = F.avg_pool2d(hd, 3, 1, 1)
+        hd = hd + (nb - hd) * civ * 0.7
+    return torch.clamp(hd[0, 0], 0.0, 1.0).cpu()
+
+
+def carve_water(h, color_path: str):
+    """Make water LOW.  FLUX heightmaps frequently draw rivers/lakes as
+    BRIGHT channels (photo glint / map-style linework), which extrudes
+    them into RIDGES in-engine — inverted terrain layout.  The colour
+    satellite pass is far more reliable about WHERE water is, so: detect
+    the water mask from colour, then carve the heightfield so water sits
+    a few meters below its local banks (and is flat-ish)."""
+    import torch
+    import torch.nn.functional as F
+    dev = h.device if h.is_cuda else (
+        "cuda" if torch.cuda.is_available() else "cpu")
+    a = np.asarray(Image.open(color_path).convert("RGB"),
+                   dtype=np.float32) / 255.0
+    if a.shape[0] != h.shape[0] or a.shape[1] != h.shape[1]:
+        a = np.asarray(Image.fromarray(
+            (a * 255).astype(np.uint8)).resize(
+            (h.shape[1], h.shape[0]), Image.BILINEAR),
+            dtype=np.float32) / 255.0
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    mx = a.max(-1)
+    # Water is BLUE-dominant (teal/steel blue).  The earlier looser test
+    # (b > r*1.08 & g > r*1.05) also matched dark FOREST green (slight
+    # blue component), carving whole forested mountainsides down to
+    # valley level — mesa/table-mountain artifacts.  Requiring b to rival
+    # g excludes vegetation: forest g >> b, water b ≈ g or higher.
+    water_np = ((b > r * 1.15) & (b >= g * 0.90) & (g > r) &
+                (mx > 0.15)).astype(np.float32)
+    frac = float(water_np.mean())
+    if frac > 0.30:
+        print(f"[terrain] carve_water: implausible water fraction "
+              f"({frac * 100.0:.0f}%) — skipping carve (bad colour map?)")
+        return h
+    if frac < 0.001:
+        print("[terrain] carve_water: no significant water in colour map")
+        return h
+    hd = h.to(dev)
+    w = torch.from_numpy(water_np).to(dev)
+    w = F.avg_pool2d(w[None, None], 9, 1, 4)[0, 0]   # despeckle/soften
+    wm = (w > 0.5).float()
+    # Bank level: local minimum of the surroundings (51-texel erosion).
+    hb = -F.max_pool2d(-hd[None, None], 51, 1, 25)[0, 0]
+    depth = 4.0 / HEIGHT_AMP_M                              # ~4 m below banks
+    target = hb - depth
+    hd = hd * (1.0 - wm) + torch.minimum(hd, target) * wm
+    # Feathered shoreline band eases the banks down to water level.
+    band = torch.clamp(w * 2.0, 0.0, 1.0) - wm
+    hd = hd * (1.0 - band) + torch.minimum(hd, hb) * band
+    print(f"[terrain] carve_water: {frac * 100.0:.1f}% of the map carved "
+          "to water level")
+    return torch.clamp(hd, 0.0, 1.0).cpu()
 
 
 def save_u16(h, path: str):
@@ -251,8 +488,8 @@ def save_mesh_glb(h, out_png: str, color_png: str = None, mesh_res: int = 256):
     import json
     import struct
 
-    WORLD_SIZE = 16384.0   # kWorldMapSize (global_definition.glsl.h)
-    HEIGHT_AMP = 2000.0    # tile_creator.comp heightmap multiplier
+    WORLD_SIZE = WORLD_SIZE_M   # kWorldMapSize (global_definition.glsl.h)
+    HEIGHT_AMP = HEIGHT_AMP_M   # tile_creator.comp heightmap multiplier
 
     a = h.numpy().astype(np.float32)
     src_h, src_w = a.shape
@@ -299,8 +536,15 @@ def save_mesh_glb(h, out_png: str, color_png: str = None, mesh_res: int = 256):
                                  for x in (pos, nrm, uv, idx))
     img_b = b""
     if color_png and os.path.exists(color_png):
-        with open(color_png, "rb") as f:
-            img_b = pad4(f.read())
+        # Embed the albedo at <=2048 px — the full 8k PNG would bloat the
+        # GLB by ~60 MB for a preview/placeable asset.
+        import io
+        cim = Image.open(color_png).convert("RGB")
+        if max(cim.size) > 2048:
+            cim = cim.resize((2048, 2048), Image.LANCZOS)
+        cbuf = io.BytesIO()
+        cim.save(cbuf, format="PNG")
+        img_b = pad4(cbuf.getvalue())
 
     views, accessors, offset = [], [], 0
 
@@ -384,19 +628,28 @@ def main():
     ap.add_argument("--from-image",
                     help="skip FLUX; use this image as the raw heightmap")
     ap.add_argument("--out", default="content/terrain/generated_map.png")
-    ap.add_argument("--size", type=int, default=2048)
-    ap.add_argument("--gen-size", type=int, default=1024,
+    ap.add_argument("--size", type=int, default=8192,
+                    help="final BASE map resolution (8192 over the 32 km "
+                         "world = 4 m/texel; 1 m detail comes from the "
+                         "runtime detail tiles, see "
+                         "terrain_detail_worker.py)")
+    ap.add_argument("--gen-size", type=int, default=2048,
                     help="FLUX RENDER resolution.  The heightfield is upsampled "
                          "from this to --size, so lowering it cuts FLUX VRAM + "
-                         "time ~quadratically with almost no loss on a heightmap "
-                         "(1024 => ~4x less activation memory than 2048).")
+                         "time ~quadratically with almost no loss on a heightmap.")
+    ap.add_argument("--refine-size", type=int, default=2048,
+                    help="resolution the erosion/refinement model runs at; "
+                         "the result is bicubic-upsampled to --size (erosion "
+                         "at 8192^2 is ~16x the cost for little visible gain "
+                         "under the runtime 1 m detail pass)")
     ap.add_argument("--steps", type=int, default=28)
     ap.add_argument("--seed", type=int, default=-1)
     ap.add_argument("--no-refine", action="store_true",
                     help="skip the stage-2 terrain conversion model")
-    ap.add_argument("--mesh-res", type=int, default=256,
+    ap.add_argument("--mesh-res", type=int, default=512,
                     help="terrain mesh grid resolution (verts per side) for "
-                         "the .glb export; 0 disables the mesh")
+                         "the .glb export (512 over 32 km = 64 m quads); "
+                         "0 disables the mesh")
     ap.add_argument("--height-scale", type=float, default=0.25,
                     help="peak height as a fraction of the engine's full "
                          "range (tile_creator.comp maps white to 2000 m, "
@@ -408,6 +661,20 @@ def main():
                     help="also generate a matching COLOR satellite map "
                          "(<out>_color.png) via a second FLUX pass "
                          "conditioned on the heightfield")
+    ap.add_argument("--pcg", action="store_true", default=True,
+                    help="segmentation-driven PCG proxies (buildings + "
+                         "trees as white meshes) -> <out>_pcg.glb")
+    ap.add_argument("--no-pcg", dest="pcg", action="store_false")
+    ap.add_argument("--height-first", action="store_true",
+                    help="legacy two-pass order (FLUX heightmap, then "
+                         "ref-conditioned colour).  Default is COLOUR-"
+                         "FIRST: FLUX renders only the orthophoto and "
+                         "the heightfield derives from it — heightmap "
+                         "and albedo match by construction.")
+    ap.add_argument("--carve-water", action="store_true",
+                    help="reshape the heightfield so the colour map's "
+                         "water sits below its banks (OFF by default: "
+                         "the original ML heightmap is used as-is)")
     ap.add_argument("--install", action="store_true",
                     help="ALSO replace assets/map.png (backs up the original "
                          "to assets/map.png.bak once)")
@@ -428,18 +695,51 @@ def main():
     # the heightmap pass stretches to 90%.
     hm_hi = 0.48 if args.color else 0.90
 
-    raw_png = args.from_image
-    if not raw_png:
-        raw_png = os.path.join(tempfile.gettempdir(), "terrain_raw.png")
-        run_flux(PROMPT_TEMPLATE.format(user_prompt=args.prompt),
-                 raw_png, args.gen_size, args.steps, args.seed,
-                 label="heightmap", prog_lo=0.02, prog_hi=hm_hi)
+    refine_res = min(args.refine_size, args.size)
+    color_first = args.color and not args.height_first \
+        and not args.from_image
+    color_raw = None
+    if color_first:
+        # ── COLOUR-FIRST: one FLUX pass renders the orthophoto; the
+        # heightfield DERIVES from it (height_from_color) — heightmap
+        # and albedo cannot disagree.
+        color_raw = os.path.join(tempfile.gettempdir(),
+                                 "terrain_color_raw.png")
+        run_flux(COLOR_FIRST_TEMPLATE.format(user_prompt=args.prompt),
+                 color_raw, args.gen_size, args.steps, args.seed,
+                 label="color orthophoto", prog_lo=0.02, prog_hi=0.70)
+        report(0.72, "deriving heightfield from color")
+        h = height_from_color(color_raw, refine_res)
+    else:
+        raw_png = args.from_image
+        if not raw_png:
+            raw_png = os.path.join(tempfile.gettempdir(),
+                                   "terrain_raw.png")
+            run_flux(PROMPT_TEMPLATE.format(user_prompt=args.prompt),
+                     raw_png, args.gen_size, args.steps, args.seed,
+                     label="heightmap", prog_lo=0.02, prog_hi=hm_hi)
+        h = image_to_heightfield(raw_png, refine_res)
 
     print("[terrain] stage 2: heightmap -> terrain conversion")
     report(hm_hi + 0.02, "terrain conversion (erosion)")
-    h = image_to_heightfield(raw_png, args.size)
+    # Refine (erosion) at --refine-size, then bicubic-upsample the result
+    # to the final --size base map (2048 -> 8192 by default).  The 1 m
+    # detail comes from the runtime detail-tile worker, so refining at
+    # full 8k is wasted work.
+    h = condition_base(h)          # despeckle BEFORE erosion
     if not args.no_refine:
         h = refine(h)
+    if color_first:
+        # Roads flat, settlements level — enforced AFTER erosion so the
+        # hydraulic pass can't re-roughen them.
+        h = semantic_height_pass(h, color_raw)
+    if args.size != refine_res:
+        import torch
+        import torch.nn.functional as F
+        h = F.interpolate(h[None, None], size=(args.size, args.size),
+                          mode="bicubic", align_corners=False)[0, 0]
+        h = torch.clamp(h, 0.0, 1.0)
+        print(f"[terrain] base map upscaled {refine_res} -> {args.size}")
     report(hm_hi + 0.07, "terrain conversion done")
 
     out = args.out if os.path.isabs(args.out) \
@@ -449,18 +749,60 @@ def main():
     # refined heightfield so its layout matches the terrain.  Runs BEFORE
     # the final heightmap write: the editor treats the heightmap PNG's
     # existence as "job complete", so it must be the LAST artifact.
-    if args.color:
+    if args.color and color_first:
+        # COLOUR-FIRST: the orthophoto ALREADY exists (the heightfield
+        # was derived from it) — just upscale/install it.  No second
+        # FLUX pass, no retry loop, no possible mismatch.
+        stem, _ = os.path.splitext(out)
+        color_out = stem + "_color.png"
+        Image.open(color_raw).convert("RGB").resize(
+            (args.size, args.size), Image.LANCZOS).save(color_out)
+        print(f"[terrain] wrote {color_out}  (color orthophoto, "
+              "height-aligned by construction)")
+    elif args.color:
         stem, _ = os.path.splitext(out)
         color_out = stem + "_color.png"
         ref8 = os.path.join(tempfile.gettempdir(), "terrain_ref8.png")
         Image.fromarray(
             (h.numpy() * 255.0 + 0.5).astype(np.uint8), mode="L"
         ).convert("RGB").save(ref8)
-        run_flux(COLOR_PROMPT_TEMPLATE.format(
-                     user_prompt=args.prompt or "natural terrain"),
-                 color_out, args.gen_size, args.steps, args.seed,
-                 ref_image=ref8, label="color satellite",
-                 prog_lo=0.58, prog_hi=0.95)
+        # FLUX's reference conditioning is soft — some seeds ignore the
+        # heightmap and paint an unrelated scene (water on ridges etc.).
+        # Score each attempt by edge-structure correlation against the
+        # heightfield and retry with a new seed; keep the best.
+        import random as _rnd
+        base_seed = args.seed if args.seed >= 0 else _rnd.randint(0, 1 << 30)
+        h_small = np.array(Image.fromarray(
+            h.numpy()).resize((256, 256), Image.BILINEAR), dtype=np.float32)
+
+        def _edges(x):
+            gy, gx = np.gradient(x)
+            e = np.hypot(gx, gy)
+            return (e - e.mean()) / (e.std() + 1e-6)
+
+        best_score, best_bytes = -1e9, None
+        for attempt in range(3):
+            run_flux(COLOR_PROMPT_TEMPLATE.format(
+                         user_prompt=args.prompt or "natural terrain"),
+                     color_out, args.gen_size, args.steps,
+                     base_seed + attempt * 7919,
+                     ref_image=ref8, label="color satellite",
+                     prog_lo=0.58, prog_hi=0.95)
+            ci = np.asarray(Image.open(color_out).convert("L").resize(
+                (256, 256), Image.BILINEAR), dtype=np.float32)
+            score = float((_edges(h_small) * _edges(ci)).mean())
+            print(f"[terrain] color attempt {attempt + 1}: "
+                  f"layout match {score:+.3f}")
+            if score > best_score:
+                with open(color_out, "rb") as bf:
+                    best_score, best_bytes = score, bf.read()
+            if score >= 0.06:
+                break
+        if best_bytes is not None:
+            with open(color_out, "wb") as bf:
+                bf.write(best_bytes)
+        print(f"[terrain] color layout match: {best_score:+.3f} "
+              f"{'(followed heightmap)' if best_score >= 0.06 else '(WEAK — consider regenerating)'}")
         # FLUX renders the albedo/colour map at --gen-size; upsample it to
         # --size so it matches the heightmap output resolution (the heightfield
         # is already upsampled in image_to_heightfield).  LANCZOS upscale of a
@@ -473,6 +815,14 @@ def main():
                 print(f"[terrain] upscaled colour map "
                       f"{args.gen_size} -> {args.size}")
         print(f"[terrain] wrote {color_out}  (color satellite map)")
+        # OPT-IN water carve (--carve-water): reshapes the heightfield
+        # along the colour map's water.  Off by default — the original
+        # ML heightmap is used untouched.
+        if args.carve_water:
+            report(0.955, "carving water into heightfield")
+            h = carve_water(h, color_out)
+        # Roads/settlements flat regardless of pipeline order.
+        h = semantic_height_pass(h, color_out)
 
     report(0.97, "writing terrain map")
     # World-height scaling happens HERE (not in the engine): the refined
@@ -483,7 +833,7 @@ def main():
     if scale < 1.0:
         h = h * scale
         print(f"[terrain] height scale {scale:g} "
-              f"(peaks ~{2000.0 * scale:.0f} m)")
+              f"(peaks ~{HEIGHT_AMP_M * scale:.0f} m)")
     save_u16(h, out)
 
     # Terrain mesh: same folder, same base name as the textures
@@ -496,6 +846,18 @@ def main():
         if args.color:
             color_out = os.path.splitext(out)[0] + "_color.png"
         save_mesh_glb(h, out, color_out, args.mesh_res)
+
+    # PCG proxies: segmentation-driven white placeholder meshes
+    # (buildings + trees) placed on the terrain — <out>_pcg.glb.
+    if args.pcg and args.color:
+        report(0.985, "PCG proxies from segmentation")
+        try:
+            import terrain_pcg
+            terrain_pcg.build_pcg_glb(
+                os.path.splitext(out)[0] + "_color.png", out,
+                os.path.splitext(out)[0] + "_pcg.glb")
+        except Exception as e:                            # noqa: BLE001
+            print(f"[terrain] PCG stage failed (non-fatal): {e}")
 
     if args.install:
         if os.path.exists(MAP_PNG) and not os.path.exists(MAP_PNG + ".bak"):

@@ -36,6 +36,7 @@
 #include "scene_rendering/conemap.h"
 #include "scene_rendering/prt_shadow.h"
 #include "scene_rendering/terrain_scene_view.h"
+#include "scene_rendering/terrain_detail_stream.h"
 #include "scene_rendering/object_scene_view.h"
 #include "scene/scene_io.h"
 #include "scene/native_file_dialog.h"
@@ -156,6 +157,9 @@ private:
     // two textures; albedo_png may be empty (heightmap-only reload).
     void createTerrainFromMaps(const std::string& height_png,
                                const std::string& albedo_png);
+    // Raw VT handles for the tile descriptor set (empty when the VT
+    // manager isn't up yet).
+    ego::TileVtBindings makeTileVtBindings() const;
     void setupCsmDebugDraw();
     void registerCsmDebugImTextureIds();
     // Registers ImGui texture IDs for the IBL/sky cubemap debug window.
@@ -371,6 +375,15 @@ private:
     // Terrain Now").  Tile compute/update still runs so the layers are
     // warm when the terrain is enabled.
     bool terrain_render_enabled_ = false;
+
+    // Set by createTerrainFromMaps: next frame, snap the camera above
+    // the freshly created terrain (consumed where the editor startup
+    // view override runs, which has the frame command buffer in scope).
+    bool      terrain_camera_snap_pending_ = false;
+    glm::vec3 terrain_camera_snap_pos_ = glm::vec3(0.0f);
+    // Heightmap path of the currently applied terrain (drives the
+    // scene-object sync in drawFrame; empty = none applied).
+    std::string terrain_applied_height_;
 
     static constexpr uint32_t kRestirMaxLights = 256;
     er::BufferInfo restir_reservoir_buffer_;
@@ -735,6 +748,8 @@ private:
     std::shared_ptr<es::ObjectSceneView> object_scene_view_;
     std::shared_ptr<es::ObjectSceneView> shadow_object_scene_view_;
     std::shared_ptr<es::TerrainSceneView> terrain_scene_view_;
+    // Runtime 1 m terrain detail streaming (worker process + tile cache).
+    std::shared_ptr<es::TerrainDetailStream> terrain_detail_stream_;
     std::shared_ptr<er::BufferInfo> runtime_lights_buffer_;
 
     // CSM: 2048x2048x4 depth array texture, one layer per cascade.

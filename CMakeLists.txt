@@ -404,6 +404,7 @@ add_library(engine STATIC
     "${ENGINE_DIR}/scene_rendering/prt_shadow.cpp"
     "${ENGINE_DIR}/scene_rendering/skydome.cpp"
     "${ENGINE_DIR}/scene_rendering/terrain_scene_view.cpp"
+    "${ENGINE_DIR}/scene_rendering/terrain_detail_stream.cpp"
     "${ENGINE_DIR}/scene_rendering/view_capture.cpp"
     "${ENGINE_DIR}/scene_rendering/ssao.cpp"
     "${ENGINE_DIR}/scene_rendering/cluster_renderer.cpp"
