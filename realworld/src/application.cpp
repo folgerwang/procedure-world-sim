@@ -3669,6 +3669,9 @@ void RealWorldApplication::reconcileImportedSceneViewMembership() {
             ecs_view_members_.end()) {
             if (object_scene_view_)        object_scene_view_->addDrawableObject(d);
             if (shadow_object_scene_view_) shadow_object_scene_view_->addDrawableObject(d);
+            // Draw-reach counters for placed drawables (see the
+            // [placed.draw] per-second report in drawFrame).
+            d->setDebugLogDraws(true);
             std::cout << "[ecs] scene-view ADD drawable ("
                       << d->getDrawableData().meshes_.size()
                       << " mesh(es))" << std::endl;
@@ -8140,6 +8143,33 @@ void RealWorldApplication::drawFrame() {
                                               terrain_albedo_png)) {
             createTerrainFromMaps(terrain_height_png,
                                   terrain_albedo_png);
+        }
+    }
+
+    // ── [placed.draw] per-second reach report ────────────────────────
+    // For placed drawables with the debug flag: shows how far each draw
+    // got last frame (the draw path early-outs silently at several
+    // gates; the counters name the gate).  Values reset each draw().
+    {
+        static float s_last_reach_report = -10.0f;
+        if (current_time_ - s_last_reach_report > 1.0f) {
+            s_last_reach_report = current_time_;
+            for (size_t i = 0; i < imported_objects_.size(); ++i) {
+                const auto& w = imported_objects_[i];
+                if (!w || !w->getDebugLogDraws()) continue;
+                const auto& d = w->getDrawableData();
+                std::cout << "[placed.draw] obj " << i
+                          << " called=" << d.m_debug_draw_called_
+                          << " notready=" << d.m_debug_draw_not_ready_
+                          << " nodes=" << d.m_debug_draw_nodes_visited_
+                          << " meshnodes=" << d.m_debug_draw_nodes_with_mesh_
+                          << " meshentered=" << d.m_debug_draw_mesh_entered_
+                          << " frustumcull=" << d.m_debug_draw_mesh_culled_frustum_
+                          << " clustertaken=" << d.m_debug_draw_mesh_taken_by_cluster_
+                          << " prims=" << d.m_debug_draw_prims_iterated_
+                          << " pipenull=" << d.m_debug_draw_prim_pipeline_null_
+                          << std::endl;
+            }
         }
     }
 
