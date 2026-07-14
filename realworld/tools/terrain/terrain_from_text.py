@@ -138,10 +138,16 @@ SEG_PROMPT_TEMPLATE = (
     "BRIGHT PURE BLUE rivers and lakes, LIGHT GREEN grassland and "
     "fields, DARK GREEN forest and woodland, BRIGHT PURE RED town and "
     "village building blocks, DARK GRAY roads and streets connecting "
-    "the towns, BROWN bare rock mountains and cliffs, WHITE snow on "
-    "the highest peaks, TAN sand and dirt, "
-    "hard edges, solid color fills, no outlines, no gradients, "
-    "no shading, no texture, no hatching, no text, no labels, "
+    # NOTE: never say "mountains"/"peaks"/"cliffs" — those words summon
+    # the map-icon archetype: SIDE-PROFILE hatched mountain drawings.
+    # Highland is just another flat region class seen from above.
+    "the towns, large irregular BROWN regions of rocky highland "
+    "painted as flat amoeba-shaped patches, WHITE patches in the "
+    "middle of the largest brown regions, TAN sand and dirt, "
+    "every region a flat solid-colored patch seen straight down from "
+    "above, hard edges, solid color fills, no outlines, no gradients, "
+    "no shading, no texture, no hatching, no ridgelines, no 3D relief, "
+    "no side view, no text, no labels, "
     "no borders, no legend, no paper style, not an antique map, "
     "flat 2D digital classification image"
 )
@@ -265,6 +271,38 @@ def quantize_to_classes(png_path: str, size: int):
         score[i] = ndi.uniform_filter((cls == i).astype(np.float32), 5)
     cls = score.argmax(0).astype(np.uint8)
     return cls
+
+
+def seg_color_agreement(cls_map, color_png: str, names) -> float:
+    """How faithfully a colour render follows the segmentation: mean
+    per-class fraction of seg pixels whose colour looks like that class.
+    Drives the retry loop — the PCG places from the seg, so a colour
+    pass that drifts puts buildings visibly off the painted houses."""
+    small = np.asarray(Image.fromarray(cls_map).resize((256, 256),
+                                                       Image.NEAREST))
+    a = np.asarray(Image.open(color_png).convert("RGB").resize((256, 256)),
+                   dtype=np.float32) / 255.0
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    mx = a.max(-1)
+    mn = a.min(-1)
+    sat = (mx - mn) / (mx + 1e-6)
+    pred = {
+        "water":  (b > r * 1.10) & (b >= g * 0.90),
+        "forest": (g > r) & (g > b) & (mx < 0.45),
+        "grass":  (g > r) & (g > b) & (mx >= 0.45),
+        "town":   ((r > g * 1.20) & (r > b * 1.20)) |
+                  ((sat < 0.20) & (mx > 0.30) & (mx < 0.80)),
+        "road":   (sat < 0.18) & (mx > 0.30) & (mx < 0.85),
+        "rock":   (sat < 0.45) & (r >= g) & (mx > 0.25),
+        "snow":   (mx > 0.75) & (sat < 0.15),
+    }
+    scores = []
+    for i, n in enumerate(names):
+        m = small == i
+        if float(m.mean()) < 0.005 or n not in pred:
+            continue
+        scores.append(float((pred[n] & m).sum()) / float(m.sum()))
+    return float(np.mean(scores)) if scores else 0.0
 
 
 def save_seg_png(cls, path: str):
@@ -587,11 +625,44 @@ def image_to_heightfield(path: str, size: int):
 # only the colour orthophoto (its strong suit), and the heightfield is
 # DERIVED from that image — aligned by construction.
 COLOR_FIRST_TEMPLATE = (
-    "photorealistic full-color satellite aerial orthophoto covering a "
-    "4 kilometer wide area, {user_prompt}, nadir view seen straight "
-    "down, orthographic map projection, natural earth colors, "
-    "no perspective, no horizon, no sky, no clouds, no text, no borders"
+    # View language FIRST and redundant.  CAUTION: avoid the word "map"
+    # — it steers FLUX toward DRAWN cartographic illustrations
+    # (isometric mountains, flat colors, panel borders).  Photography
+    # vocabulary only.
+    "real aerial photograph taken by a survey drone camera pointing "
+    "straight down at the ground, nadir orthorectified satellite "
+    "photography like Google Earth imagery, seen directly from above "
+    "at 90 degrees, photorealistic, covering a 4 kilometer wide area, "
+    "{user_prompt}, real photographic texture, natural earth colors, "
+    "no illustration, no drawing, no cartoon, no painting, no "
+    "isometric view, no perspective, no side view, no horizon, no sky, "
+    "no text, no borders"
 )
+
+
+def looks_bad_ortho(png_path: str) -> str:
+    """Reject non-orthophoto renders.  Returns '' if OK, else a reason.
+    (a) SIDE VIEW: sky band along the top (bright blue rows).
+    (b) ILLUSTRATION: drawn/cartoon maps are mostly FLAT color fills —
+        real aerial photography has texture everywhere, so a high
+        fraction of near-constant patches marks a drawing."""
+    a = np.asarray(Image.open(png_path).convert("RGB").resize((256, 256)),
+                   dtype=np.float32) / 255.0
+    top = a[:32]
+    r, g, b = top[..., 0], top[..., 1], top[..., 2]
+    mx = top.max(-1)
+    if float(((mx > 0.62) & (b >= g) & (b > r * 1.02)).mean()) > 0.5:
+        return "sky along the top (side view)"
+    lum = a.mean(-1)
+    # Local flatness: std within 4x4 blocks.
+    blocks = lum[:256 - 256 % 4].reshape(64, 4, 64, 4).transpose(
+        0, 2, 1, 3).reshape(64, 64, 16)
+    flat = float((blocks.std(-1) < 0.008).mean())
+    # Calibrated on real outputs: the isometric drawn map measured 39%
+    # flat; photorealistic aerials sit well under 20%.
+    if flat > 0.30:
+        return f"flat-color illustration ({flat * 100.0:.0f}% flat)"
+    return ""
 
 
 def height_from_color(color_path: str, size: int):
@@ -987,9 +1058,43 @@ def main():
         # classes, heightfield and albedo all derive from it.
         seg_raw = os.path.join(tempfile.gettempdir(),
                                "terrain_seg_raw.png")
-        run_flux(SEG_PROMPT_TEMPLATE.format(user_prompt=args.prompt),
-                 seg_raw, args.gen_size, args.steps, args.seed,
-                 label="land-cover layout", prog_lo=0.02, prog_hi=0.42)
+
+        def layout_side_view(png_path: str) -> str:
+            """'' if the layout looks top-down, else the reason.
+            Side-profile map-icon mountains have two signatures a real
+            classification raster never has: (a) black ridgeline
+            HATCHING, (b) snow at the TOP EDGE of brown regions (peaks
+            drawn upward) instead of centred inside them."""
+            a = np.asarray(Image.open(png_path).convert("RGB").resize(
+                (256, 256)), dtype=np.float32) / 255.0
+            mx = a.max(-1)
+            ink = float((mx < 0.18).mean())
+            if ink > 0.02:
+                return f"ridgeline hatching ({ink * 100.0:.1f}% ink)"
+            r, g, b = a[..., 0], a[..., 1], a[..., 2]
+            snow = (mx > 0.85) & ((a.max(-1) - a.min(-1)) < 0.12)
+            brown = (r > g) & (g > b) & (r > 0.35) & (r < 0.8)
+            if snow.mean() > 0.01 and brown.mean() > 0.02:
+                ys, _ = np.nonzero(snow)
+                yb, _ = np.nonzero(brown)
+                # snow centroid clearly ABOVE brown centroid => profile
+                if float(yb.mean() - ys.mean()) > 20.0:
+                    return "snow above rock (side-profile mountains)"
+            return ""
+
+        import random as _rndseg
+        seg_seed = args.seed if args.seed >= 0 \
+            else _rndseg.randint(0, 1 << 30)
+        for attempt in range(3):
+            run_flux(SEG_PROMPT_TEMPLATE.format(user_prompt=args.prompt),
+                     seg_raw, args.gen_size, args.steps,
+                     seg_seed + attempt * 7919,
+                     label="land-cover layout", prog_lo=0.02, prog_hi=0.42)
+            reason = layout_side_view(seg_raw)
+            if not reason:
+                break
+            print(f"[terrain] layout attempt {attempt + 1}: rejected — "
+                  f"{reason}; retrying with a new seed")
         report(0.44, "quantizing layout into class masks")
         cls_map = quantize_to_classes(seg_raw, args.gen_size)
         names = [n for n, _ in SEG_CLASSES]
@@ -1006,9 +1111,18 @@ def main():
         # and albedo cannot disagree.
         color_raw = os.path.join(tempfile.gettempdir(),
                                  "terrain_color_raw.png")
-        run_flux(COLOR_FIRST_TEMPLATE.format(user_prompt=args.prompt),
-                 color_raw, args.gen_size, args.steps, args.seed,
-                 label="color orthophoto", prog_lo=0.02, prog_hi=0.70)
+        import random as _rnd0
+        cf_seed = args.seed if args.seed >= 0 else _rnd0.randint(0, 1 << 30)
+        for attempt in range(3):
+            run_flux(COLOR_FIRST_TEMPLATE.format(user_prompt=args.prompt),
+                     color_raw, args.gen_size, args.steps,
+                     cf_seed + attempt * 7919,
+                     label="color orthophoto", prog_lo=0.02, prog_hi=0.70)
+            reason = looks_bad_ortho(color_raw)
+            if not reason:
+                break
+            print(f"[terrain] attempt {attempt + 1}: rejected — {reason}; "
+                  "retrying with a new seed")
         report(0.72, "deriving heightfield from color")
         h = height_from_color(color_raw, refine_res)
     else:
@@ -1074,11 +1188,35 @@ def main():
         wrote_color = False
         if args.color:
             try:
-                run_flux(COLOR_FROM_LAYOUT_TEMPLATE.format(
-                             user_prompt=args.prompt),
-                         color_out, args.gen_size, args.steps, args.seed,
-                         ref_image=seg_raw, label="albedo from layout",
-                         prog_lo=0.60, prog_hi=0.93)
+                # Ref conditioning is soft: score each attempt's CLASS
+                # AGREEMENT against the seg (PCG places from the seg, so
+                # colour drift = buildings visibly off their painted
+                # bases) and retry with new seeds, keeping the best.
+                import random as _rndl
+                seed0 = args.seed if args.seed >= 0 \
+                    else _rndl.randint(0, 1 << 30)
+                seg_names = [n for n, _ in SEG_CLASSES]
+                best_s, best_bytes = -1.0, None
+                for attempt in range(3):
+                    run_flux(COLOR_FROM_LAYOUT_TEMPLATE.format(
+                                 user_prompt=args.prompt),
+                             color_out, args.gen_size, args.steps,
+                             seed0 + attempt * 7919,
+                             ref_image=seg_raw, label="albedo from layout",
+                             prog_lo=0.60, prog_hi=0.93)
+                    s = seg_color_agreement(cls_map, color_out, seg_names)
+                    print(f"[terrain] albedo attempt {attempt + 1}: "
+                          f"seg agreement {s:.2f}")
+                    if s > best_s:
+                        with open(color_out, "rb") as bf:
+                            best_s, best_bytes = s, bf.read()
+                    if s >= 0.55:
+                        break
+                if best_bytes is not None:
+                    with open(color_out, "wb") as bf:
+                        bf.write(best_bytes)
+                print(f"[terrain] albedo seg agreement: {best_s:.2f} "
+                      f"{'(aligned)' if best_s >= 0.55 else '(WEAK)'}")
                 Image.open(color_out).convert("RGB").resize(
                     (args.size, args.size), Image.LANCZOS).save(color_out)
                 wrote_color = True
