@@ -198,8 +198,11 @@ def quantize_to_classes(png_path: str, size: int):
     put((hue >= 60) & (hue <= 175) & (s > 0.2), "grass")
     put(((hue >= 335) | (hue <= 22)) & (s > 0.35) & (v > 0.25), "town")
     put((s < 0.22) & (v < 0.55), "road")           # dark achromatic
-    put((hue > 22) & (hue < 55) & (v < 0.55), "rock")   # dark brown
-    put((hue >= 22) & (hue <= 65) & (v >= 0.55), "sand")  # tan
+    # v < 0.65 (not 0.55): the canonical rock palette colour itself has
+    # v≈0.59 — with a lower cut it fell through to "sand" and red-noise
+    # speckle inside mountains became disconnected tiny "town" blobs.
+    put((hue > 22) & (hue < 55) & (v < 0.65), "rock")   # brown
+    put((hue >= 22) & (hue <= 65), "sand")              # tan remainder
     # Unclaimed pixels: nearest palette colour.
     if (cls == 255).any():
         a16 = np.asarray(im, dtype=np.int32)
@@ -207,6 +210,53 @@ def quantize_to_classes(png_path: str, size: int):
         un = cls == 255
         d = ((a16[un][:, None, :] - pal[None]) ** 2).sum(-1)
         cls[un] = d.argmin(-1).astype(np.uint8)
+
+    # ── Warm-brown disambiguation: HOUSES vs MOUNTAINS ──────────────
+    # FLUX's stylized layouts paint houses AND mountains in the same
+    # warm-brown family, so hue rules alone put them in one class.
+    # Per warm (rock ∪ town) component, decide by STRUCTURE (rule set
+    # validated against a real antique-style generation):
+    #   • ≥ 20000 m²                        → rock, unconditionally
+    #     (mountain range — hatch strokes inside classify as "road",
+    #     so road signals must never rescue a big component);
+    #   • explicitly red-painted (≥50 %)    → town (GIS-style blocks);
+    #   • else town IFF road-laced (streets within ~40 m), NOT hugging
+    #     a mountain mass (kills scree dots + hatch fragments), and
+    #     ≥ ~7 m wide via distance transform (kills drawn boundary
+    #     LINES, which survive erosion but have no interior).
+    px_m = WORLD_SIZE_M / size
+    warm = (cls == idx["rock"]) | (cls == idx["town"])
+    if warm.any():
+        red0 = (cls == idx["town"]).astype(np.float32)  # pre-reclass
+        lab, ncomp = ndi.label(warm)
+        if ncomp > 0:
+            index = np.arange(1, ncomp + 1)
+            areas = ndi.sum(warm, lab, index) * px_m * px_m
+            red_frac = ndi.mean(red0, lab, index)
+            bigrock = np.isin(lab, index[areas >= 20000.0])
+            road_d = ndi.uniform_filter(
+                (cls == idx["road"]).astype(np.float32),
+                max(3, int(80.0 / px_m) | 1))
+            rockm_d = ndi.uniform_filter(
+                bigrock.astype(np.float32),
+                max(3, int(120.0 / px_m) | 1))
+            road_c = ndi.mean(road_d, lab, index)
+            rockm_c = ndi.mean(rockm_d, lab, index)
+            edt = ndi.distance_transform_edt(warm) * px_m
+            width_c = ndi.maximum(edt, lab, index)
+            # Elongation ≈ length/width (area over squared width):
+            # ~1 for a house rect, ~25 for a drawn boundary STRIP that
+            # is wide enough to pass the width test.
+            elong_c = areas / np.maximum((2.0 * width_c) ** 2, 1.0)
+            to_town = (red_frac >= 0.5) | (
+                (areas < 20000.0) & (road_c > 0.04) &
+                (rockm_c < 0.15) & (width_c >= 3.5) &
+                (elong_c < 8.0))
+            lut = np.empty(ncomp + 1, np.uint8)
+            lut[0] = 0                                  # unused (bg)
+            lut[1:] = np.where(to_town, idx["town"], idx["rock"])
+            cls[warm] = lut[lab[warm]]
+
     # Majority-vote smoothing: per-class box score, argmax — kills
     # single-texel speckle without the label-averaging bug a plain
     # median on indices would have.
@@ -1012,6 +1062,12 @@ def main():
         save_seg_png(np.asarray(Image.fromarray(cls_map).resize(
             (args.size, args.size), Image.NEAREST)), seg_out)
         print(f"[terrain] wrote {seg_out}  (land-cover class masks)")
+        # Keep the raw FLUX layout render beside the map: quantization
+        # problems are impossible to debug from the quantized PNG alone.
+        try:
+            shutil.copy2(seg_raw, stem + "_layout.png")
+        except OSError:
+            pass
         # 2. Albedo: FLUX conditioned on the layout render when --color,
         #    procedural class colorization otherwise / on failure.
         color_out = stem + "_color.png"
