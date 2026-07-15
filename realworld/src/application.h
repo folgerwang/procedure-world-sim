@@ -3,6 +3,8 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -82,6 +84,40 @@ public:
     // --scene <path>: load this saved .scene at startup (editor mode).
     void setStartupScene(const std::string& p) { startup_scene_path_ = p; }
     void setFrameBufferResized(bool resized) { framebuffer_resized_ = resized; }
+
+    // ── One-shot terrain verify-dump mode (CLI-driven) ───────────────────
+    // Headless capture pipeline for the terrain verification loop: once a
+    // terrain is applied (either the --verify-apply heightmap below, or a
+    // manual/AI generation), wait `delay_s` seconds, dump a clean (UI-free)
+    // render-buffer frame to `out_path`, write screenshots/terrain_verify_done.txt,
+    // then close the app.  An external driver reads the dumped PNG.
+    void setVerifyDump(const std::string& out_path, float delay_s) {
+        verify_dump_enabled_ = true;
+        if (!out_path.empty()) verify_dump_path_ = out_path;
+        if (delay_s >= 0.0f) verify_dump_delay_s_ = delay_s;
+    }
+    // Optional: apply this heightmap (+ optional albedo) on startup so no
+    // manual "Generate" click is needed — enables a fully scripted run.
+    void setVerifyApply(const std::string& height_png,
+                        const std::string& color_png) {
+        verify_apply_height_ = height_png;
+        verify_apply_color_  = color_png;
+    }
+
+    // ── Frame capture (screenshot / render-buffer dump) ──────────────────
+    // Reads the most-recently presented swapchain image back to the CPU and
+    // writes it to disk as a PNG.  Intended for offline inspection and for a
+    // future "loop agent" that observes the rendered frame.
+    //
+    // captureSwapchainToFile() performs the readback synchronously and MUST be
+    // called on the render thread (it issues Vulkan commands and waits).  When
+    // out_path is empty a timestamped file under screenshots/ is generated.
+    // Regardless of out_path, screenshots/frame_latest.png is also updated so a
+    // poller can always grab the newest frame.  Returns true on success.
+    bool captureSwapchainToFile(const std::string& out_path = "");
+    // Thread-safe: queues a capture to run at the end of the next drawFrame on
+    // the render thread.  Safe to call from any thread (e.g. an agent loop).
+    void requestFrameCapture(const std::string& out_path = "");
 
     // Screen-space velocity buffer (RG16F, NDC delta).  Populated by
     // the cluster G-buffer pass when deferred rendering is enabled;
@@ -189,6 +225,17 @@ private:
         float current_time);
     void initDrawFrame();
     void drawFrame();
+    // Services any capture requested via requestFrameCapture(); called at the
+    // end of drawFrame() on the render thread.
+    void serviceFrameCaptureRequests();
+    // Terrain verify loop: polls a request file, applies the heightmap, and
+    // captures a clean (UI-free) viewport frame for an external analyzer.
+    // Called once per frame from drawFrame() on the render thread.
+    void serviceTerrainVerify();
+    // One-shot CLI verify-dump mode: apply-on-start (optional), wait, dump a
+    // clean frame, then close the app.  Called once per frame from drawFrame().
+    void serviceVerifyDump();
+    void armVerifyDump();
     void cleanup();
     void cleanupSwapChain();
     void recreateSwapChain();
@@ -215,6 +262,40 @@ private:
     std::shared_ptr<er::Queue> present_queue_;
     std::shared_ptr<er::Surface> surface_;
     er::SwapChainInfo swap_chain_info_;
+
+    // ── Frame capture state ──────────────────────────────────────────────
+    // Index of the swapchain image handed to the last presentQueue() call.
+    // captureSwapchainToFile() reads this image back; -1 until the first
+    // successful present.
+    int32_t last_presented_image_index_ = -1;
+    // Deferred capture requests (from requestFrameCapture); drained on the
+    // render thread by serviceFrameCaptureRequests().
+    std::mutex capture_request_mutex_;
+    std::vector<std::string> pending_capture_paths_;
+
+    // ── Terrain verify loop state (see serviceTerrainVerify) ─────────────
+    // A file-based command channel an external harness (verify_loop.py) uses
+    // to drive headless "apply heightmap -> clean capture" cycles.
+    //   0 = idle, 1 = settling (waiting for terrain to stream/render),
+    //   2 = capture requested this frame.
+    int          terrain_verify_state_        = 0;
+    int          terrain_verify_settle_       = 0;   // frames left before capture
+    bool         terrain_verify_hide_ui_      = false; // true only on capture frame
+    std::string  terrain_verify_capture_path_;
+    long long    terrain_verify_last_mtime_   = 0;   // last serviced request mtime
+
+    // ── One-shot verify-dump mode state (see serviceVerifyDump) ──────────
+    bool         verify_dump_enabled_   = false;
+    std::string  verify_dump_path_      = "screenshots/terrain_verify_latest.png";
+    float        verify_dump_delay_s_   = 10.0f;
+    std::string  verify_apply_height_;               // optional startup heightmap
+    std::string  verify_apply_color_;                // optional startup albedo
+    bool         verify_apply_done_     = false;
+    int          verify_warmup_frames_  = 0;
+    int          verify_dump_stage_     = 0;         // 0 idle .. 5 done
+    int          verify_dump_hold_      = 0;         // UI-hidden frames rendered
+    std::chrono::steady_clock::time_point verify_dump_arm_tp_;
+
     std::shared_ptr<er::DescriptorPool> descriptor_pool_;
     // Persistent pool for mesh-loaded drawable material/skin descriptor sets.
     // Unlike descriptor_pool_ (destroyed + recreated by cleanupSwapChain on

@@ -17,6 +17,8 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdarg>
+#include <ctime>
+#include <mutex>
 #include <unordered_set>
 #include "Windows.h"
 
@@ -257,6 +259,13 @@ std::shared_ptr<er::DescriptorSetLayout> createRuntimeLightsDescriptorSetLayout(
     return device->createDescriptorSetLayout(bindings);
 }
 }
+
+// Global-scope forward declaration of the STB PNG writer (implementation is
+// compiled in engine_helper.cpp with C linkage — see menu.cpp). Must be
+// extern "C" so it resolves to the undecorated stbi_write_png symbol.
+extern "C" int stbi_write_png(
+    const char* filename, int w, int h, int comp, const void* data,
+    int stride_in_bytes);
 
 namespace work {
 namespace app {
@@ -1658,7 +1667,9 @@ void RealWorldApplication::initVulkan() {
         surface_,
         queue_list_,
         swap_chain_info_,
-        SET_2_FLAG_BITS(ImageUsage, COLOR_ATTACHMENT_BIT, TRANSFER_DST_BIT));
+        // TRANSFER_SRC_BIT added so the presented frame can be copied back to
+        // the CPU for screenshots / render-buffer dumps (see captureSwapchainToFile).
+        SET_3_FLAG_BITS(ImageUsage, COLOR_ATTACHMENT_BIT, TRANSFER_DST_BIT, TRANSFER_SRC_BIT));
     createRenderPasses();
     createImageViews();
     cubemap_render_pass_ =
@@ -2708,7 +2719,9 @@ void RealWorldApplication::recreateSwapChain() {
         surface_,
         queue_list_,
         swap_chain_info_,
-        SET_2_FLAG_BITS(ImageUsage, COLOR_ATTACHMENT_BIT, TRANSFER_DST_BIT));
+        // TRANSFER_SRC_BIT added so the presented frame can be copied back to
+        // the CPU for screenshots / render-buffer dumps (see captureSwapchainToFile).
+        SET_3_FLAG_BITS(ImageUsage, COLOR_ATTACHMENT_BIT, TRANSFER_DST_BIT, TRANSFER_SRC_BIT));
 
     createRenderPasses();
     createImageViews();
@@ -8103,6 +8116,335 @@ void RealWorldApplication::initDrawFrame() {
     prt_shadow_gen_->destroy(device_);
 }
 
+// ── Frame capture (screenshot / render-buffer dump) ──────────────────────
+// stbi_write_png is forward-declared at GLOBAL scope near the top of this file
+// (before namespace work/app opens) so it resolves to the externally-defined
+// symbol compiled in engine_helper.cpp — matching menu.cpp.
+namespace {
+// True for the B8G8R8A8 family, whose byte order is B,G,R,A.  stb writes RGBA,
+// so these need an R/B swap before saving.
+bool isBgraSwapchainFormat(er::Format fmt) {
+    switch (fmt) {
+        case er::Format::B8G8R8A8_UNORM:
+        case er::Format::B8G8R8A8_SNORM:
+        case er::Format::B8G8R8A8_USCALED:
+        case er::Format::B8G8R8A8_SSCALED:
+        case er::Format::B8G8R8A8_UINT:
+        case er::Format::B8G8R8A8_SINT:
+        case er::Format::B8G8R8A8_SRGB:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// Filesystem-safe local timestamp: YYYYMMDD_HHMMSS_mmm.
+std::string captureTimestampString() {
+    using namespace std::chrono;
+    const auto now = system_clock::now();
+    const auto ms =
+        duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
+    const std::time_t t = system_clock::to_time_t(now);
+    std::tm tm_buf{};
+#if defined(_WIN32)
+    localtime_s(&tm_buf, &t);
+#else
+    localtime_r(&t, &tm_buf);
+#endif
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &tm_buf);
+    char out[48];
+    std::snprintf(out, sizeof(out), "%s_%03d", buf,
+                  static_cast<int>(ms.count()));
+    return std::string(out);
+}
+}  // namespace
+
+bool RealWorldApplication::captureSwapchainToFile(const std::string& out_path) {
+    if (last_presented_image_index_ < 0) {
+        return false;  // nothing has been presented yet
+    }
+    const uint32_t idx = static_cast<uint32_t>(last_presented_image_index_);
+    if (idx >= swap_chain_info_.images.size() || !swap_chain_info_.images[idx]) {
+        return false;
+    }
+
+    const glm::uvec2 extent = swap_chain_info_.extent;
+    if (extent.x == 0 || extent.y == 0) {
+        return false;
+    }
+    const uint32_t bytes_per_pixel = 4;
+
+    // Idle the GPU so the presented image's contents are stable and the image
+    // is in PRESENT_SRC_KHR layout before dumpSwapchainImage transitions it.
+    device_->waitIdle();
+
+    std::vector<uint8_t> pixels(
+        static_cast<size_t>(extent.x) * extent.y * bytes_per_pixel);
+    er::Helper::dumpSwapchainImage(
+        device_,
+        swap_chain_info_.images[idx],
+        swap_chain_info_.format,
+        glm::uvec3(extent.x, extent.y, 1),
+        bytes_per_pixel,
+        pixels.data(),
+        std::source_location::current());
+
+    if (isBgraSwapchainFormat(swap_chain_info_.format)) {
+        for (size_t i = 0; i + 3 < pixels.size(); i += 4) {
+            std::swap(pixels[i], pixels[i + 2]);  // B <-> R
+        }
+    }
+
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path shots_dir = "screenshots";
+    fs::create_directories(shots_dir, ec);
+
+    fs::path history_path;
+    if (!out_path.empty()) {
+        history_path = fs::path(out_path);
+        if (history_path.has_parent_path()) {
+            fs::create_directories(history_path.parent_path(), ec);
+        }
+    } else {
+        history_path = shots_dir / ("frame_" + captureTimestampString() + ".png");
+    }
+    const fs::path latest_path = shots_dir / "frame_latest.png";
+
+    const int w = static_cast<int>(extent.x);
+    const int h = static_cast<int>(extent.y);
+    const int stride = static_cast<int>(extent.x * bytes_per_pixel);
+
+    bool ok = stbi_write_png(
+        history_path.string().c_str(), w, h, 4, pixels.data(), stride) != 0;
+    // Always refresh frame_latest.png so a poller can grab the newest frame,
+    // unless the caller explicitly asked for exactly that path.
+    if (fs::path(latest_path) != history_path) {
+        const bool latest_ok = stbi_write_png(
+            latest_path.string().c_str(), w, h, 4, pixels.data(), stride) != 0;
+        ok = ok && latest_ok;
+    }
+
+    if (ok) {
+        std::printf("[capture] wrote %dx%d frame -> %s\n", w, h,
+                    history_path.string().c_str());
+    } else {
+        std::printf("[capture] FAILED to write frame -> %s\n",
+                    history_path.string().c_str());
+    }
+    return ok;
+}
+
+void RealWorldApplication::requestFrameCapture(const std::string& out_path) {
+    std::lock_guard<std::mutex> lock(capture_request_mutex_);
+    pending_capture_paths_.push_back(out_path);
+}
+
+void RealWorldApplication::serviceFrameCaptureRequests() {
+    std::vector<std::string> paths;
+    {
+        std::lock_guard<std::mutex> lock(capture_request_mutex_);
+        if (pending_capture_paths_.empty()) {
+            return;
+        }
+        paths.swap(pending_capture_paths_);
+    }
+    for (const auto& p : paths) {
+        captureSwapchainToFile(p);
+    }
+}
+
+// ── Terrain verify loop (headless apply + clean capture) ─────────────────
+// File-based command channel used by tools/terrain/verify_loop.py.
+//   request : content/terrain/.verify/request.txt   (key=value lines)
+//       id=<n>  height=<png>  color=<png|empty>  capture=<png>  settle=<frames>
+//   response: content/terrain/.verify/response.txt  (written when capture done)
+//       id=<n>  status=ok  capture=<png>  width=<w>  height=<h>
+// The harness correlates request/response by the `id` field, so no files are
+// deleted — a new request is simply a file with a newer mtime and a new id.
+namespace {
+// Minimal key=value line reader.
+std::unordered_map<std::string, std::string> parseKvFile(const std::string& path) {
+    std::unordered_map<std::string, std::string> kv;
+    std::ifstream f(path);
+    std::string line;
+    while (std::getline(f, line)) {
+        // strip trailing CR (Windows line endings written by Python)
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = line.substr(0, eq);
+        std::string v = line.substr(eq + 1);
+        // trim surrounding whitespace
+        auto trim = [](std::string& s) {
+            const auto b = s.find_first_not_of(" \t");
+            const auto e = s.find_last_not_of(" \t");
+            s = (b == std::string::npos) ? std::string() : s.substr(b, e - b + 1);
+        };
+        trim(k); trim(v);
+        if (!k.empty()) kv[k] = v;
+    }
+    return kv;
+}
+}  // namespace
+
+void RealWorldApplication::serviceTerrainVerify() {
+    namespace fs = std::filesystem;
+    const fs::path dir = "content/terrain/.verify";
+    const fs::path req = dir / "request.txt";
+    const fs::path resp = dir / "response.txt";
+
+    if (terrain_verify_state_ == 0) {
+        // Idle: look for a fresh request (newer mtime than last serviced).
+        std::error_code ec;
+        if (!fs::exists(req, ec)) return;
+        const auto mt = fs::last_write_time(req, ec);
+        if (ec) return;
+        const long long mtime =
+            static_cast<long long>(mt.time_since_epoch().count());
+        if (mtime == terrain_verify_last_mtime_) return;  // already handled
+        terrain_verify_last_mtime_ = mtime;
+
+        const auto kv = parseKvFile(req.string());
+        auto get = [&](const char* k) -> std::string {
+            auto it = kv.find(k);
+            return it == kv.end() ? std::string() : it->second;
+        };
+        const std::string height = get("height");
+        if (height.empty() || !fs::exists(height, ec)) {
+            std::printf("[verify] request references missing height '%s'\n",
+                        height.c_str());
+            return;
+        }
+        const std::string color   = get("color");
+        terrain_verify_capture_path_ = get("capture");
+        if (terrain_verify_capture_path_.empty()) {
+            terrain_verify_capture_path_ = "screenshots/terrain_verify.png";
+        }
+        int settle = 60;
+        try { if (!get("settle").empty()) settle = std::stoi(get("settle")); }
+        catch (...) {}
+        terrain_verify_settle_ = std::max(1, settle);
+
+        std::printf("[verify] applying terrain height=%s color=%s (settle %d)\n",
+                    height.c_str(), color.c_str(), terrain_verify_settle_);
+        createTerrainFromMaps(height, color);
+        terrain_verify_state_ = 1;
+        return;
+    }
+
+    if (terrain_verify_state_ == 1) {
+        // Settling: let the terrain stream/render for a few frames, then
+        // schedule the clean capture (this frame renders UI-free).
+        if (--terrain_verify_settle_ > 0) return;
+        terrain_verify_hide_ui_ = true;
+        requestFrameCapture(terrain_verify_capture_path_);
+        terrain_verify_state_ = 2;
+        return;
+    }
+
+    if (terrain_verify_state_ == 2) {
+        // The UI-free frame has been presented and captured by
+        // serviceFrameCaptureRequests(); restore the UI and answer the harness.
+        terrain_verify_hide_ui_ = false;
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        const auto kv = parseKvFile(req.string());
+        const std::string id = (kv.count("id") ? kv.at("id") : std::string("0"));
+        std::ofstream out(resp.string(), std::ios::binary | std::ios::trunc);
+        out << "id=" << id << "\n"
+            << "status=ok\n"
+            << "capture=" << terrain_verify_capture_path_ << "\n"
+            << "width=" << swap_chain_info_.extent.x << "\n"
+            << "height=" << swap_chain_info_.extent.y << "\n";
+        std::printf("[verify] capture ready -> %s (id=%s)\n",
+                    terrain_verify_capture_path_.c_str(), id.c_str());
+        terrain_verify_state_ = 0;
+        return;
+    }
+}
+
+void RealWorldApplication::armVerifyDump() {
+    verify_dump_arm_tp_ = std::chrono::steady_clock::now();
+    verify_dump_stage_ = 1;
+    std::printf("[verify-dump] armed; capturing in %.1fs -> %s\n",
+                verify_dump_delay_s_, verify_dump_path_.c_str());
+}
+
+void RealWorldApplication::serviceVerifyDump() {
+    if (!verify_dump_enabled_) return;
+
+    // (1) Optional scripted apply: load the given heightmap on startup once a
+    //     few frames have gone by (let the swapchain / streaming warm up),
+    //     then arm the capture timer.
+    if (!verify_apply_height_.empty() && !verify_apply_done_) {
+        if (++verify_warmup_frames_ < 20) return;
+        std::error_code ec;
+        if (std::filesystem::exists(verify_apply_height_, ec)) {
+            std::printf("[verify-dump] applying startup terrain %s\n",
+                        verify_apply_height_.c_str());
+            createTerrainFromMaps(verify_apply_height_, verify_apply_color_);
+        } else {
+            std::printf("[verify-dump] startup height missing: %s\n",
+                        verify_apply_height_.c_str());
+        }
+        verify_apply_done_ = true;
+        armVerifyDump();
+        return;
+    }
+
+    // (2) Wait out the settle delay, then start hiding the UI.
+    if (verify_dump_stage_ == 1) {
+        const float elapsed = std::chrono::duration<float>(
+            std::chrono::steady_clock::now() - verify_dump_arm_tp_).count();
+        if (elapsed < verify_dump_delay_s_) return;
+        terrain_verify_hide_ui_ = true;
+        verify_dump_hold_ = 0;
+        verify_dump_stage_ = 2;
+        return;
+    }
+
+    // (3) UI hidden — let a few clean frames render fully through the swapchain
+    //     before requesting the readback (avoids capturing a still-UI frame).
+    if (verify_dump_stage_ == 2) {
+        terrain_verify_hide_ui_ = true;                 // keep it hidden
+        if (++verify_dump_hold_ < 4) return;
+        requestFrameCapture(verify_dump_path_);
+        verify_dump_stage_ = 3;
+        return;
+    }
+
+    // (4) Keep the UI hidden until the capture PNG is actually on disk, so the
+    //     captured frame is guaranteed to be one of the UI-free ones.
+    if (verify_dump_stage_ == 3) {
+        terrain_verify_hide_ui_ = true;
+        std::error_code ec;
+        if (!std::filesystem::exists(verify_dump_path_, ec)) return;
+        verify_dump_stage_ = 4;
+        return;
+    }
+
+    // (5) Done — restore UI, write the done marker, and quit.
+    if (verify_dump_stage_ == 4) {
+        terrain_verify_hide_ui_ = false;
+        std::error_code ec;
+        std::filesystem::create_directories("screenshots", ec);
+        {
+            std::ofstream m("screenshots/terrain_verify_done.txt",
+                            std::ios::binary | std::ios::trunc);
+            m << "capture=" << verify_dump_path_ << "\n"
+              << "width=" << swap_chain_info_.extent.x << "\n"
+              << "height=" << swap_chain_info_.extent.y << "\n";
+        }
+        std::printf("[verify-dump] wrote %s; closing app.\n",
+                    verify_dump_path_.c_str());
+        if (window_) glfwSetWindowShouldClose(window_, GLFW_TRUE);
+        verify_dump_stage_ = 5;
+        return;
+    }
+}
+
 void RealWorldApplication::drawFrame() {
     // ── CPU frame anchor ──
     // Capture host-side time relative to the same frame-in-flight slot
@@ -8192,7 +8534,19 @@ void RealWorldApplication::drawFrame() {
                                               terrain_albedo_png)) {
             createTerrainFromMaps(terrain_height_png,
                                   terrain_albedo_png);
+            // Manual / AI-generated terrain just landed — in verify-dump mode
+            // (without a scripted --verify-apply) this is the event that arms
+            // the "wait, dump, close" timer.
+            if (verify_dump_enabled_ && verify_apply_height_.empty() &&
+                verify_dump_stage_ == 0) {
+                armVerifyDump();
+            }
         }
+
+        // Headless terrain verify loop: apply-on-request + clean capture.
+        serviceTerrainVerify();
+        // One-shot CLI verify-dump: apply-on-start, wait, dump, close.
+        serviceVerifyDump();
     }
 
     // ── [placed.draw] per-second reach report ────────────────────────
@@ -13281,7 +13635,8 @@ void RealWorldApplication::drawFrame() {
         swap_chain_info_.extent,
         skydome_,
         dump_volume_noise_,
-        delta_t_);
+        delta_t_,
+        /*hide_ui*/ terrain_verify_hide_ui_);
     gpu_profiler_.endCpuScope(_cpu_imgui);
 
     // ── CPU profile: "End CB" ───────────────────────────────────────
@@ -13321,6 +13676,11 @@ void RealWorldApplication::drawFrame() {
             framebuffer_resized_);
         gpu_profiler_.endCpuScope(_cpu_present);
     }
+    // Remember which swapchain image was just presented so a frame capture can
+    // read it back.  Service pending capture requests now — while the image is
+    // still valid — before a potential swapchain recreate invalidates indices.
+    last_presented_image_index_ = static_cast<int32_t>(image_index);
+    serviceFrameCaptureRequests();
 
     if (need_recreate_swap_chain) {
         recreateSwapChain();

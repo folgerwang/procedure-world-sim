@@ -513,7 +513,14 @@ endif()
 # ── Output executable next to assets/ so relative paths resolve ───────────────
 # The game loads assets via paths like "assets/..." relative to the exe.
 # Place the binary directly in the realworld/ folder for all configs.
+# Output exe name. Defaults to "RealWorld"; can be overridden at configure time
+# with -DREALWORLD_OUTPUT_NAME=<name> to link a differently-named binary (used
+# to build while a running RealWorld.exe holds the normal output file locked).
+if(NOT DEFINED REALWORLD_OUTPUT_NAME)
+    set(REALWORLD_OUTPUT_NAME "RealWorld")
+endif()
 set_target_properties(RealWorld PROPERTIES
+    OUTPUT_NAME                             "${REALWORLD_OUTPUT_NAME}"
     RUNTIME_OUTPUT_DIRECTORY                "${CMAKE_SOURCE_DIR}/realworld"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG          "${CMAKE_SOURCE_DIR}/realworld"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE        "${CMAKE_SOURCE_DIR}/realworld"

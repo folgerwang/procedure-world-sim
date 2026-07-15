@@ -276,8 +276,14 @@ def extract_trees(veg_mask, roof_mask, px_m, spacing_m=7.0,
                 out.append((jx, jy,
                             _det_rand(jx, jy, 3.0, 9.0),      # height
                             _det_rand(jy, jx, 1.2, 3.0)))     # radius
-                if len(out) >= max_trees:
-                    return out
+    # Over budget → thin EVENLY across the whole map.  Truncating the
+    # row-major scan instead would give the map's top half all the trees
+    # and leave southern forests bare (a real artifact once the canopy
+    # detector widened).
+    if len(out) > max_trees:
+        stride = len(out) / float(max_trees)
+        out = [out[int(i * stride)] for i in range(max_trees)]
+        print(f"[pcg] tree budget: thinned to {max_trees} evenly")
     return out
 
 
@@ -494,22 +500,59 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None):
                 ~masks["water"] & ~masks["road"])
         bld = extract_buildings(roof, px_m)
 
-        # Fallback: town components whose painted-roof trace came up
-        # empty (albedo didn't draw houses there) get the grid
-        # subdivision so no town renders empty.
+        # Fallback: SMALL town components whose painted-roof trace came
+        # up empty (albedo forgot a village) get the grid subdivision so
+        # no town renders empty.  LARGE unpainted components are the
+        # albedo saying "no town here" (e.g. FLUX drawing a giant red
+        # region the albedo then renders as bare rock) — grid-filling
+        # those would carpet empty terrain with thousands of boxes, so
+        # trust the albedo and skip them.
         labels, ncomp = ndi.label(masks["town"])
         if ncomp > 0:
-            comp_mean = ndi.mean(roof.astype(np.float32), labels,
-                                 index=np.arange(1, ncomp + 1))
-            weak = [i + 1 for i, v in enumerate(np.atleast_1d(comp_mean))
-                    if v < 0.02]
-            if weak:
-                weak_mask = np.isin(labels, weak)
-                extra = buildings_from_town(weak_mask, masks["road"],
-                                            px_m)
-                print(f"[pcg] {len(weak)} town block(s) unpainted in "
-                      f"albedo -> grid-filled ({len(extra)} houses)")
-                bld = bld + extra
+            index = np.arange(1, ncomp + 1)
+            comp_mean = np.atleast_1d(
+                ndi.mean(roof.astype(np.float32), labels, index))
+            comp_area = np.atleast_1d(
+                ndi.sum(masks["town"], labels, index)) * px_m * px_m
+            # The ALBEDO is ground truth for what the player sees: a town
+            # component with (near-)zero painted roofs gets NO boxes —
+            # grid-filling it puts proxies on visibly empty land, which
+            # reads as a bug in-engine.  (The old grid-fill fallback for
+            # small unpainted components did exactly that.)  Components
+            # with at least a few painted roofs keep their traced boxes.
+            unpainted = int((comp_mean < 0.02).sum())
+            if unpainted:
+                print(f"[pcg] {unpainted} town region(s) unpainted in "
+                      "albedo -> skipped (albedo is ground truth; no "
+                      "boxes on visibly empty land)")
+
+        # TREES from the PAINTED CANOPY, not just the layout forest
+        # class: FLUX layouts draw forests as scattered tree ICONS
+        # (a few % cover) while the albedo paints dense canopy carpets
+        # — placing trees only on the icons leaves painted forests
+        # empty.  Dark-green albedo pixels are canopy; light green is
+        # lawn/grassland and stays treeless.
+        af = rgb.astype(np.float32) / 255.0
+        # Two-tier canopy detection.  Tier 1 (dense/dark forest) is the
+        # old strict test.  Tier 2 catches the LIGHTER, hazier greens
+        # FLUX paints for distant / dry forests — green-dominant by a
+        # small margin, some saturation (excludes gray rock), and below
+        # lawn brightness.  Painted forests previously failed tier 1
+        # wholesale and rendered treeless.
+        mx = af.max(-1)
+        mn = af.min(-1)
+        canopy_dark = ((af[..., 1] > af[..., 0] * 1.05) &
+                       (af[..., 1] > af[..., 2] * 1.05) &
+                       (mx < 0.50))
+        canopy_lite = ((af[..., 1] > af[..., 0] * 1.02) &
+                       (af[..., 1] > af[..., 2] * 1.02) &
+                       ((mx - mn) > 0.06) &
+                       (mx < 0.65))
+        canopy = canopy_dark | canopy_lite
+        print(f"[pcg] canopy cover: dark {canopy_dark.mean()*100:.1f}%  "
+              f"light {canopy_lite.mean()*100:.1f}%  "
+              f"(veg class {masks['veg'].mean()*100:.1f}%)")
+        masks["veg"] = masks["veg"] | canopy
         tree_block = masks["town"] | masks["road"] | masks["water"]
     else:
         # ── Building placement priors (beyond per-pixel colour) ─────────

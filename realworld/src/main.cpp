@@ -120,6 +120,36 @@ static bool parseGameFlag(int argc, char** argv) {
     return false;
 }
 
+// ── Terrain verify-dump flags ───────────────────────────────────────────
+//   --verify-dump[=<path>]   Enable one-shot verify mode: after a terrain is
+//                            applied, wait, dump a clean frame, then quit.
+//   --verify-apply <png>     Apply this heightmap on startup (fully scripted).
+//   --verify-color <png>     Optional albedo to pair with --verify-apply.
+//   --verify-delay <sec>     Seconds to wait after apply before the dump (10).
+// Value accepted as either "--flag value" or "--flag=value".
+static bool hasFlag(int argc, char** argv, const char* name) {
+    for (int i = 1; i < argc; ++i)
+        if (argv[i] && std::strcmp(argv[i], name) == 0) return true;
+    return false;
+}
+static std::string flagValue(int argc, char** argv, const char* name,
+                             const std::string& fallback = std::string()) {
+    const size_t nlen = std::strlen(name);
+    for (int i = 1; i < argc; ++i) {
+        const char* a = argv[i];
+        if (a == nullptr) continue;
+        if (std::strcmp(a, name) == 0) {
+            // "--flag value": only consume the next token if it isn't itself a
+            // flag (so a bare "--verify-dump" doesn't swallow "--verify-apply").
+            if (i + 1 < argc && argv[i + 1] != nullptr && argv[i + 1][0] != '-')
+                return std::string(argv[i + 1]);
+        } else if (std::strncmp(a, name, nlen) == 0 && a[nlen] == '=') {
+            return std::string(a + nlen + 1);
+        }
+    }
+    return fallback;
+}
+
 // ── Line-routing stream buffer: splits physics/IK/collision log lines into
 // a separate file ──────────────────────────────────────────────────────
 // std::cout carries everything; this buffer inspects each completed LINE and,
@@ -384,6 +414,24 @@ int main(int argc, char** argv) {
         std::cout << "[EDITOR] launching into an empty scene (default; "
                      "pass --scene <file> to load one, --game for the "
                      "title UI)\n";
+    }
+
+    // ── Terrain verify-dump mode ────────────────────────────────────────
+    if (hasFlag(argc, argv, "--verify-dump") ||
+        !flagValue(argc, argv, "--verify-dump").empty() ||
+        !flagValue(argc, argv, "--verify-apply").empty()) {
+        const std::string dump_out = flagValue(argc, argv, "--verify-dump");
+        float delay = 10.0f;
+        const std::string ds = flagValue(argc, argv, "--verify-delay");
+        if (!ds.empty()) { try { delay = std::stof(ds); } catch (...) {} }
+        app->setVerifyDump(dump_out, delay);
+        const std::string vh = flagValue(argc, argv, "--verify-apply");
+        if (!vh.empty())
+            app->setVerifyApply(vh, flagValue(argc, argv, "--verify-color"));
+        std::cout << "[verify] verify-dump mode: apply='" << vh
+                  << "' delay=" << delay << "s out='"
+                  << (dump_out.empty() ? "screenshots/terrain_verify_latest.png"
+                                       : dump_out) << "'\n";
     }
 
     try {
