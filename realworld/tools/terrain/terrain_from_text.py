@@ -57,6 +57,43 @@ HEIGHT_AMP_M   = 250.0   # matches kTerrainHeightAmpMeters
 DETAIL_TILE_M   = 2048.0
 DETAIL_TILE_RES = 2048
 
+
+# Prompts whose biome has no settlements / no trees. The colour-heuristic
+# segmentation hallucinates roofs from dark basalt and canopy from any faint
+# green, so we gate the PCG proxies by intent rather than trusting pixels.
+_NO_TOWN_WORDS = (
+    "volcanic", "volcano", "caldera", "lava", "basalt", "magma",
+    "desert", "dune", "dunes", "sahara", "canyon", "mesa", "badland",
+    "badlands", "arctic", "tundra", "glacier", "glacial", "iceberg",
+    "ice sheet", "snowfield", "barren", "wasteland", "wilderness",
+    "uninhabited", "moon", "lunar", "mars", "martian", "alien",
+    "rocky highland", "bare rock", "scree", "talus",
+)
+_NO_TREE_WORDS = (
+    "volcanic", "volcano", "caldera", "lava", "basalt", "magma",
+    "desert", "dune", "dunes", "sahara", "arctic", "tundra", "glacier",
+    "glacial", "iceberg", "ice sheet", "snowfield", "snowy", "snow",
+    "barren", "wasteland", "moon", "lunar", "mars", "martian",
+    "bare rock", "scree", "talus", "sand",
+)
+# Explicit vegetation words override the treeless default (e.g. "snowy alpine
+# forest" should still get trees).
+_HAS_TREE_WORDS = (
+    "forest", "woodland", "jungle", "rainforest", "taiga", "grove",
+    "wooded", "orchard", "trees", "canopy",
+)
+
+
+def _biome_pcg_flags(prompt):
+    """Infer (place_towns, place_trees) from the prompt text so barren /
+    treeless biomes don't get bogus building and tree proxies."""
+    p = prompt.lower()
+    place_towns = not any(w in p for w in _NO_TOWN_WORDS)
+    place_trees = not any(w in p for w in _NO_TREE_WORDS)
+    if any(w in p for w in _HAS_TREE_WORDS):
+        place_trees = True
+    return place_towns, place_trees
+
 # Prompt scaffold: FLUX responds well to explicit "heightmap" framing plus
 # photographic-DEM vocabulary.  The user's text slots into the middle.
 # The view language is deliberately redundant (satellite / nadir / straight
@@ -1335,12 +1372,15 @@ def main():
             import terrain_pcg
             seg_png = (os.path.splitext(out)[0] + "_seg.png"
                        if layout_mode else None)
+            place_towns, place_trees = _biome_pcg_flags(args.prompt or "")
             print(f"[pcg] stage START -> {pcg_out}"
                   + (f" (masks: {seg_png})" if seg_png else
-                     " (color heuristics)"), flush=True)
+                     " (color heuristics)")
+                  + f" [towns={place_towns} trees={place_trees}]", flush=True)
             terrain_pcg.build_pcg_glb(
                 os.path.splitext(out)[0] + "_color.png", out, pcg_out,
-                seg_path=seg_png)
+                seg_path=seg_png,
+                place_towns=place_towns, place_trees=place_trees)
             print(f"[pcg] stage DONE -> {pcg_out} "
                   f"({os.path.getsize(pcg_out)} B)", flush=True)
         except Exception as e:                            # noqa: BLE001

@@ -103,6 +103,13 @@ public:
         verify_apply_height_ = height_png;
         verify_apply_color_  = color_png;
     }
+    // Top-down capture: point the camera straight down from a given
+    // height (metres above terrain centre) instead of the oblique snap.
+    void setVerifyTopdown(bool on) { verify_topdown_ = on; }
+    void setVerifyCamHeight(float h_m) { if (h_m > 0.0f) verify_cam_height_ = h_m; }
+    // Optional world-XZ override for the top-down verify camera (defaults to
+    // the map centre); lets a driver park the camera over a town.
+    void setVerifyCamXZ(float x, float z) { verify_cam_x_ = x; verify_cam_z_ = z; }
 
     // ── Frame capture (screenshot / render-buffer dump) ──────────────────
     // Reads the most-recently presented swapchain image back to the CPU and
@@ -295,6 +302,10 @@ private:
     int          verify_dump_stage_     = 0;         // 0 idle .. 5 done
     int          verify_dump_hold_      = 0;         // UI-hidden frames rendered
     std::chrono::steady_clock::time_point verify_dump_arm_tp_;
+    bool         verify_topdown_        = false;    // straight-down capture
+    float        verify_cam_height_     = 800.0f;   // metres above centre
+    float        verify_cam_x_          = 0.0f;     // top-down eye XZ
+    float        verify_cam_z_          = 0.0f;
 
     std::shared_ptr<er::DescriptorPool> descriptor_pool_;
     // Persistent pool for mesh-loaded drawable material/skin descriptor sets.

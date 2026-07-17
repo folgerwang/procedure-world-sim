@@ -342,3 +342,23 @@ realworld/assets/rigs_training/
 realworld/assets/Characters/*.gltf
 realworld/assets/Characters/*.glb
 
+
+# ── Terrain verify/PCG loop artifacts (generated; reproducible) ──
+build_log_verify.txt
+realworld/verify_suite.log
+realworld/verify_run*.log
+realworld/screenshots/
+realworld/assets/*.png.bak
+realworld/content/terrain/.cowork/
+realworld/content/terrain/.pcg_loop/
+realworld/content/terrain/.verify_overlays/
+realworld/content/terrain/.verify_runs/
+realworld/content/terrain/.verify_suite/
+# one-shot driver bats (keep the curated launchers tracked)
+/_cowork_*.bat
+/_td_*.bat
+/_sam2_*.bat
+/_houses_dump.bat
+/_oblique_dump.bat
+/_cleanup_verify.bat
+/_town_capture.bat

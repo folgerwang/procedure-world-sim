@@ -261,6 +261,384 @@ def extract_buildings(roof_mask, px_m):
     return out
 
 
+def extract_buildings_shaped(roof_mask, px_m):
+    """Per-building oriented footprints that TRACE the painted roofs instead
+    of tiling a uniform grid: each connected roof blob is fit with a min-area
+    rotated rectangle, and large merged blocks are split by a distance-transform
+    watershed into house-sized pieces, each fit with its own oriented box. So a
+    proxy's shape/orientation follows the roof under it. Falls back to the grid
+    extractor when OpenCV is unavailable (no hard cv2 dependency)."""
+    try:
+        import cv2
+    except Exception:
+        return extract_buildings(roof_mask, px_m)
+    from scipy.ndimage import maximum_filter, label as _ndlabel
+    m = roof_mask.astype(np.uint8)
+    m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(m, 8)
+    out = []
+
+    def emit(region):
+        cnts, _ = cv2.findContours(region.astype(np.uint8),
+                                   cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in cnts:
+            if cv2.contourArea(c) * px_m * px_m < 30.0:
+                continue
+            (bx, by), (bw, bh), ang = cv2.minAreaRect(c)
+            w, d = bw * px_m, bh * px_m
+            if w < 3.0 or d < 3.0:
+                continue
+            if max(w, d) / max(min(w, d), 1e-3) > 6.0:   # ribbon / tree-line
+                continue
+            hgt = _det_rand(bx, by, 3.5, 9.0)
+            out.append((float(bx), float(by),
+                        max(3.0, w), max(3.0, d),
+                        float(np.deg2rad(ang)), hgt))
+
+    edge_px = max(3.0, 3.0 / px_m)      # ~3 m in from a wall = interior seed
+    win = max(5, int(round(6.0 / px_m)) | 1)
+    for i in range(1, n):
+        area = stats[i, cv2.CC_STAT_AREA] * px_m * px_m
+        if area < 30.0:
+            continue
+        comp = (lab == i)
+        if area <= 250.0:               # single house: one oriented box
+            emit(comp)
+            continue
+        dt = cv2.distanceTransform(comp.astype(np.uint8), cv2.DIST_L2, 5)
+        peak = (dt == maximum_filter(dt, size=win)) & (dt > edge_px)
+        mk, nmk = _ndlabel(peak)
+        if nmk < 2:                     # can't split -> trace the block outline
+            emit(comp)
+            continue
+        ws = cv2.watershed(
+            cv2.cvtColor((comp * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR),
+            mk.astype(np.int32).copy())
+        for lbl in range(1, nmk + 1):
+            emit((ws == lbl) & comp)
+    return out
+
+
+def _sam2_iou(a, b):
+    inter = np.logical_and(a, b).sum()
+    if inter == 0:
+        return 0.0
+    return float(inter) / float(np.logical_or(a, b).sum())
+
+
+def _build_sam2_predictor(cfg):
+    """Build a SAM2 image predictor.  Prefers a LOCAL checkpoint (offline) in
+    assets/ml_models/ or SAM2_CHECKPOINT; otherwise auto-downloads weights from
+    Hugging Face via SAM2ImagePredictor.from_pretrained (SAM2_HF_MODEL, default
+    facebook/sam2.1-hiera-small).  Raises on any problem so the caller falls
+    back to the heuristic extractor."""
+    import os
+    from sam2.sam2_image_predictor import SAM2ImagePredictor
+    ckpt = cfg.get("checkpoint") or os.environ.get("SAM2_CHECKPOINT")
+    model_cfg = cfg.get("config") or os.environ.get("SAM2_CONFIG")
+    if not ckpt:
+        here = os.path.dirname(os.path.abspath(__file__))
+        root = os.path.abspath(os.path.join(here, os.pardir, os.pardir))
+        mdir = os.path.join(root, "assets", "ml_models")
+        for name in ("sam2.1_hiera_small.pt", "sam2.1_hiera_tiny.pt",
+                     "sam2_hiera_small.pt", "sam2_hiera_tiny.pt"):
+            p = os.path.join(mdir, name)
+            if os.path.exists(p):
+                ckpt = p
+                break
+    if ckpt and os.path.exists(ckpt):
+        if not model_cfg:
+            base = os.path.basename(ckpt).lower()
+            if "tiny" in base:    model_cfg = "configs/sam2.1/sam2.1_hiera_t.yaml"
+            elif "small" in base: model_cfg = "configs/sam2.1/sam2.1_hiera_s.yaml"
+            elif "large" in base: model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
+            else:                 model_cfg = "configs/sam2.1/sam2.1_hiera_b+.yaml"
+        import torch
+        from sam2.build_sam import build_sam2
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        sam = build_sam2(model_cfg, ckpt, device=device)
+        print(f"[pcg] SAM2 loaded (local {os.path.basename(ckpt)}) on {device}")
+        return SAM2ImagePredictor(sam)
+    # No local weights -> Hugging Face auto-download.
+    hf = cfg.get("hf_model") or os.environ.get(
+        "SAM2_HF_MODEL", "facebook/sam2.1-hiera-small")
+    pred = SAM2ImagePredictor.from_pretrained(hf)
+    print(f"[pcg] SAM2 loaded (hf {hf})")
+    return pred
+
+def _dedup_boxes(boxes, px_m, iou_thr=0.45):
+    """Cross-tile oriented-box dedup: grid-hash centers, drop a box when its
+    rotated-rect intersection with an already-kept neighbour exceeds iou_thr
+    of the smaller box.  Keeps larger boxes first (they trace whole roofs)."""
+    import cv2
+    if len(boxes) < 2:
+        return boxes
+    order = sorted(range(len(boxes)),
+                   key=lambda i: -(boxes[i][2] * boxes[i][3]))
+    cell = 40.0 / px_m                       # 40 m neighbourhood
+    grid, kept = {}, []
+    for i in order:
+        cx, cy, w, d, ang, hgt = boxes[i]
+        r1 = ((cx, cy), (w / px_m, d / px_m), np.rad2deg(ang))
+        gx, gy = int(cx / cell), int(cy / cell)
+        dup = False
+        for nx in (gx - 1, gx, gx + 1):
+            for ny in (gy - 1, gy, gy + 1):
+                for j in grid.get((nx, ny), ()):
+                    c2 = kept[j]
+                    r2 = ((c2[0], c2[1]),
+                          (c2[2] / px_m, c2[3] / px_m), np.rad2deg(c2[4]))
+                    ok, pts = cv2.rotatedRectangleIntersection(r1, r2)
+                    if ok == cv2.INTERSECT_NONE or pts is None:
+                        continue
+                    inter = cv2.contourArea(pts)
+                    amin = min(r1[1][0] * r1[1][1], r2[1][0] * r2[1][1])
+                    if amin > 0 and inter / amin > iou_thr:
+                        dup = True
+                        break
+                if dup:
+                    break
+            if dup:
+                break
+        if not dup:
+            grid.setdefault((gx, gy), []).append(len(kept))
+            kept.append(boxes[i])
+    return kept
+
+
+def extract_buildings_sam2(rgb_u8, roof_mask, px_m, **cfg):
+    """Per-instance building footprints via SAM2, seeded with points inside the
+    building/roof mask.  Tiles the map into 1024 px windows (native res, so
+    houses are large enough for SAM2), point-prompts a grid of seeds that land
+    on the roof mask, keeps house-sized masks that mostly overlap the roof
+    mask, dedups by IoU-NMS, and fits a min-area oriented rectangle per
+    instance.  Returns [(cx, cy, w, d, ang, hgt)] in PIXEL coords (px_m units),
+    matching extract_buildings().  Raises if SAM2 / weights are unavailable."""
+    import numpy as np
+    import cv2
+    predictor = _build_sam2_predictor(cfg)
+    H, W = roof_mask.shape
+    tile = int(cfg.get("tile", 1024)); ov = int(cfg.get("overlap", 128))
+    step = max(1, tile - ov)
+    seed_px = max(6, int(round(float(cfg.get("seed_m", 10.0)) / px_m)))
+    min_m2 = float(cfg.get("min_m2", 15.0)); max_m2 = float(cfg.get("max_m2", 1200.0))
+    boxes = []
+    for y0 in range(0, H, step):
+        for x0 in range(0, W, step):
+            y1 = min(H, y0 + tile); x1 = min(W, x0 + tile)
+            rm = roof_mask[y0:y1, x0:x1]
+            if rm.sum() * px_m * px_m < min_m2:
+                continue
+            predictor.set_image(np.ascontiguousarray(rgb_u8[y0:y1, x0:x1]))
+            gy, gx = np.mgrid[0:rm.shape[0]:seed_px, 0:rm.shape[1]:seed_px]
+            on = rm[gy.ravel(), gx.ravel()]
+            seeds = np.stack([gx.ravel()[on], gy.ravel()[on]], 1)
+            kept = []
+            for sx, sy in seeds:
+                try:
+                    m, sc, _ = predictor.predict(
+                        point_coords=np.array([[float(sx), float(sy)]]),
+                        point_labels=np.array([1]), multimask_output=True)
+                except Exception:
+                    continue
+                # SAM returns ~3 granularities (subpart/part/whole).  FLUX
+                # blocks segment as ONE whole-block mask, so prefer the
+                # SMALLEST house-sized mask instead of the block.
+                cand = []
+                for k in range(len(m)):
+                    mm = np.asarray(m[k]).astype(bool)
+                    a = mm.sum() * px_m * px_m
+                    if a < min_m2 or a > max_m2:
+                        continue
+                    if (mm & rm).sum() < 0.4 * mm.sum():   # mostly roof
+                        continue
+                    cand.append((a, float(sc[k]), mm))
+                if not cand:
+                    continue
+                cand.sort(key=lambda t: t[0])              # smallest first
+                a, score, mm = cand[0]
+                kept.append((score, mm))
+            kept.sort(key=lambda t: -t[0])
+            taken = []
+            for _, mm in kept:
+                if any(_sam2_iou(mm, tm) > 0.4 for tm in taken):
+                    continue
+                taken.append(mm)
+            covered = np.zeros_like(rm, dtype=bool)
+            for mm in taken:
+                covered |= mm
+                cnts, _ = cv2.findContours(mm.astype(np.uint8),
+                                           cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if not cnts:
+                    continue
+                c = max(cnts, key=cv2.contourArea)
+                (bx, by), (bw, bh), ang = cv2.minAreaRect(c)
+                w, d = bw * px_m, bh * px_m
+                if w < 3.0 or d < 3.0:
+                    continue
+                cx, cy = bx + x0, by + y0
+                boxes.append((float(cx), float(cy), max(3.0, w), max(3.0, d),
+                              float(np.deg2rad(ang)), _det_rand(cx, cy, 3.5, 9.0)))
+            # RESIDUAL coverage: roof area SAM2 did not resolve into
+            # house-sized instances (typically whole uniform blocks) gets
+            # the watershed/oriented-rect subdivision so no block is empty.
+            resid = rm & ~covered
+            if resid.sum() * px_m * px_m > 60.0:
+                for (rcx, rcy, rw, rd, rang, rh) in \
+                        extract_buildings_shaped(resid, px_m):
+                    boxes.append((rcx + x0, rcy + y0, rw, rd, rang, rh))
+    boxes = _dedup_boxes(boxes, px_m,
+                         float(cfg.get("dedup_iou", 0.45)))
+    return boxes
+
+
+def extract_building_footprints(rgb_u8, roof_mask, px_m, **cfg):
+    """Overlap-free house footprints as simplified contour POLYGONS.
+    SAM2 instances claim roof pixels first (a global claimed bitmap ensures
+    every pixel belongs to at most ONE house — polygons of a partition can
+    never overlap); the residual roof is split by watershed.  Each polygon
+    traces the painted house base outline (approxPolyDP, ~eps_m metres).
+    Returns [(poly_px [N,2] float32, height_m)].  Raises if SAM2/cv2 are
+    unavailable so the caller can fall back to boxes."""
+    import cv2
+    from scipy.ndimage import maximum_filter, label as _ndlabel
+    predictor = _build_sam2_predictor(cfg)
+    H, W = roof_mask.shape
+    tile = int(cfg.get("tile", 1024)); ov = int(cfg.get("overlap", 128))
+    step = max(1, tile - ov)
+    seed_px = max(6, int(round(float(cfg.get("seed_m", 10.0)) / px_m)))
+    min_m2 = float(cfg.get("min_m2", 20.0))
+    max_m2 = float(cfg.get("max_m2", 1200.0))
+    roof_frac = float(cfg.get("roof_frac", 0.4))
+    eps_px = max(1.0, float(cfg.get("eps_m", 1.0)) / px_m)
+    claimed = np.zeros((H, W), bool)
+    out = []
+
+    def emit(region, x0, y0):
+        cnts, _ = cv2.findContours(region.astype(np.uint8),
+                                   cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for c in cnts:
+            if cv2.contourArea(c) * px_m * px_m < min_m2:
+                continue
+            ap = cv2.approxPolyDP(c, eps_px, True).reshape(-1, 2)
+            if len(ap) > 24:
+                ap = cv2.approxPolyDP(c, eps_px * 2.0, True).reshape(-1, 2)
+            if len(ap) < 3:
+                continue
+            poly = ap.astype(np.float32)
+            poly[:, 0] += x0; poly[:, 1] += y0
+            hgt = _det_rand(float(poly[:, 0].mean()),
+                            float(poly[:, 1].mean()), 3.5, 9.0)
+            out.append((poly, hgt))
+
+    er = max(1, int(round(2.5 / px_m)))
+    for y0 in range(0, H, step):
+        for x0 in range(0, W, step):
+            y1 = min(H, y0 + tile); x1 = min(W, x0 + tile)
+            cl = claimed[y0:y1, x0:x1]
+            rm = roof_mask[y0:y1, x0:x1] & ~cl
+            if rm.sum() * px_m * px_m < min_m2:
+                continue
+            predictor.set_image(np.ascontiguousarray(rgb_u8[y0:y1, x0:x1]))
+            gy, gx = np.mgrid[0:rm.shape[0]:seed_px, 0:rm.shape[1]:seed_px]
+            on = rm[gy.ravel(), gx.ravel()]
+            seeds = np.stack([gx.ravel()[on], gy.ravel()[on]], 1)
+            cand = []
+            for sx, sy in seeds:
+                try:
+                    m, sc, _ = predictor.predict(
+                        point_coords=np.array([[float(sx), float(sy)]]),
+                        point_labels=np.array([1]), multimask_output=True)
+                except Exception:
+                    continue
+                pick = None
+                for k in range(len(m)):
+                    mm = np.asarray(m[k]).astype(bool)
+                    a = mm.sum() * px_m * px_m
+                    if a < min_m2 or a > max_m2:
+                        continue
+                    if (mm & rm).sum() < roof_frac * mm.sum():
+                        continue
+                    if pick is None or a < pick[0]:
+                        pick = (a, float(sc[k]), mm)
+                if pick:
+                    cand.append(pick)
+            cand.sort(key=lambda t: -t[1])
+            for a, scv, mm in cand:
+                mm = mm & rm & ~cl
+                if mm.sum() * px_m * px_m < min_m2:
+                    continue
+                emit(mm, x0, y0)
+                cl |= mm
+            resid = rm & ~cl
+            if resid.sum() * px_m * px_m >= min_m2:
+                ncc, lab = cv2.connectedComponents(resid.astype(np.uint8), 8)
+                for i in range(1, ncc):
+                    comp = lab == i
+                    a = comp.sum() * px_m * px_m
+                    if a < min_m2:
+                        continue
+                    if a <= 300.0:
+                        emit(comp, x0, y0); cl |= comp
+                        continue
+                    dt = cv2.distanceTransform(comp.astype(np.uint8),
+                                               cv2.DIST_L2, 5)
+                    win = max(5, int(round(6.0 / px_m)) | 1)
+                    peak = (dt == maximum_filter(dt, size=win)) & (dt > er)
+                    mk, nmk = _ndlabel(peak)
+                    if nmk < 2:
+                        emit(comp, x0, y0); cl |= comp
+                        continue
+                    ws = cv2.watershed(
+                        cv2.cvtColor((comp * 255).astype(np.uint8),
+                                     cv2.COLOR_GRAY2BGR),
+                        mk.astype(np.int32).copy())
+                    for lbl in range(1, nmk + 1):
+                        seg_m = (ws == lbl) & comp
+                        if seg_m.sum() * px_m * px_m >= min_m2:
+                            emit(seg_m, x0, y0)
+                    cl |= comp
+    print(f"[pcg] footprint instances: {len(out)} (overlap-free partition)")
+    return out
+
+
+def _load_env_cfg():
+    """Extractor config from the TERRAIN_PCG_CFG env json (loop hand-off)."""
+    p = os.environ.get("TERRAIN_PCG_CFG")
+    if p and os.path.exists(p):
+        try:
+            cfg = json.load(open(p, encoding="utf-8"))
+            print(f"[pcg] extractor cfg from {p}: {cfg}")
+            return cfg
+        except Exception:
+            pass
+    return {}
+
+
+def extract_buildings_best(roof_mask, px_m, rgb_u8=None):
+    """Preferred building extractor: SAM2 per-instance masks when available
+    (needs weights + a GPU and the albedo), else the oriented-rect heuristic,
+    else the grid extractor.  Same return contract as extract_buildings()."""
+    cfg = {}
+    cfg_path = os.environ.get("TERRAIN_PCG_CFG")
+    if cfg_path and os.path.exists(cfg_path):
+        try:
+            cfg = json.load(open(cfg_path, encoding="utf-8"))
+            print(f"[pcg] extractor cfg from {cfg_path}: {cfg}")
+        except Exception:
+            cfg = {}
+    if rgb_u8 is not None:
+        try:
+            b = extract_buildings_sam2(rgb_u8, roof_mask, px_m, **cfg)
+            if b:
+                print(f"[pcg] SAM2 per-instance buildings: {len(b)}")
+                return b
+            print("[pcg] SAM2 produced no instances; using heuristic fallback")
+        except Exception as e:                                # noqa: BLE001
+            print(f"[pcg] SAM2 unavailable ({e}); oriented-rect heuristic")
+    return extract_buildings_shaped(roof_mask, px_m)
+
+
 def extract_trees(veg_mask, roof_mask, px_m, spacing_m=7.0,
                   max_trees=30000):
     """Jittered-grid sampling inside vegetation (deterministic)."""
@@ -328,6 +706,124 @@ def add_cone(acc, cx, cz, hgt, rad, y0, sides=6):
     for i in range(sides):
         f += [0, 1 + i, 1 + (i + 1) % sides]
     acc.add(v, n, f)
+
+
+def _ear_clip(poly):
+    """Triangulate a simple polygon into index triples (ear clipping,
+    O(n^2); footprints are capped at ~24 verts so this is instant)."""
+    n = len(poly)
+    if n < 3:
+        return []
+    area = 0.0
+    for i in range(n):
+        x1, y1 = poly[i]; x2, y2 = poly[(i + 1) % n]
+        area += x1 * y2 - x2 * y1
+    idx = list(range(n))
+    if area < 0:
+        idx.reverse()
+
+    def cross(o, a, b):
+        return ((a[0] - o[0]) * (b[1] - o[1]) -
+                (a[1] - o[1]) * (b[0] - o[0]))
+    tris, guard = [], 0
+    while len(idx) > 3 and guard < 2000:
+        guard += 1
+        clipped = False
+        for k in range(len(idx)):
+            i0, i1, i2 = idx[k - 1], idx[k], idx[(k + 1) % len(idx)]
+            a, b, c = poly[i0], poly[i1], poly[i2]
+            if cross(a, b, c) <= 0:
+                continue
+            if any(cross(a, b, poly[j]) >= 0 and cross(b, c, poly[j]) >= 0
+                   and cross(c, a, poly[j]) >= 0
+                   for j in idx if j not in (i0, i1, i2)):
+                continue
+            tris.append((i0, i1, i2))
+            del idx[k]
+            clipped = True
+            break
+        if not clipped:
+            break
+    if len(idx) == 3:
+        tris.append((idx[0], idx[1], idx[2]))
+    return tris
+
+
+def add_prism(acc, poly_xz, hgt, y0):
+    """Extrude a house FOOTPRINT polygon: vertical walls + ear-clipped flat
+    roof cap.  The proxy base traces the painted outline exactly (up to the
+    contour simplification epsilon), unlike an oriented bounding box."""
+    n = len(poly_xz)
+    if n < 3:
+        return
+    v = [(x, y0, z) for x, z in poly_xz] + \
+        [(x, y0 + hgt, z) for x, z in poly_xz]
+    nrm = [(0, 1, 0)] * (2 * n)
+    f = []
+    for i in range(n):
+        j = (i + 1) % n
+        f += [i, j, n + j, i, n + j, n + i]
+    for (a, b, c) in _ear_clip(poly_xz):
+        f += [n + a, n + b, n + c]
+    acc.add(v, nrm, f)
+
+
+def add_house(acc, poly_w, eave_h, y0, gs=2.0, pitch=0.8, cap=4.5):
+    """House proxy from a footprint polygon: vertical walls to the eave, then
+    a HIP ROOF whose ridge network follows the footprint\'s medial axis.
+    Construction: roof rise at an interior point = min(distance-to-outline *
+    pitch, cap) — the level sets of the distance transform ARE the straight-
+    skeleton offsets, so the ridge lines land exactly on the edge-connection
+    skeleton of the outline.  Surface is a Delaunay triangulation of the
+    boundary ring + an interior grid, clipped to the footprint."""
+    import cv2
+    from scipy.spatial import Delaunay
+    P2 = np.asarray(poly_w, np.float32)
+    n = len(P2)
+    if n < 3:
+        return
+    mn = P2.min(0) - gs
+    mx = P2.max(0) + gs
+    gw = max(4, int(np.ceil((mx[0] - mn[0]) / gs)) + 1)
+    gh = max(4, int(np.ceil((mx[1] - mn[1]) / gs)) + 1)
+    cont = ((P2 - mn) / gs).astype(np.float32)
+    mask = np.zeros((gh, gw), np.uint8)
+    cv2.fillPoly(mask, [np.round(cont).astype(np.int32)], 1)
+    dt = cv2.distanceTransform(mask, cv2.DIST_L2, 5) * gs   # metres
+    pts = [(float(x), float(z)) for x, z in P2]
+    rise = [0.0] * n                       # roof meets the eave at the wall
+    ys, xs = np.nonzero(mask)
+    for yy, xx in zip(ys, xs):
+        if dt[yy, xx] < gs * 0.8:          # too close to the ring
+            continue
+        pts.append((float(mn[0] + xx * gs), float(mn[1] + yy * gs)))
+        rise.append(float(min(dt[yy, xx] * pitch, cap)))
+    pts_np = np.asarray(pts, np.float32)
+    try:
+        tri = Delaunay(pts_np)
+    except Exception:
+        # degenerate footprint: fall back to a flat prism
+        add_prism(acc, [tuple(p) for p in P2], eave_h, y0)
+        return
+    cont_cv = P2.reshape(-1, 1, 2).astype(np.float32)
+    v = [(float(x), y0, float(z)) for x, z in P2] + \
+        [(float(x), y0 + eave_h, float(z)) for x, z in P2] + \
+        [(float(p[0]), y0 + eave_h + h, float(p[1]))
+         for p, h in zip(pts_np, rise)]
+    nrm = [(0, 1, 0)] * len(v)
+    f = []
+    for i in range(n):                     # walls ground->eave
+        j = (i + 1) % n
+        f += [i, j, n + j, i, n + j, n + i]
+    roff = 2 * n
+    for simp in tri.simplices:             # roof surface
+        c = pts_np[simp].mean(0)
+        if cv2.pointPolygonTest(cont_cv,
+                                (float(c[0]), float(c[1])), False) < 0:
+            continue
+        a, b, c2 = (int(t) for t in simp)
+        f += [roff + a, roff + b, roff + c2]
+    acc.add(v, nrm, f)
 
 
 def write_glb(groups, path):
@@ -446,7 +942,8 @@ def write_glb(groups, path):
         f.write(bin_chunk)
 
 
-def build_pcg_glb(color_path, height_path, out_glb, seg_path=None):
+def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
+                  place_towns=True, place_trees=True):
     rgb = np.asarray(Image.open(color_path).convert("RGB"))
     H = rgb.shape[0]
     px_m = WORLD_SIZE_M / H
@@ -498,7 +995,14 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None):
             size=max(3, int(80.0 / px_m) | 1)) > 1e-6   # ~±40 m slack
         roof = (heur["roof"] & town_r &
                 ~masks["water"] & ~masks["road"])
-        bld = extract_buildings(roof, px_m)
+        bld, bld_polys = [], []
+        try:
+            bld_polys = extract_building_footprints(
+                rgb, roof, px_m, **_load_env_cfg())
+        except Exception as e:                            # noqa: BLE001
+            print(f"[pcg] footprint extractor unavailable ({e}); boxes")
+        if not bld_polys:
+            bld = extract_buildings_best(roof, px_m, rgb_u8=rgb)
 
         # Fallback: SMALL town components whose painted-roof trace came
         # up empty (albedo forgot a village) get the grid subdivision so
@@ -577,25 +1081,59 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None):
         veg_d = ndi.uniform_filter(masks["veg"].astype(np.float32),
                                    size=dens_win)
         roof &= (dens > 0.06) & (veg_d < 0.60)
-        bld = extract_buildings(roof, px_m)
+        bld, bld_polys = [], []
+        try:
+            bld_polys = extract_building_footprints(
+                rgb, roof, px_m, **_load_env_cfg())
+        except Exception as e:                            # noqa: BLE001
+            print(f"[pcg] footprint extractor unavailable ({e}); boxes")
+        if not bld_polys:
+            bld = extract_buildings_best(roof, px_m, rgb_u8=rgb)
         tree_block = masks["roof"]
 
     # Per-class accumulators — written as separate primitives with their
     # own DEBUG COLOUR material, so a glance at the rendered proxies
     # tells you what the segmentation classified each blob as:
     #   buildings = orange, trees = green.
+    # ── Biome gate ────────────────────
+    # The colour heuristics classify dark low-saturation BASALT as roofs
+    # and any faint-green tint as canopy, so barren/treeless prompts
+    # (volcanic, desert, snow, rock) get hallucinated towns and forests.
+    # When the caller says the biome has no civilisation / no trees,
+    # suppress those proxies outright rather than trusting the pixels.
+    if not place_towns and (bld or locals().get("bld_polys")):
+        print("[pcg] biome gate: suppressing building proxies (barren biome)")
+        bld = []
+        bld_polys = []
     acc_bld, acc_tree = MeshAcc(), MeshAcc()
+    bld_polys = locals().get("bld_polys") or []
     for cx, cy, w, d, ang, hgt in bld:
         wx, wz = px_to_world(cx, cy)
         add_box(acc_bld, wx, wz, w, d, ang, hgt, ground(cx, cy) - 0.3)
-    trees = extract_trees(masks["veg"], tree_block, px_m)
+    for poly, phgt in bld_polys:
+        pcx, pcy = float(poly[:, 0].mean()), float(poly[:, 1].mean())
+        pts = [px_to_world(px_, py_) for px_, py_ in poly]
+        # walls take ~60% of the height budget; the hip roof the rest.
+        eave = max(2.5, 0.6 * phgt)
+        add_house(acc_bld, pts, eave, ground(pcx, pcy) - 0.3,
+                  pitch=0.8, cap=max(2.0, 0.4 * phgt))
+    trees = extract_trees(masks["veg"], tree_block, px_m) if place_trees else []
+    if not place_trees:
+        print("[pcg] biome gate: suppressing tree proxies (treeless biome)")
     for px, py, hgt, rad in trees:
         wx, wz = px_to_world(px, py)
         add_cone(acc_tree, wx, wz, hgt, rad, ground(px, py) - 0.2)
     write_glb([(acc_bld,  (255,  96,  32), "proxy_building"),
                (acc_tree, ( 48, 208,  80), "proxy_tree")],
               out_glb)
-    print(f"[pcg] {len(bld)} buildings (orange) + {len(trees)} trees "
+    if bld_polys:
+        fp = os.path.splitext(out_glb)[0] + "_footprints.json"
+        with open(fp, "w", encoding="utf-8") as fh:
+            json.dump({"px_m": px_m, "world_size_m": WORLD_SIZE_M,
+                       "polys": [p.tolist() for p, _ in bld_polys],
+                       "heights": [h for _, h in bld_polys]}, fh)
+        print(f"[pcg] footprints sidecar -> {fp}")
+    print(f"[pcg] {len(bld) + len(bld_polys)} buildings (orange) + {len(trees)} trees "
           f"(green) [{'layout masks' if use_seg else 'color heuristics'}]"
           f" -> {out_glb} "
           f"({len(acc_bld.pos) + len(acc_tree.pos)} verts)")
@@ -610,8 +1148,14 @@ def main():
                     help="layout seg PNG (<map>_seg.png) — exact class "
                          "masks from the layout-first pipeline; when "
                          "given, colour heuristics are bypassed")
+    ap.add_argument("--no-towns", action="store_true",
+                    help="suppress building proxies (barren biome)")
+    ap.add_argument("--no-trees", action="store_true",
+                    help="suppress tree proxies (treeless biome)")
     args = ap.parse_args()
-    build_pcg_glb(args.color, args.height, args.out, seg_path=args.seg)
+    build_pcg_glb(args.color, args.height, args.out, seg_path=args.seg,
+                  place_towns=not args.no_towns,
+                  place_trees=not args.no_trees)
 
 
 if __name__ == "__main__":

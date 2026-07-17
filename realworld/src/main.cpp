@@ -428,6 +428,18 @@ int main(int argc, char** argv) {
         const std::string vh = flagValue(argc, argv, "--verify-apply");
         if (!vh.empty())
             app->setVerifyApply(vh, flagValue(argc, argv, "--verify-color"));
+        if (hasFlag(argc, argv, "--verify-topdown"))
+            app->setVerifyTopdown(true);
+        const std::string chs = flagValue(argc, argv, "--verify-cam-height");
+        if (!chs.empty()) { try { app->setVerifyCamHeight(std::stof(chs)); } catch (...) {} }
+        const std::string cxs = flagValue(argc, argv, "--verify-cam-x");
+        const std::string czs = flagValue(argc, argv, "--verify-cam-z");
+        if (!cxs.empty() || !czs.empty()) {
+            float vx = 0.0f, vz = 0.0f;
+            try { if (!cxs.empty()) vx = std::stof(cxs); } catch (...) {}
+            try { if (!czs.empty()) vz = std::stof(czs); } catch (...) {}
+            app->setVerifyCamXZ(vx, vz);
+        }
         std::cout << "[verify] verify-dump mode: apply='" << vh
                   << "' delay=" << delay << "s out='"
                   << (dump_out.empty() ? "screenshots/terrain_verify_latest.png"

@@ -10228,8 +10228,16 @@ void RealWorldApplication::drawFrame() {
     // freshly created terrain, looking gently down at the landscape.
     if (terrain_camera_snap_pending_ && main_camera_object_) {
         terrain_camera_snap_pending_ = false;
-        const glm::vec3 eye = terrain_camera_snap_pos_;
+        glm::vec3 eye = terrain_camera_snap_pos_;
         glm::vec3 dir = glm::normalize(glm::vec3(0.7f, -0.25f, 0.7f));
+        if (verify_topdown_) {
+            // snap_pos_.y holds (ground + 30); recover ground and place
+            // the eye straight above the map centre for a top-down frame.
+            const float ground = terrain_camera_snap_pos_.y - 30.0f;
+            eye = glm::vec3(verify_cam_x_, ground + verify_cam_height_,
+                            verify_cam_z_);
+            dir = glm::normalize(glm::vec3(0.0001f, -1.0f, 0.0001f));
+        }
         main_camera_object_->setViewDirection(dir);
         main_camera_object_->updateCamera(command_buffer, eye, dir);
         std::cout << "[terrain] camera snapped to ("
