@@ -370,7 +370,8 @@ def _dedup_boxes(boxes, px_m, iou_thr=0.45):
     """Cross-tile oriented-box dedup: grid-hash centers, drop a box when its
     rotated-rect intersection with an already-kept neighbour exceeds iou_thr
     of the smaller box.  Keeps larger boxes first (they trace whole roofs)."""
-    import cv2
+    # cv2 optional: the intersection test below carries its own guarded
+    # import with a numpy Sutherland-Hodgman fallback.
     if len(boxes) < 2:
         return boxes
     order = sorted(range(len(boxes)),
@@ -388,10 +389,16 @@ def _dedup_boxes(boxes, px_m, iou_thr=0.45):
                     c2 = kept[j]
                     r2 = ((c2[0], c2[1]),
                           (c2[2] / px_m, c2[3] / px_m), np.rad2deg(c2[4]))
-                    ok, pts = cv2.rotatedRectangleIntersection(r1, r2)
-                    if ok == cv2.INTERSECT_NONE or pts is None:
-                        continue
-                    inter = cv2.contourArea(pts)
+                    try:
+                        import cv2 as _cv2
+                        ok, pts = _cv2.rotatedRectangleIntersection(r1, r2)
+                        if ok == _cv2.INTERSECT_NONE or pts is None:
+                            continue
+                        inter = _cv2.contourArea(pts)
+                    except ModuleNotFoundError:
+                        inter = _rot_rect_inter_area_np(r1, r2)
+                        if inter <= 0.0:
+                            continue
                     amin = min(r1[1][0] * r1[1][1], r2[1][0] * r2[1][1])
                     if amin > 0 and inter / amin > iou_thr:
                         dup = True
@@ -954,7 +961,8 @@ def _add_gable_house(acc_wall, acc_roof, c, w, d, ang, hgt, y0):
 
 
 def _add_flat_block(acc_wall, acc_roof, P, hgt, y0):
-    import cv2
+    # NOTE: no module-level cv2 dependency — the ear-clip bail below does
+    # its own guarded import with a numpy hull fallback.
     ring = [tuple(p) for p in P]
     if _poly_area_signed(ring) > 0:          # need CLOCKWISE for outward
         ring = ring[::-1]
@@ -963,8 +971,13 @@ def _add_flat_block(acc_wall, acc_roof, P, hgt, y0):
         # Ear clipping bailed — the simplified outline self-intersects.
         # A fan over a bad ring sprays giant roof triangles outside the
         # building, so fall back to the convex hull instead.
-        hull = cv2.convexHull(np.asarray(P, np.float32).reshape(-1, 1, 2))
-        ring = [tuple(p) for p in hull.reshape(-1, 2)]
+        try:
+            import cv2 as _cv2
+            hull = _cv2.convexHull(
+                np.asarray(P, np.float32).reshape(-1, 1, 2)).reshape(-1, 2)
+        except ModuleNotFoundError:
+            hull = _convex_hull_np(np.asarray(P, np.float64).reshape(-1, 2))
+        ring = [tuple(p) for p in hull]
         if _poly_area_signed(ring) > 0:
             ring = ring[::-1]
         tris = _ear_clip(ring)
@@ -976,23 +989,164 @@ def _add_flat_block(acc_wall, acc_roof, P, hgt, y0):
     acc_roof.add(v, [(0, 1, 0)] * len(v), f, uvs)
 
 
+def _convex_hull_np(pts):
+    """Andrew monotone-chain convex hull (cv2.convexHull fallback)."""
+    pts = np.unique(np.asarray(pts, np.float64).reshape(-1, 2), axis=0)
+    if len(pts) < 3:
+        return pts
+    pts = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
+    def half(seq):
+        out = []
+        for p in seq:
+            while len(out) >= 2 and np.cross(out[-1] - out[-2],
+                                             p - out[-2]) <= 0:
+                out.pop()
+            out.append(p)
+        return out
+    return np.array(half(list(pts))[:-1] + half(list(pts)[::-1])[:-1])
+
+
+def _clip_poly_np(subject, clip):
+    """Sutherland–Hodgman convex clip; both polygons as (N,2) arrays."""
+    out = list(map(tuple, subject))
+    cp = list(map(tuple, clip))
+    for i in range(len(cp)):
+        a, b = np.array(cp[i]), np.array(cp[(i + 1) % len(cp)])
+        e = b - a
+        inp, out = out, []
+        if not inp:
+            break
+        for j in range(len(inp)):
+            p, q = np.array(inp[j]), np.array(inp[(j + 1) % len(inp)])
+            pin = np.cross(e, p - a) >= 0
+            qin = np.cross(e, q - a) >= 0
+            if pin:
+                out.append(tuple(p))
+            if pin != qin:
+                d = q - p
+                den = np.cross(e, d)
+                if abs(den) > 1e-12:
+                    t = np.cross(e, a - p) / den
+                    out.append(tuple(p + t * d))
+    return np.array(out) if out else np.zeros((0, 2))
+
+
+def _rot_rect_inter_area_np(r1, r2):
+    """cv2.rotatedRectangleIntersection area fallback for two
+    ((cx,cy),(w,h),ang_deg) rects."""
+    b1 = np.array(_box_points_np(*r1))
+    b2 = np.array(_box_points_np(*r2))
+    # ensure CCW order for the clipper
+    if _poly_area_signed([tuple(p) for p in b1]) < 0:
+        b1 = b1[::-1]
+    if _poly_area_signed([tuple(p) for p in b2]) < 0:
+        b2 = b2[::-1]
+    inter = _clip_poly_np(b1, b2)
+    if len(inter) < 3:
+        return 0.0
+    return abs(_poly_area_signed([tuple(p) for p in inter]))
+
+
+def _min_area_rect_np(P):
+    """cv2.minAreaRect fallback (rotating calipers over the convex hull).
+    Returns ((cx, cy), (w, h), angle_deg) like cv2, close enough for the
+    gable/massing decisions below.  Pure numpy — used when cv2 is absent."""
+    pts = np.unique(np.asarray(P, np.float64).reshape(-1, 2), axis=0)
+    if len(pts) < 3:
+        c = pts.mean(axis=0)
+        return (float(c[0]), float(c[1])), (0.0, 0.0), 0.0
+    # Andrew monotone-chain convex hull
+    pts = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
+    def half(seq):
+        out = []
+        for p in seq:
+            while len(out) >= 2 and np.cross(out[-1] - out[-2],
+                                             p - out[-2]) <= 0:
+                out.pop()
+            out.append(p)
+        return out
+    hull = np.array(half(list(pts)) [:-1] + half(list(pts)[::-1])[:-1])
+    best = None
+    for i in range(len(hull)):
+        e = hull[(i + 1) % len(hull)] - hull[i]
+        L = np.hypot(*e)
+        if L < 1e-9:
+            continue
+        ux, uy = e / L
+        R = np.array([[ux, uy], [-uy, ux]])
+        q = hull @ R.T
+        mn, mx = q.min(axis=0), q.max(axis=0)
+        w, h = float(mx[0] - mn[0]), float(mx[1] - mn[1])
+        if best is None or w * h < best[0]:
+            cx, cy = (mn + mx) / 2.0
+            cw = np.array([cx, cy]) @ R              # back to world
+            best = (w * h, (float(cw[0]), float(cw[1])), (w, h),
+                    float(np.degrees(np.arctan2(uy, ux))))
+    _, c, wh, ang = best
+    return c, wh, ang
+
+
+def _box_points_np(center, wh, ang_deg):
+    """cv2.boxPoints fallback: 4 corners of a rotated rect."""
+    cx, cy = center
+    w, h = wh
+    a = np.radians(ang_deg)
+    ca, sa = np.cos(a), np.sin(a)
+    out = []
+    for dx, dy in ((-w / 2, -h / 2), (w / 2, -h / 2),
+                   (w / 2, h / 2), (-w / 2, h / 2)):
+        out.append((cx + dx * ca - dy * sa, cy + dx * sa + dy * ca))
+    return out
+
+
+def _signed_dist_poly_np(P, px, py):
+    """cv2.pointPolygonTest(measureDist=True) fallback: distance from
+    (px, py) to the polygon boundary, positive inside, negative outside."""
+    pts = np.asarray(P, np.float64).reshape(-1, 2)
+    a = pts
+    b = np.roll(pts, -1, axis=0)
+    ab = b - a
+    ap = np.array([px, py])[None, :] - a
+    t = np.clip((ap * ab).sum(1) / np.maximum((ab * ab).sum(1), 1e-12),
+                0.0, 1.0)
+    proj = a + t[:, None] * ab
+    d = float(np.sqrt(((np.array([px, py])[None, :] - proj) ** 2)
+                      .sum(1)).min())
+    # even-odd rule for inside/outside
+    x, y = px, py
+    inside = False
+    for (x1, y1), (x2, y2) in zip(a, b):
+        if (y1 > y) != (y2 > y):
+            xi = x1 + (y - y1) * (x2 - x1) / (y2 - y1 + 1e-30)
+            if x < xi:
+                inside = not inside
+    return d if inside else -d
+
+
 def add_building(acc_wall, acc_roof, poly_w, hgt, y0):
     """CLEAN house from a traced footprint: simplify the outline, then
     either a rectangular massing with a proper GABLE roof (most houses)
     or straight walls + flat roof slab for genuinely irregular outlines.
     Replaces the medial-axis hip surface whose Delaunay-over-noisy-
     outline roofs read as crumpled paper in game."""
-    import cv2
+    try:
+        import cv2
+    except ModuleNotFoundError:
+        cv2 = None                                 # numpy fallback below
     P = np.asarray(poly_w, np.float32)
     if len(P) < 3:
         return
-    ap = cv2.approxPolyDP(P.reshape(-1, 1, 2), 1.2, True).reshape(-1, 2)
-    if len(ap) >= 3:
-        P = ap.astype(np.float32)
+    if cv2 is not None:
+        ap = cv2.approxPolyDP(P.reshape(-1, 1, 2), 1.2, True).reshape(-1, 2)
+        if len(ap) >= 3:
+            P = ap.astype(np.float32)
     area = abs(_poly_area_signed([tuple(p) for p in P]))
     if area < 6.0:
         return
-    (rcx, rcz), (rw, rh), rang = cv2.minAreaRect(P.reshape(-1, 1, 2))
+    if cv2 is not None:
+        (rcx, rcz), (rw, rh), rang = cv2.minAreaRect(P.reshape(-1, 1, 2))
+    else:
+        (rcx, rcz), (rw, rh), rang = _min_area_rect_np(P)
     if rw < 0.5 or rh < 0.5:
         return
     # GABLE only for house-scale, honestly-rectangular footprints.  The
@@ -1002,10 +1156,14 @@ def add_building(acc_wall, acc_roof, poly_w, hgt, y0):
     # the outline exactly (reads as a commercial/apartment building).
     # ...and the rect's own corners must stay within ~2.5 m of the traced
     # outline, or the roof still spears through the neighbours.
-    box = cv2.boxPoints(((rcx, rcz), (rw, rh), rang))
-    cont = P.reshape(-1, 1, 2).astype(np.float32)
-    out_d = max(-cv2.pointPolygonTest(cont, (float(bx), float(bz)), True)
-                for bx, bz in box)
+    if cv2 is not None:
+        box = cv2.boxPoints(((rcx, rcz), (rw, rh), rang))
+        cont = P.reshape(-1, 1, 2).astype(np.float32)
+        out_d = max(-cv2.pointPolygonTest(cont, (float(bx), float(bz)), True)
+                    for bx, bz in box)
+    else:
+        box = _box_points_np((rcx, rcz), (rw, rh), rang)
+        out_d = max(-_signed_dist_poly_np(P, bx, bz) for bx, bz in box)
     if (area <= 420.0 and max(rw, rh) <= 32.0 and out_d <= 2.5
             and area / max(rw * rh, 1e-3) >= 0.62):
         _add_gable_house(acc_wall, acc_roof, (float(rcx), float(rcz)),

@@ -371,9 +371,24 @@ def main():
     dev = "cuda" if torch.cuda.is_available() else "cpu"
 
     os.makedirs(args.tiles_dir, exist_ok=True)
-    base01 = torch.from_numpy(
-        np.array(Image.open(args.map).convert("I"),
-                 dtype=np.float32) / 65535.0).to(dev)
+    # The editor can re-apply/install a terrain WHILE a worker is starting,
+    # briefly replacing the map file.  Retry a few times; if the map is
+    # really gone (superseded generation), exit quietly instead of dying
+    # with a traceback — the editor will spawn a fresh worker for the new
+    # map.
+    base_np = None
+    for _attempt in range(5):
+        try:
+            base_np = np.array(Image.open(args.map).convert("I"),
+                               dtype=np.float32) / 65535.0
+            break
+        except (FileNotFoundError, OSError):
+            time.sleep(1.0)
+    if base_np is None:
+        print(f"[detail-worker] map vanished ({args.map}) — superseded; "
+              "exiting cleanly")
+        return
+    base01 = torch.from_numpy(base_np).to(dev)
     color_np = None
     if args.color and os.path.exists(args.color):
         color_np = np.asarray(Image.open(args.color).convert("RGB"))
@@ -386,8 +401,15 @@ def main():
           f"tiles={TILES_PER_SIDE}x{TILES_PER_SIDE} @ {DETAIL_TILE_RES}^2")
     last_work = time.time()
     while True:
-        with open(alive, "w") as f:
-            f.write(str(os.getpid()))
+        # The editor deletes the tiles dir when the terrain is re-applied;
+        # treat that as "this worker is superseded", not a crash.
+        try:
+            os.makedirs(args.tiles_dir, exist_ok=True)
+            with open(alive, "w") as f:
+                f.write(str(os.getpid()))
+        except OSError:
+            print("[detail-worker] tiles dir revoked — superseded; exiting")
+            return
         reqs = sorted(fn for fn in os.listdir(args.tiles_dir)
                       if fn.startswith("req_"))
         if not reqs:

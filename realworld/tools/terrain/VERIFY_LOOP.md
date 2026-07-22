@@ -90,6 +90,43 @@ If you want a human or Claude-in-Cowork to judge instead of the API:
 3. Open `screenshots/x.png` — it's a clean, UI-free render of the terrain — and
    judge it against the rubric below. Adjust the prompt and repeat.
 
+## Natural-distribution correction (`terrain_naturalize.py`)
+
+The generator now runs a statistics pass by default (`--naturalize`, disable
+with `--no-naturalize`): it measures the heightfield against real-DEM target
+bands and corrects deviations before the masks/semantic pass.
+
+Metrics checked (`analyze()`): radial spectral slope beta, elevation-clamp
+mass at 0/1, terrace (quantization) mass, hypsometric integral vs a biome
+target (`--nat-biome auto|hills|mountains|plains`), slope distribution in
+degrees at the effective world scale, and drainage concavity theta from the
+slope-area law S ~ A^-theta.
+
+Corrections (`naturalize()`), in order: despike (3x3 MAD outliers),
+de-terrace (sub-quantum dither + smear), de-clamp (soft knee off the 0/1
+rails), macro relief governor (amplitude into the biome slope budget),
+attenuation-only spectral cleanup (strips speckle power, never touches the
+landform band), biome hypsometric remap (monotonic), and stream-power
+erosion with fixed uplift — the equilibrium S* = U/(k·sqrt(A/A_ref)) carves
+dendritic drainage with a genuine slope-area law.  A second monotonic remap
+and slope trim run after erosion (order-preserving, so the drainage
+survives).  Erosion is resolution-capped (256) and its carve delta is
+upsampled; high-frequency texture is intentionally NOT added — that is the
+engine detail-tile system's job.
+
+Outputs: corrected heightmap plus `<out>.stats.json` (before/after metrics,
+per-check pass/fail, `after.natural` overall verdict).  `verify_loop.py`
+reads the sidecar (or computes it) and feeds it to the vision analyzer as
+auxiliary evidence, and records it in the run report.
+
+Standalone use:
+
+```bash
+python tools/terrain/terrain_naturalize.py --in map.png --analyze-only
+python tools/terrain/terrain_naturalize.py --in map.png --out map_nat.png \
+       --biome auto --prompt "rolling hills" --report map_stats.json
+```
+
 ## Rubric
 
 Each criterion is pass/fail; terrain passes only if all four pass:

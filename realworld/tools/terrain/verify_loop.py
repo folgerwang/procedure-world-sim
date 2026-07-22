@@ -213,11 +213,20 @@ def load_image_b64(png_path, max_dim=1568):
     return media_type, base64.b64encode(data).decode("ascii")
 
 
-def build_user_prompt(prompt, height_scale):
+def build_user_prompt(prompt, height_scale, stats=None):
     rubric_lines = "\n".join(f"  - {k}: {v}" for k, v in RUBRIC.items())
+    stats_block = ""
+    if stats:
+        stats_block = (
+            "\nObjective heightmap statistics (precomputed against real-DEM "
+            "target bands — use as auxiliary evidence for "
+            "plausible_landforms/not_degenerate):\n"
+            + json.dumps(stats, indent=1) + "\n"
+        )
     return (
         f"Terrain prompt: \"{prompt}\"\n"
-        f"Current height-scale: {height_scale:.3f} (x250 world units)\n\n"
+        f"Current height-scale: {height_scale:.3f} (x250 world units)\n"
+        f"{stats_block}\n"
         f"Rubric (each criterion is pass/fail):\n{rubric_lines}\n\n"
         "Analyze the screenshot and return STRICT JSON with EXACTLY these keys:\n"
         "{\n"
@@ -237,7 +246,19 @@ def build_user_prompt(prompt, height_scale):
     )
 
 
-def analyze_frame(api_key, model, png_path, prompt, height_scale):
+def _load_gray(path):
+    """Heightmap PNG -> float [0,1] array (any bit depth)."""
+    import numpy as np
+    from PIL import Image
+    a = np.array(Image.open(path), np.float64)
+    if a.ndim == 3:
+        a = a.mean(axis=2)
+    scale = 65535.0 if a.max() > 255.0 else (255.0 if a.max() > 1.0 else 1.0)
+    return a / scale
+
+
+def analyze_frame(api_key, model, png_path, prompt, height_scale,
+                  stats=None):
     media_type, b64 = load_image_b64(png_path)
     payload = {
         "model": model,
@@ -248,7 +269,7 @@ def analyze_frame(api_key, model, png_path, prompt, height_scale):
             "content": [
                 {"type": "image", "source": {
                     "type": "base64", "media_type": media_type, "data": b64}},
-                {"type": "text", "text": build_user_prompt(prompt, height_scale)},
+                {"type": "text", "text": build_user_prompt(prompt, height_scale, stats)},
             ],
         }],
     }
@@ -364,6 +385,25 @@ def main():
             run["iterations"].append({"iter": i, "error": "generation_failed"})
             break
 
+        # Objective distribution check (terrain_naturalize): the generator
+        # writes <out>.stats.json when its naturalize pass ran; otherwise
+        # compute here.  Fed to the vision analyzer as auxiliary evidence
+        # and recorded in the run report.
+        stats = None
+        try:
+            sidecar = Path(str(height_png) + ".stats.json")
+            if sidecar.exists():
+                stats = json.loads(sidecar.read_text(encoding="utf-8"))
+                stats = stats.get("after", stats)
+            else:
+                import terrain_naturalize as tn
+                stats = tn.analyze(_load_gray(height_png),
+                                   biome=tn.biome_from_prompt(prompt))
+            print(f"  [stats] natural={stats.get('natural')} "
+                  f"checks={stats.get('checks')}", flush=True)
+        except Exception as e:                      # non-fatal
+            print(f"  [stats] unavailable: {e}", flush=True)
+
         capture = run_engine_oneshot(
             args.engine_exe, height_png, color_png, capture_png,
             args.delay, args.engine_timeout)
@@ -376,7 +416,7 @@ def main():
         print(f"  [analyze] {capture} via {args.model}...", flush=True)
         try:
             verdict = analyze_frame(api_key, args.model, capture,
-                                    prompt, height_scale)
+                                    prompt, height_scale, stats)
         except RuntimeError as e:
             print(f"  [analyze] {e}", flush=True)
             run["iterations"].append({"iter": i, "error": str(e)})
@@ -393,6 +433,7 @@ def main():
             "iter": i, "seed": seed, "prompt": prompt,
             "height_scale": height_scale, "height_png": str(height_png),
             "capture": capture, "verdict": verdict,
+            "objective_stats": stats,
         })
 
         if verdict_pass:

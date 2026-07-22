@@ -220,13 +220,17 @@ def quantize_to_classes(png_path: str, size: int):
     c = v - mn
     s = c / (v + 1e-6)
     # Hue in degrees (0..360); undefined (c≈0) stays 0 but s gates it.
+    # cs: divide-safe chroma — the full RHS is evaluated BEFORE the mask
+    # indexes it, so a raw `/ c` warns on every gray (c == 0) pixel even
+    # though those lanes are discarded.
     hue = np.zeros_like(v)
+    cs = np.where(c > 1e-6, c, 1.0)
     m = (c > 1e-6) & (v == r)
-    hue[m] = (60.0 * ((g - b) / c) % 360.0)[m]
+    hue[m] = (60.0 * ((g - b) / cs) % 360.0)[m]
     m = (c > 1e-6) & (v == g)
-    hue[m] = (60.0 * ((b - r) / c) + 120.0)[m]
+    hue[m] = (60.0 * ((b - r) / cs) + 120.0)[m]
     m = (c > 1e-6) & (v == b)
-    hue[m] = (60.0 * ((r - g) / c) + 240.0)[m]
+    hue[m] = (60.0 * ((r - g) / cs) + 240.0)[m]
 
     names = [n for n, _ in SEG_CLASSES]
     idx = {n: i for i, n in enumerate(names)}
@@ -1027,6 +1031,18 @@ def main():
     ap.add_argument("--seed", type=int, default=-1)
     ap.add_argument("--no-refine", action="store_true",
                     help="skip the stage-2 terrain conversion model")
+    ap.add_argument("--naturalize", dest="naturalize", action="store_true",
+                    default=True,
+                    help="match real-DEM statistics: despike/de-terrace, "
+                         "biome hypsometry, slope budget, stream-power "
+                         "erosion with a natural slope-area law (default on)")
+    ap.add_argument("--no-naturalize", dest="naturalize",
+                    action="store_false")
+    ap.add_argument("--nat-biome", default="auto",
+                    choices=["auto", "hills", "mountains", "plains"],
+                    help="hypsometry/slope target biome (auto = from prompt)")
+    ap.add_argument("--nat-strength", type=float, default=1.0,
+                    help="0..1 blend of the naturalize correction")
     ap.add_argument("--mesh-res", type=int, default=512,
                     help="terrain mesh grid resolution (verts per side) for "
                          "the .glb export (512 over 32 km = 64 m quads); "
@@ -1181,6 +1197,37 @@ def main():
     h = condition_base(h)          # despeckle BEFORE erosion
     if not args.no_refine:
         h = refine(h)
+
+    # ── Natural-distribution correction (terrain_naturalize) ───────────────
+    # Measures the heightfield against real-DEM statistics (spectral slope,
+    # slope distribution, hypsometry, clamp/terrace mass, drainage concavity)
+    # and corrects deviations: despike, de-terrace, de-clamp, biome-target
+    # hypsometric remap, and stream-power erosion that carves dendritic
+    # drainage obeying the S~A^-theta slope-area law.  Runs BEFORE the
+    # masks/semantic pass so town/water flattening stays authoritative.
+    nat_report = None
+    if args.naturalize:
+        import terrain_naturalize as tn
+        import torch as _torch
+        nat_biome = (tn.biome_from_prompt(args.prompt or "")
+                     if args.nat_biome == "auto" else args.nat_biome)
+        wm = None
+        if layout_mode:
+            _names = [n for n, _ in SEG_CLASSES]
+            _cls_r = np.asarray(Image.fromarray(cls_map).resize(
+                (h.shape[-1], h.shape[-1]), Image.NEAREST))
+            wm = _cls_r == _names.index("water")
+        report(hm_hi + 0.05, "naturalize (distribution match)")
+        _h_np, nat_report = tn.naturalize(
+            h.numpy().astype(np.float64),
+            biome=nat_biome,
+            strength=args.nat_strength,
+            water_mask=wm,
+            world_m=WORLD_SIZE_M,
+            amp_m=HEIGHT_AMP_M * args.height_scale,  # EFFECTIVE world amp
+            verbose=True)
+        h = _torch.from_numpy(_h_np.astype(np.float32))
+
     if layout_mode:
         # Mask-driven: towns/roads flat, water below its banks —
         # enforced AFTER erosion so the hydraulic pass can't re-roughen
@@ -1351,6 +1398,19 @@ def main():
         print(f"[terrain] height scale {scale:g} "
               f"(peaks ~{HEIGHT_AMP_M * scale:.0f} m)")
     save_u16(h, out)
+
+    # Natural-distribution report sidecar: <out>.stats.json with the
+    # before/after metrics from the naturalize pass — the verify loop and
+    # the editor can gate on `after.natural` without recomputing.
+    if nat_report is not None:
+        import json as _json
+        try:
+            with open(out + ".stats.json", "w", encoding="utf-8") as _f:
+                _json.dump(nat_report, _f, indent=2)
+            print(f"[terrain] wrote {out}.stats.json "
+                  f"(natural={nat_report['after']['natural']})")
+        except OSError as _e:
+            print(f"[terrain] stats sidecar failed (non-fatal): {_e}")
 
     # Terrain mesh: same folder, same base name as the textures
     # (<out>.glb), baked from the scaled heightfield with the albedo
