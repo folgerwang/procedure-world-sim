@@ -669,11 +669,18 @@ def extract_trees(veg_mask, roof_mask, px_m, spacing_m=7.0,
 class MeshAcc:
     def __init__(self):
         self.pos, self.nrm, self.idx = [], [], []
+        self.uv = []     # OPTIONAL explicit UVs, parallel to pos.  When a
+        #                  group supplies them for every vertex write_glb
+        #                  uses them; otherwise it falls back to planar
+        #                  world-XZ UVs (fine for solid debug colours,
+        #                  useless for real tiling textures).
 
-    def add(self, verts, normals, faces):
+    def add(self, verts, normals, faces, uvs=None):
         base = len(self.pos)
         self.pos.extend(verts)
         self.nrm.extend(normals)
+        if uvs is not None:
+            self.uv.extend(uvs)
         self.idx.extend(base + f for f in faces)
 
 
@@ -826,10 +833,315 @@ def add_house(acc, poly_w, eave_h, y0, gs=2.0, pitch=0.8, cap=4.5):
     acc.add(v, nrm, f)
 
 
+# ── Proxy upgrade: procedural albedos + clean building/tree builders ────────
+_TEX_CACHE = {}
+
+
+def _tex(name, size=256):
+    """Small deterministic tiling albedo textures, embedded in the GLB.
+    (The engine's drawable path samples baseColorTexture with wrap, so a
+    256px tile is all a proxy needs to stop looking like a debug blob.)"""
+    import zlib
+    if name in _TEX_CACHE:
+        return _TEX_CACHE[name]
+    rng = np.random.default_rng(zlib.crc32(name.encode()))
+    if name == "wall":
+        img = (np.array([213, 202, 178], np.float32) +
+               rng.normal(0, 5, (size, size, 1)))
+        img += np.linspace(6, -10, size)[:, None, None]      # weathering
+        def _win(x0, y0, w, h):
+            img[y0:y0+h, x0:x0+w] = ([68, 80, 95] +
+                                     rng.normal(0, 4, (h, w, 1)))
+            fr = [156, 152, 142]
+            img[y0:y0+3, x0:x0+w] = fr; img[y0+h-3:y0+h, x0:x0+w] = fr
+            img[y0:y0+h, x0:x0+3] = fr; img[y0:y0+h, x0+w-3:x0+w] = fr
+            img[y0+h//2-1:y0+h//2+1, x0:x0+w] = fr
+        _win(28, 88, 70, 100)                                # 2 windows /
+        _win(158, 88, 70, 100)                               # storey tile
+    elif name == "roof":
+        img = (np.array([167, 82, 56], np.float32) +
+               rng.normal(0, 6, (size, size, 1)))
+        for r in range(0, size, 32):                         # tile rows
+            img[r:r+3] *= 0.62
+            img[r+3:r+8] *= 1.14
+        for r0 in range(0, size, 32):                        # joints,
+            offs = 16 if (r0 // 32) % 2 else 0               # half-offset
+            for c in range(offs, size, 32):
+                img[r0:r0+32, c:c+2] *= 0.82
+            for c in range(0, size, 8):                      # per-tile tint
+                img[r0:r0+32, c:c+8] *= rng.uniform(0.93, 1.07)
+    elif name == "bark":
+        img = (np.array([97, 74, 55], np.float32) +
+               rng.normal(0, 5, (size, size, 1)))
+        img += rng.normal(0, 13, (1, size, 1))               # vertical streaks
+        for c in rng.integers(0, size, 10):
+            img[:, c:c+2] *= 0.7
+    elif name == "leaf":
+        blotch = np.kron(rng.normal(0, 1, (size // 16, size // 16)),
+                         np.ones((16, 16)))[:, :, None]
+        img = (np.array([64, 116, 55], np.float32) *
+               (1.0 + 0.16 * blotch) + rng.normal(0, 7, (size, size, 1)))
+    else:
+        raise KeyError(name)
+    _TEX_CACHE[name] = Image.fromarray(
+        np.clip(img, 0, 255).astype(np.uint8), "RGB")
+    return _TEX_CACHE[name]
+
+
+def _poly_area_signed(p):
+    a = 0.0
+    for i in range(len(p)):
+        x1, z1 = p[i]; x2, z2 = p[(i + 1) % len(p)]
+        a += x1 * z2 - x2 * z1
+    return 0.5 * a
+
+
+def _wall_ring(acc, ring, y0, y1):
+    """Wall quads around a CLOCKWISE-from-above ring (outward windings).
+    UVs: u = cumulative metres / 5 (window pair per 5 m), v = metres below
+    the eave / 3 (one storey per texture repeat)."""
+    u = 0.0
+    for i in range(len(ring)):
+        p0, p1 = ring[i], ring[(i + 1) % len(ring)]
+        el = float(np.hypot(p1[0] - p0[0], p1[1] - p0[1]))
+        if el < 0.3:
+            continue
+        u0, u1 = u / 5.0, (u + el) / 5.0
+        u += el
+        v = [(p0[0], y0, p0[1]), (p1[0], y0, p1[1]),
+             (p1[0], y1, p1[1]), (p0[0], y1, p0[1])]
+        vv0, vv1 = (y1 - y0) / 3.0, 0.0
+        uvs = [(u0, vv0), (u1, vv0), (u1, vv1), (u0, vv1)]
+        acc.add(v, [(0, 1, 0)] * 4, [0, 1, 2, 0, 2, 3], uvs)
+
+
+def _add_gable_house(acc_wall, acc_roof, c, w, d, ang, hgt, y0):
+    if w < d:
+        w, d = d, w
+        ang += np.pi * 0.5
+    w, d = max(w, 3.0), max(d, 2.6)
+    ca, sa = float(np.cos(ang)), float(np.sin(ang))
+
+    def pt(u, v):
+        return (c[0] + u * ca - v * sa, c[1] + u * sa + v * ca)
+
+    rise = float(np.clip(0.45 * d, 1.0, 3.5))
+    eave = max(2.4, hgt - 0.5 * rise)
+    A, B = pt(-w / 2, -d / 2), pt(w / 2, -d / 2)
+    C, D = pt(w / 2, d / 2), pt(-w / 2, d / 2)
+    _wall_ring(acc_wall, [A, D, C, B], y0, y0 + eave)   # clockwise ⇒ outward
+    R1, R2 = pt(-w / 2, 0.0), pt(w / 2, 0.0)
+    ye, yr = y0 + eave, y0 + eave + rise
+    # gable end triangles (wall material, outward windings)
+    for tri, uvs in ((([ (C[0], ye, C[1]), (B[0], ye, B[1]), (R2[0], yr, R2[1]) ]),
+                      [(0.0, 0.0), (d / 5.0, 0.0), (d / 10.0, -rise / 3.0)]),
+                     (([ (A[0], ye, A[1]), (D[0], ye, D[1]), (R1[0], yr, R1[1]) ]),
+                      [(0.0, 0.0), (d / 5.0, 0.0), (d / 10.0, -rise / 3.0)])):
+        acc_wall.add(tri, [(0, 1, 0)] * 3, [0, 1, 2], uvs)
+    # roof planes with a small overhang
+    ovl, ovs, drop = 0.35, 0.45, 0.08
+    sl = float(np.hypot(d / 2 + ovs, rise + drop))
+    for side in (-1.0, 1.0):
+        E1 = pt(-w / 2 - ovl, side * (d / 2 + ovs))
+        E2 = pt(w / 2 + ovl, side * (d / 2 + ovs))
+        Ra = pt(-w / 2 - ovl, 0.0)
+        Rb = pt(w / 2 + ovl, 0.0)
+        v = [(E1[0], ye - drop, E1[1]), (E2[0], ye - drop, E2[1]),
+             (Rb[0], yr, Rb[1]), (Ra[0], yr, Ra[1])]
+        uvs = [(0.0, sl / 3.0), ((w + 2 * ovl) / 3.0, sl / 3.0),
+               ((w + 2 * ovl) / 3.0, 0.0), (0.0, 0.0)]
+        acc_roof.add(v, [(0, 1, 0)] * 4, [0, 1, 2, 0, 2, 3], uvs)
+
+
+def _add_flat_block(acc_wall, acc_roof, P, hgt, y0):
+    import cv2
+    ring = [tuple(p) for p in P]
+    if _poly_area_signed(ring) > 0:          # need CLOCKWISE for outward
+        ring = ring[::-1]
+    tris = _ear_clip(ring)
+    if len(tris) < len(ring) - 2:
+        # Ear clipping bailed — the simplified outline self-intersects.
+        # A fan over a bad ring sprays giant roof triangles outside the
+        # building, so fall back to the convex hull instead.
+        hull = cv2.convexHull(np.asarray(P, np.float32).reshape(-1, 1, 2))
+        ring = [tuple(p) for p in hull.reshape(-1, 2)]
+        if _poly_area_signed(ring) > 0:
+            ring = ring[::-1]
+        tris = _ear_clip(ring)
+    yt = y0 + max(2.6, hgt)
+    _wall_ring(acc_wall, ring, y0, yt)
+    v = [(x, yt, z) for x, z in ring]
+    uvs = [(x / 2.5, z / 2.5) for x, z in ring]
+    f = [i for t in tris for i in t]
+    acc_roof.add(v, [(0, 1, 0)] * len(v), f, uvs)
+
+
+def add_building(acc_wall, acc_roof, poly_w, hgt, y0):
+    """CLEAN house from a traced footprint: simplify the outline, then
+    either a rectangular massing with a proper GABLE roof (most houses)
+    or straight walls + flat roof slab for genuinely irregular outlines.
+    Replaces the medial-axis hip surface whose Delaunay-over-noisy-
+    outline roofs read as crumpled paper in game."""
+    import cv2
+    P = np.asarray(poly_w, np.float32)
+    if len(P) < 3:
+        return
+    ap = cv2.approxPolyDP(P.reshape(-1, 1, 2), 1.2, True).reshape(-1, 2)
+    if len(ap) >= 3:
+        P = ap.astype(np.float32)
+    area = abs(_poly_area_signed([tuple(p) for p in P]))
+    if area < 6.0:
+        return
+    (rcx, rcz), (rw, rh), rang = cv2.minAreaRect(P.reshape(-1, 1, 2))
+    if rw < 0.5 or rh < 0.5:
+        return
+    # GABLE only for house-scale, honestly-rectangular footprints.  The
+    # min-area rect is ROTATED: on a big irregular blob its corners poke
+    # up to ~15 m outside the traced outline and the roof spears through
+    # the neighbours.  Everything else gets a flat-roof block that traces
+    # the outline exactly (reads as a commercial/apartment building).
+    # ...and the rect's own corners must stay within ~2.5 m of the traced
+    # outline, or the roof still spears through the neighbours.
+    box = cv2.boxPoints(((rcx, rcz), (rw, rh), rang))
+    cont = P.reshape(-1, 1, 2).astype(np.float32)
+    out_d = max(-cv2.pointPolygonTest(cont, (float(bx), float(bz)), True)
+                for bx, bz in box)
+    if (area <= 420.0 and max(rw, rh) <= 32.0 and out_d <= 2.5
+            and area / max(rw * rh, 1e-3) >= 0.62):
+        _add_gable_house(acc_wall, acc_roof, (float(rcx), float(rcz)),
+                         float(rw), float(rh), float(np.deg2rad(rang)),
+                         hgt, y0)
+    else:
+        _add_flat_block(acc_wall, acc_roof, P, hgt, y0)
+
+
+def _tube(acc, cx, cz, r, y0, y1, sides=5):
+    v, n, uv = [], [], []
+    for i in range(sides):
+        t = 2 * np.pi * i / sides
+        nx, nz = np.cos(t), np.sin(t)
+        for y, vv in ((y0, (y1 - y0) / 2.0), (y1, 0.0)):
+            v.append((cx + r * nx, y, cz + r * nz))
+            n.append((nx, 0.0, nz))
+            uv.append((t / np.pi, vv))
+    f = []
+    for i in range(sides):
+        j = (i + 1) % sides
+        f += [2 * i, 2 * j, 2 * j + 1, 2 * i, 2 * j + 1, 2 * i + 1]
+    acc.add(v, n, f, uv)
+
+
+def _cone_lp(acc, cx, cz, r, y0, h, sides=6):
+    v = [(cx, y0 + h, cz)]
+    n = [(0.0, 1.0, 0.0)]
+    uv = [(0.5, 0.0)]
+    for i in range(sides):
+        t = 2 * np.pi * i / sides
+        nx, nz = np.cos(t), np.sin(t)
+        nl = float(np.hypot(h, r)) + 1e-6
+        v.append((cx + r * nx, y0, cz + r * nz))
+        n.append((nx * h / nl, r / nl, nz * h / nl))
+        uv.append((t / np.pi, h / 2.5))
+    f = []
+    for i in range(sides):
+        f += [0, 1 + i, 1 + (i + 1) % sides]
+    acc.add(v, n, f, uv)
+
+
+def _octa(acc, cx, cz, y0, r, h):
+    ym = y0 + 0.38 * h
+    mid = []
+    for i in range(5):
+        t = 2 * np.pi * i / 5
+        mid.append((cx + r * np.cos(t), ym, cz + r * np.sin(t)))
+    v = [(cx, y0 + h, cz), (cx, y0 - 0.15 * h, cz)] + mid
+    n = ([(0.0, 1.0, 0.0), (0.0, -1.0, 0.0)] +
+         [((m[0] - cx) / r, 0.0, (m[2] - cz) / r) for m in mid])
+    uv = [(0.5, 0.0), (0.5, 1.0)] + [(i / 2.5, 0.5) for i in range(5)]
+    f = []
+    for i in range(5):
+        j = (i + 1) % 5
+        f += [0, 2 + i, 2 + j, 1, 2 + j, 2 + i]
+    acc.add(v, n, f, uv)
+
+
+def add_tree(acc_trunk, acc_leaf, cx, cz, hgt, rad, y0, sx, sy):
+    """Low-poly TREE (bark trunk + foliage canopy) replacing the flat
+    debug cones: ~70% conifers (two stacked canopy cones), ~30% broadleaf
+    (faceted crown on a taller trunk).  All variation comes from
+    _det_rand on the source pixel coords, so output is deterministic."""
+    kind = _det_rand(sx, sy, 0.0, 1.0)
+    s = 0.85 + 0.3 * _det_rand(sy, sx, 0.0, 1.0)
+    hgt, rad = hgt * s, rad * s
+    rt = float(np.clip(rad * 0.16, 0.2, 0.5))
+    if kind < 0.7:                                   # conifer
+        th = 0.25 * hgt
+        _tube(acc_trunk, cx, cz, rt, y0 - 0.4, y0 + th + 0.3)
+        _cone_lp(acc_leaf, cx, cz, rad, y0 + th, 0.55 * hgt)
+        _cone_lp(acc_leaf, cx, cz, rad * 0.62, y0 + th + 0.32 * hgt,
+                 0.55 * hgt)
+    else:                                            # broadleaf
+        th = 0.42 * hgt
+        _tube(acc_trunk, cx, cz, rt, y0 - 0.4, y0 + th + 0.1)
+        _octa(acc_leaf, cx, cz, y0 + th, rad * 1.25, 0.6 * hgt)
+
+
+def _flat_shade(pos, idx, uv=None):
+    """Explode shared-vertex geometry into per-face vertices carrying TRUE
+    face normals, so proxies actually shade under the sun (the accumulators
+    only store placeholder up-normals, which renders every wall exactly as
+    bright as every roof — houses read as flat melted blobs).
+    Winding of the source faces is arbitrary (footprint polygons arrive in
+    either orientation), so the normal SIGN is fixed by convention instead:
+    roof-ish faces (|ny| >= 0.5) point up; wall faces point AWAY from their
+    own building's centroid.  Per-building membership is recovered from
+    shared-vertex connected components — houses never share vertices."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    tris = idx.reshape(-1, 3).astype(np.int64)
+    a, b, c = pos[tris[:, 0]], pos[tris[:, 1]], pos[tris[:, 2]]
+    fn = np.cross(b - a, c - a)
+    fn /= (np.linalg.norm(fn, axis=1, keepdims=True) + 1e-12)
+
+    nv = len(pos)
+    e0 = np.concatenate([tris[:, 0], tris[:, 1], tris[:, 2]])
+    e1 = np.concatenate([tris[:, 1], tris[:, 2], tris[:, 0]])
+    adj = coo_matrix((np.ones(len(e0), np.int8), (e0, e1)), shape=(nv, nv))
+    _, comp = connected_components(adj, directed=False)
+    ncomp = int(comp.max()) + 1
+    csum = np.zeros((ncomp, 3), np.float64)
+    ccnt = np.zeros(ncomp, np.int64)
+    np.add.at(csum, comp, pos)
+    np.add.at(ccnt, comp, 1)
+    cent = (csum / ccnt[:, None])[comp[tris[:, 0]]]      # per-tri centroid
+
+    tcen = (a + b + c) / 3.0
+    roof = np.abs(fn[:, 1]) >= 0.5
+    # Walls flip only when CLEARLY inward (margin in metres): the new
+    # builders emit correct outward windings, and a lone wall quad is its
+    # own component whose centroid lies ON the wall plane (dot ≈ 0) — a
+    # zero threshold there would flip on float noise.
+    flip = np.where(roof, fn[:, 1] < 0.0,
+                    (fn[:, 0] * (tcen[:, 0] - cent[:, 0]) +
+                     fn[:, 2] * (tcen[:, 2] - cent[:, 2])) < -0.25)
+    fn[flip] = -fn[flip]
+
+    if uv is not None:
+        uv = uv[tris].reshape(-1, 2).astype(np.float32)
+    pos = pos[tris].reshape(-1, 3).astype(np.float32)
+    nrm = np.repeat(fn, 3, axis=0).astype(np.float32)
+    idx = np.arange(len(pos), dtype=np.uint32)
+    return pos, nrm, idx, uv
+
+
 def write_glb(groups, path):
-    """groups: [(MeshAcc, (r, g, b) 0-255, name), ...] — ONE MATERIAL PER
-    GROUP so each PCG class renders in its own debug colour (buildings vs
-    trees) and mis-segmented blobs are identifiable at a glance."""
+    """groups: [(MeshAcc, (r, g, b) 0-255, name[, flat_shade]), ...] — ONE
+    MATERIAL PER GROUP so each PCG class renders in its own debug colour
+    (buildings vs trees) and mis-segmented blobs are identifiable at a
+    glance.  Pass flat_shade=True for groups whose accumulators only carry
+    placeholder normals (buildings): faces are exploded and given true
+    per-face normals so walls/roofs shade correctly."""
     import io
 
     def pad4(bb, fill=b"\x00"):
@@ -848,29 +1160,42 @@ def write_glb(groups, path):
         return len(views) - 1
 
     prim_json, materials, images, textures = [], [], [], []
-    for (acc, rgb, name) in groups:
+    for grp in groups:
+        acc, albedo, name = grp[0], grp[1], grp[2]
+        flat = bool(grp[3]) if len(grp) > 3 else False
         if not acc.pos:
             continue
         pos = np.asarray(acc.pos, np.float32)
         nrm = np.asarray(acc.nrm, np.float32)
         nrm /= (np.linalg.norm(nrm, axis=1, keepdims=True) + 1e-6)
         idx = np.asarray(acc.idx, np.uint32)
+        uv = (np.asarray(acc.uv, np.float32)
+              if len(acc.uv) == len(acc.pos) and len(acc.pos) else None)
+        if flat and len(idx):
+            pos, nrm, idx, uv = _flat_shade(pos, idx, uv)
         # Double-sided by construction: emit every triangle in BOTH
-        # windings.
+        # windings.  (The reversed copies share the exploded vertices, so
+        # both copies of a face carry the SAME corrected normal — coplanar
+        # duplicates shade identically and cannot z-fight visibly.)
         rev = idx.reshape(-1, 3)[:, ::-1].reshape(-1)
         idx = np.concatenate([idx, rev]).astype(np.uint32)
 
-        # Planar world-XZ UVs (NOT zeros): the cluster pipeline computes
-        # tangents from UV deltas — degenerate UVs break it.
-        uv = np.stack([pos[:, 0] / WORLD_SIZE_M + 0.5,
-                       pos[:, 2] / WORLD_SIZE_M + 0.5], 1).astype(np.float32)
+        if uv is None:
+            # Planar world-XZ UVs (NOT zeros): the cluster pipeline
+            # computes tangents from UV deltas — degenerate UVs break it.
+            uv = np.stack([pos[:, 0] / WORLD_SIZE_M + 0.5,
+                           pos[:, 2] / WORLD_SIZE_M + 0.5],
+                          1).astype(np.float32)
 
-        # Tiny embedded solid-colour albedo: the engine's drawable path
-        # expects a baseColorTexture — factor-only materials import but
-        # don't render.
+        # Embedded albedo: the engine's drawable path expects a
+        # baseColorTexture — factor-only materials import but don't
+        # render.  Accepts a solid (r, g, b) OR a PIL.Image (real
+        # tiling texture for walls/roofs/foliage).
         mat_idx = len(materials)
         wb = io.BytesIO()
-        Image.new("RGB", (4, 4), tuple(rgb)).save(wb, format="PNG")
+        img = (albedo if isinstance(albedo, Image.Image)
+               else Image.new("RGB", (4, 4), tuple(albedo)))
+        img.save(wb, format="PNG")
         img_view = view(pad4(wb.getvalue()), None)
         images.append({"bufferView": img_view, "mimeType": "image/png"})
         textures.append({"sampler": 0, "source": len(images) - 1})
@@ -1105,26 +1430,34 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
         print("[pcg] biome gate: suppressing building proxies (barren biome)")
         bld = []
         bld_polys = []
-    acc_bld, acc_tree = MeshAcc(), MeshAcc()
+    acc_wall, acc_roof = MeshAcc(), MeshAcc()
+    acc_trunk, acc_leaf = MeshAcc(), MeshAcc()
     bld_polys = locals().get("bld_polys") or []
     for cx, cy, w, d, ang, hgt in bld:
         wx, wz = px_to_world(cx, cy)
-        add_box(acc_bld, wx, wz, w, d, ang, hgt, ground(cx, cy) - 0.3)
+        ca, sa = np.cos(ang), np.sin(ang)
+        pts = [(wx + u * ca - v * sa, wz + u * sa + v * ca)
+               for u, v in ((-w / 2, -d / 2), (w / 2, -d / 2),
+                            (w / 2, d / 2), (-w / 2, d / 2))]
+        add_building(acc_wall, acc_roof, pts, hgt, ground(cx, cy) - 0.6)
     for poly, phgt in bld_polys:
-        pcx, pcy = float(poly[:, 0].mean()), float(poly[:, 1].mean())
         pts = [px_to_world(px_, py_) for px_, py_ in poly]
-        # walls take ~60% of the height budget; the hip roof the rest.
-        eave = max(2.5, 0.6 * phgt)
-        add_house(acc_bld, pts, eave, ground(pcx, pcy) - 0.3,
-                  pitch=0.8, cap=max(2.0, 0.4 * phgt))
+        # SLOPE-AWARE base: min ground over the whole outline (a centre
+        # sample let downhill corners float in mid-air), walls extended
+        # 0.4 m into the ground.
+        base = min(ground(px_, py_) for px_, py_ in poly) - 0.4
+        add_building(acc_wall, acc_roof, pts, phgt, base)
     trees = extract_trees(masks["veg"], tree_block, px_m) if place_trees else []
     if not place_trees:
         print("[pcg] biome gate: suppressing tree proxies (treeless biome)")
     for px, py, hgt, rad in trees:
         wx, wz = px_to_world(px, py)
-        add_cone(acc_tree, wx, wz, hgt, rad, ground(px, py) - 0.2)
-    write_glb([(acc_bld,  (255,  96,  32), "proxy_building"),
-               (acc_tree, ( 48, 208,  80), "proxy_tree")],
+        add_tree(acc_trunk, acc_leaf, wx, wz, hgt, rad,
+                 ground(px, py) - 0.15, int(px), int(py))
+    write_glb([(acc_wall,  _tex("wall"), "house_wall", True),
+               (acc_roof,  _tex("roof"), "house_roof", True),
+               (acc_trunk, _tex("bark"), "tree_trunk"),
+               (acc_leaf,  _tex("leaf"), "tree_leaf")],
               out_glb)
     if bld_polys:
         fp = os.path.splitext(out_glb)[0] + "_footprints.json"
@@ -1136,7 +1469,7 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
     print(f"[pcg] {len(bld) + len(bld_polys)} buildings (orange) + {len(trees)} trees "
           f"(green) [{'layout masks' if use_seg else 'color heuristics'}]"
           f" -> {out_glb} "
-          f"({len(acc_bld.pos) + len(acc_tree.pos)} verts)")
+          f"({len(acc_wall.pos) + len(acc_roof.pos) + len(acc_trunk.pos) + len(acc_leaf.pos)} verts)")
 
 
 def main():
