@@ -370,8 +370,7 @@ def _dedup_boxes(boxes, px_m, iou_thr=0.45):
     """Cross-tile oriented-box dedup: grid-hash centers, drop a box when its
     rotated-rect intersection with an already-kept neighbour exceeds iou_thr
     of the smaller box.  Keeps larger boxes first (they trace whole roofs)."""
-    # cv2 optional: the intersection test below carries its own guarded
-    # import with a numpy Sutherland-Hodgman fallback.
+    import cv2
     if len(boxes) < 2:
         return boxes
     order = sorted(range(len(boxes)),
@@ -389,16 +388,10 @@ def _dedup_boxes(boxes, px_m, iou_thr=0.45):
                     c2 = kept[j]
                     r2 = ((c2[0], c2[1]),
                           (c2[2] / px_m, c2[3] / px_m), np.rad2deg(c2[4]))
-                    try:
-                        import cv2 as _cv2
-                        ok, pts = _cv2.rotatedRectangleIntersection(r1, r2)
-                        if ok == _cv2.INTERSECT_NONE or pts is None:
-                            continue
-                        inter = _cv2.contourArea(pts)
-                    except ModuleNotFoundError:
-                        inter = _rot_rect_inter_area_np(r1, r2)
-                        if inter <= 0.0:
-                            continue
+                    ok, pts = cv2.rotatedRectangleIntersection(r1, r2)
+                    if ok == cv2.INTERSECT_NONE or pts is None:
+                        continue
+                    inter = cv2.contourArea(pts)
                     amin = min(r1[1][0] * r1[1][1], r2[1][0] * r2[1][1])
                     if amin > 0 and inter / amin > iou_thr:
                         dup = True
@@ -843,19 +836,125 @@ def add_house(acc, poly_w, eave_h, y0, gs=2.0, pitch=0.8, cap=4.5):
 # ── Proxy upgrade: procedural albedos + clean building/tree builders ────────
 _TEX_CACHE = {}
 
+# Variant palettes — one MATERIAL per entry, chosen per building/tree by a
+# deterministic hash of its map position, so towns get a mix of render
+# colours instead of a single clone-stamped look.
+_WALL_BASES = [(226, 221, 208),   # whitewash
+               (213, 202, 178),   # warm plaster
+               (208, 183, 141),   # sand / ochre
+               (186, 168, 150)]   # weathered gray
+_ROOF_BASES = [(167, 82, 56),     # terracotta
+               (122, 63, 48),     # dark brown tile
+               (109, 109, 116),   # slate gray
+               (150, 96, 60)]     # faded clay
+_LEAF_BASES = [(64, 116, 55),     # mid green
+               (44, 90, 42),      # dark conifer green
+               (109, 128, 52),    # olive / dry
+               (130, 106, 44)]    # autumn tint
 
-def _tex(name, size=256):
-    """Small deterministic tiling albedo textures, embedded in the GLB.
-    (The engine's drawable path samples baseColorTexture with wrap, so a
-    256px tile is all a proxy needs to stop looking like a debug blob.)"""
+
+def _load_terrain_grid(path):
+    """Height sampler built from the terrain RENDER mesh (<stamp>.glb) —
+    the authoritative surface the player actually sees.  The mesh is a
+    regular vertex grid over the world extent; returns (xs, zs, Y)."""
+    import json as _json
+    import struct as _st
+    data = open(path, "rb").read()
+    off, chunks = 12, {}
+    while off < len(data):
+        clen, ctype = _st.unpack("<II", data[off:off + 8])
+        off += 8
+        chunks[ctype] = data[off:off + clen]
+        off += clen
+    g = _json.loads(chunks[0x4E4F534A])
+    buf = chunks[0x004E4942]
+    pos = []
+    for m in g["meshes"]:
+        for pr in m["primitives"]:
+            a = g["accessors"][pr["attributes"]["POSITION"]]
+            bv = g["bufferViews"][a["bufferView"]]
+            if a["componentType"] != 5126:
+                raise ValueError("non-float positions")
+            arr = np.frombuffer(
+                buf, np.float32, a["count"] * 3,
+                bv.get("byteOffset", 0) + a.get("byteOffset", 0))
+            pos.append(arr.reshape(-1, 3))
+    P = np.vstack(pos).astype(np.float64)
+    xs = np.unique(np.round(P[:, 0], 3))
+    zs = np.unique(np.round(P[:, 2], 3))
+    if len(xs) * len(zs) != len(P):
+        raise ValueError("terrain mesh is not a regular grid")
+    Y = np.full((len(zs), len(xs)), np.nan, np.float32)
+    xi = np.searchsorted(xs, np.round(P[:, 0], 3))
+    zi = np.searchsorted(zs, np.round(P[:, 2], 3))
+    Y[zi, xi] = P[:, 1]
+    if np.isnan(Y).any():
+        raise ValueError("terrain grid has holes")
+    return xs, zs, Y
+
+
+def _grid_sample(grid, wx, wz):
+    """Bilinear height on the render-mesh grid (matches the rasterised
+    triangles to within half a quad)."""
+    xs, zs, Y = grid
+    fx = int(np.clip(np.searchsorted(xs, wx) - 1, 0, len(xs) - 2))
+    fz = int(np.clip(np.searchsorted(zs, wz) - 1, 0, len(zs) - 2))
+    tx = float(np.clip((wx - xs[fx]) / max(xs[fx + 1] - xs[fx], 1e-6),
+                       0.0, 1.0))
+    tz = float(np.clip((wz - zs[fz]) / max(zs[fz + 1] - zs[fz], 1e-6),
+                       0.0, 1.0))
+    return float(Y[fz, fx] * (1 - tx) * (1 - tz) +
+                 Y[fz, fx + 1] * tx * (1 - tz) +
+                 Y[fz + 1, fx] * (1 - tx) * tz +
+                 Y[fz + 1, fx + 1] * tx * tz)
+
+
+def _normal_from_height(h, strength=2.0):
+    """Tangent-space normal map from a height field (glTF convention)."""
+    gy, gx = np.gradient(h.astype(np.float32))
+    n = np.dstack([-gx * strength, gy * strength, np.ones_like(h)])
+    n /= np.linalg.norm(n, axis=2, keepdims=True) + 1e-9
+    return Image.fromarray(
+        np.clip((n * 0.5 + 0.5) * 255, 0, 255).astype(np.uint8), "RGB")
+
+
+def _mr_image(rough, metal=None):
+    """glTF metallicRoughness map: G = roughness, B = metallic."""
+    h, w = rough.shape
+    out = np.zeros((h, w, 3), np.float32)
+    out[..., 1] = rough
+    if metal is not None:
+        out[..., 2] = metal
+    return Image.fromarray(
+        np.clip(out * 255, 0, 255).astype(np.uint8), "RGB")
+
+
+def _tex_bundle(name, size=256):
+    """Deterministic PBR texture set {albedo, normal, mr} for a material,
+    embedded in the GLB — albedo alone made close-up surfaces read as
+    flat printed paper; the normal + roughness maps give the renderer's
+    PBR path something to light.  Variant names like 'wall2' / 'roof1' /
+    'leaf0' select a palette entry."""
     import zlib
     if name in _TEX_CACHE:
         return _TEX_CACHE[name]
     rng = np.random.default_rng(zlib.crc32(name.encode()))
-    if name == "wall":
-        img = (np.array([213, 202, 178], np.float32) +
+
+    def _variant(prefix, bases):
+        s = name[len(prefix):]
+        return bases[min(int(s) if s else 0, len(bases) - 1)]
+
+    hgt = np.zeros((size, size), np.float32)     # height field (px units)
+    rough = np.full((size, size), 0.9, np.float32)
+    if name.startswith("wall"):
+        img = (np.array(_variant("wall", _WALL_BASES), np.float32) +
                rng.normal(0, 5, (size, size, 1)))
         img += np.linspace(6, -10, size)[:, None, None]      # weathering
+        from scipy import ndimage as _ndi
+        hgt = _ndi.gaussian_filter(
+            rng.normal(0, 1.2, (size, size)).astype(np.float32), 3)
+        rough[:] = 0.88
+
         def _win(x0, y0, w, h):
             img[y0:y0+h, x0:x0+w] = ([68, 80, 95] +
                                      rng.normal(0, 4, (h, w, 1)))
@@ -863,36 +962,65 @@ def _tex(name, size=256):
             img[y0:y0+3, x0:x0+w] = fr; img[y0+h-3:y0+h, x0:x0+w] = fr
             img[y0:y0+h, x0:x0+3] = fr; img[y0:y0+h, x0+w-3:x0+w] = fr
             img[y0+h//2-1:y0+h//2+1, x0:x0+w] = fr
-        _win(28, 88, 70, 100)                                # 2 windows /
-        _win(158, 88, 70, 100)                               # storey tile
-    elif name == "roof":
-        img = (np.array([167, 82, 56], np.float32) +
+            hgt[y0:y0+h, x0:x0+w] -= 5.0                     # recessed
+            hgt[y0:y0+3, x0:x0+w] += 5.5                     # raised frame
+            hgt[y0+h-3:y0+h, x0:x0+w] += 5.5
+            hgt[y0:y0+h, x0:x0+3] += 5.5; hgt[y0:y0+h, x0+w-3:x0+w] += 5.5
+            rough[y0:y0+h, x0:x0+w] = 0.25                   # glass
+        _win(28, 60, 70, 96)                                 # 2 windows /
+        _win(158, 60, 70, 96)                                # storey tile
+        # (window band sits HIGH in the tile: the blank lower ~40% is a
+        # plinth, so a wall sunk into a slope buries plaster, not glass)
+    elif name.startswith("roof"):
+        img = (np.array(_variant("roof", _ROOF_BASES), np.float32) +
                rng.normal(0, 6, (size, size, 1)))
+        row = np.arange(size, dtype=np.float32) % 32
+        hgt += (row[:, None] / 32.0) * 3.0                   # tile ramp
         for r in range(0, size, 32):                         # tile rows
             img[r:r+3] *= 0.62
             img[r+3:r+8] *= 1.14
+            hgt[r:r+3] -= 3.0                                # row step
         for r0 in range(0, size, 32):                        # joints,
             offs = 16 if (r0 // 32) % 2 else 0               # half-offset
             for c in range(offs, size, 32):
                 img[r0:r0+32, c:c+2] *= 0.82
+                hgt[r0:r0+32, c:c+2] -= 1.6
             for c in range(0, size, 8):                      # per-tile tint
                 img[r0:r0+32, c:c+8] *= rng.uniform(0.93, 1.07)
+        rough[:] = 0.82
     elif name == "bark":
         img = (np.array([97, 74, 55], np.float32) +
                rng.normal(0, 5, (size, size, 1)))
-        img += rng.normal(0, 13, (1, size, 1))               # vertical streaks
+        streak = rng.normal(0, 13, (1, size)).astype(np.float32)
+        img += streak[:, :, None]                            # vertical streaks
+        hgt += np.repeat(streak, size, 0) * 0.12
         for c in rng.integers(0, size, 10):
             img[:, c:c+2] *= 0.7
-    elif name == "leaf":
-        blotch = np.kron(rng.normal(0, 1, (size // 16, size // 16)),
-                         np.ones((16, 16)))[:, :, None]
-        img = (np.array([64, 116, 55], np.float32) *
-               (1.0 + 0.16 * blotch) + rng.normal(0, 7, (size, size, 1)))
+            hgt[:, c:c+2] -= 2.0
+        rough[:] = 0.95
+    elif name.startswith("leaf"):
+        from scipy import ndimage as _ndi
+        blotch = _ndi.gaussian_filter(
+            np.kron(rng.normal(0, 1, (size // 16, size // 16)),
+                    np.ones((16, 16))).astype(np.float32), 5)[:, :, None]
+        img = (np.array(_variant("leaf", _LEAF_BASES), np.float32) *
+               (1.0 + 0.09 * blotch) + rng.normal(0, 5, (size, size, 1)))
+        hgt = blotch[..., 0] * 1.2
+        rough[:] = 0.95
     else:
         raise KeyError(name)
-    _TEX_CACHE[name] = Image.fromarray(
-        np.clip(img, 0, 255).astype(np.uint8), "RGB")
+    strength = {"w": 2.0, "r": 2.5, "b": 1.5, "l": 0.6}[name[0]]
+    _TEX_CACHE[name] = {
+        "albedo": Image.fromarray(np.clip(img, 0, 255).astype(np.uint8),
+                                  "RGB"),
+        "normal": _normal_from_height(hgt, strength),
+        "mr": _mr_image(rough)}
     return _TEX_CACHE[name]
+
+
+def _tex(name, size=256):
+    """Back-compat: albedo of the PBR bundle."""
+    return _tex_bundle(name, size)["albedo"]
 
 
 def _poly_area_signed(p):
@@ -905,24 +1033,34 @@ def _poly_area_signed(p):
 
 def _wall_ring(acc, ring, y0, y1):
     """Wall quads around a CLOCKWISE-from-above ring (outward windings).
-    UVs: u = cumulative metres / 5 (window pair per 5 m), v = metres below
-    the eave / 3 (one storey per texture repeat)."""
-    u = 0.0
+    UVs tile an INTEGER number of window bays along each wall and an
+    integer number of storeys up its height, anchored to that wall's own
+    edges — cumulative/metric UVs sliced windows at corners, eaves and
+    ground, and scattered rows at heights that made no sense."""
+    nv = max(1, int(round((y1 - y0) / 3.0)))
     for i in range(len(ring)):
         p0, p1 = ring[i], ring[(i + 1) % len(ring)]
         el = float(np.hypot(p1[0] - p0[0], p1[1] - p0[1]))
         if el < 0.3:
             continue
-        u0, u1 = u / 5.0, (u + el) / 5.0
-        u += el
+        nu = max(1, int(round(el / 5.0)))
         v = [(p0[0], y0, p0[1]), (p1[0], y0, p1[1]),
              (p1[0], y1, p1[1]), (p0[0], y1, p0[1])]
-        vv0, vv1 = (y1 - y0) / 3.0, 0.0
-        uvs = [(u0, vv0), (u1, vv0), (u1, vv1), (u0, vv1)]
+        uvs = [(0.0, float(nv)), (float(nu), float(nv)),
+               (float(nu), 0.0), (0.0, 0.0)]
         acc.add(v, [(0, 1, 0)] * 4, [0, 1, 2, 0, 2, 3], uvs)
 
 
-def _add_gable_house(acc_wall, acc_roof, c, w, d, ang, hgt, y0):
+def _add_gable_house(acc_wall, acc_roof, c, w, d, ang, eave, rise, y0,
+                     hip=False):
+    """Rectangular wing with a ridge along the long axis.  hip=False:
+    gable ends (vertical wall triangles).  hip=True: the ridge is inset
+    from both ends and the end faces slope like the sides — the two roof
+    forms real houses actually use.  eave/rise are supplied by the
+    CALLER: all wings of one building share an eave (per-wing eaves let
+    storey walls poke through sibling roofs as sawtooth artefacts), and
+    each wing's rise comes from its own width so secondary ridges tuck
+    under the main roof."""
     if w < d:
         w, d = d, w
         ang += np.pi * 0.5
@@ -931,38 +1069,157 @@ def _add_gable_house(acc_wall, acc_roof, c, w, d, ang, hgt, y0):
 
     def pt(u, v):
         return (c[0] + u * ca - v * sa, c[1] + u * sa + v * ca)
-
-    rise = float(np.clip(0.45 * d, 1.0, 3.5))
-    eave = max(2.4, hgt - 0.5 * rise)
+    e = min(0.45 * d, 0.33 * w) if hip else 0.0   # ridge end inset
     A, B = pt(-w / 2, -d / 2), pt(w / 2, -d / 2)
     C, D = pt(w / 2, d / 2), pt(-w / 2, d / 2)
     _wall_ring(acc_wall, [A, D, C, B], y0, y0 + eave)   # clockwise ⇒ outward
-    R1, R2 = pt(-w / 2, 0.0), pt(w / 2, 0.0)
     ye, yr = y0 + eave, y0 + eave + rise
-    # gable end triangles (wall material, outward windings)
-    for tri, uvs in ((([ (C[0], ye, C[1]), (B[0], ye, B[1]), (R2[0], yr, R2[1]) ]),
-                      [(0.0, 0.0), (d / 5.0, 0.0), (d / 10.0, -rise / 3.0)]),
-                     (([ (A[0], ye, A[1]), (D[0], ye, D[1]), (R1[0], yr, R1[1]) ]),
-                      [(0.0, 0.0), (d / 5.0, 0.0), (d / 10.0, -rise / 3.0)])):
-        acc_wall.add(tri, [(0, 1, 0)] * 3, [0, 1, 2], uvs)
-    # roof planes with a small overhang
-    ovl, ovs, drop = 0.35, 0.45, 0.08
-    sl = float(np.hypot(d / 2 + ovs, rise + drop))
+    # CLOSED roof volume (no paper sheets, no see-through slits): the
+    # slopes span an extended eave frame, hip ends are sloped faces on
+    # that same frame, and a flat SOFFIT cap underneath seals the body —
+    # from below the overhang you see a ceiling, not the world.
+    ovl, ovs, drop = (0.45 if hip else 0.35), 0.45, 0.12
+    W2, D2 = w / 2 + ovl, d / 2 + ovs
+    E = (e + ovl) if hip else 0.0                # ridge inset on frame
+    yb = ye - drop
+    R1, R2 = pt(-W2 + E, 0.0), pt(W2 - E, 0.0)
+    Ea, Eb = pt(-W2, -D2), pt(W2, -D2)
+    Ec, Ed = pt(W2, D2), pt(-W2, D2)
+    if not hip:
+        # vertical gable wall triangles at the wall plane (visible in
+        # the shadow slot behind the verge overhang)
+        # UVs pinned inside the texture's blank plaster strip (above the
+        # window row) — a metric mapping floated half-windows up here.
+        Rw1, Rw2 = pt(-w / 2, 0.0), pt(w / 2, 0.0)
+        guv = [(0.0, 0.30), (d / 5.0, 0.30), (d / 10.0, 0.02)]
+        for tri in (((C[0], ye, C[1]), (B[0], ye, B[1]),
+                     (Rw2[0], yr, Rw2[1])),
+                    ((A[0], ye, A[1]), (D[0], ye, D[1]),
+                     (Rw1[0], yr, Rw1[1]))):
+            acc_wall.add(list(tri), [(0, 1, 0)] * 3, [0, 1, 2], guv)
+    else:
+        # sloped hip end faces on the eave frame (outward windings).
+        # PLANAR UVs: u tracks each vertex's position along the end
+        # face, v the slope distance from the eave — constant tile size.
+        sle = float(np.hypot(max(E, 0.3), rise + drop))
+        for tri, uvs in (
+                (([(Ec[0], yb, Ec[1]), (Eb[0], yb, Eb[1]),
+                   (R2[0], yr, R2[1])]),
+                 [(D2 / 3.0, sle / 3.0), (-D2 / 3.0, sle / 3.0),
+                  (0.0, 0.0)]),
+                (([(Ea[0], yb, Ea[1]), (Ed[0], yb, Ed[1]),
+                   (R1[0], yr, R1[1])]),
+                 [(D2 / 3.0, sle / 3.0), (-D2 / 3.0, sle / 3.0),
+                  (0.0, 0.0)])):
+            acc_roof.add(tri, [(0, 1, 0)] * 3, [0, 1, 2], uvs)
+    # side slopes on the eave frame.  PLANAR UVs: u = metres along the
+    # ridge axis PER VERTEX (the hip edge crops tiles diagonally like a
+    # real roof), v = slope metres from the eave.  Stretching the short
+    # ridge edge to the eave's u-range sheared the tiles and put an
+    # affine seam across the quad diagonal.
+    sl = float(np.hypot(D2, rise + drop))
     for side in (-1.0, 1.0):
-        E1 = pt(-w / 2 - ovl, side * (d / 2 + ovs))
-        E2 = pt(w / 2 + ovl, side * (d / 2 + ovs))
-        Ra = pt(-w / 2 - ovl, 0.0)
-        Rb = pt(w / 2 + ovl, 0.0)
-        v = [(E1[0], ye - drop, E1[1]), (E2[0], ye - drop, E2[1]),
+        E1 = pt(-W2, side * D2)
+        E2 = pt(W2, side * D2)
+        Ra = pt(-W2 + E, 0.0)
+        Rb = pt(W2 - E, 0.0)
+        v = [(E1[0], yb, E1[1]), (E2[0], yb, E2[1]),
              (Rb[0], yr, Rb[1]), (Ra[0], yr, Ra[1])]
-        uvs = [(0.0, sl / 3.0), ((w + 2 * ovl) / 3.0, sl / 3.0),
-               ((w + 2 * ovl) / 3.0, 0.0), (0.0, 0.0)]
+        uvs = [(-W2 / 3.0, sl / 3.0), (W2 / 3.0, sl / 3.0),
+               ((W2 - E) / 3.0, 0.0), ((-W2 + E) / 3.0, 0.0)]
         acc_roof.add(v, [(0, 1, 0)] * 4, [0, 1, 2, 0, 2, 3], uvs)
+    # soffit: flat cap under the whole eave frame
+    v = [(Ea[0], yb, Ea[1]), (Eb[0], yb, Eb[1]),
+         (Ec[0], yb, Ec[1]), (Ed[0], yb, Ed[1])]
+    uvs = [(0.0, 0.0), (2 * W2 / 3.0, 0.0),
+           (2 * W2 / 3.0, 2 * D2 / 3.0), (0.0, 2 * D2 / 3.0)]
+    acc_roof.add(v, [(0, 1, 0)] * 4, [0, 1, 2, 0, 2, 3], uvs)
+
+
+def _inset_ring(ring, d):
+    """Miter-offset every vertex of a CLOCKWISE ring inward by edge
+    distance d (the ridge ring of a hip roof).  Returns None when the
+    inset degenerates — flipped orientation, collapsed area, spiked
+    miter, or self-intersection — and the caller falls back."""
+    n = len(ring)
+    P = np.asarray(ring, np.float64)
+    offs = np.zeros((n, 2))
+    for i in range(n):
+        p0, p1, p2 = P[i - 1], P[i], P[(i + 1) % n]
+        e0, e1 = p1 - p0, p2 - p1
+        l0, l1 = np.linalg.norm(e0), np.linalg.norm(e1)
+        if l0 < 1e-6 or l1 < 1e-6:
+            return None
+        e0, e1 = e0 / l0, e1 / l1
+        n0 = np.array([e0[1], -e0[0]])       # inward normals (CW ring)
+        n1 = np.array([e1[1], -e1[0]])
+        den = 1.0 + float(n0 @ n1)
+        if den < 0.15:                       # near-180° spike: CLAMP the
+            m = n0 + n1                      # miter instead of giving up
+            ml = float(np.linalg.norm(m))
+            off = (m / ml if ml > 1e-6 else
+                   np.array([-e0[0], -e0[1]])) * d
+        else:
+            off = (n0 + n1) / den * d
+            ol = float(np.linalg.norm(off))
+            if ol > 3.0 * d:
+                off *= 3.0 * d / ol
+        offs[i] = off
+
+    def _cr(p, q, r):
+        return ((q[0] - p[0]) * (r[1] - p[1]) -
+                (q[1] - p[1]) * (r[0] - p[0]))
+
+    def _crossers(inner):
+        bad = set()
+        for i in range(n):                   # O(n²); rings are small
+            a, b = inner[i], inner[(i + 1) % n]
+            for j in range(i + 1, n):
+                if j == i or (j + 1) % n == i or (i + 1) % n == j:
+                    continue
+                c, e = inner[j], inner[(j + 1) % n]
+                if (((_cr(c, e, a) > 0) != (_cr(c, e, b) > 0)) and
+                        ((_cr(a, b, c) > 0) != (_cr(a, b, e) > 0))):
+                    bad.update((i, (i + 1) % n, j, (j + 1) % n))
+        return bad
+    # The inset is pushed toward the footprint's MEDIAL LINE (so the cap
+    # collapses into a main ridge), which makes degeneracies routine —
+    # REPAIR instead of rejecting: vertices whose ridge segments cross or
+    # that escape the outline get their offsets shrunk locally; a ring
+    # that folded straight through the collapse line (flipped signed
+    # area, no crossings) gets a global shrink.
+    import cv2
+    cont = np.asarray(ring, np.float32).reshape(-1, 1, 2)
+    a_out = _poly_area_signed(ring)
+    inner = None
+    for _ in range(12):
+        inner = [(float(P[i, 0] + offs[i, 0]),
+                  float(P[i, 1] + offs[i, 1])) for i in range(n)]
+        if np.sign(_poly_area_signed(inner)) != np.sign(a_out):
+            offs *= 0.65
+            continue
+        bad = _crossers(inner)
+        for i in range(n):
+            if cv2.pointPolygonTest(cont, inner[i], False) < 0:
+                bad.add(i)
+        if not bad:
+            break
+        for i in bad:
+            offs[i] *= 0.45
+    else:
+        return None
+    if (_crossers(inner) or
+            np.sign(_poly_area_signed(inner)) != np.sign(a_out)):
+        return None
+    return inner
 
 
 def _add_flat_block(acc_wall, acc_roof, P, hgt, y0):
-    # NOTE: no module-level cv2 dependency — the ear-clip bail below does
-    # its own guarded import with a numpy hull fallback.
+    """Irregular footprint: straight walls + pitched HIP roof — the eave
+    ring rises to an inset ridge ring topped with a small cap, so big
+    blocks read as ridged roofs instead of flat slabs.  Falls back to a
+    flat slab only when the inset ring degenerates."""
+    import cv2
     ring = [tuple(p) for p in P]
     if _poly_area_signed(ring) > 0:          # need CLOCKWISE for outward
         ring = ring[::-1]
@@ -971,206 +1228,240 @@ def _add_flat_block(acc_wall, acc_roof, P, hgt, y0):
         # Ear clipping bailed — the simplified outline self-intersects.
         # A fan over a bad ring sprays giant roof triangles outside the
         # building, so fall back to the convex hull instead.
-        try:
-            import cv2 as _cv2
-            hull = _cv2.convexHull(
-                np.asarray(P, np.float32).reshape(-1, 1, 2)).reshape(-1, 2)
-        except ModuleNotFoundError:
-            hull = _convex_hull_np(np.asarray(P, np.float64).reshape(-1, 2))
-        ring = [tuple(p) for p in hull]
+        hull = cv2.convexHull(np.asarray(P, np.float32).reshape(-1, 1, 2))
+        ring = [tuple(p) for p in hull.reshape(-1, 2)]
         if _poly_area_signed(ring) > 0:
             ring = ring[::-1]
         tris = _ear_clip(ring)
-    yt = y0 + max(2.6, hgt)
-    _wall_ring(acc_wall, ring, y0, yt)
-    v = [(x, yt, z) for x, z in ring]
-    uvs = [(x / 2.5, z / 2.5) for x, z in ring]
-    f = [i for t in tris for i in t]
-    acc_roof.add(v, [(0, 1, 0)] * len(v), f, uvs)
-
-
-def _convex_hull_np(pts):
-    """Andrew monotone-chain convex hull (cv2.convexHull fallback)."""
-    pts = np.unique(np.asarray(pts, np.float64).reshape(-1, 2), axis=0)
-    if len(pts) < 3:
-        return pts
-    pts = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
-    def half(seq):
-        out = []
-        for p in seq:
-            while len(out) >= 2 and np.cross(out[-1] - out[-2],
-                                             p - out[-2]) <= 0:
-                out.pop()
-            out.append(p)
-        return out
-    return np.array(half(list(pts))[:-1] + half(list(pts)[::-1])[:-1])
-
-
-def _clip_poly_np(subject, clip):
-    """Sutherland–Hodgman convex clip; both polygons as (N,2) arrays."""
-    out = list(map(tuple, subject))
-    cp = list(map(tuple, clip))
-    for i in range(len(cp)):
-        a, b = np.array(cp[i]), np.array(cp[(i + 1) % len(cp)])
-        e = b - a
-        inp, out = out, []
-        if not inp:
+    eave = max(2.6, hgt)
+    ye = y0 + eave
+    _wall_ring(acc_wall, ring, y0, ye)
+    (_, _), (rw, rh), _ = cv2.minAreaRect(
+        np.asarray(ring, np.float32).reshape(-1, 1, 2))
+    # Aim the inset at HALF the short side, i.e. the medial collapse
+    # distance of the footprint: the cap shrinks to a spine and the roof
+    # gets a MAIN RIDGE LINE instead of a low plateau.
+    inset = float(np.clip(0.48 * min(rw, rh), 1.2, 14.0))
+    inner = None
+    for scale in (1.0, 0.7, 0.45, 0.25):     # shrink until the ridge
+        trial = max(0.8, inset * scale)      # ring stops degenerating
+        inner = _inset_ring(ring, trial)
+        if inner is not None:
+            inset = trial
             break
-        for j in range(len(inp)):
-            p, q = np.array(inp[j]), np.array(inp[(j + 1) % len(inp)])
-            pin = np.cross(e, p - a) >= 0
-            qin = np.cross(e, q - a) >= 0
-            if pin:
-                out.append(tuple(p))
-            if pin != qin:
-                d = q - p
-                den = np.cross(e, d)
-                if abs(den) > 1e-12:
-                    t = np.cross(e, a - p) / den
-                    out.append(tuple(p + t * d))
-    return np.array(out) if out else np.zeros((0, 2))
+        if trial <= 0.8:
+            break
+    if inner is not None:
+        # Constant-pitch roof: each ridge vertex rises with the inset
+        # depth it actually reached (necks that were repaired inward sit
+        # lower) — the straight-skeleton behaviour of a real hip roof.
+        PITCH, RISE_MIN, RISE_MAX = 1.0, 0.8, 7.0   # ~45° pitch
+
+        def _dist_to_ring(p):
+            best = 1e9
+            for i in range(len(ring)):
+                a, b = np.asarray(ring[i]), np.asarray(ring[(i + 1) %
+                                                           len(ring)])
+                ab = b - a
+                t = float(np.clip(np.dot(p - a, ab) /
+                                  max(float(ab @ ab), 1e-9), 0.0, 1.0))
+                best = min(best, float(np.linalg.norm(a + t * ab - p)))
+            return best
+
+        rises = [float(np.clip(PITCH * _dist_to_ring(np.asarray(q)),
+                               RISE_MIN, RISE_MAX)) for q in inner]
+        n = len(ring)
+        for i in range(n):                   # roof band: eave -> ridge
+            j = (i + 1) % n
+            o0, o1, i0, i1 = ring[i], ring[j], inner[i], inner[j]
+            ex, ez = o1[0] - o0[0], o1[1] - o0[1]
+            el = float(np.hypot(ex, ez))
+            ux, uz = ex / el, ez / el
+            # PLANAR per-vertex UVs (project onto the eave edge; v =
+            # slope distance from it) — stretching the shorter ridge
+            # edge to the eave's u-range sheared the tiles and left an
+            # affine seam across the quad diagonal.
+            def _uv(p, y):
+                dx, dz = p[0] - o0[0], p[1] - o0[1]
+                horiz = abs(dx * uz - dz * ux)
+                return ((dx * ux + dz * uz) / 3.0,
+                        float(np.hypot(horiz, y - ye)) / 3.0)
+            v = [(o0[0], ye, o0[1]), (o1[0], ye, o1[1]),
+                 (i1[0], ye + rises[j], i1[1]),
+                 (i0[0], ye + rises[i], i0[1])]
+            uvs = [(0.0, 0.0), (el / 3.0, 0.0),
+                   _uv(i1, ye + rises[j]), _uv(i0, ye + rises[i])]
+            acc_roof.add(v, [(0, 1, 0)] * 4, [0, 1, 2, 0, 2, 3], uvs)
+        ctris = _ear_clip(inner)             # ridge cap (thin spine)
+        v = [(x, ye + r, z) for (x, z), r in zip(inner, rises)]
+        uvs = [(x / 2.5, z / 2.5) for x, z in inner]
+        acc_roof.add(v, [(0, 1, 0)] * len(v),
+                     [i for t in ctris for i in t], uvs)
+    else:
+        v = [(x, ye, z) for x, z in ring]
+        uvs = [(x / 2.5, z / 2.5) for x, z in ring]
+        acc_roof.add(v, [(0, 1, 0)] * len(v),
+                     [i for t in tris for i in t], uvs)
 
 
-def _rot_rect_inter_area_np(r1, r2):
-    """cv2.rotatedRectangleIntersection area fallback for two
-    ((cx,cy),(w,h),ang_deg) rects."""
-    b1 = np.array(_box_points_np(*r1))
-    b2 = np.array(_box_points_np(*r2))
-    # ensure CCW order for the clipper
-    if _poly_area_signed([tuple(p) for p in b1]) < 0:
-        b1 = b1[::-1]
-    if _poly_area_signed([tuple(p) for p in b2]) < 0:
-        b2 = b2[::-1]
-    inter = _clip_poly_np(b1, b2)
-    if len(inter) < 3:
-        return 0.0
-    return abs(_poly_area_signed([tuple(p) for p in inter]))
-
-
-def _min_area_rect_np(P):
-    """cv2.minAreaRect fallback (rotating calipers over the convex hull).
-    Returns ((cx, cy), (w, h), angle_deg) like cv2, close enough for the
-    gable/massing decisions below.  Pure numpy — used when cv2 is absent."""
-    pts = np.unique(np.asarray(P, np.float64).reshape(-1, 2), axis=0)
-    if len(pts) < 3:
-        c = pts.mean(axis=0)
-        return (float(c[0]), float(c[1])), (0.0, 0.0), 0.0
-    # Andrew monotone-chain convex hull
-    pts = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
-    def half(seq):
-        out = []
-        for p in seq:
-            while len(out) >= 2 and np.cross(out[-1] - out[-2],
-                                             p - out[-2]) <= 0:
-                out.pop()
-            out.append(p)
-        return out
-    hull = np.array(half(list(pts)) [:-1] + half(list(pts)[::-1])[:-1])
-    best = None
-    for i in range(len(hull)):
-        e = hull[(i + 1) % len(hull)] - hull[i]
-        L = np.hypot(*e)
-        if L < 1e-9:
+def _dedupe_footprints(bld_polys, H, px_m):
+    """Resolve overlaps BETWEEN footprints: the extractor's per-instance
+    polygons can still overlap after contour simplification (hundreds of
+    pairs on a map, tens of m² each), which made neighbouring houses
+    interpenetrate.  Rasterise footprints onto a shared claim map (1 m
+    cells) largest-first, keep each footprint's biggest unclaimed
+    component, and re-trace its outline."""
+    import cv2
+    cell = max(1, int(round(1.0 / px_m)))          # px per ~1 m cell
+    G = max(1, H // cell)
+    claim = np.zeros((G, G), np.uint8)
+    res = [None] * len(bld_polys)
+    order = sorted(range(len(bld_polys)),
+                   key=lambda i: -abs(cv2.contourArea(
+                       np.asarray(bld_polys[i][0], np.float32))))
+    for i in order:
+        poly, hgt = bld_polys[i]
+        p = np.asarray(poly, np.float64) / cell
+        x0 = max(int(np.floor(p[:, 0].min())) - 1, 0)
+        y0 = max(int(np.floor(p[:, 1].min())) - 1, 0)
+        x1 = min(int(np.ceil(p[:, 0].max())) + 2, G)
+        y1 = min(int(np.ceil(p[:, 1].max())) + 2, G)
+        if x1 <= x0 or y1 <= y0:
             continue
-        ux, uy = e / L
-        R = np.array([[ux, uy], [-uy, ux]])
-        q = hull @ R.T
-        mn, mx = q.min(axis=0), q.max(axis=0)
-        w, h = float(mx[0] - mn[0]), float(mx[1] - mn[1])
-        if best is None or w * h < best[0]:
-            cx, cy = (mn + mx) / 2.0
-            cw = np.array([cx, cy]) @ R              # back to world
-            best = (w * h, (float(cw[0]), float(cw[1])), (w, h),
-                    float(np.degrees(np.arctan2(uy, ux))))
-    _, c, wh, ang = best
-    return c, wh, ang
+        m = np.zeros((y1 - y0, x1 - x0), np.uint8)
+        cv2.fillPoly(m, [np.round(p - [x0, y0]).astype(np.int32)], 1)
+        m[claim[y0:y1, x0:x1] > 0] = 0
+        n, lab = cv2.connectedComponents(m)
+        if n <= 1:
+            continue
+        sizes = np.bincount(lab.ravel())
+        sizes[0] = 0
+        keep = (lab == int(sizes.argmax())).astype(np.uint8)
+        if keep.sum() * (cell * px_m) ** 2 < 8.0:  # < 8 m² left: drop
+            continue
+        claim[y0:y1, x0:x1] |= keep
+        cont, _ = cv2.findContours(keep, cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+        c = max(cont, key=cv2.contourArea).reshape(-1, 2)
+        if len(c) < 3:
+            continue
+        res[i] = (((c + [x0, y0]).astype(np.float32) + 0.5) * cell, hgt)
+    return [r for r in res if r is not None]
 
 
-def _box_points_np(center, wh, ang_deg):
-    """cv2.boxPoints fallback: 4 corners of a rotated rect."""
-    cx, cy = center
-    w, h = wh
-    a = np.radians(ang_deg)
-    ca, sa = np.cos(a), np.sin(a)
-    out = []
-    for dx, dy in ((-w / 2, -h / 2), (w / 2, -h / 2),
-                   (w / 2, h / 2), (-w / 2, h / 2)):
-        out.append((cx + dx * ca - dy * sa, cy + dx * sa + dy * ca))
-    return out
+def _largest_rect(mask):
+    """Largest all-ones axis-aligned rectangle in a binary mask (stack-
+    based histogram sweep).  Returns (area, r0, c0, r1, c1) or None."""
+    Hm, Wm = mask.shape
+    heights = np.zeros(Wm, np.int32)
+    best = (0, None)
+    for r in range(Hm):
+        heights = (heights + 1) * mask[r]
+        stack = []
+        for cc in range(Wm + 1):
+            h = int(heights[cc]) if cc < Wm else 0
+            start = cc
+            while stack and stack[-1][1] >= h:
+                s, hh = stack.pop()
+                if hh * (cc - s) > best[0]:
+                    best = (hh * (cc - s), (r - hh + 1, s, r, cc - 1))
+                start = s
+            stack.append((start, h))
+    return best[1] and (best[0],) + best[1]
 
 
-def _signed_dist_poly_np(P, px, py):
-    """cv2.pointPolygonTest(measureDist=True) fallback: distance from
-    (px, py) to the polygon boundary, positive inside, negative outside."""
-    pts = np.asarray(P, np.float64).reshape(-1, 2)
-    a = pts
-    b = np.roll(pts, -1, axis=0)
-    ab = b - a
-    ap = np.array([px, py])[None, :] - a
-    t = np.clip((ap * ab).sum(1) / np.maximum((ab * ab).sum(1), 1e-12),
-                0.0, 1.0)
-    proj = a + t[:, None] * ab
-    d = float(np.sqrt(((np.array([px, py])[None, :] - proj) ** 2)
-                      .sum(1)).min())
-    # even-odd rule for inside/outside
-    x, y = px, py
-    inside = False
-    for (x1, y1), (x2, y2) in zip(a, b):
-        if (y1 > y) != (y2 > y):
-            xi = x1 + (y - y1) * (x2 - x1) / (y2 - y1 + 1e-30)
-            if x < xi:
-                inside = not inside
-    return d if inside else -d
+def _decompose_rects(P, max_wings=4):
+    """Split a traced footprint into up to `max_wings` oriented rectangles
+    (REAL-WORLD reference: houses are rectangles and L/T/U compositions
+    of them, not amoebas).  Rasterise the outline in its dominant-axis
+    frame, peel off the largest inscribed rectangle repeatedly, and map
+    the rectangles back to world space."""
+    import cv2
+    (rcx, rcz), (rw, rh), rang = cv2.minAreaRect(P.reshape(-1, 1, 2))
+    th = float(np.deg2rad(rang))
+    ca, sa = np.cos(th), np.sin(th)
+    rot = np.array([[ca, sa], [-sa, ca]], np.float64)      # world -> frame
+    Q = (P.astype(np.float64) - [rcx, rcz]) @ rot.T
+    res = 0.5 if max(rw, rh) < 80 else 1.0
+    mn = Q.min(0) - res
+    cells = np.ceil((Q.max(0) - mn) / res).astype(int) + 2
+    if cells[0] * cells[1] > 400000:
+        return []
+    mask = np.zeros((cells[1], cells[0]), np.uint8)        # rows = frame-y
+    cv2.fillPoly(mask, [np.round((Q - mn) / res).astype(np.int32)], 1)
+    total = int(mask.sum())
+    if not total:
+        return []
+    rects, covered = [], 0
+    for _ in range(max_wings):
+        got = _largest_rect(mask)
+        if not got:
+            break
+        a, r0, c0, r1, c1 = got
+        wm, dm = (c1 - c0 + 1) * res, (r1 - r0 + 1) * res
+        if min(wm, dm) < 2.4 or a * res * res < max(10.0, 0.06 * total *
+                                                    res * res):
+            break
+        fcx = mn[0] + (c0 + c1 + 1) * 0.5 * res
+        fcy = mn[1] + (r0 + r1 + 1) * 0.5 * res
+        wc = np.array([fcx, fcy]) @ rot + [rcx, rcz]       # frame -> world
+        rects.append((float(wc[0]), float(wc[1]), float(wm), float(dm), th))
+        mask[r0:r1 + 1, c0:c1 + 1] = 0
+        covered += a
+        if covered >= 0.90 * total:
+            break
+    return rects
 
 
 def add_building(acc_wall, acc_roof, poly_w, hgt, y0):
-    """CLEAN house from a traced footprint: simplify the outline, then
-    either a rectangular massing with a proper GABLE roof (most houses)
-    or straight walls + flat roof slab for genuinely irregular outlines.
-    Replaces the medial-axis hip surface whose Delaunay-over-noisy-
-    outline roofs read as crumpled paper in game."""
-    try:
-        import cv2
-    except ModuleNotFoundError:
-        cv2 = None                                 # numpy fallback below
+    """House from a traced footprint, built the way real houses are
+    shaped: the outline is decomposed into 1-4 oriented rectangular
+    WINGS, each a gable- or hip-roofed block (ridge along its long axis);
+    wings overlap slightly so L/T/U compositions read as one building
+    with proper roof valleys.  Falls back to the outline-tracing hip
+    block only when no clean rectangle fits."""
+    import cv2
     P = np.asarray(poly_w, np.float32)
     if len(P) < 3:
         return
-    if cv2 is not None:
-        ap = cv2.approxPolyDP(P.reshape(-1, 1, 2), 1.2, True).reshape(-1, 2)
-        if len(ap) >= 3:
-            P = ap.astype(np.float32)
+    ap = cv2.approxPolyDP(P.reshape(-1, 1, 2), 1.2, True).reshape(-1, 2)
+    if len(ap) >= 3:
+        P = ap.astype(np.float32)
     area = abs(_poly_area_signed([tuple(p) for p in P]))
     if area < 6.0:
         return
-    if cv2 is not None:
-        (rcx, rcz), (rw, rh), rang = cv2.minAreaRect(P.reshape(-1, 1, 2))
+    # SEPARATION: the segmentation partitions towns wall-to-wall, so
+    # neighbouring buildings built to the outline interpenetrate (wing
+    # inflation + raster rounding push ~0.5 m past it).  Shrink every
+    # footprint inward before massing so adjacent houses stand apart.
+    ring = [tuple(p) for p in P]
+    if _poly_area_signed(ring) > 0:
+        ring = ring[::-1]
+    shr = _inset_ring(ring, 0.8)
+    if shr is None:
+        shr = _inset_ring(ring, 0.4)
+    if shr is not None and abs(_poly_area_signed(shr)) >= 6.0:
+        P = np.asarray(shr, np.float32)
     else:
-        (rcx, rcz), (rw, rh), rang = _min_area_rect_np(P)
-    if rw < 0.5 or rh < 0.5:
-        return
-    # GABLE only for house-scale, honestly-rectangular footprints.  The
-    # min-area rect is ROTATED: on a big irregular blob its corners poke
-    # up to ~15 m outside the traced outline and the roof spears through
-    # the neighbours.  Everything else gets a flat-roof block that traces
-    # the outline exactly (reads as a commercial/apartment building).
-    # ...and the rect's own corners must stay within ~2.5 m of the traced
-    # outline, or the roof still spears through the neighbours.
-    if cv2 is not None:
-        box = cv2.boxPoints(((rcx, rcz), (rw, rh), rang))
-        cont = P.reshape(-1, 1, 2).astype(np.float32)
-        out_d = max(-cv2.pointPolygonTest(cont, (float(bx), float(bz)), True)
-                    for bx, bz in box)
-    else:
-        box = _box_points_np((rcx, rcz), (rw, rh), rang)
-        out_d = max(-_signed_dist_poly_np(P, bx, bz) for bx, bz in box)
-    if (area <= 420.0 and max(rw, rh) <= 32.0 and out_d <= 2.5
-            and area / max(rw * rh, 1e-3) >= 0.62):
-        _add_gable_house(acc_wall, acc_roof, (float(rcx), float(rcz)),
-                         float(rw), float(rh), float(np.deg2rad(rang)),
-                         hgt, y0)
-    else:
+        # miter inset degenerated — uniform scale about the centroid is a
+        # crude inset that always succeeds
+        cen = P.mean(0)
+        P = (cen + (P - cen) * 0.88).astype(np.float32)
+    rects = _decompose_rects(P)
+    if not rects:
         _add_flat_block(acc_wall, acc_roof, P, hgt, y0)
+        return
+    rises = [float(np.clip(0.55 * min(w, d), 1.2, 4.5))
+             for _, _, w, d, _ in rects]
+    eave = max(2.4, hgt - 0.5 * max(rises))
+    for k, ((cx, cz, w, d, ang), rise) in enumerate(zip(rects, rises)):
+        # hip whenever the wing is wide — a 15 m gable end is a huge
+        # blank triangle; hips read as real architecture at that scale
+        hip = (min(w, d) > 10.0 or
+               _det_rand(int(cz) + 7 * k, int(cx) + 3, 0.0, 1.0) > 0.55)
+        # +0.3 m inflation hides the coplanar seams where wings touch
+        _add_gable_house(acc_wall, acc_roof, (cx, cz), w + 0.3, d + 0.3,
+                         ang, eave, rise, y0, hip=hip)
 
 
 def _tube(acc, cx, cz, r, y0, y1, sides=5):
@@ -1223,25 +1514,97 @@ def _octa(acc, cx, cz, y0, r, h):
     acc.add(v, n, f, uv)
 
 
+def _cone_jit(acc, cx, cz, r, y0, h, seed, sides=7):
+    """Canopy tier with radial ring jitter — an organically ragged cone
+    instead of a perfect lampshade."""
+    v = [(cx, y0 + h, cz)]
+    n = [(0.0, 1.0, 0.0)]
+    uv = [(0.5, 0.0)]
+    for i in range(sides):
+        t = 2 * np.pi * i / sides
+        rr = r * (0.78 + 0.44 * _det_rand(seed + i, seed * 3 + i, 0.0, 1.0))
+        yy = y0 + h * 0.08 * (_det_rand(seed * 5 + i, seed + 2 * i,
+                                        0.0, 1.0) - 0.5)
+        nx, nz = np.cos(t), np.sin(t)
+        nl = float(np.hypot(h, rr)) + 1e-6
+        v.append((cx + rr * nx, yy, cz + rr * nz))
+        n.append((nx * h / nl, rr / nl, nz * h / nl))
+        uv.append((t / np.pi * 2.5, h / 1.1))   # finer foliage tiling
+    f = []
+    for i in range(sides):
+        f += [0, 1 + i, 1 + (i + 1) % sides]
+    acc.add(v, n, f, uv)
+
+
+def _blob(acc, cx, cy, cz, rx, ry, rz, seed):
+    """Jittered subdivided octahedron — a lumpy broadleaf crown."""
+    base = [(0, 1, 0), (0, -1, 0), (1, 0, 0), (-1, 0, 0),
+            (0, 0, 1), (0, 0, -1)]
+    faces8 = [(0, 2, 4), (0, 4, 3), (0, 3, 5), (0, 5, 2),
+              (1, 4, 2), (1, 3, 4), (1, 5, 3), (1, 2, 5)]
+    verts = list(base)
+    mid = {}
+
+    def midpoint(a, b):
+        key = (min(a, b), max(a, b))
+        if key not in mid:
+            m = np.asarray(verts[a], np.float64) + np.asarray(verts[b],
+                                                             np.float64)
+            m /= np.linalg.norm(m) + 1e-9
+            mid[key] = len(verts)
+            verts.append(tuple(m))
+        return mid[key]
+
+    faces = []
+    for a, b, c in faces8:                    # one subdivision -> 32 tris
+        ab, bc, ca = midpoint(a, b), midpoint(b, c), midpoint(c, a)
+        faces += [(a, ab, ca), (ab, b, bc), (ca, bc, c), (ab, bc, ca)]
+    v, n, uv = [], [], []
+    for i, p in enumerate(verts):
+        j = 0.8 + 0.4 * _det_rand(seed + i * 7, seed * 3 + i, 0.0, 1.0)
+        v.append((cx + p[0] * rx * j, cy + p[1] * ry * j,
+                  cz + p[2] * rz * j))
+        n.append(p)
+        uv.append((p[0] * 1.6 + 0.5, p[2] * 1.6 + 0.5))  # finer tiling
+    acc.add(v, n, [i for t in faces for i in t], uv)
+
+
 def add_tree(acc_trunk, acc_leaf, cx, cz, hgt, rad, y0, sx, sy):
-    """Low-poly TREE (bark trunk + foliage canopy) replacing the flat
-    debug cones: ~70% conifers (two stacked canopy cones), ~30% broadleaf
-    (faceted crown on a taller trunk).  All variation comes from
-    _det_rand on the source pixel coords, so output is deterministic."""
+    """Low-poly TREE with real-world species variety: ~40% spruce (three
+    ragged tiers), ~30% pine (high crown, two narrow tiers on a tall
+    bare trunk), ~30% broadleaf (lumpy multi-blob crown).  All variation
+    comes from _det_rand on the source pixel coords (deterministic)."""
     kind = _det_rand(sx, sy, 0.0, 1.0)
-    s = 0.85 + 0.3 * _det_rand(sy, sx, 0.0, 1.0)
+    s = 0.65 + 0.75 * _det_rand(sy, sx, 0.0, 1.0)   # wide size spread
     hgt, rad = hgt * s, rad * s
-    rt = float(np.clip(rad * 0.16, 0.2, 0.5))
-    if kind < 0.7:                                   # conifer
-        th = 0.25 * hgt
+    rt = float(np.clip(rad * 0.16, 0.2, 0.55))
+    seed = sx * 131 + sy * 17
+    # minimum trunk clearances keep small trees' canopies OFF the ground
+    # even when terrain detail displacement raises the surface a little
+    if kind < 0.4:                                   # spruce: 3 tiers
+        th = max(0.18 * hgt, 1.0)
         _tube(acc_trunk, cx, cz, rt, y0 - 0.4, y0 + th + 0.3)
-        _cone_lp(acc_leaf, cx, cz, rad, y0 + th, 0.55 * hgt)
-        _cone_lp(acc_leaf, cx, cz, rad * 0.62, y0 + th + 0.32 * hgt,
-                 0.55 * hgt)
-    else:                                            # broadleaf
-        th = 0.42 * hgt
-        _tube(acc_trunk, cx, cz, rt, y0 - 0.4, y0 + th + 0.1)
-        _octa(acc_leaf, cx, cz, y0 + th, rad * 1.25, 0.6 * hgt)
+        _cone_jit(acc_leaf, cx, cz, rad, y0 + th, 0.48 * hgt, seed)
+        _cone_jit(acc_leaf, cx, cz, rad * 0.74, y0 + th + 0.26 * hgt,
+                  0.46 * hgt, seed + 3)
+        _cone_jit(acc_leaf, cx, cz, rad * 0.46, y0 + th + 0.52 * hgt,
+                  0.44 * hgt, seed + 6)
+    elif kind < 0.7:                                 # pine: tall bare trunk
+        th = max(0.45 * hgt, 1.5)
+        _tube(acc_trunk, cx, cz, rt * 0.85, y0 - 0.4, y0 + th + 0.2)
+        _cone_jit(acc_leaf, cx, cz, rad * 0.8, y0 + th, 0.42 * hgt,
+                  seed + 1)
+        _cone_jit(acc_leaf, cx, cz, rad * 0.52, y0 + th + 0.28 * hgt,
+                  0.4 * hgt, seed + 4)
+    else:                                            # broadleaf: blob crown
+        th = max(0.38 * hgt, 1.2)
+        _tube(acc_trunk, cx, cz, rt * 1.1, y0 - 0.4, y0 + th + 0.15)
+        cy = y0 + th + 0.28 * hgt
+        _blob(acc_leaf, cx, cy, cz, rad * 1.2, 0.34 * hgt, rad * 1.2, seed)
+        ox = rad * 0.55 * (_det_rand(seed + 21, seed + 5, 0.0, 1.0) - 0.5)
+        oz = rad * 0.55 * (_det_rand(seed + 9, seed + 33, 0.0, 1.0) - 0.5)
+        _blob(acc_leaf, cx + ox, cy + 0.16 * hgt, cz + oz,
+              rad * 0.8, 0.24 * hgt, rad * 0.8, seed + 50)
 
 
 def _flat_shade(pos, idx, uv=None):
@@ -1345,25 +1708,37 @@ def write_glb(groups, path):
                            pos[:, 2] / WORLD_SIZE_M + 0.5],
                           1).astype(np.float32)
 
-        # Embedded albedo: the engine's drawable path expects a
+        # Embedded PBR set: the engine's drawable path expects a
         # baseColorTexture — factor-only materials import but don't
-        # render.  Accepts a solid (r, g, b) OR a PIL.Image (real
-        # tiling texture for walls/roofs/foliage).
+        # render.  Accepts a solid (r, g, b), a PIL.Image (albedo only),
+        # or a {albedo, normal, mr} bundle from _tex_bundle for full
+        # PBR (normal + metallicRoughness maps).
         mat_idx = len(materials)
-        wb = io.BytesIO()
-        img = (albedo if isinstance(albedo, Image.Image)
-               else Image.new("RGB", (4, 4), tuple(albedo)))
-        img.save(wb, format="PNG")
-        img_view = view(pad4(wb.getvalue()), None)
-        images.append({"bufferView": img_view, "mimeType": "image/png"})
-        textures.append({"sampler": 0, "source": len(images) - 1})
-        materials.append({"name": name,
-                          "pbrMetallicRoughness": {
-                              "baseColorTexture": {
-                                  "index": len(textures) - 1},
-                              "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
-                              "metallicFactor": 0.0,
-                              "roughnessFactor": 0.9}})
+
+        def _emit_tex(im):
+            wb = io.BytesIO()
+            im.save(wb, format="PNG")
+            iv = view(pad4(wb.getvalue()), None)
+            images.append({"bufferView": iv, "mimeType": "image/png"})
+            textures.append({"sampler": 0, "source": len(images) - 1})
+            return len(textures) - 1
+
+        bundle = albedo if isinstance(albedo, dict) else {
+            "albedo": (albedo if isinstance(albedo, Image.Image)
+                       else Image.new("RGB", (4, 4), tuple(albedo)))}
+        pbr = {"baseColorTexture": {"index": _emit_tex(bundle["albedo"])},
+               "baseColorFactor": [1.0, 1.0, 1.0, 1.0],
+               # factors MULTIPLY the mr texture; metallic 0 stays safe
+               # even on loaders that ignore the texture.
+               "metallicFactor": 0.0,
+               "roughnessFactor": 1.0 if "mr" in bundle else 0.9}
+        mat = {"name": name, "pbrMetallicRoughness": pbr}
+        if "mr" in bundle:
+            pbr["metallicRoughnessTexture"] = {
+                "index": _emit_tex(bundle["mr"])}
+        if "normal" in bundle:
+            mat["normalTexture"] = {"index": _emit_tex(bundle["normal"])}
+        materials.append(mat)
 
         # Split into <=65k-vertex primitives with UINT16 indices: standard
         # game assets never exceed 16-bit indexing, and a 255k-vert single
@@ -1459,7 +1834,22 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
         return (px * px_m - WORLD_SIZE_M * 0.5,
                 py * px_m - WORLD_SIZE_M * 0.5)
 
+    # Placement heights come from the RENDER MESH when it exists (the
+    # sibling <stamp>.glb): the engine draws hmap*HEIGHT_AMP_M with NO
+    # soil offset, so heightmap-derived bases floated ~SOIL_OFFSET_M
+    # (5 m) above the visible ground — every tree hovered mid-air.
+    ground_grid = None
+    ter_glb = os.path.splitext(height_path)[0] + ".glb"
+    if os.path.exists(ter_glb):
+        try:
+            ground_grid = _load_terrain_grid(ter_glb)
+            print(f"[pcg] ground heights from render mesh: {ter_glb}")
+        except Exception as e:                            # noqa: BLE001
+            print(f"[pcg] terrain glb unreadable ({e}); heightmap fallback")
+
     def ground(px, py):
+        if ground_grid is not None:
+            return _grid_sample(ground_grid, *px_to_world(px, py))
         return float(hmap[min(int(py), H - 1),
                           min(int(px), H - 1)]) * HEIGHT_AMP_M + SOIL_OFFSET_M
 
@@ -1588,46 +1978,81 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
         print("[pcg] biome gate: suppressing building proxies (barren biome)")
         bld = []
         bld_polys = []
-    acc_wall, acc_roof = MeshAcc(), MeshAcc()
-    acc_trunk, acc_leaf = MeshAcc(), MeshAcc()
+    # Variant accumulators — a deterministic position hash assigns each
+    # building a wall/roof palette and a height jitter, and each tree a
+    # foliage palette, so streets stop looking clone-stamped.
+    acc_walls = [MeshAcc() for _ in _WALL_BASES]
+    acc_roofs = [MeshAcc() for _ in _ROOF_BASES]
+    acc_leafs = [MeshAcc() for _ in _LEAF_BASES]
+    acc_trunk = MeshAcc()
+
+    def _pick(cx, cy, salt, n):
+        return min(int(_det_rand(int(cx) + salt, int(cy) + 2 * salt + 1,
+                                 0.0, float(n))), n - 1)
+
+    def _jitter_h(cx, cy, h):
+        h = h * (0.85 + 0.35 * _det_rand(int(cx) + 3, int(cy) + 5,
+                                         0.0, 1.0))
+        if _det_rand(int(cx) + 9, int(cy) + 13, 0.0, 1.0) > 0.88:
+            h *= 1.45                        # occasional taller landmark
+        return h
+
     bld_polys = locals().get("bld_polys") or []
+    if bld_polys:
+        n0 = len(bld_polys)
+        bld_polys = _dedupe_footprints(bld_polys, H, px_m)
+        print(f"[pcg] footprint overlap resolution: {n0} -> "
+              f"{len(bld_polys)} buildings")
     for cx, cy, w, d, ang, hgt in bld:
         wx, wz = px_to_world(cx, cy)
         ca, sa = np.cos(ang), np.sin(ang)
         pts = [(wx + u * ca - v * sa, wz + u * sa + v * ca)
                for u, v in ((-w / 2, -d / 2), (w / 2, -d / 2),
                             (w / 2, d / 2), (-w / 2, d / 2))]
-        add_building(acc_wall, acc_roof, pts, hgt, ground(cx, cy) - 0.6)
+        add_building(acc_walls[_pick(cx, cy, 17, len(_WALL_BASES))],
+                     acc_roofs[_pick(cx, cy, 31, len(_ROOF_BASES))],
+                     pts, _jitter_h(cx, cy, hgt), ground(cx, cy) - 0.6)
     for poly, phgt in bld_polys:
         pts = [px_to_world(px_, py_) for px_, py_ in poly]
         # SLOPE-AWARE base: min ground over the whole outline (a centre
         # sample let downhill corners float in mid-air), walls extended
         # 0.4 m into the ground.
-        base = min(ground(px_, py_) for px_, py_ in poly) - 0.4
-        add_building(acc_wall, acc_roof, pts, phgt, base)
+        base = min(ground(px_, py_) for px_, py_ in poly) - 0.3
+        pcx, pcy = float(poly[:, 0].mean()), float(poly[:, 1].mean())
+        add_building(acc_walls[_pick(pcx, pcy, 17, len(_WALL_BASES))],
+                     acc_roofs[_pick(pcx, pcy, 31, len(_ROOF_BASES))],
+                     pts, _jitter_h(pcx, pcy, phgt), base)
     trees = extract_trees(masks["veg"], tree_block, px_m) if place_trees else []
     if not place_trees:
         print("[pcg] biome gate: suppressing tree proxies (treeless biome)")
     for px, py, hgt, rad in trees:
         wx, wz = px_to_world(px, py)
-        add_tree(acc_trunk, acc_leaf, wx, wz, hgt, rad,
-                 ground(px, py) - 0.15, int(px), int(py))
-    write_glb([(acc_wall,  _tex("wall"), "house_wall", True),
-               (acc_roof,  _tex("roof"), "house_roof", True),
-               (acc_trunk, _tex("bark"), "tree_trunk"),
-               (acc_leaf,  _tex("leaf"), "tree_leaf")],
-              out_glb)
+        add_tree(acc_trunk, acc_leafs[_pick(px, py, 53, len(_LEAF_BASES))],
+                 wx, wz, hgt, rad, ground(px, py) - 0.05, int(px), int(py))
+    groups = ([(a, _tex_bundle(f"wall{i}"), f"house_wall{i}", True)
+               for i, a in enumerate(acc_walls)] +
+              [(a, _tex_bundle(f"roof{i}"), f"house_roof{i}", True)
+               for i, a in enumerate(acc_roofs)] +
+              [(acc_trunk, _tex_bundle("bark"), "tree_trunk")] +
+              [(a, _tex_bundle(f"leaf{i}"), f"tree_leaf{i}")
+               for i, a in enumerate(acc_leafs)])
+    write_glb([grp for grp in groups if grp[0].pos], out_glb)
     if bld_polys:
         fp = os.path.splitext(out_glb)[0] + "_footprints.json"
         with open(fp, "w", encoding="utf-8") as fh:
             json.dump({"px_m": px_m, "world_size_m": WORLD_SIZE_M,
                        "polys": [p.tolist() for p, _ in bld_polys],
-                       "heights": [h for _, h in bld_polys]}, fh)
+                       "heights": [h for _, h in bld_polys],
+                       # tree placements too, so offline tooling can
+                       # rebuild the proxy GLB without re-running
+                       # segmentation
+                       "trees": [[int(px), int(py), float(h), float(r)]
+                                 for px, py, h, r in trees]}, fh)
         print(f"[pcg] footprints sidecar -> {fp}")
     print(f"[pcg] {len(bld) + len(bld_polys)} buildings (orange) + {len(trees)} trees "
           f"(green) [{'layout masks' if use_seg else 'color heuristics'}]"
           f" -> {out_glb} "
-          f"({len(acc_wall.pos) + len(acc_roof.pos) + len(acc_trunk.pos) + len(acc_leaf.pos)} verts)")
+          f"({sum(len(a.pos) for a, *_ in groups)} verts)")
 
 
 def main():
