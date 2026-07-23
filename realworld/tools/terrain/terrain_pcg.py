@@ -1007,9 +1007,45 @@ def _tex_bundle(name, size=256):
                (1.0 + 0.09 * blotch) + rng.normal(0, 5, (size, size, 1)))
         hgt = blotch[..., 0] * 1.2
         rough[:] = 0.95
+    elif name == "door":
+        img = np.full((size, size, 3), [96, 66, 40], np.float32)
+        img += rng.normal(0, 4, (size, size, 1))
+        for c in range(24, size - 24, 52):                   # plank seams
+            img[:, c:c+3] *= 0.72
+            hgt[:, c:c+3] -= 2.5
+        fr = 20                                              # frame
+        img[:fr] = [64, 46, 30]; img[-fr:] = [64, 46, 30]
+        img[:, :fr] = [64, 46, 30]; img[:, -fr:] = [64, 46, 30]
+        hgt[:fr] += 4; hgt[-fr:] += 4
+        hgt[:, :fr] += 4; hgt[:, -fr:] += 4
+        img[118:138, 196:216] = [200, 190, 150]              # handle
+        hgt[118:138, 196:216] += 5
+        rough[:] = 0.72
+    elif name == "fence":
+        img = np.full((size, size, 3), [72, 62, 50], np.float32)  # shadow bg
+        for c in range(0, size, 44):                         # pickets
+            img[30:, c:c+28] = ([204, 198, 186] +
+                                rng.normal(0, 5, (size - 30, 28, 1)))
+            hgt[30:, c:c+28] += 4
+            img[18:30, c+8:c+20] = [204, 198, 186]           # pointed top
+            hgt[18:30, c+8:c+20] += 4
+        for r in (86, 190):                                  # rails
+            img[r:r+14] = np.maximum(img[r:r+14], 176)
+            hgt[r:r+14] += 2
+        rough[:] = 0.85
+    elif name == "road":
+        img = (np.full((size, size, 3), [56, 56, 59], np.float32) +
+               rng.normal(0, 4, (size, size, 1)))
+        from scipy import ndimage as _ndi
+        patch = _ndi.gaussian_filter(
+            rng.normal(0, 1, (size, size)).astype(np.float32), 9)
+        img += patch[:, :, None] * 9.0
+        hgt = patch * 1.0
+        rough[:] = 0.96
     else:
         raise KeyError(name)
-    strength = {"w": 2.0, "r": 2.5, "b": 1.5, "l": 0.6}[name[0]]
+    strength = {"door": 1.5, "fence": 1.2, "road": 0.7}.get(
+        name, {"w": 2.0, "r": 2.5, "b": 1.5, "l": 0.6}.get(name[0], 1.5))
     _TEX_CACHE[name] = {
         "albedo": Image.fromarray(np.clip(img, 0, 255).astype(np.uint8),
                                   "RGB"),
@@ -1091,7 +1127,7 @@ def _add_gable_house(acc_wall, acc_roof, c, w, d, ang, eave, rise, y0,
         # UVs pinned inside the texture's blank plaster strip (above the
         # window row) — a metric mapping floated half-windows up here.
         Rw1, Rw2 = pt(-w / 2, 0.0), pt(w / 2, 0.0)
-        guv = [(0.0, 0.30), (d / 5.0, 0.30), (d / 10.0, 0.02)]
+        guv = [(0.0, 0.20), (d / 5.0, 0.20), (d / 10.0, 0.02)]
         for tri in (((C[0], ye, C[1]), (B[0], ye, B[1]),
                      (Rw2[0], yr, Rw2[1])),
                     ((A[0], ye, A[1]), (D[0], ye, D[1]),
@@ -1346,7 +1382,7 @@ def _dedupe_footprints(bld_polys, H, px_m):
         if len(c) < 3:
             continue
         res[i] = (((c + [x0, y0]).astype(np.float32) + 0.5) * cell, hgt)
-    return [r for r in res if r is not None]
+    return [r for r in res if r is not None], claim
 
 
 def _largest_rect(mask):
@@ -1413,7 +1449,8 @@ def _decompose_rects(P, max_wings=4):
     return rects
 
 
-def add_building(acc_wall, acc_roof, poly_w, hgt, y0):
+def add_building(acc_wall, acc_roof, poly_w, hgt, y0,
+                 acc_door=None, door_dir=None):
     """House from a traced footprint, built the way real houses are
     shaped: the outline is decomposed into 1-4 oriented rectangular
     WINGS, each a gable- or hip-roofed block (ridge along its long axis);
@@ -1450,18 +1487,190 @@ def add_building(acc_wall, acc_roof, poly_w, hgt, y0):
     rects = _decompose_rects(P)
     if not rects:
         _add_flat_block(acc_wall, acc_roof, P, hgt, y0)
-        return
-    rises = [float(np.clip(0.55 * min(w, d), 1.2, 4.5))
-             for _, _, w, d, _ in rects]
+        # door on the longest outline edge (outward for a CW ring)
+        if acc_door is not None:
+            ring2 = [tuple(p) for p in P]
+            if _poly_area_signed(ring2) > 0:
+                ring2 = ring2[::-1]
+            best = max(range(len(ring2)), key=lambda i: np.hypot(
+                ring2[(i + 1) % len(ring2)][0] - ring2[i][0],
+                ring2[(i + 1) % len(ring2)][1] - ring2[i][1]))
+            a, b = ring2[best], ring2[(best + 1) % len(ring2)]
+            el = float(np.hypot(b[0] - a[0], b[1] - a[1]))
+            if el >= 2.5:
+                ux, uz = (b[0] - a[0]) / el, (b[1] - a[1]) / el
+                _add_door(acc_door, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2,
+                          -uz, ux, y0 + 0.3)
+                return ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, -uz, ux)
+        return None
+    # normalise wing orientation here so door math matches the builder
+    rects = [(cx, cz, w, d, ang) if w >= d else
+             (cx, cz, d, w, ang + np.pi * 0.5)
+             for cx, cz, w, d, ang in rects]
+    rises = [float(np.clip(0.55 * d, 1.2, 4.5)) for _, _, _, d, _ in rects]
     eave = max(2.4, hgt - 0.5 * max(rises))
     for k, ((cx, cz, w, d, ang), rise) in enumerate(zip(rects, rises)):
         # hip whenever the wing is wide — a 15 m gable end is a huge
         # blank triangle; hips read as real architecture at that scale
-        hip = (min(w, d) > 10.0 or
+        hip = (d > 10.0 or
                _det_rand(int(cz) + 7 * k, int(cx) + 3, 0.0, 1.0) > 0.55)
         # +0.3 m inflation hides the coplanar seams where wings touch
         _add_gable_house(acc_wall, acc_roof, (cx, cz), w + 0.3, d + 0.3,
                          ang, eave, rise, y0, hip=hip)
+    if acc_door is None:
+        return None
+    # DOOR on the main wing's long wall, on the side facing the road
+    # when we know where one is (door_dir), hash-picked otherwise
+    cx, cz, w, d, ang = rects[0]
+    ca, sa = float(np.cos(ang)), float(np.sin(ang))
+    az = (-sa, ca)                                  # short-axis direction
+    if door_dir is not None:
+        side = 1.0 if az[0] * door_dir[0] + az[1] * door_dir[1] >= 0 else -1.0
+    else:
+        side = 1.0 if _det_rand(int(cx) + 5, int(cz) + 1, 0.0, 1.0) > 0.5 \
+            else -1.0
+    # SNAP the door to the window-bay grid: bay centres and bay
+    # boundaries are guaranteed blank wall (windows sit at 1/4 and 3/4
+    # of each bay), so the door never overlaps a window
+    wl = w + 0.3
+    bayw = wl / max(1, int(round(wl / 5.0)))
+    shift = (_det_rand(int(cz) + 2, int(cx) + 8, 0.0, 1.0) - 0.5) * 0.4 * w
+    shift = round(shift / (bayw * 0.5)) * (bayw * 0.5)
+    shift = float(np.clip(shift, -(w / 2 - 1.2), w / 2 - 1.2))
+    dxy = (cx + ca * shift + side * az[0] * (d + 0.3) / 2,
+           cz + sa * shift + side * az[1] * (d + 0.3) / 2)
+    nx, nz = side * az[0], side * az[1]
+    _add_door(acc_door, dxy[0], dxy[1], nx, nz, y0 + 0.3)
+    return (dxy[0], dxy[1], nx, nz)
+
+
+def _add_door(acc_door, cx, cz, nx, nz, ybase):
+    """Entrance door: a framed door quad sitting 5 cm proud of the wall,
+    2.15 m tall — the texture is mapped ONCE (not tiled)."""
+    tx, tz = -nz, nx
+    hw, o, h = 0.60, 0.05, 2.15
+    p1 = (cx + tx * hw + nx * o, cz + tz * hw + nz * o)
+    p0 = (cx - tx * hw + nx * o, cz - tz * hw + nz * o)
+    v = [(p1[0], ybase, p1[1]), (p0[0], ybase, p0[1]),
+         (p0[0], ybase + h, p0[1]), (p1[0], ybase + h, p1[1])]
+    acc_door.add(v, [(nx, 0.0, nz)] * 4, [0, 1, 2, 0, 2, 3],
+                 [(0.0, 1.0), (1.0, 1.0), (1.0, 0.0), (0.0, 0.0)])
+
+
+def add_fence_rect(acc_fence, corners, ground_w, gate, step=2.6, h=0.85):
+    """Terrain-following picket fence around a garden rect (CW corners),
+    with a gap for the gate nearest `gate` (world x,z) — the entrance
+    stays reachable."""
+    ring = []
+    for i in range(4):
+        a = np.asarray(corners[i], np.float64)
+        b = np.asarray(corners[(i + 1) % 4], np.float64)
+        seg = float(np.linalg.norm(b - a))
+        nseg = max(1, int(round(seg / step)))
+        for s in range(nseg):
+            ring.append(a + (b - a) * (s / nseg))
+    n = len(ring)
+    gap_a = gap_b = None
+    for i in range(n):
+        a, b = ring[i], ring[(i + 1) % n]
+        mid = (a + b) * 0.5
+        if gate is not None and float(np.hypot(mid[0] - gate[0],
+                                               mid[1] - gate[1])) < 2.2:
+            gap_a = a if gap_a is None else gap_a           # gate gap
+            gap_b = b
+            continue
+        ya, yb = ground_w(a[0], a[1]), ground_w(b[0], b[1])
+        el = float(np.linalg.norm(b - a))
+        ux, uz = (b - a) / max(el, 1e-6)
+        onx, onz = -uz, ux                                  # CW ⇒ outward
+        v = [(a[0], ya - 0.2, a[1]), (b[0], yb - 0.2, b[1]),
+             (b[0], yb + h, b[1]), (a[0], ya + h, a[1])]
+        uvs = [(0.0, 1.0), (el / 2.2, 1.0), (el / 2.2, 0.0), (0.0, 0.0)]
+        acc_fence.add(v, [(onx, 0.0, onz)] * 4, [0, 1, 2, 0, 2, 3], uvs)
+    if gap_a is None:
+        return
+    # GATE in the gap: two posts and a lower swing panel, so the garden
+    # entrance reads as a gate rather than a missing fence piece
+    ga, gb = np.asarray(gap_a), np.asarray(gap_b)
+    gd = gb - ga
+    gl = float(np.linalg.norm(gd))
+    if gl < 0.8:
+        return
+    ux, uz = gd / gl
+    onx, onz = -uz, ux
+    for p in (ga, gb):                                      # posts
+        y = ground_w(p[0], p[1])
+        pa = (p[0] - ux * 0.09, p[1] - uz * 0.09)
+        pb = (p[0] + ux * 0.09, p[1] + uz * 0.09)
+        v = [(pa[0], y - 0.2, pa[1]), (pb[0], y - 0.2, pb[1]),
+             (pb[0], y + h + 0.22, pb[1]), (pa[0], y + h + 0.22, pa[1])]
+        acc_fence.add(v, [(onx, 0.0, onz)] * 4, [0, 1, 2, 0, 2, 3],
+                      [(0.0, 1.0), (0.18, 1.0), (0.18, 0.0), (0.0, 0.0)])
+    pa = ga + gd * (0.12 / gl) if gl > 0.5 else ga          # panel
+    pb = gb - gd * (0.12 / gl) if gl > 0.5 else gb
+    ya, yb = ground_w(pa[0], pa[1]), ground_w(pb[0], pb[1])
+    pl = float(np.linalg.norm(pb - pa))
+    v = [(pa[0], ya + 0.06, pa[1]), (pb[0], yb + 0.06, pb[1]),
+         (pb[0], yb + h * 0.8, pb[1]), (pa[0], ya + h * 0.8, pa[1])]
+    acc_fence.add(v, [(onx, 0.0, onz)] * 4, [0, 1, 2, 0, 2, 3],
+                  [(0.0, 1.0), (pl / 2.2, 1.0), (pl / 2.2, 0.0),
+                   (0.0, 0.0)])
+
+
+def build_road_mesh(acc_road, road_mask, ground_w, res=2.5, lift=0.06,
+                    max_quads=150000):
+    """Asphalt mesh CONNECTING the houses: a draped grid of quads over
+    the segmentation's painted road network.  Nodes are shared and
+    sampled once each (crack-free); the coverage field is smoothed
+    before thresholding (softer outline), and BOUNDARY nodes drop to
+    ground level so the road's edge tapers into the terrain instead of
+    ending in a floating, aliased cliff."""
+    import cv2
+    from scipy import ndimage as _ndi
+    frac = road_mask.astype(np.float32)
+    while True:
+        cells = max(8, int(WORLD_SIZE_M / res))
+        f = cv2.resize(frac, (cells, cells), interpolation=cv2.INTER_AREA)
+        on = _ndi.gaussian_filter(f, 1.0) > 0.5
+        if int(on.sum()) <= max_quads:
+            break
+        res *= 1.25
+    ys, xs = np.nonzero(on)
+    if not len(ys):
+        return 0
+    # per-node count of adjacent road cells: <4 ⇒ boundary node
+    cnt = np.zeros((cells + 1, cells + 1), np.int16)
+    o = on.astype(np.int16)
+    cnt[:-1, :-1] += o
+    cnt[:-1, 1:] += o
+    cnt[1:, :-1] += o
+    cnt[1:, 1:] += o
+    nodes = {}
+
+    def node(ix, iy):
+        key = (ix, iy)
+        if key not in nodes:
+            wx = ix * res - WORLD_SIZE_M * 0.5
+            wz = iy * res - WORLD_SIZE_M * 0.5
+            lft = lift if cnt[iy, ix] >= 4 else 0.0
+            y = ground_w(wx, wz) + lft
+            gx = (ground_w(wx + res, wz) - ground_w(wx - res, wz)) / (2 * res)
+            gz = (ground_w(wx, wz + res) - ground_w(wx, wz - res)) / (2 * res)
+            nrm = np.array([-gx, 1.0, -gz])
+            nrm /= np.linalg.norm(nrm)
+            nodes[key] = len(nodes)
+            acc_road.pos.append((wx, y, wz))
+            acc_road.nrm.append(tuple(nrm))
+            acc_road.uv.append((wx / 7.0, wz / 7.0))
+        return nodes[key]
+
+    for iy, ix in zip(ys, xs):
+        a = node(ix, iy)
+        b = node(ix + 1, iy)
+        c = node(ix + 1, iy + 1)
+        d = node(ix, iy + 1)
+        acc_road.idx.extend([a, b, c, a, c, d])
+    return int(on.sum())
 
 
 def _tube(acc, cx, cz, r, y0, y1, sides=5):
@@ -1997,10 +2206,40 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
             h *= 1.45                        # occasional taller landmark
         return h
 
+    import cv2
+    acc_door, acc_fence, acc_road = MeshAcc(), MeshAcc(), MeshAcc()
+
+    def ground_w(wx, wz):
+        return ground((wx + WORLD_SIZE_M * 0.5) / px_m,
+                      (wz + WORLD_SIZE_M * 0.5) / px_m)
+
+    # direction field toward the nearest painted road (doors face it)
+    _door_field = None
+    if masks["road"].any():
+        from scipy.ndimage import distance_transform_edt
+        _rs = cv2.resize(masks["road"].astype(np.uint8), (1024, 1024),
+                         interpolation=cv2.INTER_AREA) > 0
+        _rd, _ri = distance_transform_edt(~_rs, return_indices=True)
+        _door_field = (_rd, _ri, H / 1024.0)
+
+    def door_dir_at(pcx, pcy):
+        if _door_field is None:
+            return None
+        rd, ri, sc = _door_field
+        qx = min(int(pcx / sc), 1023)
+        qy = min(int(pcy / sc), 1023)
+        if rd[qy, qx] * sc * px_m > 60.0:      # no road within 60 m
+            return None
+        dx = float(ri[1][qy, qx] - qx)
+        dz = float(ri[0][qy, qx] - qy)
+        n = float(np.hypot(dx, dz))
+        return (dx / n, dz / n) if n > 1e-6 else None
+
     bld_polys = locals().get("bld_polys") or []
+    claim = None
     if bld_polys:
         n0 = len(bld_polys)
-        bld_polys = _dedupe_footprints(bld_polys, H, px_m)
+        bld_polys, claim = _dedupe_footprints(bld_polys, H, px_m)
         print(f"[pcg] footprint overlap resolution: {n0} -> "
               f"{len(bld_polys)} buildings")
     for cx, cy, w, d, ang, hgt in bld:
@@ -2011,7 +2250,9 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
                             (w / 2, d / 2), (-w / 2, d / 2))]
         add_building(acc_walls[_pick(cx, cy, 17, len(_WALL_BASES))],
                      acc_roofs[_pick(cx, cy, 31, len(_ROOF_BASES))],
-                     pts, _jitter_h(cx, cy, hgt), ground(cx, cy) - 0.6)
+                     pts, _jitter_h(cx, cy, hgt), ground(cx, cy) - 0.6,
+                     acc_door, door_dir_at(cx, cy))
+    _garden_src = []
     for poly, phgt in bld_polys:
         pts = [px_to_world(px_, py_) for px_, py_ in poly]
         # SLOPE-AWARE base: min ground over the whole outline (a centre
@@ -2019,9 +2260,65 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
         # 0.4 m into the ground.
         base = min(ground(px_, py_) for px_, py_ in poly) - 0.3
         pcx, pcy = float(poly[:, 0].mean()), float(poly[:, 1].mean())
-        add_building(acc_walls[_pick(pcx, pcy, 17, len(_WALL_BASES))],
-                     acc_roofs[_pick(pcx, pcy, 31, len(_ROOF_BASES))],
-                     pts, _jitter_h(pcx, pcy, phgt), base)
+        dinfo = add_building(
+            acc_walls[_pick(pcx, pcy, 17, len(_WALL_BASES))],
+            acc_roofs[_pick(pcx, pcy, 31, len(_ROOF_BASES))],
+            pts, _jitter_h(pcx, pcy, phgt), base,
+            acc_door, door_dir_at(pcx, pcy))
+        _garden_src.append((poly, dinfo))
+    # ── gardens: picket fence around house-scale lots with free ground ──
+    ngarden = 0
+    if claim is not None:
+        for poly, dinfo in _garden_src:
+            P = np.asarray(poly, np.float32)
+            garea = float(cv2.contourArea(P)) * px_m * px_m
+            pcx, pcy = float(P[:, 0].mean()), float(P[:, 1].mean())
+            if not 25.0 <= garea <= 260.0:
+                continue
+            if _det_rand(int(pcx) + 41, int(pcy) + 7, 0.0, 1.0) < 0.2:
+                continue
+            Pw = (P * px_m - WORLD_SIZE_M * 0.5).astype(np.float32)
+            (rcx, rcz), (rw, rh), rang = cv2.minAreaRect(
+                Pw.reshape(-1, 1, 2))
+            th = float(np.deg2rad(rang))
+            ca_, sa_ = np.cos(th), np.sin(th)
+            m = 4.2
+            cors = [(rcx + u * ca_ - v * sa_, rcz + u * sa_ + v * ca_)
+                    for u, v in ((-(rw / 2 + m), -(rh / 2 + m)),
+                                 ((rw / 2 + m), -(rh / 2 + m)),
+                                 ((rw / 2 + m), (rh / 2 + m)),
+                                 (-(rw / 2 + m), (rh / 2 + m)))]
+            if _poly_area_signed(cors) > 0:
+                cors = cors[::-1]
+            ok = True
+            for i in range(4):
+                a = np.asarray(cors[i]); b = np.asarray(cors[(i + 1) % 4])
+                L = float(np.linalg.norm(b - a))
+                for s in range(int(L / 1.5) + 1):
+                    q = a + (b - a) * (s / max(int(L / 1.5) + 1, 1))
+                    gx = int(q[0] + WORLD_SIZE_M * 0.5)
+                    gz = int(q[1] + WORLD_SIZE_M * 0.5)
+                    px_ = min(int((q[0] + WORLD_SIZE_M * 0.5) / px_m), H - 1)
+                    py_ = min(int((q[1] + WORLD_SIZE_M * 0.5) / px_m), H - 1)
+                    if (not (0 <= gx < claim.shape[1] and
+                             0 <= gz < claim.shape[0]) or
+                            claim[gz, gx] or
+                            masks["road"][py_, px_] or
+                            masks["water"][py_, px_]):
+                        ok = False
+                        break
+                if not ok:
+                    break
+            if not ok:
+                continue
+            gate = ((dinfo[0] + dinfo[2] * m, dinfo[1] + dinfo[3] * m)
+                    if dinfo else None)
+            add_fence_rect(acc_fence, cors, ground_w, gate)
+            ngarden += 1
+    nroad = build_road_mesh(acc_road, masks["road"] & ~masks["water"],
+                            ground_w)
+    print(f"[pcg] doors: {len(acc_door.pos) // 4}  gardens: {ngarden}  "
+          f"road quads: {nroad}")
     trees = extract_trees(masks["veg"], tree_block, px_m) if place_trees else []
     if not place_trees:
         print("[pcg] biome gate: suppressing tree proxies (treeless biome)")
@@ -2035,7 +2332,10 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
                for i, a in enumerate(acc_roofs)] +
               [(acc_trunk, _tex_bundle("bark"), "tree_trunk")] +
               [(a, _tex_bundle(f"leaf{i}"), f"tree_leaf{i}")
-               for i, a in enumerate(acc_leafs)])
+               for i, a in enumerate(acc_leafs)] +
+              [(acc_door, _tex_bundle("door"), "house_door"),
+               (acc_fence, _tex_bundle("fence"), "garden_fence"),
+               (acc_road, _tex_bundle("road"), "roadway")])
     write_glb([grp for grp in groups if grp[0].pos], out_glb)
     if bld_polys:
         fp = os.path.splitext(out_glb)[0] + "_footprints.json"
