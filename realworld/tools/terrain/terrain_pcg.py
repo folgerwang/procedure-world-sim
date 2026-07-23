@@ -967,8 +967,12 @@ def _tex_bundle(name, size=256):
             hgt[y0+h-3:y0+h, x0:x0+w] += 5.5
             hgt[y0:y0+h, x0:x0+3] += 5.5; hgt[y0:y0+h, x0+w-3:x0+w] += 5.5
             rough[y0:y0+h, x0:x0+w] = 0.25                   # glass
-        _win(28, 60, 70, 96)                                 # 2 windows /
-        _win(158, 60, 70, 96)                                # storey tile
+        # ONE centered window per bay tile (was two at 1/4 and 3/4 —
+        # at a 5 m bay that put a window every 2.5 m, reading as a
+        # near-continuous glass band; a single window per bay gives
+        # the calm ~5 m rhythm real facades have).  Bay BOUNDARIES are
+        # the guaranteed-blank strips now — door snapping relies on it.
+        _win(93, 60, 70, 96)
         # (window band sits HIGH in the tile: the blank lower ~40% is a
         # plinth, so a wall sunk into a slope buries plaster, not glass)
     elif name.startswith("roof"):
@@ -1497,7 +1501,10 @@ def add_building(acc_wall, acc_roof, poly_w, hgt, y0,
                 ring2[(i + 1) % len(ring2)][1] - ring2[i][1]))
             a, b = ring2[best], ring2[(best + 1) % len(ring2)]
             el = float(np.hypot(b[0] - a[0], b[1] - a[1]))
-            if el >= 2.5:
+            # EVERY building gets a door: even when the longest edge is
+            # shorter than the old 2.5 m threshold, place it centred on
+            # that edge (a slightly cramped door beats a doorless house)
+            if el >= 0.9:
                 ux, uz = (b[0] - a[0]) / el, (b[1] - a[1]) / el
                 _add_door(acc_door, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2,
                           -uz, ux, y0 + 0.3)
@@ -1529,14 +1536,28 @@ def add_building(acc_wall, acc_roof, poly_w, hgt, y0,
     else:
         side = 1.0 if _det_rand(int(cx) + 5, int(cz) + 1, 0.0, 1.0) > 0.5 \
             else -1.0
-    # SNAP the door to the window-bay grid: bay centres and bay
-    # boundaries are guaranteed blank wall (windows sit at 1/4 and 3/4
-    # of each bay), so the door never overlaps a window
+    # SNAP the door to a window-bay BOUNDARY: with one centered window
+    # per bay, the boundaries are the guaranteed blank-plaster strips
+    # (bay centres are glass now), so the door never overlaps a window.
     wl = w + 0.3
-    bayw = wl / max(1, int(round(wl / 5.0)))
+    nbay = max(1, int(round(wl / 5.0)))
+    bayw = wl / nbay
     shift = (_det_rand(int(cz) + 2, int(cx) + 8, 0.0, 1.0) - 0.5) * 0.4 * w
-    shift = round(shift / (bayw * 0.5)) * (bayw * 0.5)
-    shift = float(np.clip(shift, -(w / 2 - 1.2), w / 2 - 1.2))
+    # boundaries sit at (k - nbay/2) * bayw from the wall centre; keep k
+    # on boundaries INSIDE the door-margin range (plain clamping after
+    # snapping would land the door mid-bay, i.e. on glass)
+    lim = max(0.0, w / 2 - 1.2)
+    k = round(shift / bayw + nbay * 0.5)
+    k_lo = int(np.ceil(-lim / bayw + nbay * 0.5))
+    k_hi = int(np.floor(lim / bayw + nbay * 0.5))
+    if k_lo <= k_hi:
+        k = int(np.clip(k, k_lo, k_hi))
+        shift = (k - nbay * 0.5) * bayw
+    else:
+        # wall too short for any boundary inside the margin (small house,
+        # single bay): push the door as far off the bay-centre window as
+        # the margin allows — a partly overlapped frame beats dead-centre
+        shift = float(lim if shift >= 0.0 else -lim)
     dxy = (cx + ca * shift + side * az[0] * (d + 0.3) / 2,
            cz + sa * shift + side * az[1] * (d + 0.3) / 2)
     nx, nz = side * az[0], side * az[1]
@@ -2206,7 +2227,10 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
             h *= 1.45                        # occasional taller landmark
         return h
 
-    import cv2
+    try:
+        import cv2
+    except ModuleNotFoundError:
+        cv2 = None                                 # PIL fallback below
     acc_door, acc_fence, acc_road = MeshAcc(), MeshAcc(), MeshAcc()
 
     def ground_w(wx, wz):
@@ -2217,8 +2241,14 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
     _door_field = None
     if masks["road"].any():
         from scipy.ndimage import distance_transform_edt
-        _rs = cv2.resize(masks["road"].astype(np.uint8), (1024, 1024),
-                         interpolation=cv2.INTER_AREA) > 0
+        if cv2 is not None:
+            _rs = cv2.resize(masks["road"].astype(np.uint8), (1024, 1024),
+                             interpolation=cv2.INTER_AREA) > 0
+        else:
+            from PIL import Image as _Im
+            _rs = np.asarray(_Im.fromarray(
+                (masks["road"] * 255).astype(np.uint8)).resize(
+                    (1024, 1024), _Im.BILINEAR)) > 127
         _rd, _ri = distance_transform_edt(~_rs, return_indices=True)
         _door_field = (_rd, _ri, H / 1024.0)
 

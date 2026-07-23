@@ -1448,6 +1448,10 @@ def main():
             traceback.print_exc()
             print(f"[terrain] PCG stage FAILED (non-fatal): {e}",
                   flush=True)
+            if "cv2" in str(e):
+                print("[terrain] HINT: install OpenCV — run Setup.bat "
+                      "or:  python -m pip install opencv-python-headless",
+                      flush=True)
     elif args.pcg:
         print("[pcg] stage SKIPPED: no --color albedo "
               "(segmentation needs the colour map)", flush=True)

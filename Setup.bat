@@ -217,6 +217,67 @@ echo.
 
 :deps_done
 
+rem ── OpenCV (cv2) ─────────────────────────────────────────────────────────────
+rem   Required by the terrain PCG stage (tools\terrain\terrain_pcg.py):
+rem   building-footprint tracing, watershed splitting, road-mask fields.
+rem   Installed EXPLICITLY (not only via requirements.txt) so every Setup.bat
+rem   path guarantees it, including runs with partial/failed deps installs.
+rem   Headless build: image ops only, no GUI dependencies.
+echo -- OpenCV (terrain PCG) -----------------------------------
+where python >nul 2>&1
+if errorlevel 1 (
+    echo [WARN]  Python not on PATH -- skipping OpenCV install.
+    goto :cv2_done
+)
+python -c "import cv2" >nul 2>&1
+if errorlevel 1 (
+    echo [INFO]  Installing opencv-python-headless...
+    python -m pip install --disable-pip-version-check opencv-python-headless
+    if errorlevel 1 (
+        echo [WARN]  OpenCV install failed. Terrain PCG buildings/trees
+        echo         will be skipped until it is installed:
+        echo         python -m pip install opencv-python-headless
+    ) else (
+        echo [INFO]  OpenCV OK
+    )
+) else (
+    echo [INFO]  OpenCV already installed
+)
+:cv2_done
+echo -----------------------------------------------------------
+echo.
+
+rem ── SAM2 (Segment Anything 2, terrain PCG footprints) ────────────────────────
+rem   Optional but recommended: per-instance building-footprint extraction in
+rem   tools\terrain\terrain_pcg.py.  Without it the PCG stage falls back to an
+rem   oriented-rect heuristic (blockier buildings).  Weights auto-download from
+rem   Hugging Face (facebook/sam2.1-hiera-small, ~180 MB) on FIRST use; to run
+rem   offline, drop sam2.1_hiera_small.pt into realworld\assets\ml_models\.
+echo -- SAM2 (terrain PCG footprints) --------------------------
+where python >nul 2>&1
+if errorlevel 1 (
+    echo [WARN]  Python not on PATH -- skipping SAM2 install.
+    goto :sam2_done
+)
+python -c "import sam2" >nul 2>&1
+if errorlevel 1 (
+    echo [INFO]  Installing sam2 + huggingface_hub...
+    python -m pip install --disable-pip-version-check sam2 huggingface_hub
+    if errorlevel 1 (
+        echo [WARN]  SAM2 install failed ^(needs torch ^>= 2.3^).  PCG will
+        echo         use the oriented-rect fallback.  Manual install:
+        echo         python -m pip install sam2
+        echo         or from source: github.com/facebookresearch/sam2
+    ) else (
+        echo [INFO]  SAM2 OK
+    )
+) else (
+    echo [INFO]  SAM2 already installed
+)
+:sam2_done
+echo -----------------------------------------------------------
+echo.
+
 rem ── Auto-rig ML model ────────────────────────────────────────────────────────
 rem   If the TorchScript model doesn't exist, run the Python export.
 rem   Use -skip-model to bypass this step.
