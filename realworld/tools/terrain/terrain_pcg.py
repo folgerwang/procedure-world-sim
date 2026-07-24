@@ -853,6 +853,124 @@ _LEAF_BASES = [(64, 116, 55),     # mid green
                (130, 106, 44)]    # autumn tint
 
 
+def _conform_heightmap(hmap, amp, px_m, bld_polys, road_mask, water_mask,
+                       pad_skirt_m=4.5, road_smooth_m=7.0):
+    """ADJUST the heightmap so the terrain matches the placed geometry:
+    flatten a level PAD under every building footprint (with a smooth
+    graded skirt so the edge ramps into the natural ground rather than
+    cliffing), and GRADE the road corridors toward a locally smoothed
+    profile so streets stop rolling over every bump.  Returns a new
+    normalised [0,1] heightmap.  Water is never raised."""
+    from scipy import ndimage as ndi
+    import cv2
+    H = hmap.shape[0]
+    world = hmap.astype(np.float32) * amp          # metres
+    out = world.copy()
+
+    # ── building pads ──────────────────────────────────────────────
+    pad_val = np.zeros((H, H), np.float32)
+    pad_mask = np.zeros((H, H), np.uint8)
+    for poly, _h in bld_polys:
+        p = np.round(np.asarray(poly)).astype(np.int32)
+        x0, y0 = p.min(0)
+        x1, y1 = p.max(0)
+        x0, y0 = max(int(x0), 0), max(int(y0), 0)
+        x1, y1 = min(int(x1), H - 1), min(int(y1), H - 1)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        sub = np.zeros((y1 - y0 + 1, x1 - x0 + 1), np.uint8)
+        cv2.fillPoly(sub, [p - [x0, y0]], 1)
+        b = sub.astype(bool)
+        if not b.any():
+            continue
+        pad = float(np.median(world[y0:y1 + 1, x0:x1 + 1][b]))
+        pv = pad_val[y0:y1 + 1, x0:x1 + 1]
+        pm = pad_mask[y0:y1 + 1, x0:x1 + 1]
+        pv[b] = pad
+        pm[b] = 1
+    if pad_mask.any():
+        dist, (iy, ix) = ndi.distance_transform_edt(
+            pad_mask == 0, return_indices=True)
+        pad_filled = pad_val[iy, ix]               # nearest pad height
+        w = np.clip(1.0 - dist / max(pad_skirt_m / px_m, 1.0), 0.0, 1.0)
+        w[pad_mask.astype(bool)] = 1.0
+        out = w * pad_filled + (1.0 - w) * out
+
+    # ── road grading ──────────────────────────────────────────────
+    rd = road_mask & ~water_mask
+    if rd.any():
+        sm = ndi.gaussian_filter(out, road_smooth_m / px_m)
+        dist_r = ndi.distance_transform_edt(~rd)
+        wr = np.clip(1.0 - dist_r / max(road_smooth_m / px_m, 1.0), 0.0, 1.0)
+        wr[pad_mask.astype(bool)] = 0.0            # pads win over roads
+        out = wr * sm + (1.0 - wr) * out
+
+    out = ndi.gaussian_filter(out, 0.8)            # kill grid stairstep
+    out[water_mask] = np.minimum(out[water_mask], world[water_mask])
+    return np.clip(out / amp, 0.0, 1.0).astype(np.float32)
+
+
+def _write_heightmap_png(hmap, path):
+    """Write a normalised heightmap as 16-bit grayscale (engine format)."""
+    im = Image.fromarray(
+        np.clip(hmap * 65535.0, 0, 65535).astype(np.uint16), mode="I;16")
+    im.save(path)
+
+
+def _regen_terrain_glb(glb_path, hmap, amp):
+    """Rewrite the terrain render-mesh export IN PLACE from a conformed
+    heightmap: resample the height grid and replace POSITION.y + NORMAL,
+    leaving UVs, indices and the embedded albedo untouched (identical
+    structure, so the engine loads it exactly as before)."""
+    import struct
+    data = open(glb_path, "rb").read()
+    off, chunks, spans = 12, {}, {}
+    while off < len(data):
+        clen, ctype = struct.unpack("<II", data[off:off + 8])
+        off += 8
+        chunks[ctype] = bytearray(data[off:off + clen])
+        spans[ctype] = (off, clen)
+        off += clen
+    g = json.loads(bytes(chunks[0x4E4F534A]))
+    buf = chunks[0x004E4942]
+    pr = g["meshes"][0]["primitives"][0]
+    pa = g["accessors"][pr["attributes"]["POSITION"]]
+    na = g["accessors"][pr["attributes"]["NORMAL"]]
+    res = int(round(pa["count"] ** 0.5))
+    if res * res != pa["count"]:
+        raise ValueError("terrain glb not a square grid")
+    a = hmap.astype(np.float32)
+    ys = np.round(np.linspace(0, a.shape[0] - 1, res)).astype(np.int64)
+    xs = np.round(np.linspace(0, a.shape[1] - 1, res)).astype(np.int64)
+    grid = a[np.ix_(ys, xs)] * amp
+    step = WORLD_SIZE_M / (res - 1)
+    dx = np.gradient(grid, step, axis=1)
+    dz = np.gradient(grid, step, axis=0)
+    nrm = np.stack([-dx, np.ones_like(grid), -dz], -1)
+    nrm /= np.linalg.norm(nrm, axis=-1, keepdims=True)
+    pv = g["bufferViews"][pa["bufferView"]]
+    nv = g["bufferViews"][na["bufferView"]]
+    pos = np.frombuffer(buf, np.float32, pa["count"] * 3,
+                        pv.get("byteOffset", 0)).reshape(-1, 3).copy()
+    pos[:, 1] = grid.reshape(-1)
+    buf[pv.get("byteOffset", 0):pv.get("byteOffset", 0) + pos.nbytes] = \
+        pos.astype(np.float32).tobytes()
+    nn = nrm.reshape(-1, 3).astype(np.float32)
+    buf[nv.get("byteOffset", 0):nv.get("byteOffset", 0) + nn.nbytes] = \
+        nn.tobytes()
+    pa["min"] = pos.min(0).tolist()
+    pa["max"] = pos.max(0).tolist()
+    jb = json.dumps(g, separators=(",", ":")).encode("utf-8")
+    jb += b" " * ((4 - len(jb) % 4) % 4)
+    with open(glb_path, "wb") as f:
+        total = 12 + 8 + len(jb) + 8 + len(buf)
+        f.write(struct.pack("<III", 0x46546C67, 2, total))
+        f.write(struct.pack("<II", len(jb), 0x4E4F534A))
+        f.write(jb)
+        f.write(struct.pack("<II", len(buf), 0x004E4942))
+        f.write(bytes(buf))
+
+
 def _load_terrain_grid(path):
     """Height sampler built from the terrain RENDER mesh (<stamp>.glb) —
     the authoritative surface the player actually sees.  The mesh is a
@@ -967,12 +1085,8 @@ def _tex_bundle(name, size=256):
             hgt[y0+h-3:y0+h, x0:x0+w] += 5.5
             hgt[y0:y0+h, x0:x0+3] += 5.5; hgt[y0:y0+h, x0+w-3:x0+w] += 5.5
             rough[y0:y0+h, x0:x0+w] = 0.25                   # glass
-        # ONE centered window per bay tile (was two at 1/4 and 3/4 —
-        # at a 5 m bay that put a window every 2.5 m, reading as a
-        # near-continuous glass band; a single window per bay gives
-        # the calm ~5 m rhythm real facades have).  Bay BOUNDARIES are
-        # the guaranteed-blank strips now — door snapping relies on it.
-        _win(93, 60, 70, 96)
+        _win(28, 60, 70, 96)                                 # 2 windows /
+        _win(158, 60, 70, 96)                                # storey tile
         # (window band sits HIGH in the tile: the blank lower ~40% is a
         # plinth, so a wall sunk into a slope buries plaster, not glass)
     elif name.startswith("roof"):
@@ -1038,17 +1152,39 @@ def _tex_bundle(name, size=256):
             hgt[r:r+14] += 2
         rough[:] = 0.85
     elif name == "road":
-        img = (np.full((size, size, 3), [56, 56, 59], np.float32) +
-               rng.normal(0, 4, (size, size, 1)))
-        from scipy import ndimage as _ndi
-        patch = _ndi.gaussian_filter(
-            rng.normal(0, 1, (size, size)).astype(np.float32), 9)
-        img += patch[:, :, None] * 9.0
-        hgt = patch * 1.0
-        rough[:] = 0.96
+        # STONE-PAVED road (fits the ancient-town setting and needs no
+        # directional lane markings, so it maps onto the continuous road
+        # grid with plain world UVs — no fragile per-ribbon UVs).  A
+        # tileable Voronoi cobble: warm-gray setts with recessed mortar,
+        # domed height for PBR relief.
+        from scipy.spatial import cKDTree
+        nseed = 22                                           # larger setts
+        seeds = rng.uniform(0, size, (nseed, 2))
+        alls = np.vstack([seeds + [ox * size, oy * size]
+                          for ox in (-1, 0, 1) for oy in (-1, 0, 1)])
+        yy, xx = np.mgrid[0:size, 0:size]
+        q = np.stack([xx.ravel(), yy.ravel()], 1).astype(np.float32)
+        d, idx = cKDTree(alls).query(q, k=2)
+        d1 = d[:, 0].reshape(size, size)
+        d2 = d[:, 1].reshape(size, size)
+        cell = idx[:, 0].reshape(size, size)
+        mortar = (d2 - d1) < 2.0
+        # darker warm-gray granite; per-stone TONE variation only
+        base = np.array([116, 110, 99], np.float32)
+        tone = 1.0 + rng.uniform(-0.13, 0.13, (alls.shape[0], 1))
+        warm = rng.uniform(-1.0, 1.0, (alls.shape[0], 1)) * \
+            np.array([5.0, 1.5, -3.0], np.float32)
+        cellcol = base * tone + warm
+        img = cellcol[cell % len(cellcol)]
+        img += rng.normal(0, 3, (size, size, 1))             # grain
+        img[mortar] = [58, 54, 49]
+        hgt = np.clip(1.0 - d1 / (size / 4.7 * 0.6), 0.0, 1.0) * 3.0
+        hgt[mortar] -= 3.0
+        rough[:] = 0.92
+        rough[mortar] = 0.98
     else:
         raise KeyError(name)
-    strength = {"door": 1.5, "fence": 1.2, "road": 0.7}.get(
+    strength = {"door": 1.5, "fence": 1.2, "road": 0.9}.get(
         name, {"w": 2.0, "r": 2.5, "b": 1.5, "l": 0.6}.get(name[0], 1.5))
     _TEX_CACHE[name] = {
         "albedo": Image.fromarray(np.clip(img, 0, 255).astype(np.uint8),
@@ -1501,10 +1637,7 @@ def add_building(acc_wall, acc_roof, poly_w, hgt, y0,
                 ring2[(i + 1) % len(ring2)][1] - ring2[i][1]))
             a, b = ring2[best], ring2[(best + 1) % len(ring2)]
             el = float(np.hypot(b[0] - a[0], b[1] - a[1]))
-            # EVERY building gets a door: even when the longest edge is
-            # shorter than the old 2.5 m threshold, place it centred on
-            # that edge (a slightly cramped door beats a doorless house)
-            if el >= 0.9:
+            if el >= 2.5:
                 ux, uz = (b[0] - a[0]) / el, (b[1] - a[1]) / el
                 _add_door(acc_door, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2,
                           -uz, ux, y0 + 0.3)
@@ -1536,28 +1669,14 @@ def add_building(acc_wall, acc_roof, poly_w, hgt, y0,
     else:
         side = 1.0 if _det_rand(int(cx) + 5, int(cz) + 1, 0.0, 1.0) > 0.5 \
             else -1.0
-    # SNAP the door to a window-bay BOUNDARY: with one centered window
-    # per bay, the boundaries are the guaranteed blank-plaster strips
-    # (bay centres are glass now), so the door never overlaps a window.
+    # SNAP the door to the window-bay grid: bay centres and bay
+    # boundaries are guaranteed blank wall (windows sit at 1/4 and 3/4
+    # of each bay), so the door never overlaps a window
     wl = w + 0.3
-    nbay = max(1, int(round(wl / 5.0)))
-    bayw = wl / nbay
+    bayw = wl / max(1, int(round(wl / 5.0)))
     shift = (_det_rand(int(cz) + 2, int(cx) + 8, 0.0, 1.0) - 0.5) * 0.4 * w
-    # boundaries sit at (k - nbay/2) * bayw from the wall centre; keep k
-    # on boundaries INSIDE the door-margin range (plain clamping after
-    # snapping would land the door mid-bay, i.e. on glass)
-    lim = max(0.0, w / 2 - 1.2)
-    k = round(shift / bayw + nbay * 0.5)
-    k_lo = int(np.ceil(-lim / bayw + nbay * 0.5))
-    k_hi = int(np.floor(lim / bayw + nbay * 0.5))
-    if k_lo <= k_hi:
-        k = int(np.clip(k, k_lo, k_hi))
-        shift = (k - nbay * 0.5) * bayw
-    else:
-        # wall too short for any boundary inside the margin (small house,
-        # single bay): push the door as far off the bay-centre window as
-        # the margin allows — a partly overlapped frame beats dead-centre
-        shift = float(lim if shift >= 0.0 else -lim)
+    shift = round(shift / (bayw * 0.5)) * (bayw * 0.5)
+    shift = float(np.clip(shift, -(w / 2 - 1.2), w / 2 - 1.2))
     dxy = (cx + ca * shift + side * az[0] * (d + 0.3) / 2,
            cz + sa * shift + side * az[1] * (d + 0.3) / 2)
     nx, nz = side * az[0], side * az[1]
@@ -1638,7 +1757,213 @@ def add_fence_rect(acc_fence, corners, ground_w, gate, step=2.6, h=0.85):
                    (0.0, 0.0)])
 
 
-def build_road_mesh(acc_road, road_mask, ground_w, res=2.5, lift=0.06,
+def _thin(img):
+    """Zhang-Suen thinning to a 1-px skeleton (vectorised, numpy only —
+    avoids a scikit-image dependency)."""
+    a = (img > 0).astype(np.uint8).copy()
+    a[0, :] = a[-1, :] = a[:, 0] = a[:, -1] = 0
+
+    def nbrs(x):
+        P2 = np.roll(x, 1, 0); P6 = np.roll(x, -1, 0)
+        P4 = np.roll(x, -1, 1); P8 = np.roll(x, 1, 1)
+        P3 = np.roll(P2, -1, 1); P9 = np.roll(P2, 1, 1)
+        P5 = np.roll(P6, -1, 1); P7 = np.roll(P6, 1, 1)
+        return P2, P3, P4, P5, P6, P7, P8, P9
+
+    changed = True
+    while changed:
+        changed = False
+        for step in (0, 1):
+            P2, P3, P4, P5, P6, P7, P8, P9 = nbrs(a)
+            B = P2 + P3 + P4 + P5 + P6 + P7 + P8 + P9
+            seq = [P2, P3, P4, P5, P6, P7, P8, P9, P2]
+            A = np.zeros_like(a)
+            for i in range(8):
+                A += ((seq[i] == 0) & (seq[i + 1] == 1)).astype(np.uint8)
+            if step == 0:
+                c1 = (P2 * P4 * P6 == 0) & (P4 * P6 * P8 == 0)
+            else:
+                c1 = (P2 * P4 * P8 == 0) & (P2 * P6 * P8 == 0)
+            cond = (a == 1) & (B >= 2) & (B <= 6) & (A == 1) & c1
+            if cond.any():
+                a[cond] = 0
+                changed = True
+    return a
+
+
+def _trace_skeleton(sk):
+    """Walk a 1-px skeleton into polylines (lists of (col,row)), breaking
+    at endpoints and junctions."""
+    pts = set(map(tuple, np.argwhere(sk > 0)))       # (r, c)
+    NB = [(-1, -1), (-1, 0), (-1, 1), (0, -1),
+          (0, 1), (1, -1), (1, 0), (1, 1)]
+
+    def neigh(p):
+        r, c = p
+        return [(r + dr, c + dc) for dr, dc in NB if (r + dr, c + dc) in pts]
+
+    deg = {p: len(neigh(p)) for p in pts}
+    seen = set()
+    lines = []
+
+    def walk(a, b):
+        path = [a, b]
+        seen.add((a, b)); seen.add((b, a))
+        prev, cur = a, b
+        while deg.get(cur, 0) == 2:
+            nxt = [q for q in neigh(cur) if q != prev]
+            if not nxt or (cur, nxt[0]) in seen:
+                break
+            seen.add((cur, nxt[0])); seen.add((nxt[0], cur))
+            path.append(nxt[0]); prev, cur = cur, nxt[0]
+        return [(c, r) for (r, c) in path]
+
+    for p in list(pts):
+        if deg[p] != 2:
+            for q in neigh(p):
+                if (p, q) not in seen:
+                    lines.append(walk(p, q))
+    for p in list(pts):                              # leftover loops
+        if deg[p] == 2:
+            for q in neigh(p):
+                if (p, q) not in seen:
+                    lines.append(walk(p, q))
+    return lines
+
+
+def build_road_ribbons(acc_road, road_mask, ground_w, px_m, lift=0.07,
+                       tile_m=8.0):
+    """Roads that read as ROADS: skeletonise the painted street network,
+    trace each street to a centreline polyline, and extrude a ribbon of
+    the locally-measured width draped on the terrain.  UVs run u across
+    the carriageway (0..1) and v along it (metres / tile_m), so the road
+    texture's dashes and edge lines follow the street."""
+    import cv2
+    from scipy import ndimage as ndi
+    H = road_mask.shape[0]
+    ds = max(1, int(round(2.0 / px_m)))              # ~2 m cells
+    Hs = H // ds
+    small = cv2.resize(road_mask.astype(np.uint8), (Hs, Hs),
+                       interpolation=cv2.INTER_AREA) > 0
+    if not small.any():
+        return 0
+    cell = px_m * ds
+    dist = ndi.distance_transform_edt(small).astype(np.float32) * cell
+    sk = _thin(small.astype(np.uint8))
+    lines = _trace_skeleton(sk)
+
+    def w_of(c, r):
+        return ((c + 0.5) * cell - WORLD_SIZE_M * 0.5,
+                (r + 0.5) * cell - WORLD_SIZE_M * 0.5)
+
+    def terr_n(x, z):
+        g = 2.0
+        gx = (ground_w(x + g, z) - ground_w(x - g, z)) / (2 * g)
+        gz = (ground_w(x, z + g) - ground_w(x, z - g)) / (2 * g)
+        n = np.array([-gx, 1.0, -gz]); n /= np.linalg.norm(n)
+        return tuple(n)
+
+    nrib = 0
+    for pl in lines:
+        p = np.asarray(pl, np.float32)
+        if len(p) < 2:
+            continue
+        p = cv2.approxPolyDP(p.reshape(-1, 1, 2), 1.0,
+                             False).reshape(-1, 2)
+        if len(p) < 2:
+            continue
+        halfs = [float(np.clip(
+            dist[int(min(max(r, 0), Hs - 1)), int(min(max(c, 0), Hs - 1))],
+            1.7, 6.0)) for c, r in p]
+        W = np.array([w_of(c, r) for c, r in p], np.float32)
+        if float(np.sum(np.linalg.norm(np.diff(W, axis=0), axis=1))) < 5.0:
+            continue                          # drop skeleton stubs/spurs
+        n = len(W)
+        tang = np.zeros((n, 2), np.float32)
+        for i in range(n):
+            d = (W[1] - W[0] if i == 0 else
+                 W[-1] - W[-2] if i == n - 1 else W[i + 1] - W[i - 1])
+            L = float(np.linalg.norm(d))
+            tang[i] = d / L if L > 1e-6 else (1.0, 0.0)
+        nx = np.stack([-tang[:, 1], tang[:, 0]], 1)  # left normal
+        cum = [0.0]
+        for i in range(1, n):
+            cum.append(cum[-1] + float(np.linalg.norm(W[i] - W[i - 1])))
+        # 4-vertex cross-section: carriageway (u 0.10..0.90) at road
+        # height, plus a graded SHOULDER each side dropping to ~ground
+        # over `sh` metres onto the texture's gravel verge — the road
+        # edge melts into the terrain instead of a floating lip.
+        sh = 0.9
+        base = len(acc_road.pos)
+        for i in range(n):
+            h = halfs[i]
+            prof = ((h + sh, 0.02, 0.0),      # outer shoulder (≈ ground)
+                    (h,      lift, 0.10),     # kerb
+                    (-h,     lift, 0.90),     # kerb
+                    (-(h + sh), 0.02, 1.0))   # outer shoulder
+            for off, yl, u in prof:
+                x = float(W[i, 0] + nx[i, 0] * off)
+                z = float(W[i, 1] + nx[i, 1] * off)
+                acc_road.pos.append((x, ground_w(x, z) + yl, z))
+                acc_road.nrm.append(terr_n(x, z))
+                acc_road.uv.append((u, cum[i] / tile_m))
+        for i in range(n - 1):
+            b0, b1 = base + 4 * i, base + 4 * (i + 1)
+            for k in range(3):
+                a, b = b0 + k, b0 + k + 1
+                c2, d = b1 + k, b1 + k + 1
+                acc_road.idx.extend([a, c2, b, b, c2, d])
+        nrib += 1
+    return nrib
+
+
+def _prune_spurs(sk, iters):
+    """Iteratively erode skeleton endpoints — clips short spurs so a
+    blobby mask's medial axis becomes a clean street graph."""
+    from scipy import ndimage as ndi
+    k = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], np.uint8)
+    a = sk.astype(np.uint8).copy()
+    for _ in range(iters):
+        cnt = ndi.convolve(a, k, mode="constant")
+        ends = (a == 1) & (cnt <= 1)
+        if not ends.any():
+            break
+        a[ends] = 0
+    return a
+
+
+def _clean_road_mask(road_mask, px_m, width_m=4.0, prune_m=8.0):
+    """Turn the segmentation's broad, blobby ROAD region into a clean
+    narrow STREET NETWORK: skeletonise to centrelines, prune spurs, then
+    re-dilate to a uniform width.  Result reads as linear roads with
+    parallel edges instead of an amorphous paved field."""
+    import cv2
+    H = road_mask.shape[0]
+    ds = max(1, int(round(1.5 / px_m)))          # ~1.5 m cells
+    Hs = H // ds
+    cellm = px_m * ds
+    m = (cv2.resize(road_mask.astype(np.uint8), (Hs, Hs),
+                    interpolation=cv2.INTER_AREA) > 0.4).astype(np.uint8)
+    k3 = np.ones((3, 3), np.uint8)
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, k3, iterations=2)
+    m = cv2.morphologyEx(m, cv2.MORPH_OPEN, k3, iterations=1)
+    sk = _thin(m)
+    sk = _prune_spurs(sk, max(1, int(round(prune_m / cellm))))
+    r = max(1, int(round((width_m * 0.5) / cellm)))
+    disk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
+    road = cv2.dilate(sk.astype(np.uint8), disk)
+    road = cv2.morphologyEx(road, cv2.MORPH_CLOSE, disk)
+    # drop tiny disconnected components (rock/roof misclassified as road)
+    ncc, lab, st, _ = cv2.connectedComponentsWithStats(road, 8)
+    min_cells = 150.0 / (cellm * cellm)
+    keep = np.zeros_like(road)
+    for i in range(1, ncc):
+        if st[i, cv2.CC_STAT_AREA] >= min_cells:
+            keep[lab == i] = 1
+    return cv2.resize(keep, (H, H), interpolation=cv2.INTER_NEAREST) > 0
+
+
+def build_road_mesh(acc_road, road_mask, ground_w, res=2.5, lift=0.35,
                     max_quads=150000):
     """Asphalt mesh CONNECTING the houses: a draped grid of quads over
     the segmentation's painted road network.  Nodes are shared and
@@ -1673,7 +1998,7 @@ def build_road_mesh(acc_road, road_mask, ground_w, res=2.5, lift=0.06,
         if key not in nodes:
             wx = ix * res - WORLD_SIZE_M * 0.5
             wz = iy * res - WORLD_SIZE_M * 0.5
-            lft = lift if cnt[iy, ix] >= 4 else 0.0
+            lft = lift if cnt[iy, ix] >= 4 else -0.10
             y = ground_w(wx, wz) + lft
             gx = (ground_w(wx + res, wz) - ground_w(wx - res, wz)) / (2 * res)
             gz = (ground_w(wx, wz + res) - ground_w(wx, wz - res)) / (2 * res)
@@ -1682,7 +2007,7 @@ def build_road_mesh(acc_road, road_mask, ground_w, res=2.5, lift=0.06,
             nodes[key] = len(nodes)
             acc_road.pos.append((wx, y, wz))
             acc_road.nrm.append(tuple(nrm))
-            acc_road.uv.append((wx / 7.0, wz / 7.0))
+            acc_road.uv.append((wx / 5.0, wz / 5.0))
         return nodes[key]
 
     for iy, ix in zip(ys, xs):
@@ -2014,7 +2339,7 @@ def write_glb(groups, path):
                         "primitives": prim_json}],
             "materials": materials,
             "images": images,
-            "samplers": [{"magFilter": 9729, "minFilter": 9729,
+            "samplers": [{"magFilter": 9729, "minFilter": 9987,
                           "wrapS": 10497, "wrapT": 10497}],
             "textures": textures,
             "bufferViews": views, "accessors": accs}
@@ -2077,7 +2402,12 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
         except Exception as e:                            # noqa: BLE001
             print(f"[pcg] terrain glb unreadable ({e}); heightmap fallback")
 
+    _conf = [None]          # conformed heightmap once the pads are cut
+
     def ground(px, py):
+        if _conf[0] is not None:          # sample conformed heights DIRECTLY
+            return float(_conf[0][min(int(py), H - 1),
+                                  min(int(px), H - 1)]) * HEIGHT_AMP_M
         if ground_grid is not None:
             return _grid_sample(ground_grid, *px_to_world(px, py))
         return float(hmap[min(int(py), H - 1),
@@ -2227,10 +2557,7 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
             h *= 1.45                        # occasional taller landmark
         return h
 
-    try:
-        import cv2
-    except ModuleNotFoundError:
-        cv2 = None                                 # PIL fallback below
+    import cv2
     acc_door, acc_fence, acc_road = MeshAcc(), MeshAcc(), MeshAcc()
 
     def ground_w(wx, wz):
@@ -2241,14 +2568,8 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
     _door_field = None
     if masks["road"].any():
         from scipy.ndimage import distance_transform_edt
-        if cv2 is not None:
-            _rs = cv2.resize(masks["road"].astype(np.uint8), (1024, 1024),
-                             interpolation=cv2.INTER_AREA) > 0
-        else:
-            from PIL import Image as _Im
-            _rs = np.asarray(_Im.fromarray(
-                (masks["road"] * 255).astype(np.uint8)).resize(
-                    (1024, 1024), _Im.BILINEAR)) > 127
+        _rs = cv2.resize(masks["road"].astype(np.uint8), (1024, 1024),
+                         interpolation=cv2.INTER_AREA) > 0
         _rd, _ri = distance_transform_edt(~_rs, return_indices=True)
         _door_field = (_rd, _ri, H / 1024.0)
 
@@ -2272,6 +2593,43 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
         bld_polys, claim = _dedupe_footprints(bld_polys, H, px_m)
         print(f"[pcg] footprint overlap resolution: {n0} -> "
               f"{len(bld_polys)} buildings")
+
+    # ── CONFORM the heightmap to the geometry: flat pads under houses,
+    #    graded road corridors — so buildings sit flush and streets stop
+    #    rolling.  Rewrites the heightmap PNG + render-mesh export and
+    #    mirrors the active terrain map; placement then samples the
+    #    conformed heights.
+    if bld_polys or masks["road"].any():
+        hc = _conform_heightmap(hmap, HEIGHT_AMP_M, px_m, bld_polys,
+                                masks["road"], masks["water"])
+        try:
+            _write_heightmap_png(hc, height_path)
+            if os.path.exists(ter_glb):
+                _regen_terrain_glb(ter_glb, hc, HEIGHT_AMP_M)
+            active = os.path.join(os.path.dirname(os.path.dirname(
+                os.path.dirname(os.path.abspath(height_path)))),
+                "assets", "map.png")
+            if os.path.exists(active):
+                am = np.asarray(Image.open(active), np.float32)
+                aH = am.shape[0]
+                hc_a = (hc if aH == H else np.asarray(
+                    Image.fromarray((hc * 65535).astype(np.uint16),
+                                    "I;16").resize((aH, aH), Image.BILINEAR),
+                    np.float32) / 65535.0)
+                # only overwrite the active map if THIS stamp is the one
+                # installed (its base histogram matches within tolerance)
+                base_a = (hmap if aH == H else np.asarray(
+                    Image.fromarray((hmap * 65535).astype(np.uint16),
+                                    "I;16").resize((aH, aH), Image.BILINEAR),
+                    np.float32) / 65535.0)
+                if np.mean(np.abs(base_a - am / 65535.0)) < 0.02:
+                    _write_heightmap_png(hc_a, active)
+                    print("[pcg] conformed active terrain assets/map.png")
+            print(f"[pcg] heightmap conformed: {len(bld_polys)} pads, "
+                  f"roads graded -> {height_path}")
+        except Exception as e:                            # noqa: BLE001
+            print(f"[pcg] heightmap conform write failed ({e})")
+        _conf[0] = hc
     for cx, cy, w, d, ang, hgt in bld:
         wx, wz = px_to_world(cx, cy)
         ca, sa = np.cos(ang), np.sin(ang)
@@ -2345,8 +2703,8 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
                     if dinfo else None)
             add_fence_rect(acc_fence, cors, ground_w, gate)
             ngarden += 1
-    nroad = build_road_mesh(acc_road, masks["road"] & ~masks["water"],
-                            ground_w)
+    road_clean = _clean_road_mask(masks["road"] & ~masks["water"], px_m)
+    nroad = build_road_mesh(acc_road, road_clean, ground_w)
     print(f"[pcg] doors: {len(acc_door.pos) // 4}  gardens: {ngarden}  "
           f"road quads: {nroad}")
     trees = extract_trees(masks["veg"], tree_block, px_m) if place_trees else []
