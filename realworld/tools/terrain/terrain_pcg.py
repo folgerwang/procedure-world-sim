@@ -854,7 +854,7 @@ _LEAF_BASES = [(64, 116, 55),     # mid green
 
 
 def _conform_heightmap(hmap, amp, px_m, bld_polys, road_mask, water_mask,
-                       pad_skirt_m=4.5, road_smooth_m=7.0):
+                       pad_skirt_m=4.5, road_smooth_m=10.0):
     """ADJUST the heightmap so the terrain matches the placed geometry:
     flatten a level PAD under every building footprint (with a smooth
     graded skirt so the edge ramps into the natural ground rather than
@@ -1152,39 +1152,40 @@ def _tex_bundle(name, size=256):
             hgt[r:r+14] += 2
         rough[:] = 0.85
     elif name == "road":
-        # STONE-PAVED road (fits the ancient-town setting and needs no
-        # directional lane markings, so it maps onto the continuous road
-        # grid with plain world UVs — no fragile per-ribbon UVs).  A
-        # tileable Voronoi cobble: warm-gray setts with recessed mortar,
-        # domed height for PBR relief.
-        from scipy.spatial import cKDTree
-        nseed = 22                                           # larger setts
-        seeds = rng.uniform(0, size, (nseed, 2))
-        alls = np.vstack([seeds + [ox * size, oy * size]
-                          for ox in (-1, 0, 1) for oy in (-1, 0, 1)])
-        yy, xx = np.mgrid[0:size, 0:size]
-        q = np.stack([xx.ravel(), yy.ravel()], 1).astype(np.float32)
-        d, idx = cKDTree(alls).query(q, k=2)
-        d1 = d[:, 0].reshape(size, size)
-        d2 = d[:, 1].reshape(size, size)
-        cell = idx[:, 0].reshape(size, size)
-        mortar = (d2 - d1) < 2.0
-        # darker warm-gray granite; per-stone TONE variation only
-        base = np.array([116, 110, 99], np.float32)
-        tone = 1.0 + rng.uniform(-0.13, 0.13, (alls.shape[0], 1))
-        warm = rng.uniform(-1.0, 1.0, (alls.shape[0], 1)) * \
-            np.array([5.0, 1.5, -3.0], np.float32)
-        cellcol = base * tone + warm
-        img = cellcol[cell % len(cellcol)]
-        img += rng.normal(0, 3, (size, size, 1))             # grain
-        img[mortar] = [58, 54, 49]
-        hgt = np.clip(1.0 - d1 / (size / 4.7 * 0.6), 0.0, 1.0) * 3.0
-        hgt[mortar] -= 3.0
-        rough[:] = 0.92
-        rough[mortar] = 0.98
+        # COUNTRYSIDE dirt-gravel road: warm packed-earth base, gravel
+        # speckle, soft wheel-worn mottle.  Non-directional, so it tiles
+        # cleanly on the continuous road grid with world-space UVs.
+        from scipy import ndimage as _ndi
+        img = (np.full((size, size, 3), [139, 123, 99], np.float32) +
+               rng.normal(0, 4, (size, size, 1)))
+        mott = _ndi.gaussian_filter(
+            rng.normal(0, 1, (size, size)).astype(np.float32), 11)
+        img += (mott * 10.0)[:, :, None]
+        # gravel speckle: sparse light + dark pebbles
+        spk = rng.random((size, size))
+        img[spk > 0.986] = [176, 165, 142]
+        img[spk < 0.012] = [96, 84, 66]
+        hgt = mott * 1.5
+        hgt[spk > 0.986] += 1.5
+        hgt[spk < 0.012] -= 1.2
+        rough[:] = 0.96
+    elif name == "roadfade":
+        # ALPHA FADE skirt: same dirt colour, alpha 1 -> 0 down the tile
+        # (v axis).  Rendered with alphaMode BLEND so the road edge
+        # dissolves smoothly into the terrain.
+        img = (np.full((size, size, 3), [139, 123, 99], np.float32) +
+               rng.normal(0, 4, (size, size, 1)))
+        vv2 = (np.arange(size, dtype=np.float32) / (size - 1))[:, None]
+        aa = np.clip(1.0 - vv2, 0.0, 1.0) ** 1.3
+        aa = aa + rng.normal(0, 0.05, (size, size))          # organic edge
+        alpha = np.clip(aa * 255, 0, 255).astype(np.uint8)
+        arr = np.dstack([np.clip(img, 0, 255).astype(np.uint8), alpha])
+        _TEX_CACHE[name] = {"albedo": Image.fromarray(arr, "RGBA"),
+                            "alpha": True}
+        return _TEX_CACHE[name]
     else:
         raise KeyError(name)
-    strength = {"door": 1.5, "fence": 1.2, "road": 0.9}.get(
+    strength = {"door": 1.5, "fence": 1.2, "road": 1.1}.get(
         name, {"w": 2.0, "r": 2.5, "b": 1.5, "l": 0.6}.get(name[0], 1.5))
     _TEX_CACHE[name] = {
         "albedo": Image.fromarray(np.clip(img, 0, 255).astype(np.uint8),
@@ -1917,6 +1918,68 @@ def build_road_ribbons(acc_road, road_mask, ground_w, px_m, lift=0.07,
     return nrib
 
 
+def _road_paint_mask(road_mask, road_clean, px_m):
+    """Full-width paint mask: every component of the raw road blob that
+    belongs to the street network (overlaps the cleaned skeleton
+    corridor).  Painting only the narrow corridor left the wider FLUX-
+    painted road showing its old colour alongside the dirt."""
+    import cv2
+    H = road_mask.shape[0]
+    ds = max(1, int(round(2.0 / px_m)))
+    Hs = H // ds
+    m = (cv2.resize(road_mask.astype(np.uint8), (Hs, Hs),
+                    interpolation=cv2.INTER_AREA) > 0.4).astype(np.uint8)
+    c = (cv2.resize(road_clean.astype(np.uint8), (Hs, Hs),
+                    interpolation=cv2.INTER_AREA) > 0.2)
+    ncc, lab = cv2.connectedComponents(m, 8)
+    keep_ids = np.unique(lab[c])
+    keep = np.isin(lab, keep_ids[keep_ids > 0]).astype(np.uint8)
+    # widen ~4 m: the FLUX albedo repaints roads with its own micro-
+    # layout that drifts a few metres off the seg mask — without this a
+    # gray sliver of the old road peeks out beside the dirt
+    r = max(1, int(round(6.0 / (px_m * ds))))
+    dk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*r+1, 2*r+1))
+    keep = cv2.dilate(keep, dk)
+    keep = cv2.resize(keep, (H, H), interpolation=cv2.INTER_NEAREST) > 0
+    return keep | road_clean
+
+
+def _paint_roads_into_albedo(color_path, road_mask, px_m,
+                             feather_m=1.4):
+    """Composite the street network INTO the terrain's color satellite
+    map.  The terrain shader drapes this albedo over the (displaced)
+    ground, so a painted road always sits exactly ON the surface — no
+    z-fighting, no floating mesh, and the feathered alpha edge blends
+    into the surroundings by construction.  The ML detail stream then
+    re-details it near the camera like any other terrain feature."""
+    from scipy import ndimage as ndi
+    rgb = np.asarray(Image.open(color_path).convert("RGB"),
+                     np.float32)
+    H = rgb.shape[0]
+    if road_mask.shape[0] != H:
+        import cv2
+        road_mask = cv2.resize(road_mask.astype(np.uint8), (H, H),
+                               interpolation=cv2.INTER_NEAREST) > 0
+    rng = np.random.default_rng(7)
+    # packed-dirt look MATCHING the road mesh texture, so ground and
+    # mesh read as one material and the alpha-fade seam is invisible
+    road_col = np.full((H, H, 3), (139.0, 123.0, 99.0), np.float32)
+    mott = ndi.gaussian_filter(
+        rng.normal(0, 1, (H // 4, H // 4)).astype(np.float32), 2)
+    mott = np.kron(mott, np.ones((4, 4), np.float32))[:H, :H]
+    road_col += (mott * 9.0)[:, :, None]
+    road_col += rng.normal(0, 5.5, (H, H, 1))
+    d_in = ndi.distance_transform_edt(road_mask) * px_m
+    gutter = road_mask & (d_in < 0.8)
+    road_col[gutter] *= 0.8
+    d_out = ndi.distance_transform_edt(~road_mask) * px_m
+    alpha = np.clip(1.0 - d_out / feather_m, 0.0, 1.0) * 0.93
+    out = rgb * (1.0 - alpha[:, :, None]) + road_col * alpha[:, :, None]
+    Image.fromarray(np.clip(out, 0, 255).astype(np.uint8),
+                    "RGB").save(color_path)
+    print(f"[pcg] painted street network into albedo -> {color_path}")
+
+
 def _prune_spurs(sk, iters):
     """Iteratively erode skeleton endpoints — clips short spurs so a
     blobby mask's medial axis becomes a clean street graph."""
@@ -1932,7 +1995,8 @@ def _prune_spurs(sk, iters):
     return a
 
 
-def _clean_road_mask(road_mask, px_m, width_m=4.0, prune_m=8.0):
+def _clean_road_mask(road_mask, px_m, width_m=4.0, prune_m=8.0,
+                     town_mask=None):
     """Turn the segmentation's broad, blobby ROAD region into a clean
     narrow STREET NETWORK: skeletonise to centrelines, prune spurs, then
     re-dilate to a uniform width.  Result reads as linear roads with
@@ -1953,38 +2017,54 @@ def _clean_road_mask(road_mask, px_m, width_m=4.0, prune_m=8.0):
     disk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
     road = cv2.dilate(sk.astype(np.uint8), disk)
     road = cv2.morphologyEx(road, cv2.MORPH_CLOSE, disk)
-    # drop tiny disconnected components (rock/roof misclassified as road)
+    # drop tiny disconnected components (rock/roof misclassified as
+    # road), and — when a town mask is given — drop components that
+    # never touch a town: the seg labels mountain crevices as "road",
+    # which painted squiggly trails all over the rock faces.
     ncc, lab, st, _ = cv2.connectedComponentsWithStats(road, 8)
     min_cells = 150.0 / (cellm * cellm)
+    near_town = None
+    if town_mask is not None and town_mask.any():
+        tm = (cv2.resize(town_mask.astype(np.uint8), (Hs, Hs),
+                         interpolation=cv2.INTER_AREA) > 0).astype(np.uint8)
+        r_t = max(1, int(round(50.0 / cellm)))
+        tk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                       (2 * r_t + 1, 2 * r_t + 1))
+        near_town = cv2.dilate(tm, tk).astype(bool)
     keep = np.zeros_like(road)
     for i in range(1, ncc):
-        if st[i, cv2.CC_STAT_AREA] >= min_cells:
-            keep[lab == i] = 1
+        if st[i, cv2.CC_STAT_AREA] < min_cells:
+            continue
+        comp = lab == i
+        if near_town is not None and not (comp & near_town).any():
+            continue
+        keep[comp] = 1
     return cv2.resize(keep, (H, H), interpolation=cv2.INTER_NEAREST) > 0
 
 
-def build_road_mesh(acc_road, road_mask, ground_w, res=2.5, lift=0.35,
-                    max_quads=150000):
-    """Asphalt mesh CONNECTING the houses: a draped grid of quads over
-    the segmentation's painted road network.  Nodes are shared and
-    sampled once each (crack-free); the coverage field is smoothed
-    before thresholding (softer outline), and BOUNDARY nodes drop to
-    ground level so the road's edge tapers into the terrain instead of
-    ending in a floating, aliased cliff."""
+def build_road_mesh(acc_road, acc_fade, road_mask, ground_hc, res=2.0,
+                    lift=0.15, max_quads=200000, skirt_on=False):
+    """Countryside road ATTACHED to the ground: the heightmap has been
+    graded smooth along the corridor (see _conform_heightmap), and every
+    node here samples that SAME conformed heightmap — mesh and displaced
+    terrain agree by construction.  Interior sits `lift` above the
+    surface (clear of ML micro-detail); boundary nodes drop flush.  An
+    ALPHA-FADE skirt (alphaMode BLEND) runs around every edge so the
+    road dissolves into the ground instead of cutting a seam."""
     import cv2
     from scipy import ndimage as _ndi
     frac = road_mask.astype(np.float32)
     while True:
         cells = max(8, int(WORLD_SIZE_M / res))
-        f = cv2.resize(frac, (cells, cells), interpolation=cv2.INTER_AREA)
-        on = _ndi.gaussian_filter(f, 1.0) > 0.5
+        fld = cv2.resize(frac, (cells, cells),
+                         interpolation=cv2.INTER_AREA)
+        on = _ndi.gaussian_filter(fld, 1.0) > 0.5
         if int(on.sum()) <= max_quads:
             break
         res *= 1.25
     ys, xs = np.nonzero(on)
     if not len(ys):
         return 0
-    # per-node count of adjacent road cells: <4 ⇒ boundary node
     cnt = np.zeros((cells + 1, cells + 1), np.int16)
     o = on.astype(np.int16)
     cnt[:-1, :-1] += o
@@ -1998,16 +2078,18 @@ def build_road_mesh(acc_road, road_mask, ground_w, res=2.5, lift=0.35,
         if key not in nodes:
             wx = ix * res - WORLD_SIZE_M * 0.5
             wz = iy * res - WORLD_SIZE_M * 0.5
-            lft = lift if cnt[iy, ix] >= 4 else -0.10
-            y = ground_w(wx, wz) + lft
-            gx = (ground_w(wx + res, wz) - ground_w(wx - res, wz)) / (2 * res)
-            gz = (ground_w(wx, wz + res) - ground_w(wx, wz - res)) / (2 * res)
+            lft = lift if cnt[iy, ix] >= 4 else 0.02
+            y = ground_hc(wx, wz) + lft
+            gx = (ground_hc(wx + res, wz) -
+                  ground_hc(wx - res, wz)) / (2 * res)
+            gz = (ground_hc(wx, wz + res) -
+                  ground_hc(wx, wz - res)) / (2 * res)
             nrm = np.array([-gx, 1.0, -gz])
             nrm /= np.linalg.norm(nrm)
             nodes[key] = len(nodes)
             acc_road.pos.append((wx, y, wz))
             acc_road.nrm.append(tuple(nrm))
-            acc_road.uv.append((wx / 5.0, wz / 5.0))
+            acc_road.uv.append((wx / 4.0, wz / 4.0))
         return nodes[key]
 
     for iy, ix in zip(ys, xs):
@@ -2016,6 +2098,40 @@ def build_road_mesh(acc_road, road_mask, ground_w, res=2.5, lift=0.35,
         c = node(ix + 1, iy + 1)
         d = node(ix, iy + 1)
         acc_road.idx.extend([a, b, c, a, c, d])
+
+    # fade skirt: outward quad on every boundary edge, alpha 1 -> 0
+    onp = np.zeros((cells + 2, cells + 2), bool)
+    onp[1:-1, 1:-1] = on
+    SK = max(1.6, res * 0.8)
+
+    def skirt(n0, n1, ox, oz):
+        (x0, y0_, z0), (x1, y1_, z1) = (acc_road.pos[n0],
+                                        acc_road.pos[n1])
+        e0 = (x0 + ox * SK, z0 + oz * SK)
+        e1 = (x1 + ox * SK, z1 + oz * SK)
+        b = len(acc_fade.pos)
+        el = float(np.hypot(x1 - x0, z1 - z0))
+        for (px_, py_, pz), uvv in (
+                ((x0, y0_ - 0.02, z0), (0.0, 0.0)),
+                ((x1, y1_ - 0.02, z1), (el / 4.0, 0.0)),
+                ((e1[0], ground_hc(*e1) - 0.03, e1[1]), (el / 4.0, 1.0)),
+                ((e0[0], ground_hc(*e0) - 0.03, e0[1]), (0.0, 1.0))):
+            acc_fade.pos.append((px_, py_, pz))
+            acc_fade.nrm.append((0.0, 1.0, 0.0))
+            acc_fade.uv.append(uvv)
+        acc_fade.idx.extend([b, b + 1, b + 2, b, b + 2, b + 3])
+
+    if not skirt_on:
+        return int(on.sum())
+    for iy, ix in zip(ys, xs):
+        if not onp[iy, ix + 1]:                 # north neighbour off
+            skirt(node(ix, iy), node(ix + 1, iy), 0.0, -1.0)
+        if not onp[iy + 2, ix + 1]:             # south
+            skirt(node(ix, iy + 1), node(ix + 1, iy + 1), 0.0, 1.0)
+        if not onp[iy + 1, ix]:                 # west
+            skirt(node(ix, iy), node(ix, iy + 1), -1.0, 0.0)
+        if not onp[iy + 1, ix + 2]:             # east
+            skirt(node(ix + 1, iy), node(ix + 1, iy + 1), 1.0, 0.0)
     return int(on.sum())
 
 
@@ -2288,6 +2404,8 @@ def write_glb(groups, path):
                "metallicFactor": 0.0,
                "roughnessFactor": 1.0 if "mr" in bundle else 0.9}
         mat = {"name": name, "pbrMetallicRoughness": pbr}
+        if bundle.get("alpha"):
+            mat["alphaMode"] = "BLEND"      # smooth-blend edge material
         if "mr" in bundle:
             pbr["metallicRoughnessTexture"] = {
                 "index": _emit_tex(bundle["mr"])}
@@ -2599,9 +2717,13 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
     #    rolling.  Rewrites the heightmap PNG + render-mesh export and
     #    mirrors the active terrain map; placement then samples the
     #    conformed heights.
-    if bld_polys or masks["road"].any():
+    road_clean = (_clean_road_mask(masks["road"] & ~masks["water"], px_m,
+                                   town_mask=masks.get("town"))
+                  if masks["road"].any() else
+                  np.zeros_like(masks["road"]))
+    if bld_polys or road_clean.any():
         hc = _conform_heightmap(hmap, HEIGHT_AMP_M, px_m, bld_polys,
-                                masks["road"], masks["water"])
+                                road_clean, masks["water"])
         try:
             _write_heightmap_png(hc, height_path)
             if os.path.exists(ter_glb):
@@ -2703,8 +2825,38 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
                     if dinfo else None)
             add_fence_rect(acc_fence, cors, ground_w, gate)
             ngarden += 1
-    road_clean = _clean_road_mask(masks["road"] & ~masks["water"], px_m)
-    nroad = build_road_mesh(acc_road, road_clean, ground_w)
+    # COUNTRYSIDE ROAD MESH, matched to the conformed heightmap: the
+    # conform step graded the corridor smooth, and every road node
+    # samples that same conformed map — so the mesh is attached to the
+    # rendered ground by construction, with an alpha-fade skirt
+    # dissolving its edges into the terrain.
+    acc_fade = MeshAcc()
+    nroad = 0
+    if road_clean.any():
+        try:
+            from scipy import ndimage as _ndi
+            _paint_roads_into_albedo(
+                color_path,
+                _road_paint_mask(masks["road"] & ~masks["water"],
+                                 road_clean, px_m),
+                px_m, feather_m=2.0)
+        except Exception as e:                            # noqa: BLE001
+            print(f"[pcg] road albedo paint failed ({e})")
+        hc_src = _conf[0] if _conf[0] is not None else hmap
+
+        def ground_hc(wx, wz):
+            fx = (wx + WORLD_SIZE_M * 0.5) / px_m
+            fy = (wz + WORLD_SIZE_M * 0.5) / px_m
+            x0 = int(np.clip(fx, 0, H - 2))
+            y0 = int(np.clip(fy, 0, H - 2))
+            tx = float(np.clip(fx - x0, 0.0, 1.0))
+            ty = float(np.clip(fy - y0, 0.0, 1.0))
+            v = (hc_src[y0, x0] * (1 - tx) * (1 - ty) +
+                 hc_src[y0, x0 + 1] * tx * (1 - ty) +
+                 hc_src[y0 + 1, x0] * (1 - tx) * ty +
+                 hc_src[y0 + 1, x0 + 1] * tx * ty)
+            return float(v) * HEIGHT_AMP_M
+        nroad = build_road_mesh(acc_road, acc_fade, road_clean, ground_hc)
     print(f"[pcg] doors: {len(acc_door.pos) // 4}  gardens: {ngarden}  "
           f"road quads: {nroad}")
     trees = extract_trees(masks["veg"], tree_block, px_m) if place_trees else []
@@ -2722,8 +2874,9 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
               [(a, _tex_bundle(f"leaf{i}"), f"tree_leaf{i}")
                for i, a in enumerate(acc_leafs)] +
               [(acc_door, _tex_bundle("door"), "house_door"),
-               (acc_fence, _tex_bundle("fence"), "garden_fence"),
-               (acc_road, _tex_bundle("road"), "roadway")])
+               (acc_fence, _tex_bundle("fence"), "garden_fence")] +
+              ([(acc_road, _tex_bundle("road"), "roadway")]
+               if acc_road.pos else []))
     write_glb([grp for grp in groups if grp[0].pos], out_glb)
     if bld_polys:
         fp = os.path.splitext(out_glb)[0] + "_footprints.json"
