@@ -78,6 +78,11 @@ def masks_from_seg(seg_path, H):
             "town": cls == idx["town"],
             "road": cls == idx["road"],
             "veg": cls == idx["forest"],
+            # open grassland — the ground-cover scatter (grass tufts and
+            # flowers) plants here.  Kept separate from "veg" (forest
+            # canopy) so meadow cover and trees don't fight for the same
+            # ground.
+            "grass": cls == idx["grass"],
             # roof stays empty — buildings come from town-block
             # subdivision, not per-pixel roofs.
             "roof": np.zeros(cls.shape, bool)}
@@ -665,6 +670,95 @@ def extract_trees(veg_mask, roof_mask, px_m, spacing_m=7.0,
     return out
 
 
+def extract_ground_cover(grass_mask, block_mask, hmap, px_m,
+                         spacing_m=2.2, max_items=140000,
+                         max_slope=0.35, flower_frac=0.14):
+    """Scatter points for GRASS TUFTS and FLOWERS across open grassland.
+
+    Same deterministic jittered-grid as the trees, with two extra gates
+    that keep the cover believable and the budget affordable:
+
+      * SLOPE — tufts only sit on gentle ground (steep faces are the
+        rock/scree the material system already shades as bare).
+      * block_mask — roads, buildings, water and canopy footprints are
+        excluded so nothing sprouts through a roof or a carriageway.
+
+    Returns (x_px, y_px, kind, scale) where kind 0 = grass tuft,
+    1 = flower cluster.  Flowers arrive in CLUMPS rather than uniformly:
+    real meadows have patches, and a flat sprinkle reads as noise."""
+    H, W = grass_mask.shape
+    step = max(1, int(round(spacing_m / px_m)))
+    # slope from the heightmap, in metres per metre
+    gy_, gx_ = np.gradient(hmap.astype(np.float32) * HEIGHT_AMP_M, px_m)
+    slope = np.hypot(gx_, gy_)
+    out = []
+    for gy in range(0, H - step, step):
+        for gx in range(0, W - step, step):
+            jx = gx + int(_det_rand(gx, gy, 0, step))
+            jy = gy + int(_det_rand(gy, gx, 0, step))
+            jx, jy = min(jx, W - 1), min(jy, H - 1)
+            if not grass_mask[jy, jx] or block_mask[jy, jx]:
+                continue
+            if slope[jy, jx] > max_slope:
+                continue
+            # low-frequency clumping field: thins tufts in some patches
+            # and concentrates flowers in others
+            clump = _det_rand(jx // max(1, step * 6), jy // max(1, step * 6),
+                              0.0, 1.0)
+            if _det_rand(jx, jy, 0.0, 1.0) > 0.35 + 0.65 * clump:
+                continue
+            is_flower = (_det_rand(jy, jx, 0.0, 1.0)
+                         < flower_frac * (0.35 + 1.3 * clump))
+            out.append((jx, jy, 1 if is_flower else 0,
+                        _det_rand(jx + 7, jy + 3, 0.75, 1.35)))
+    if len(out) > max_items:
+        stride = len(out) / float(max_items)
+        out = [out[int(i * stride)] for i in range(max_items)]
+        print(f"[pcg] ground-cover budget: thinned to {max_items} evenly")
+    return out
+
+
+def add_grass_tuft(acc, cx, cz, y0, s, seed):
+    """Grass tuft: three intersecting billboard blades in a star, so it
+    reads from every direction without needing per-frame facing.  Each
+    quad tapers to a point and leans slightly (deterministic per site)."""
+    h = 0.42 * s
+    w = 0.30 * s
+    for k in range(3):
+        a = (float(seed % 17) / 17.0 + k / 3.0) * np.pi
+        ca, sa = float(np.cos(a)), float(np.sin(a))
+        lean_x = (_det_rand(seed + k, seed, -1.0, 1.0)) * 0.10 * s
+        lean_z = (_det_rand(seed, seed + k, -1.0, 1.0)) * 0.10 * s
+        x0, z0 = cx - ca * w * 0.5, cz - sa * w * 0.5
+        x1, z1 = cx + ca * w * 0.5, cz + sa * w * 0.5
+        v = [(x0, y0, z0), (x1, y0, z1),
+             (x1 + lean_x, y0 + h, z1 + lean_z),
+             (x0 + lean_x, y0 + h, z0 + lean_z)]
+        # normal points up-ish: grass is lit like a soft volume, not a
+        # hard vertical plane (avoids black blades when the sun is low)
+        n = [(0.0, 1.0, 0.0)] * 4
+        acc.add(v, n, [0, 1, 2, 0, 2, 3],
+                [(0.0, 1.0), (1.0, 1.0), (1.0, 0.0), (0.0, 0.0)])
+
+
+def add_flower(acc_stem, acc_head, cx, cz, y0, s, seed):
+    """Flower: a thin stem plus a small crossed-quad head.  The head uses
+    its own accumulator so it can carry a bright petal material while the
+    stems stay green."""
+    h = 0.34 * s
+    _tube(acc_stem, cx, cz, 0.012 * s, y0, y0 + h, sides=3)
+    r = 0.075 * s
+    for k in range(2):
+        a = (float(seed % 13) / 13.0 + k * 0.5) * np.pi
+        ca, sa = float(np.cos(a)), float(np.sin(a))
+        v = [(cx - ca * r, y0 + h - r, cz - sa * r),
+             (cx + ca * r, y0 + h - r, cz + sa * r),
+             (cx + ca * r, y0 + h + r, cz + sa * r),
+             (cx - ca * r, y0 + h + r, cz - sa * r)]
+        acc_head.add(v, [(0.0, 1.0, 0.0)] * 4, [0, 1, 2, 0, 2, 3],
+                     [(0.0, 1.0), (1.0, 1.0), (1.0, 0.0), (0.0, 0.0)])
+
+
 # ── 3. PCG mesh assembly (merged, white) ────────────────────────────────────
 class MeshAcc:
     def __init__(self):
@@ -847,6 +941,13 @@ _ROOF_BASES = [(167, 82, 56),     # terracotta
                (122, 63, 48),     # dark brown tile
                (109, 109, 116),   # slate gray
                (150, 96, 60)]     # faded clay
+# Ground-cover palettes.  Grass runs cooler/greyer than tree canopy so
+# fields read as meadow rather than moss; flowers pick from warm meadow
+# colours (white daisy, yellow buttercup, red poppy, violet knapweed).
+_GRASS_BASES = [(96, 132, 62), (108, 142, 70), (86, 120, 58),
+                (118, 148, 78)]
+_PETAL_BASES = [(236, 238, 228), (238, 206, 84),
+                (206, 74, 62), (156, 108, 190)]
 _LEAF_BASES = [(64, 116, 55),     # mid green
                (44, 90, 42),      # dark conifer green
                (109, 128, 52),    # olive / dry
@@ -854,7 +955,7 @@ _LEAF_BASES = [(64, 116, 55),     # mid green
 
 
 def _conform_heightmap(hmap, amp, px_m, bld_polys, road_mask, water_mask,
-                       pad_skirt_m=4.5, road_smooth_m=10.0):
+                       pad_skirt_m=4.5, road_smooth_m=4.0):
     """ADJUST the heightmap so the terrain matches the placed geometry:
     flatten a level PAD under every building footprint (with a smooth
     graded skirt so the edge ramps into the natural ground rather than
@@ -1125,6 +1226,61 @@ def _tex_bundle(name, size=256):
                (1.0 + 0.09 * blotch) + rng.normal(0, 5, (size, size, 1)))
         hgt = blotch[..., 0] * 1.2
         rough[:] = 0.95
+    elif name.startswith("grassblade"):
+        # Vertical blades on a transparent field.  The alpha channel is
+        # what shapes them — the quad is a billboard, so anything not
+        # painted here must cut away or tufts read as solid cards.
+        base = np.array(_variant("grassblade", _GRASS_BASES), np.float32)
+        img = np.tile(base, (size, size, 1))
+        alpha = np.zeros((size, size), np.float32)
+        nb = 7
+        for b in range(nb):
+            cx = (b + 0.5) / nb * size + rng.normal(0, size * 0.02)
+            halfw = size * rng.uniform(0.014, 0.030)
+            tipy = rng.uniform(0.05, 0.35) * size       # blade top
+            bend = rng.normal(0, size * 0.05)
+            shade = rng.uniform(0.78, 1.18)
+            for y in range(int(tipy), size):
+                t = (y - tipy) / max(1.0, size - tipy)   # 0 tip .. 1 root
+                w = halfw * (0.25 + 0.75 * t)            # taper to a point
+                x = cx + bend * (1.0 - t) ** 2
+                x0, x1 = int(np.clip(x - w, 0, size)), int(np.clip(x + w, 0, size))
+                if x1 > x0:
+                    alpha[y, x0:x1] = 1.0
+                    # darken toward the root: ambient occlusion in-tuft
+                    img[y, x0:x1] *= shade * (0.62 + 0.38 * (1.0 - t))
+        img += rng.normal(0, 4, (size, size, 1))
+        rough[:] = 0.92
+        arr = np.dstack([np.clip(img, 0, 255).astype(np.uint8),
+                         np.clip(alpha * 255, 0, 255).astype(np.uint8)])
+        _TEX_CACHE[name] = {
+            "albedo": Image.fromarray(arr, "RGBA"),
+            "alpha": True, "alpha_mode": "MASK", "alpha_cutoff": 0.35,
+            "double_sided": True,
+            "mr": _mr_image(rough)}
+        return _TEX_CACHE[name]
+    elif name.startswith("petal"):
+        # Flower head: a soft round bloom with a pale centre, alpha-cut
+        # to a disc so the crossed quads don't show their corners.
+        base = np.array(_variant("petal", _PETAL_BASES), np.float32)
+        yy, xx = np.mgrid[0:size, 0:size]
+        r = np.hypot(yy - size / 2, xx - size / 2) / (size / 2)
+        img = np.tile(base, (size, size, 1))
+        img *= (1.0 + 0.55 * np.clip(1.0 - r * 2.6, 0.0, 1.0))[..., None]
+        img += rng.normal(0, 5, (size, size, 1))
+        alpha = (r < 0.92).astype(np.float32)
+        # petal notches: five lobes, so blooms aren't perfect circles
+        ang = np.arctan2(yy - size / 2, xx - size / 2)
+        alpha *= (r < (0.62 + 0.30 * np.abs(np.cos(2.5 * ang)))).astype(np.float32)
+        rough[:] = 0.85
+        arr = np.dstack([np.clip(img, 0, 255).astype(np.uint8),
+                         np.clip(alpha * 255, 0, 255).astype(np.uint8)])
+        _TEX_CACHE[name] = {
+            "albedo": Image.fromarray(arr, "RGBA"),
+            "alpha": True, "alpha_mode": "MASK", "alpha_cutoff": 0.4,
+            "double_sided": True,
+            "mr": _mr_image(rough)}
+        return _TEX_CACHE[name]
     elif name == "door":
         img = np.full((size, size, 3), [96, 66, 40], np.float32)
         img += rng.normal(0, 4, (size, size, 1))
@@ -1918,7 +2074,31 @@ def build_road_ribbons(acc_road, road_mask, ground_w, px_m, lift=0.07,
     return nrib
 
 
-def _road_paint_mask(road_mask, road_clean, px_m):
+def _road_paint_mask(road_mask, road_clean, px_m, corridor_only=True):
+    """Paint mask for the road albedo.
+
+    corridor_only (default): paint EXACTLY the cleaned street corridor —
+    the same uniform-width network the road ribbon mesh is swept along —
+    so paint and geometry agree.  The old behaviour (below) painted every
+    raw FLUX road BLOB that touched the network, which at world scale
+    dumped amorphous tan splodges across whole fields wherever the
+    segmentation called a paved area 'road'.
+
+    corridor_only=False restores that legacy full-blob paint."""
+    import cv2
+    if corridor_only:
+        H = road_mask.shape[0]
+        # widen slightly past the mesh so no ground colour peeks out at
+        # the ribbon's edge, then let the caller's feather soften it
+        r = max(1, int(round((ROAD_WIDTH_M * 0.5 + 0.75) / px_m)))
+        disk = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                         (2 * r + 1, 2 * r + 1))
+        base = road_clean.astype(np.uint8)
+        return cv2.dilate(base, disk) > 0
+    return _road_paint_mask_legacy(road_mask, road_clean, px_m)
+
+
+def _road_paint_mask_legacy(road_mask, road_clean, px_m):
     """Full-width paint mask: every component of the raw road blob that
     belongs to the street network (overlaps the cleaned skeleton
     corridor).  Painting only the narrow corridor left the wider FLUX-
@@ -1995,7 +2175,108 @@ def _prune_spurs(sk, iters):
     return a
 
 
-def _clean_road_mask(road_mask, px_m, width_m=4.0, prune_m=8.0,
+# Road geometry, shared by the mask, the albedo paint, the heightmap
+# grading and the mesh so all four agree.  4 m read as a footpath at
+# world scale; 7 m is a believable two-lane country road with shoulders.
+ROAD_WIDTH_M = 7.0
+
+
+def _trace_skeleton_polylines(sk, min_px=4):
+    """1-px skeleton raster -> list of (N,2) float arrays in (x, y) pixel
+    coords.  Walks the skeleton graph: every run between endpoints /
+    junctions becomes one polyline, so the road network turns into
+    CENTRELINES that can be ribboned instead of rasterised."""
+    a = sk > 0
+    pts = set(zip(*(c.tolist() for c in np.nonzero(a))))   # {(y, x)}
+    if not pts:
+        return []
+
+    def nbrs(p):
+        y, x = p
+        out = []
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dx or dy:
+                    q = (y + dy, x + dx)
+                    if q in pts:
+                        out.append(q)
+        return out
+
+    deg = {p: len(nbrs(p)) for p in pts}
+    nodes = {p for p in pts if deg[p] != 2}       # endpoints + junctions
+    used = set()                                   # visited edges
+
+    def walk(start, second):
+        line = [start, second]
+        used.add(frozenset((start, second)))
+        prev, cur = start, second
+        while cur not in nodes:
+            nxt = [q for q in nbrs(cur)
+                   if q != prev and frozenset((cur, q)) not in used]
+            if not nxt:
+                break
+            # prefer 4-connected steps: diagonal-first walks zig-zag
+            nxt.sort(key=lambda q: abs(q[0] - cur[0]) + abs(q[1] - cur[1]))
+            q = nxt[0]
+            used.add(frozenset((cur, q)))
+            line.append(q)
+            prev, cur = cur, q
+        return line
+
+    lines = []
+    for n in nodes:
+        for q in nbrs(n):
+            if frozenset((n, q)) not in used:
+                lines.append(walk(n, q))
+    # closed rings carry no node — seed them anywhere
+    for p in pts:
+        if deg.get(p, 0) == 2 and all(
+                frozenset((p, q)) not in used for q in nbrs(p)):
+            nb = nbrs(p)
+            if nb:
+                lines.append(walk(p, nb[0]))
+    out = []
+    for l in lines:
+        if len(l) >= min_px:
+            arr = np.asarray(l, np.float64)
+            out.append(arr[:, ::-1].copy())        # (y,x) -> (x,y)
+    return out
+
+
+def _smooth_polyline(P, iters=4):
+    """Chaikin corner-cutting: converts the skeleton's 8-connected
+    staircase into a smooth curve.  Endpoints are pinned so junctions
+    stay put."""
+    P = np.asarray(P, np.float64)
+    for _ in range(iters):
+        if len(P) < 3:
+            break
+        Q = np.empty((2 * (len(P) - 1) + 2, 2))
+        Q[0] = P[0]
+        Q[1:-1:2] = 0.75 * P[:-1] + 0.25 * P[1:]
+        Q[2:-1:2] = 0.25 * P[:-1] + 0.75 * P[1:]
+        Q[-1] = P[-1]
+        P = Q
+    return P
+
+
+def _resample_polyline(P, step):
+    """Uniform arc-length resampling (constant quad length along the
+    ribbon, so UVs and shading stay even)."""
+    P = np.asarray(P, np.float64)
+    if len(P) < 2:
+        return P
+    seg = np.hypot(*np.diff(P, axis=0).T)
+    d = np.concatenate([[0.0], np.cumsum(seg)])
+    if d[-1] < 1e-6:
+        return P
+    n = max(2, int(round(d[-1] / step)) + 1)
+    t = np.linspace(0.0, d[-1], n)
+    return np.column_stack([np.interp(t, d, P[:, 0]),
+                            np.interp(t, d, P[:, 1])])
+
+
+def _clean_road_mask(road_mask, px_m, width_m=ROAD_WIDTH_M, prune_m=8.0,
                      town_mask=None):
     """Turn the segmentation's broad, blobby ROAD region into a clean
     narrow STREET NETWORK: skeletonise to centrelines, prune spurs, then
@@ -2043,96 +2324,116 @@ def _clean_road_mask(road_mask, px_m, width_m=4.0, prune_m=8.0,
 
 
 def build_road_mesh(acc_road, acc_fade, road_mask, ground_hc, res=2.0,
-                    lift=0.15, max_quads=200000, skirt_on=False):
-    """Countryside road ATTACHED to the ground: the heightmap has been
-    graded smooth along the corridor (see _conform_heightmap), and every
-    node here samples that SAME conformed heightmap — mesh and displaced
-    terrain agree by construction.  Interior sits `lift` above the
-    surface (clear of ML micro-detail); boundary nodes drop flush.  An
-    ALPHA-FADE skirt (alphaMode BLEND) runs around every edge so the
-    road dissolves into the ground instead of cutting a seam."""
-    import cv2
+                    lift=0.15, max_quads=200000, skirt_on=True,
+                    width_m=ROAD_WIDTH_M, fade_m=0.6):
+    """Countryside road ATTACHED to the ground, built as a CENTRELINE
+    RIBBON: the cleaned mask is thinned to centrelines, each polyline is
+    Chaikin-smoothed and arc-length resampled, then swept into a constant
+    width quad strip that follows the (already corridor-graded) terrain.
+
+    This replaces the old approach of rasterising the mask into an
+    axis-aligned quad grid, whose every edge staircased along cell
+    boundaries — the jagged shoulders were structural, not a tuning
+    problem.  A ribbon has genuinely straight, parallel edges.
+
+    Interior sits `lift` above the surface (clear of ML micro-detail); the
+    outer edge rows drop flush so the shoulder tucks into the ground."""
     from scipy import ndimage as _ndi
-    frac = road_mask.astype(np.float32)
-    while True:
-        cells = max(8, int(WORLD_SIZE_M / res))
-        fld = cv2.resize(frac, (cells, cells),
-                         interpolation=cv2.INTER_AREA)
-        on = _ndi.gaussian_filter(fld, 1.0) > 0.5
-        if int(on.sum()) <= max_quads:
-            break
-        res *= 1.25
-    ys, xs = np.nonzero(on)
-    if not len(ys):
+    H = road_mask.shape[0]
+    px_m = WORLD_SIZE_M / float(H)
+    m = road_mask.astype(bool)
+    if not m.any():
         return 0
-    cnt = np.zeros((cells + 1, cells + 1), np.int16)
-    o = on.astype(np.int16)
-    cnt[:-1, :-1] += o
-    cnt[:-1, 1:] += o
-    cnt[1:, :-1] += o
-    cnt[1:, 1:] += o
-    nodes = {}
 
-    def node(ix, iy):
-        key = (ix, iy)
-        if key not in nodes:
-            wx = ix * res - WORLD_SIZE_M * 0.5
-            wz = iy * res - WORLD_SIZE_M * 0.5
-            lft = lift if cnt[iy, ix] >= 4 else 0.02
-            y = ground_hc(wx, wz) + lft
-            gx = (ground_hc(wx + res, wz) -
-                  ground_hc(wx - res, wz)) / (2 * res)
-            gz = (ground_hc(wx, wz + res) -
-                  ground_hc(wx, wz - res)) / (2 * res)
-            nrm = np.array([-gx, 1.0, -gz])
-            nrm /= np.linalg.norm(nrm)
-            nodes[key] = len(nodes)
-            acc_road.pos.append((wx, y, wz))
-            acc_road.nrm.append(tuple(nrm))
-            acc_road.uv.append((wx / 4.0, wz / 4.0))
-        return nodes[key]
+    # centrelines: thin at a coarse-ish scale (fast, and skeletons of
+    # smooth blobs are cleaner), then trace + smooth in PIXEL space
+    ds = max(1, int(round(1.5 / px_m)))
+    if ds > 1:
+        Hs = max(8, H // ds)
+        sm = _ndi.zoom(m.astype(np.float32), Hs / float(H), order=1) > 0.4
+    else:
+        Hs, sm = H, m
+    cell_m = WORLD_SIZE_M / float(Hs)
+    sk = _thin(sm.astype(np.uint8))
+    polys = _trace_skeleton_polylines(sk, min_px=max(3, int(6.0 / cell_m)))
+    if not polys:
+        return 0
 
-    for iy, ix in zip(ys, xs):
-        a = node(ix, iy)
-        b = node(ix + 1, iy)
-        c = node(ix + 1, iy + 1)
-        d = node(ix, iy + 1)
-        acc_road.idx.extend([a, b, c, a, c, d])
+    half = width_m * 0.5
+    step_m = max(1.5, res)                      # quad length along the road
+    quads = 0
 
-    # fade skirt: outward quad on every boundary edge, alpha 1 -> 0
-    onp = np.zeros((cells + 2, cells + 2), bool)
-    onp[1:-1, 1:-1] = on
-    SK = max(1.6, res * 0.8)
+    def ground_n(wx, wz):
+        """height + smoothed normal at a world point."""
+        e = 1.5
+        y = ground_hc(wx, wz)
+        gx = (ground_hc(wx + e, wz) - ground_hc(wx - e, wz)) / (2 * e)
+        gz = (ground_hc(wx, wz + e) - ground_hc(wx, wz - e)) / (2 * e)
+        n = np.array([-gx, 1.0, -gz])
+        return y, n / np.linalg.norm(n)
 
-    def skirt(n0, n1, ox, oz):
-        (x0, y0_, z0), (x1, y1_, z1) = (acc_road.pos[n0],
-                                        acc_road.pos[n1])
-        e0 = (x0 + ox * SK, z0 + oz * SK)
-        e1 = (x1 + ox * SK, z1 + oz * SK)
-        b = len(acc_fade.pos)
-        el = float(np.hypot(x1 - x0, z1 - z0))
-        for (px_, py_, pz), uvv in (
-                ((x0, y0_ - 0.02, z0), (0.0, 0.0)),
-                ((x1, y1_ - 0.02, z1), (el / 4.0, 0.0)),
-                ((e1[0], ground_hc(*e1) - 0.03, e1[1]), (el / 4.0, 1.0)),
-                ((e0[0], ground_hc(*e0) - 0.03, e0[1]), (0.0, 1.0))):
-            acc_fade.pos.append((px_, py_, pz))
-            acc_fade.nrm.append((0.0, 1.0, 0.0))
-            acc_fade.uv.append(uvv)
-        acc_fade.idx.extend([b, b + 1, b + 2, b, b + 2, b + 3])
+    for P in polys:
+        # pixel -> world, smooth, then resample at a constant step
+        W = np.column_stack([P[:, 0] * cell_m - WORLD_SIZE_M * 0.5,
+                             P[:, 1] * cell_m - WORLD_SIZE_M * 0.5])
+        W = _smooth_polyline(W, iters=4)
+        W = _resample_polyline(W, step_m)
+        if len(W) < 2:
+            continue
+        if quads + len(W) * 2 > max_quads:
+            break
+        # per-vertex tangent (central differences) -> left/right offsets
+        T = np.gradient(W, axis=0)
+        L = np.hypot(T[:, 0], T[:, 1])
+        L[L < 1e-9] = 1.0
+        T /= L[:, None]
+        Nx, Nz = -T[:, 1], T[:, 0]               # left normal in XZ
 
-    if not skirt_on:
-        return int(on.sum())
-    for iy, ix in zip(ys, xs):
-        if not onp[iy, ix + 1]:                 # north neighbour off
-            skirt(node(ix, iy), node(ix + 1, iy), 0.0, -1.0)
-        if not onp[iy + 2, ix + 1]:             # south
-            skirt(node(ix, iy + 1), node(ix + 1, iy + 1), 0.0, 1.0)
-        if not onp[iy + 1, ix]:                 # west
-            skirt(node(ix, iy), node(ix, iy + 1), -1.0, 0.0)
-        if not onp[iy + 1, ix + 2]:             # east
-            skirt(node(ix + 1, iy), node(ix + 1, iy + 1), 1.0, 0.0)
-    return int(on.sum())
+        base = len(acc_road.pos)
+        run = 0.0
+        for i in range(len(W)):
+            if i:
+                run += float(np.hypot(W[i, 0] - W[i - 1, 0],
+                                      W[i, 1] - W[i - 1, 1]))
+            for side, u in ((-1.0, 0.0), (1.0, 1.0)):
+                wx = W[i, 0] + Nx[i] * half * side
+                wz = W[i, 1] + Nz[i] * half * side
+                y, nrm = ground_n(wx, wz)
+                # edge rows sit lower than the crown: a slight camber
+                # tucks the shoulder into the terrain instead of leaving
+                # a lip standing proud of it
+                acc_road.pos.append((wx, y + lift * 0.35, wz))
+                acc_road.nrm.append(tuple(nrm))
+                acc_road.uv.append((u, run / 8.0))
+            # crown vertex is implicit: the strip is 2 verts wide, so
+            # raise both by the same lift at the centre via the y above
+        for i in range(len(W) - 1):
+            a = base + i * 2
+            b, c, d = a + 1, a + 3, a + 2
+            acc_road.idx.extend([a, b, c, a, c, d])
+            quads += 1
+
+        # ── fade skirt: a NARROW apron either side, alpha 1 -> 0 ──────
+        if skirt_on and acc_fade is not None:
+            for side in (-1.0, 1.0):
+                fb = len(acc_fade.pos)
+                for i in range(len(W)):
+                    ex = W[i, 0] + Nx[i] * half * side
+                    ez = W[i, 1] + Nz[i] * half * side
+                    ox = W[i, 0] + Nx[i] * (half + fade_m) * side
+                    oz = W[i, 1] + Nz[i] * (half + fade_m) * side
+                    v = float(i) / max(1, len(W) - 1)
+                    acc_fade.pos.append((ex, ground_hc(ex, ez) + 0.01, ez))
+                    acc_fade.nrm.append((0.0, 1.0, 0.0))
+                    acc_fade.uv.append((0.0, v * 8.0))
+                    acc_fade.pos.append((ox, ground_hc(ox, oz) - 0.02, oz))
+                    acc_fade.nrm.append((0.0, 1.0, 0.0))
+                    acc_fade.uv.append((1.0, v * 8.0))
+                for i in range(len(W) - 1):
+                    a = fb + i * 2
+                    acc_fade.idx.extend([a, a + 1, a + 3, a, a + 3, a + 2])
+    return quads
+
 
 
 def _tube(acc, cx, cz, r, y0, y1, sides=5):
@@ -2405,7 +2706,15 @@ def write_glb(groups, path):
                "roughnessFactor": 1.0 if "mr" in bundle else 0.9}
         mat = {"name": name, "pbrMetallicRoughness": pbr}
         if bundle.get("alpha"):
-            mat["alphaMode"] = "BLEND"      # smooth-blend edge material
+            # MASK (alpha-test) for cutout foliage — grass blades and
+            # petals must not depend on draw order the way BLEND does,
+            # or tufts punch holes in each other.  BLEND stays the
+            # default for the soft road-edge skirt.
+            mat["alphaMode"] = bundle.get("alpha_mode", "BLEND")
+            if mat["alphaMode"] == "MASK":
+                mat["alphaCutoff"] = bundle.get("alpha_cutoff", 0.5)
+        if bundle.get("double_sided"):
+            mat["doubleSided"] = True       # billboards seen from behind
         if "mr" in bundle:
             pbr["metallicRoughnessTexture"] = {
                 "index": _emit_tex(bundle["mr"])}
@@ -2663,6 +2972,10 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
     acc_roofs = [MeshAcc() for _ in _ROOF_BASES]
     acc_leafs = [MeshAcc() for _ in _LEAF_BASES]
     acc_trunk = MeshAcc()
+    # ground cover: one accumulator per palette variant so a single
+    # draw covers each material (grass tufts carry the flower stems too)
+    acc_grass = [MeshAcc() for _ in _GRASS_BASES]
+    acc_petals = [MeshAcc() for _ in _PETAL_BASES]
 
     def _pick(cx, cy, salt, n):
         return min(int(_det_rand(int(cx) + salt, int(cy) + 2 * salt + 1,
@@ -2866,11 +3179,46 @@ def build_pcg_glb(color_path, height_path, out_glb, seg_path=None,
         wx, wz = px_to_world(px, py)
         add_tree(acc_trunk, acc_leafs[_pick(px, py, 53, len(_LEAF_BASES))],
                  wx, wz, hgt, rad, ground(px, py) - 0.05, int(px), int(py))
+
+    # ── ground cover: grass tufts + flowers on open grassland ─────────
+    # Gated on the same biome flag as trees (a lava field or dune sea has
+    # no meadow) and blocked from roads/buildings/water/canopy.
+    ncover = nflower = 0
+    if "grass" not in masks:
+        # heuristic segment() path has no explicit grassland class: open
+        # ground is whatever isn't water / town / road / canopy / roof
+        masks["grass"] = ~(masks["water"] | masks.get("town", False)
+                           | masks["road"] | masks["veg"] | masks["roof"])
+    if place_trees and masks["grass"].any():
+        cover_block = (masks["town"] | masks["road"] | masks["water"]
+                       | tree_block)
+        cover = extract_ground_cover(masks["grass"], cover_block,
+                                     hmap, px_m)
+        for px, py, kind, s in cover:
+            wx, wz = px_to_world(px, py)
+            gy = ground(px, py) - 0.03
+            seed = int(px) * 131 + int(py) * 17
+            if kind:
+                add_flower(acc_grass[_pick(px, py, 29, len(_GRASS_BASES))],
+                           acc_petals[_pick(px, py, 37, len(_PETAL_BASES))],
+                           wx, wz, gy, s, seed)
+                nflower += 1
+            else:
+                add_grass_tuft(
+                    acc_grass[_pick(px, py, 29, len(_GRASS_BASES))],
+                    wx, wz, gy, s, seed)
+                ncover += 1
+        print(f"[pcg] ground cover: {ncover} grass tufts, "
+              f"{nflower} flowers")
     groups = ([(a, _tex_bundle(f"wall{i}"), f"house_wall{i}", True)
                for i, a in enumerate(acc_walls)] +
               [(a, _tex_bundle(f"roof{i}"), f"house_roof{i}", True)
                for i, a in enumerate(acc_roofs)] +
               [(acc_trunk, _tex_bundle("bark"), "tree_trunk")] +
+              [(a, _tex_bundle(f"grassblade{i}"), f"ground_grass{i}")
+               for i, a in enumerate(acc_grass)] +
+              [(a, _tex_bundle(f"petal{i}"), f"ground_flower{i}")
+               for i, a in enumerate(acc_petals)] +
               [(a, _tex_bundle(f"leaf{i}"), f"tree_leaf{i}")
                for i, a in enumerate(acc_leafs)] +
               [(acc_door, _tex_bundle("door"), "house_door"),
